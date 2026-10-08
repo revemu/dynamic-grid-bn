@@ -65,12 +65,19 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - รองรับคู่เทรดหลัก: `SOMI:USDso`, `USDC.e:USDso`, `WBTC:USDso`, `WETH:USDso`
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
-3. **Asset Precision & Terminology**:
-   - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB)
-   - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT)
-4. **Data Feeds**:
-   - ดึง Historical Klines สำหรับช่วง Warmup บน Timeframe ที่กำหนด (`initialCandleCount`, ค่าเริ่มต้น 300 แท่ง)
-   - สตรีมแท่งเทียน Real-time เพื่อคำนวณ ATR, Dow Swings, และพล็อตแท่งเทียนบน Dashboard
+4. **Asset Precision & Terminology**:
+   - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
+   - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)
+5. **Data Feeds & Dual-Exchange Candle Mapping Pipeline**:
+   - **Binance Universal Candle Source**: แม้ว่าบอทจะส่งคำสั่งเทรดบน DreamDEX (เช่น `SOMI:USDso`, `WBTC:USDso`, `WETH:USDso`) แท่งเทียนและ ATR จะถูกดึงจาก Binance Spot เสมอเพื่อความเสถียรและสภาพคล่องสูงสุด
+   - **Symbol Resolution (`resolveBinanceCandleSymbol`)**:
+     - `SOMI` / `SOMI:USDSO` -> `SOMIUSDT`
+     - `USDC.E:USDSO` -> `USDCUSDT`
+     - `WBTC:USDSO` -> `BTCUSDT`
+     - `WETH:USDSO` -> `ETHUSDT`
+   - **Candle Flush Protection (`clearCandles` & `clearExisting: true`)**:
+     - เมื่อสลับคู่เหรียญ ระบบจะเรียก `macroDowEngine.clearCandles()` และ `localTrendEngine.clearCandles()` เพื่อล้างแท่งเทียนเก่าของเหรียญเดิมทิ้ง ป้องกันปัญหากราฟเพี้ยนจากการนำแท่งเทียน BTC (ราคา $83,000) มาผสมกับแท่ง SOMI (ราคา $0.20)
+   - **Real-Time WebSockets**: สตรีมแท่งเทียน Real-time (Binance Kline WS) และ Order Book Ticker สำหรับคำนวณ ATR, Dow Swings และอัปเดต Dashboard chart
 
 ---
 

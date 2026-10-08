@@ -85,21 +85,45 @@ async function main(): Promise<void> {
   let bookTickerFeed: BinanceBookTickerFeed | undefined;
   let userDataFeed: BinanceUserDataFeed | undefined;
 
+  // Map trading symbol (which may be on DreamDEX like SOMI, SOMI:USDSO, WBTC, WETH)
+  // to a liquid Binance Spot Symbol for 100% reliable candlestick data & ATR calculations!
+  const resolveBinanceCandleSymbol = (sym: string): string => {
+    const s = sym.toUpperCase().replace(/[\/\-_:]/g, "");
+    if (s.startsWith("SOMI")) return "SOMIUSDT";
+    if (s.startsWith("USDC") || s === "USDSO") return "USDCUSDT";
+    if (s.startsWith("WBTC") || s === "BTC") return "BTCUSDT";
+    if (s.startsWith("WETH") || s === "ETH") return "ETHUSDT";
+    // If symbol does not end with USDT, USDC, FDUSD, etc., default to appending USDT
+    if (!s.endsWith("USDT") && !s.endsWith("USDC") && !s.endsWith("FDUSD")) {
+      return `${s}USDT`;
+    }
+    return s;
+  };
+
   const initFeeds = async (sym: string) => {
-    const symLower = sym.toLowerCase();
+    const binanceCandleSymbol = resolveBinanceCandleSymbol(sym);
+    const symLower = binanceCandleSymbol.toLowerCase();
+
+    log(`📈 Initializing Binance market feeds for ${sym} -> using Binance symbol: ${binanceCandleSymbol}`);
+
+    macroDowEngine.clearCandles();
+    localTrendEngine.clearCandles();
+
     await macroDowEngine.loadHigherTimeframeCandles(
-      symLower,
+      binanceCandleSymbol,
       config.dowTimeframe,
       config.binanceBaseUrl,
       log,
       config.initialCandleCount ?? 300,
+      true,
     );
     await localTrendEngine.loadHigherTimeframeCandles(
-      symLower,
+      binanceCandleSymbol,
       config.tradingTimeframe,
       config.binanceBaseUrl,
       log,
       config.initialCandleCount ?? 300,
+      true,
     );
 
     macroFeed?.stop();
@@ -309,12 +333,14 @@ async function main(): Promise<void> {
         const fetchLimit = s.initialCandleCount ?? res.initialCandleCount ?? 300;
         const tf = s.dowTimeframe ?? res.dowTimeframe ?? config.dowTimeframe;
         try {
+          const candleSym = resolveBinanceCandleSymbol(symbolInfo.symbol);
           await macroDowEngine.loadHigherTimeframeCandles(
-            symbolInfo.symbol.toLowerCase(),
+            candleSym,
             tf,
             config.binanceBaseUrl,
             log,
             fetchLimit,
+            true,
           );
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           log(`🔄 Reloaded ${fetchLimit} candles (${tf}) following settings update`);

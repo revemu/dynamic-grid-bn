@@ -2529,6 +2529,13 @@ export class DowStructureEngine {
     };
   }
 
+  public clearCandles(): void {
+    this.candles = [];
+    this.swingHighs = [];
+    this.swingLows = [];
+    this.recalculateSwings();
+  }
+
   /**
    * Fetch higher-timeframe candles (e.g. 1h) from Binance REST API to establish
    * macro Dow Theory Swing Highs and Lows.
@@ -2539,6 +2546,7 @@ export class DowStructureEngine {
     restBase: string = "https://api.binance.com",
     log?: (msg: string) => void,
     limit: number = 300,
+    clearExisting = true,
   ): Promise<void> {
     const sym = symbol.toUpperCase();
     const clampedLimit = Math.min(1000, Math.max(10, limit));
@@ -2556,8 +2564,10 @@ export class DowStructureEngine {
 
       log?.(`loaded ${rawKlines.length} macro candles on ${timeframe} timeframe for Dow Theory bounds`);
       const candleMap = new Map<number, Candle>();
-      for (const c of this.candles) {
-        candleMap.set(c.time, c);
+      if (!clearExisting) {
+        for (const c of this.candles) {
+          candleMap.set(c.time, c);
+        }
       }
       for (const k of rawKlines) {
         const time = Math.floor(Number(k[0]) / 1000);

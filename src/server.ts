@@ -510,8 +510,16 @@ export class DashboardServer {
       return;
     }
 
-    // Popular Binance Spot Symbols list
+    // Popular Spot Symbols list (Binance & DreamDEX)
     if (pathname === "/api/symbols" && req.method === "GET") {
+      const exchangeQuery = parsedUrl.searchParams.get("exchange") || "";
+      if (exchangeQuery === "dreamdex") {
+        const dreamdexSymbols = ["SOMI", "SOMI:USDSO", "USDC.E:USDSO", "WBTC:USDSO", "WETH:USDSO"];
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ symbols: dreamdexSymbols }));
+        return;
+      }
+
       const popular = [
         "BTCUSDT",
         "ETHUSDT",
@@ -528,6 +536,7 @@ export class DashboardServer {
         "LINKUSDT",
         "DOTUSDT",
         "FETUSDT",
+        "SOMIUSDT",
       ];
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ symbols: popular }));

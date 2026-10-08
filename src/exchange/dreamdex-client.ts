@@ -238,8 +238,12 @@ export class DreamDexClient implements IExchangeClient {
 
   private resolveMarket(symbol: string): DreamDexMarketMeta {
     const cleanSym = symbol.toUpperCase().replace(/[\/\-_]/g, ":");
-    const market = DREAMDEX_MARKETS[cleanSym] || DREAMDEX_MARKETS["SOMI:USDSO"]!;
-    return market;
+    if (DREAMDEX_MARKETS[cleanSym]) return DREAMDEX_MARKETS[cleanSym]!;
+    if (cleanSym.startsWith("SOMI")) return DREAMDEX_MARKETS["SOMI:USDSO"]!;
+    if (cleanSym.startsWith("USDC")) return DREAMDEX_MARKETS["USDC.E:USDSO"]!;
+    if (cleanSym.startsWith("WBTC") || cleanSym.startsWith("BTC")) return DREAMDEX_MARKETS["WBTC:USDSO"]!;
+    if (cleanSym.startsWith("WETH") || cleanSym.startsWith("ETH")) return DREAMDEX_MARKETS["WETH:USDSO"]!;
+    return DREAMDEX_MARKETS["SOMI:USDSO"]!;
   }
 
   public async getExchangeInfo(symbol: string): Promise<ExchangeSymbolInfo> {

@@ -2585,12 +2585,26 @@
     }
   }
 
+  function resolveBinanceCandleSymbol(sym) {
+    if (!sym) return "BTCUSDT";
+    const s = sym.toUpperCase().replace(/[\/\-_:]/g, "");
+    if (s.startsWith("SOMI")) return "SOMIUSDT";
+    if (s.startsWith("USDC") || s === "USDSO") return "USDCUSDT";
+    if (s.startsWith("WBTC") || s === "BTC") return "BTCUSDT";
+    if (s.startsWith("WETH") || s === "ETH") return "ETHUSDT";
+    if (!s.endsWith("USDT") && !s.endsWith("USDC") && !s.endsWith("FDUSD")) {
+      return `${s}USDT`;
+    }
+    return s;
+  }
+
   async function loadFallbackCandles() {
     if (pendingCandles && pendingCandles.length > 0) return;
     try {
       const topSel = document.getElementById("topSymbolSelect");
-      const sym = (topSel && topSel.value) ? topSel.value.toUpperCase() : "BTCUSDT";
-      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=15m&limit=100`);
+      const rawSym = (topSel && topSel.value) ? topSel.value.toUpperCase() : "BTCUSDT";
+      const binanceSym = resolveBinanceCandleSymbol(rawSym);
+      const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=15m&limit=100`);
       if (!res.ok) return;
       const raw = await res.json();
       if (!Array.isArray(raw) || raw.length === 0) return;
@@ -2941,10 +2955,8 @@
 
       setVal("cfg_symbol", data.symbol || "BTCUSDT");
       setVal("cfg_exchange", data.exchange || "binance");
-      const elTopSymbolSelect = document.getElementById("topSymbolSelect");
-      if (elTopSymbolSelect && data.symbol) {
-        elTopSymbolSelect.value = data.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
-      }
+      const currentExchange = (data.exchange || "binance").toLowerCase();
+      renderTopSymbolOptions(currentExchange, data.symbol);
       setVal("cfg_binanceApiKey", data.binanceApiKey || "");
       setVal("cfg_binanceApiSecret", data.binanceApiSecret || "");
       setVal("cfg_binanceBaseUrl", data.binanceBaseUrl || "https://api.binance.com");
@@ -3153,6 +3165,62 @@
 
   if (elSaveSettingsBtn) {
     elSaveSettingsBtn.addEventListener("click", saveSettings);
+  }
+
+  function renderTopSymbolOptions(exchange, currentSymbol) {
+    const elTopSymbolSelect = document.getElementById("topSymbolSelect");
+    if (!elTopSymbolSelect) return;
+    const isDreamdex = exchange === "dreamdex";
+    if (isDreamdex) {
+      elTopSymbolSelect.innerHTML = `
+        <option value="SOMI">SOMI (SOMI/USDso)</option>
+        <option value="SOMI:USDSO">SOMI:USDso</option>
+        <option value="USDC.E:USDSO">USDC.e:USDso</option>
+        <option value="WBTC:USDSO">WBTC:USDso</option>
+        <option value="WETH:USDSO">WETH:USDso</option>
+      `;
+    } else {
+      elTopSymbolSelect.innerHTML = `
+        <option value="BTCUSDT">BTC/USDT</option>
+        <option value="ETHUSDT">ETH/USDT</option>
+        <option value="ETHFDUSD">ETH/FDUSD</option>
+        <option value="SOLUSDT">SOL/USDT</option>
+        <option value="BNBUSDT">BNB/USDT</option>
+        <option value="SOMIUSDT">SOMI/USDT</option>
+        <option value="DOGEUSDT">DOGE/USDT</option>
+        <option value="XRPUSDT">XRP/USDT</option>
+        <option value="ADAUSDT">ADA/USDT</option>
+        <option value="AVAXUSDT">AVAX/USDT</option>
+        <option value="SUIUSDT">SUI/USDT</option>
+        <option value="NEARUSDT">NEAR/USDT</option>
+        <option value="PEPEUSDT">PEPE/USDT</option>
+      `;
+    }
+    if (currentSymbol) {
+      elTopSymbolSelect.value = currentSymbol.toUpperCase();
+      if (!elTopSymbolSelect.value) {
+        elTopSymbolSelect.value = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
+      }
+    }
+  }
+
+  const elCfgExchange = document.getElementById("cfg_exchange");
+  if (elCfgExchange) {
+    elCfgExchange.addEventListener("change", (e) => {
+      const selectedExchange = (e.target.value || "binance").toLowerCase();
+      const cfgSymbol = document.getElementById("cfg_symbol");
+      let newDefaultSym = selectedExchange === "dreamdex" ? "SOMI" : "BTCUSDT";
+      if (cfgSymbol) {
+        const cur = (cfgSymbol.value || "").toUpperCase();
+        if (selectedExchange === "dreamdex" && (cur.includes("USDT") || cur.includes("FDUSD") || cur === "BTCUSDT")) {
+          cfgSymbol.value = "SOMI";
+        } else if (selectedExchange === "binance" && (cur.includes("USDSO") || cur === "SOMI")) {
+          cfgSymbol.value = "SOMIUSDT";
+        }
+        newDefaultSym = cfgSymbol.value;
+      }
+      renderTopSymbolOptions(selectedExchange, newDefaultSym);
+    });
   }
 
   const elTopSymbolSelect = document.getElementById("topSymbolSelect");
