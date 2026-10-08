@@ -122,6 +122,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - When trading on Binance (`this.binance.exchangeName === "binance"`), `buyOrdersActive` and `sellOrdersActive` remain continuously `true`.
   - Hysteresis level pausing (`enableBuyBelowSellLevel1` and `enableSellAboveBuyLevel1`) is bypassed on CEX because 0% maker fees and zero gas allow resting buy and sell orders to stay simultaneously active on the order book without churn costs.
   - Eliminates rapid rebalance loops (`needsBuyRebalance = true`) caused by price wiggling around Sell Level 1.
+- **Smart Order Level Re-linking (Zero Cancel-Replace at Identical Price)**:
+  - แก้ไขปัญหาบอทยกเลิกออเดอร์เดิมแล้วสร้างใหม่ที่ราคาเท่าเดิม (เช่น ยกเลิก `SELL Order #...` แล้วสร้าง `Sell Target 1` ที่ราคาเดิม)
+  - ทั้งในระบบ Reconcile (`reconcileActiveOrders`) และ Stale Orders Cleanup (`staleSells` / `staleBuys`): หากพบออเดอร์ที่มีราคาตรงกับระดับเป้าหมายของกรอบปัจจุบัน ($\le 0.1\%$) ระบบจะทำการ **Re-link / Rename `levelDesc`** ให้ตรงกับชื่อระดับนั้นทันที แทนการสั่ง Cancel ทิ้งแล้วตั้งใหม่ ช่วยให้ออเดอร์ Maker เดิมค้างอยู่บน Order Book อย่างต่อเนื่อง 100%
 - **4 Channel Modes (`CHANNEL_MODE`)**:
   - `DOW_ATR_CLAMP` (Default): Dow Theory swing pivots clamped to $2.5\times$ – $5.0\times$ ATR.
   - `FIXED_PCT_CLAMP`: Clamped between `MIN_CHANNEL_WIDTH_PCT` (1.8%) and `MAX_CHANNEL_WIDTH_PCT` (4.0%).
