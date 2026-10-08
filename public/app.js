@@ -1854,13 +1854,13 @@
       const markerMap = new Map();
 
       // Multi-Touch S/R Touch Points Lookup (Active confirmed structural bounds)
-      // Strictly filter to points genuinely touching the active channel bounds or live S/R bounds (within 1.5% tolerance)
+      // Strictly filter to points genuinely touching the active channel bounds or live S/R bounds (within 0.25% tolerance)
       const activeResCluster = data.resistanceCluster || (data.isChannelLocked ? data.liveResistanceCluster : undefined);
       const resTouchPoints = (activeResCluster && Array.isArray(activeResCluster.points))
         ? activeResCluster.points.filter((p) => {
             if (!p || typeof p.price !== "number") return false;
-            const matchesUpper = data.upperBound && Math.abs(p.price - data.upperBound) / data.upperBound <= 0.015;
-            const matchesLive = data.liveCalculatedUpperBound && Math.abs(p.price - data.liveCalculatedUpperBound) / data.liveCalculatedUpperBound <= 0.015;
+            const matchesUpper = data.upperBound && Math.abs(p.price - data.upperBound) / data.upperBound <= 0.0025;
+            const matchesLive = data.liveCalculatedUpperBound && Math.abs(p.price - data.liveCalculatedUpperBound) / data.liveCalculatedUpperBound <= 0.0025;
             return matchesUpper || matchesLive;
           })
         : [];
@@ -1868,8 +1868,8 @@
       const supTouchPoints = (activeSupCluster && Array.isArray(activeSupCluster.points))
         ? activeSupCluster.points.filter((p) => {
             if (!p || typeof p.price !== "number") return false;
-            const matchesBottom = data.bottomBound && Math.abs(p.price - data.bottomBound) / data.bottomBound <= 0.015;
-            const matchesLive = data.liveCalculatedBottomBound && Math.abs(p.price - data.liveCalculatedBottomBound) / data.liveCalculatedBottomBound <= 0.015;
+            const matchesBottom = data.bottomBound && Math.abs(p.price - data.bottomBound) / data.bottomBound <= 0.0025;
+            const matchesLive = data.liveCalculatedBottomBound && Math.abs(p.price - data.liveCalculatedBottomBound) / data.liveCalculatedBottomBound <= 0.0025;
             return matchesBottom || matchesLive;
           })
         : [];

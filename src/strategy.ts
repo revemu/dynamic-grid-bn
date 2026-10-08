@@ -2371,10 +2371,13 @@ export class DynamicGrid {
           if (!dow?.resistanceCluster) return undefined;
           // If active upperBound matches dow.resistanceCluster price within tolerance (0.5%)
           if (Math.abs(dow.resistanceCluster.price - upperBound) / upperBound <= 0.005) {
+            const validPts = (dow.resistanceCluster.points || []).filter(
+              (p) => Math.abs(p.price - upperBound) / upperBound <= 0.0025,
+            );
             return {
               price: upperBound,
-              touchCount: dow.resistanceCluster.touchCount,
-              points: (dow.resistanceCluster.points || []).map((p) => ({
+              touchCount: validPts.length > 0 ? validPts.length : dow.resistanceCluster.touchCount,
+              points: (validPts.length > 0 ? validPts : dow.resistanceCluster.points || []).map((p) => ({
                 time: p.time,
                 price: p.price,
                 index: p.index,
@@ -2387,10 +2390,13 @@ export class DynamicGrid {
             (c) => Math.abs(c.price - upperBound) / upperBound <= 0.005,
           );
           if (matchCluster) {
+            const validPts = (matchCluster.points || []).filter(
+              (p) => Math.abs(p.price - upperBound) / upperBound <= 0.0025,
+            );
             return {
               price: upperBound,
-              touchCount: matchCluster.touchCount,
-              points: matchCluster.points.map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
+              touchCount: validPts.length > 0 ? validPts.length : matchCluster.touchCount,
+              points: (validPts.length > 0 ? validPts : matchCluster.points).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
             };
           }
           const matchHigh = dow.waveCycle?.annotatedSwings?.find(
@@ -2404,7 +2410,7 @@ export class DynamicGrid {
             };
           }
           const validPoints = (dow.resistanceCluster.points || []).filter(
-            (p) => Math.abs(p.price - upperBound) / upperBound <= 0.005,
+            (p) => Math.abs(p.price - upperBound) / upperBound <= 0.0025,
           );
           if (validPoints.length > 0) {
             return {
@@ -2418,10 +2424,13 @@ export class DynamicGrid {
         supportCluster: (() => {
           if (!dow?.supportCluster) return undefined;
           if (Math.abs(dow.supportCluster.price - lowerBound) / lowerBound <= 0.005) {
+            const validPts = (dow.supportCluster.points || []).filter(
+              (p) => Math.abs(p.price - lowerBound) / lowerBound <= 0.0025,
+            );
             return {
               price: lowerBound,
-              touchCount: dow.supportCluster.touchCount,
-              points: (dow.supportCluster.points || []).map((p) => ({
+              touchCount: validPts.length > 0 ? validPts.length : dow.supportCluster.touchCount,
+              points: (validPts.length > 0 ? validPts : dow.supportCluster.points || []).map((p) => ({
                 time: p.time,
                 price: p.price,
                 index: p.index,
@@ -2433,10 +2442,13 @@ export class DynamicGrid {
             (c) => Math.abs(c.price - lowerBound) / lowerBound <= 0.005,
           );
           if (matchCluster) {
+            const validPts = (matchCluster.points || []).filter(
+              (p) => Math.abs(p.price - lowerBound) / lowerBound <= 0.0025,
+            );
             return {
               price: lowerBound,
-              touchCount: matchCluster.touchCount,
-              points: matchCluster.points.map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
+              touchCount: validPts.length > 0 ? validPts.length : matchCluster.touchCount,
+              points: (validPts.length > 0 ? validPts : matchCluster.points).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
             };
           }
           const matchLow = dow.waveCycle?.annotatedSwings?.find(
@@ -2477,12 +2489,16 @@ export class DynamicGrid {
         liveResistanceCluster: dow?.resistanceCluster ? {
           price: dow.resistanceCluster.price,
           touchCount: dow.resistanceCluster.touchCount,
-          points: (dow.resistanceCluster.points || []).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
+          points: (dow.resistanceCluster.points || [])
+            .filter((p) => Math.abs(p.price - dow.resistanceCluster!.price) / dow.resistanceCluster!.price <= 0.0025)
+            .map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
         } : undefined,
         liveSupportCluster: dow?.supportCluster ? {
           price: dow.supportCluster.price,
           touchCount: dow.supportCluster.touchCount,
-          points: (dow.supportCluster.points || []).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
+          points: (dow.supportCluster.points || [])
+            .filter((p) => Math.abs(p.price - dow.supportCluster!.price) / dow.supportCluster!.price <= 0.0025)
+            .map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
         } : undefined,
         regime: activeRegime,
         isSwingConfirmed: dow?.isSwingConfirmed ?? false,

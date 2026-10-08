@@ -380,34 +380,17 @@ export class DowStructureEngine {
       const clusters: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
       const used = new Set<number>();
 
-      // Resistance: cluster highest peaks first. Support: cluster lowest valleys first.
-      const sorted = [...points].sort((a, b) => isHigh ? b.price - a.price : a.price - b.price);
-
-      for (let i = 0; i < sorted.length; i++) {
-        if (used.has(i)) continue;
-        const p1 = sorted[i]!;
-        const group: SwingPoint[] = [p1];
-        const groupIndices: number[] = [i];
-
-        for (let j = i + 1; j < sorted.length; j++) {
-          if (used.has(j)) continue;
-          const p2 = sorted[j]!;
-          if (Math.abs(p2.price - p1.price) / p1.price <= tol) {
-            group.push(p2);
-            groupIndices.push(j);
-          }
-        }
-
-        // Filter group to distinct touches only (no adjacent bars or same continuous peak/valley)
-        const distinctPoints: SwingPoint[] = [];
+      // Helper: filter a group of points to distinct touches separated by time & intervening movement
+      const getDistinctTouches = (group: SwingPoint[]): SwingPoint[] => {
+        const distinct: SwingPoint[] = [];
         const sortedByTime = [...group].sort((a, b) => a.index - b.index);
 
         for (const pt of sortedByTime) {
-          if (distinctPoints.length === 0) {
-            distinctPoints.push(pt);
+          if (distinct.length === 0) {
+            distinct.push(pt);
             continue;
           }
-          const prevPt = distinctPoints[distinctPoints.length - 1]!;
+          const prevPt = distinct[distinct.length - 1]!;
           const barGap = Math.abs(pt.index - prevPt.index);
 
           // Must be separated by at least 2 candles
@@ -444,27 +427,97 @@ export class DowStructureEngine {
           }
 
           if (hadInterveningSeparation) {
-            distinctPoints.push(pt);
+            distinct.push(pt);
+          }
+        }
+        return distinct;
+      };
+
+      // Density-First Clustering:
+      // Evaluate candidate clusters for each unused point to prioritize dense horizontal levels (most touches)
+      // over isolated outlier spikes.
+      while (used.size < points.length) {
+        let bestCandidate: {
+          seedIdx: number;
+          clusterPrice: number;
+          touchingPoints: SwingPoint[];
+          consumedIndices: number[];
+        } | undefined;
+
+        for (let i = 0; i < points.length; i++) {
+          if (used.has(i)) continue;
+          const p1 = points[i]!;
+          const candidateGroup: SwingPoint[] = [p1];
+          const candidateIndices: number[] = [i];
+
+          for (let j = 0; j < points.length; j++) {
+            if (i === j || used.has(j)) continue;
+            const p2 = points[j]!;
+            if (Math.abs(p2.price - p1.price) / p1.price <= tol) {
+              candidateGroup.push(p2);
+              candidateIndices.push(j);
+            }
+          }
+
+          const distinct = getDistinctTouches(candidateGroup);
+          if (distinct.length === 0) continue;
+
+          // For Resistance: Strictly use min peak price so every peak reaches and touches the resistance line
+          // For Support: Strictly use min valley price so the support floor line sits at the bottom of the valleys
+          const cPrice = isHigh
+            ? Math.min(...distinct.map((p) => p.price))
+            : Math.min(...distinct.map((p) => p.price));
+
+          // Strict Touch Verification:
+          // Only points that genuinely touch cPrice within tight tolerance (<= 0.20%) count as touches of this line!
+          // Outlier spikes that overshot/undershot the line are excluded from touching this level.
+          const lineTouchTol = Math.min(tol, 0.002);
+          const touchingPts = distinct.filter(
+            (p) => Math.abs(p.price - cPrice) / cPrice <= lineTouchTol,
+          );
+          if (touchingPts.length === 0) continue;
+
+          const consumed = candidateIndices.filter((idx) => {
+            const pt = points[idx]!;
+            return touchingPts.some((tp) => tp.time === pt.time && tp.price === pt.price);
+          });
+
+          // Score candidate:
+          // 1. More genuine touches wins (Density first!)
+          // 2. Tie-break: Resistance closer to currentPrice, or Support closer to currentPrice
+          const isBetter = !bestCandidate ||
+            touchingPts.length > bestCandidate.touchingPoints.length ||
+            (touchingPts.length === bestCandidate.touchingPoints.length &&
+              Math.abs(cPrice - currentPrice) < Math.abs(bestCandidate.clusterPrice - currentPrice));
+
+          if (isBetter) {
+            bestCandidate = {
+              seedIdx: i,
+              clusterPrice: cPrice,
+              touchingPoints: touchingPts,
+              consumedIndices: consumed,
+            };
           }
         }
 
-        if (distinctPoints.length >= 1) {
-          // For Resistance: Strictly use min peak price so every peak reaches and touches the resistance line
-          // (zero floating lines in empty space; touches all peaks)
-          // For Support: Strictly use min valley price so the support floor line sits at the bottom of the valleys
-          // and touches the actual swing low (zero floating lines above valleys)
-          const clusterPrice = isHigh
-            ? Math.min(...distinctPoints.map((p) => p.price))
-            : Math.min(...distinctPoints.map((p) => p.price));
-          clusters.push({
-            price: clusterPrice,
-            touchCount: distinctPoints.length,
-            points: distinctPoints,
-          });
-          if (distinctPoints.length >= minTouchCount) {
-            for (const idx of groupIndices) used.add(idx);
-          }
+        if (!bestCandidate) {
+          // Mark remaining points as used so loop terminates
+          for (let i = 0; i < points.length; i++) used.add(i);
+          break;
         }
+
+        clusters.push({
+          price: bestCandidate.clusterPrice,
+          touchCount: bestCandidate.touchingPoints.length,
+          points: bestCandidate.touchingPoints,
+        });
+
+        // Mark consumed points as used
+        for (const idx of bestCandidate.consumedIndices) {
+          used.add(idx);
+        }
+        // Always mark at least the seed to ensure progress
+        used.add(bestCandidate.seedIdx);
       }
       return clusters;
     };
@@ -2448,7 +2501,16 @@ export class DowStructureEngine {
 
     let effectiveResCluster: { price: number; touchCount: number; points: SwingPoint[] } | undefined;
     if (upperMatchesSR && srResult?.resistance) {
-      effectiveResCluster = { ...srResult.resistance, price: upperBound };
+      const tightTol = Math.min(clusterToleranceRatio, 0.0025);
+      const pointsAtCeiling = srResult.resistance.points.filter(
+        (pt) => Math.abs(pt.price - upperBound) / upperBound <= tightTol,
+      );
+      effectiveResCluster = {
+        ...srResult.resistance,
+        price: upperBound,
+        touchCount: pointsAtCeiling.length > 0 ? pointsAtCeiling.length : srResult.resistance.touchCount,
+        points: pointsAtCeiling.length > 0 ? pointsAtCeiling : srResult.resistance.points,
+      };
     } else {
       const matchCluster = srResult?.allResistanceClusters?.find(
         (c) => Math.abs(c.price - upperBound) / upperBound <= clusterToleranceRatio,
@@ -2494,7 +2556,16 @@ export class DowStructureEngine {
 
     let effectiveSupCluster: { price: number; touchCount: number; points: SwingPoint[] } | undefined;
     if (bottomMatchesSR && srResult?.support) {
-      effectiveSupCluster = { ...srResult.support, price: bottomBound };
+      const tightTol = Math.min(clusterToleranceRatio, 0.0025);
+      const pointsAtFloor = srResult.support.points.filter(
+        (pt) => Math.abs(pt.price - bottomBound) / bottomBound <= tightTol,
+      );
+      effectiveSupCluster = {
+        ...srResult.support,
+        price: bottomBound,
+        touchCount: pointsAtFloor.length > 0 ? pointsAtFloor.length : srResult.support.touchCount,
+        points: pointsAtFloor.length > 0 ? pointsAtFloor : srResult.support.points,
+      };
     } else {
       const matchCluster = srResult?.allSupportClusters?.find(
         (c) => Math.abs(c.price - bottomBound) / bottomBound <= clusterToleranceRatio,
