@@ -214,15 +214,22 @@ export class DreamDexClient implements IExchangeClient {
   }
 
   public setPrivateKey(key: string): void {
-    const cleanKey = (key.startsWith("0x") ? key : `0x${key}`) as `0x${string}`;
-    if (cleanKey.length === 66) {
-      this.privateKey = cleanKey;
-      this.account = privateKeyToAccount(cleanKey);
-      this.walletClient = createWalletClient({
-        account: this.account,
-        transport: http(this.rpcUrl),
-      });
-      this.log(`🔑 Initialized DreamDEX wallet: ${this.account.address}`);
+    if (!key || key === "******") return;
+    try {
+      const cleanKey = (key.startsWith("0x") ? key : `0x${key}`) as `0x${string}`;
+      if (cleanKey.length === 66) {
+        this.privateKey = cleanKey;
+        this.account = privateKeyToAccount(cleanKey);
+        this.walletClient = createWalletClient({
+          account: this.account,
+          transport: http(this.rpcUrl),
+        });
+        this.log(`🔑 Initialized DreamDEX wallet: ${this.account.address}`);
+      } else {
+        this.log(`⚠️ Invalid private key length (${cleanKey.length} chars). DreamDEX client running in read-only / simulation mode.`);
+      }
+    } catch (err) {
+      this.log(`⚠️ Could not parse private key: ${(err as Error).message}. Running in read-only / simulation mode.`);
     }
   }
 

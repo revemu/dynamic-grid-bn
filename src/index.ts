@@ -263,12 +263,20 @@ async function main(): Promise<void> {
       // 1. Handle Exchange Adapter switch or credentials update dynamically
       if (exchangeChanged || (targetExchangeName === "dreamdex" && privateKeyChanged)) {
         try {
+          const realPrivateKey = (s.dreamdexPrivateKey !== undefined && s.dreamdexPrivateKey !== "******" && s.dreamdexPrivateKey.trim() !== "")
+            ? s.dreamdexPrivateKey.trim()
+            : grid.getRealDreamdexPrivateKey();
+
+          const realApiSecret = (s.binanceApiSecret !== undefined && s.binanceApiSecret !== "******")
+            ? s.binanceApiSecret
+            : grid.getRealBinanceApiSecret();
+
           const newExchange = createExchangeClient({
             exchange: targetExchangeName,
             apiKey: s.binanceApiKey !== undefined ? s.binanceApiKey : prevConfig.binanceApiKey,
-            apiSecret: (s.binanceApiSecret !== undefined && s.binanceApiSecret !== "******") ? s.binanceApiSecret : prevConfig.binanceApiSecret,
+            apiSecret: realApiSecret,
             baseUrl: s.binanceBaseUrl || prevConfig.binanceBaseUrl,
-            privateKey: (s.dreamdexPrivateKey !== undefined && s.dreamdexPrivateKey !== "******") ? s.dreamdexPrivateKey : (grid.getRuntimeConfig().dreamdexPrivateKey !== "******" ? grid.getRuntimeConfig().dreamdexPrivateKey : undefined),
+            privateKey: (realPrivateKey && realPrivateKey !== "******") ? realPrivateKey : undefined,
             rpcUrl: s.dreamdexRpcUrl || prevConfig.dreamdexRpcUrl,
             log: (msg) => log(`[${targetExchangeName}] ${msg}`),
           });

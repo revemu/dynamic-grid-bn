@@ -374,6 +374,14 @@ export class DynamicGrid {
     };
   }
 
+  public getRealDreamdexPrivateKey(): string | undefined {
+    return this.cfg.dreamdexPrivateKey;
+  }
+
+  public getRealBinanceApiSecret(): string | undefined {
+    return this.cfg.binanceApiSecret;
+  }
+
   public getIntervalMs(): number {
     return this.cfg.intervalMs ?? 2000;
   }

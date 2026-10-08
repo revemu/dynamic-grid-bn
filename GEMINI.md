@@ -64,7 +64,8 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - ซิงค์ประวัติ Order ย้อนหลังผ่าน Somnia GraphQL Indexer API (`SomniaIndexerClient` / `https://prd.smk.somnia.host/v1/graphql`)
    - รองรับคู่เทรดหลัก: `SOMI:USDso`, `USDC.e:USDso`, `WBTC:USDso`, `WETH:USDso`
    - **Real On-Chain ERC-20 Balances & Allowance**: ดึงยอดเงิน USDso และ Base token (WETH, WBTC, USDC.e) ผ่าน ERC-20 `balanceOf` บน Somnia RPC จริง โดยไม่ฮาร์ดโค้ด `quoteFree: 0` พร้อมระบบ `ensureAllowance` ตรวจสอบและ approve อัตโนมัติก่อนวางออเดอร์
-   - **Pool Address Corrections**: อัปเดตและยืนยัน pool address ถูกต้อง 100% เช่น WETH:USDso (`0xa936da11B57b50A344e1293AAaE5232885ea2bDE`) แก้ไขข้อผิดพลาด typo เดิม
+   - **Credentials Masking Protection (`******`)**: ฟรอนต์เอนด์และแบ็กเอนด์แยกแยะระหว่างค่า Masking (`******`) กับ Private Key จริงอย่างเข้มงวด โดยจะไม่ส่งหรือเผลอ parse ข้อความ `******` เป็น private key เข้า `viem` อีกต่อไป ป้องกันปัญหา `invalid private key, expected hex or 32 bytes` ขณะบันทึกการตั้งค่า
+   - **Dynamic Trading Pair Selection in Settings**: ช่องกรอกคู่เทรดใน Settings Modal และ Datalist จะสลับคู่เหรียญของ DreamDEX (`SOMI:USDso`, `USDC.e:USDso`, `WBTC:USDso`, `WETH:USDso`) ให้เลือกทันทีตามกระดานที่เปิดใช้งาน
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

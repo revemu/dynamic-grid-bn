@@ -3054,10 +3054,16 @@
       exchange: document.getElementById("cfg_exchange") ? document.getElementById("cfg_exchange").value : "binance",
       symbol: document.getElementById("cfg_symbol") ? document.getElementById("cfg_symbol").value.trim().toUpperCase() : undefined,
       binanceApiKey: document.getElementById("cfg_binanceApiKey") ? document.getElementById("cfg_binanceApiKey").value.trim() : undefined,
-      binanceApiSecret: document.getElementById("cfg_binanceApiSecret") ? document.getElementById("cfg_binanceApiSecret").value.trim() : undefined,
+      binanceApiSecret: (() => {
+        const val = document.getElementById("cfg_binanceApiSecret") ? document.getElementById("cfg_binanceApiSecret").value.trim() : "";
+        return (val && val !== "******") ? val : undefined;
+      })(),
       binanceBaseUrl: document.getElementById("cfg_binanceBaseUrl") ? document.getElementById("cfg_binanceBaseUrl").value.trim() : undefined,
       binanceWsBase: document.getElementById("cfg_binanceWsBase") ? document.getElementById("cfg_binanceWsBase").value.trim() : undefined,
-      dreamdexPrivateKey: document.getElementById("cfg_dreamdexPrivateKey") ? document.getElementById("cfg_dreamdexPrivateKey").value.trim() : undefined,
+      dreamdexPrivateKey: (() => {
+        const val = document.getElementById("cfg_dreamdexPrivateKey") ? document.getElementById("cfg_dreamdexPrivateKey").value.trim() : "";
+        return (val && val !== "******") ? val : undefined;
+      })(),
       dreamdexRpcUrl: document.getElementById("cfg_dreamdexRpcUrl") ? document.getElementById("cfg_dreamdexRpcUrl").value.trim() : undefined,
       dashboardPort: document.getElementById("cfg_dashboardPort") ? parseInt(document.getElementById("cfg_dashboardPort").value, 10) : undefined,
       dryRun: document.getElementById("cfg_dryRun") ? document.getElementById("cfg_dryRun").checked : false,
@@ -3212,6 +3218,16 @@
     }
     if (elPopularSymbolsList) {
       elPopularSymbolsList.innerHTML = targetHtml;
+    }
+    const lblSymbol = document.getElementById("lbl_symbol");
+    if (lblSymbol) {
+      lblSymbol.innerHTML = isDreamdex
+        ? `DreamDEX Trading Pair (Symbol) <span class="help-tip" title="Choose or enter DreamDEX pair (e.g. SOMI, SOMI:USDso, WETH:USDso, WBTC:USDso)">ℹ️</span>`
+        : `Binance Trading Pair (Symbol) <span class="help-tip" title="Choose or enter Binance Spot pair (e.g. BTCUSDT, ETHUSDT, ETHFDUSD)">ℹ️</span>`;
+    }
+    const cfgSymbol = document.getElementById("cfg_symbol");
+    if (cfgSymbol) {
+      cfgSymbol.placeholder = isDreamdex ? "SOMI:USDSO" : "BTCUSDT";
     }
   }
 
