@@ -496,26 +496,14 @@ export class DowStructureEngine {
     const effectiveMaxSupPrice = hasValleysBelowPrice ? currentPrice * 1.001 : currentPrice * (1 + tol);
 
     // Filter out broken levels:
-    // A resistance cluster is broken if the active wave high pierced through it: c.price < activeWaveHigh * (1 - tol)
-    // Or if peaks above price exist and c.price is below current price.
-    const isResistanceBroken = (p: number, points?: SwingPoint[]) => {
-      // If the cluster itself contains the active wave peak, it belongs to the active ceiling and is NOT broken!
-      if (activeWaveHigh && points && points.some((pt) => Math.abs(pt.price - activeWaveHigh) / activeWaveHigh <= tol)) {
-        return false;
-      }
-      if (activeWaveHigh && p < activeWaveHigh * (1 - tol)) return true;
+    // A resistance cluster cannot be used as an overhead ceiling if peaks above price exist and the cluster is below current price.
+    const isResistanceBroken = (p: number) => {
       if (hasPeaksAbovePrice && p < currentPrice * 0.999) return true;
       return false;
     };
 
-    // A support cluster is broken if the active wave low broke below it: c.price > activeWaveLow * (1 + tol)
-    // Or if valleys below price exist and c.price is above current price.
-    const isSupportBroken = (p: number, points?: SwingPoint[]) => {
-      // If the cluster itself contains the active wave valley, it belongs to the active base and is NOT broken!
-      if (activeWaveLow && points && points.some((pt) => Math.abs(pt.price - activeWaveLow) / activeWaveLow <= tol)) {
-        return false;
-      }
-      if (activeWaveLow && p > activeWaveLow * (1 + tol)) return true;
+    // A support cluster cannot be used as underlying floor if valleys below price exist and the cluster is above current price.
+    const isSupportBroken = (p: number) => {
       if (hasValleysBelowPrice && p > currentPrice * 1.001) return true;
       return false;
     };
@@ -526,10 +514,10 @@ export class DowStructureEngine {
     const minSupPrice = (activeWaveHigh ?? currentPrice) * (1 - (maxSpanPct / 100));
 
     const resCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-    for (const c of validResClusters.filter((c) => c.price >= effectiveMinResPrice && c.price <= maxResPrice && !isResistanceBroken(c.price, c.points))) {
+    for (const c of validResClusters.filter((c) => c.price >= effectiveMinResPrice && c.price <= maxResPrice && !isResistanceBroken(c.price))) {
       resCandidates.push(c);
     }
-    for (const c of resClusters.filter((c) => c.touchCount < minTouchCount && c.price >= effectiveMinResPrice && c.price <= maxResPrice && !isResistanceBroken(c.price, c.points))) {
+    for (const c of resClusters.filter((c) => c.touchCount < minTouchCount && c.price >= effectiveMinResPrice && c.price <= maxResPrice && !isResistanceBroken(c.price))) {
       // Skip sub-clusters whose points are already covered by a valid multi-touch cluster
       if (resCandidates.some((r) => r.touchCount >= minTouchCount && c.points.some((pt) => r.points.some((rpt) => rpt.time === pt.time)))) {
         continue;
@@ -566,10 +554,10 @@ export class DowStructureEngine {
 
     // 2. Confirmed Support Candidates (sorted descending by price: closest below price first)
     const supCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-    for (const c of validSupClusters.filter((c) => c.price <= effectiveMaxSupPrice && c.price >= minSupPrice && !isSupportBroken(c.price, c.points))) {
+    for (const c of validSupClusters.filter((c) => c.price <= effectiveMaxSupPrice && c.price >= minSupPrice && !isSupportBroken(c.price))) {
       supCandidates.push(c);
     }
-    for (const c of supClusters.filter((c) => c.touchCount < minTouchCount && c.price <= effectiveMaxSupPrice && c.price >= minSupPrice && !isSupportBroken(c.price, c.points))) {
+    for (const c of supClusters.filter((c) => c.touchCount < minTouchCount && c.price <= effectiveMaxSupPrice && c.price >= minSupPrice && !isSupportBroken(c.price))) {
       // Skip sub-clusters whose points are already covered by a valid multi-touch cluster
       if (supCandidates.some((s) => s.touchCount >= minTouchCount && c.points.some((pt) => s.points.some((spt) => spt.time === pt.time)))) {
         continue;
@@ -600,7 +588,17 @@ export class DowStructureEngine {
     supCandidates.sort((a, b) => b.price - a.price);
 
     // ── 3. Find Optimal Structural Pair Fitting [minSpanPct, maxSpanPct] ─────────
-    // "ถ้าต้องปรับกรอบ ให้เลือกจาก ยอดหรือเหวเท่านั้น ไม่ใช่กรอบลอยๆ ให้อยู่ใน range min max"
+    // Identify immediate multi-touch clusters (nearest above/below price with touchCount >= minTouchCount)
+    const nearestMultiTouchRes = resCandidates.find(
+      (r) => r.touchCount >= minTouchCount && r.price >= currentPrice * 0.999
+    );
+    const nearestMultiTouchSup = supCandidates.find(
+      (s) => s.touchCount >= minTouchCount && s.price <= currentPrice * 1.001
+    );
+
+    // Baseline tradeable span floor: allow genuine multi-touch levels to form if tradeable (>= 1.8%)
+    const effectiveTradeableMinSpan = Math.min(minSpanPct, 1.8);
+
     let bestPair: {
       res: { price: number; touchCount: number; points: SwingPoint[] };
       sup: { price: number; touchCount: number; points: SwingPoint[] };
@@ -614,10 +612,11 @@ export class DowStructureEngine {
         if (r.price <= s.price) continue;
 
         const widthPct = ((r.price - s.price) / s.price) * 100;
-        const inRange = widthPct >= minSpanPct && widthPct <= maxSpanPct;
+        const isTradeableWidth = widthPct >= effectiveTradeableMinSpan && widthPct <= maxSpanPct;
+        const meetsUserMinSpan = widthPct >= minSpanPct;
 
         let score: number;
-        if (inRange) {
+        if (isTradeableWidth) {
           // 1. Channel MUST enclose current market price so bot can accumulate and exit:
           const enclosesPrice = s.price <= currentPrice * 1.001 && r.price >= currentPrice * 0.999;
           const enclosesBonus = enclosesPrice ? 1000 : -2000;
@@ -625,23 +624,37 @@ export class DowStructureEngine {
           // 2. Multi-touch cluster bonus (touchCount >= 2): Top priority for multi-touch levels!
           const touchBonus = (r.touchCount >= 2 ? 2500 : 0) + (s.touchCount >= 2 ? 2500 : 0);
 
-          // 3. Priority for active wave swings (HH & HL / LH & LL)
+          // 3. User Rule: "ถ้ามี สองจุดที่ต่ำกว่า ถือให้ใช้กรอบนั้น"
+          // Highest priority bonus for the NEAREST multi-touch resistance above price (immediate overhead ceiling)
+          // and NEAREST multi-touch support below price (immediate underlying floor):
+          const isNearestMultiRes = Boolean(
+            nearestMultiTouchRes && Math.abs(r.price - nearestMultiTouchRes.price) / r.price <= tol
+          );
+          const isNearestMultiSup = Boolean(
+            nearestMultiTouchSup && Math.abs(s.price - nearestMultiTouchSup.price) / s.price <= tol
+          );
+          const nearestMultiBonus = (isNearestMultiRes ? 3500 : 0) + (isNearestMultiSup ? 3500 : 0);
+
+          // 4. Bonus for meeting full user minSpanPct target
+          const spanTargetBonus = meetsUserMinSpan ? 500 : 0;
+
+          // 5. Priority for active wave swings (HH & HL / LH & LL)
           const isAtWaveHigh = Boolean(activeWaveHigh && Math.abs(r.price - activeWaveHigh) / activeWaveHigh <= tol);
           const isAtWaveLow = Boolean(activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol);
-          const waveHighBonus = isAtWaveHigh ? (isConfirmedLowerHigh && r.touchCount >= 2 ? 1500 : 600) : 0;
-          const waveLowBonus = isAtWaveLow ? 600 : 0;
+          const waveHighBonus = isAtWaveHigh ? (isConfirmedLowerHigh && r.touchCount >= 2 ? 1500 : 400) : 0;
+          const waveLowBonus = isAtWaveLow ? 400 : 0;
 
-          // 4. Penalty for ancient lows that sit far below the active Higher Low (unless part of recent canonical lows in active wave!)
+          // 6. Penalty for ancient lows that sit far below the active Higher Low (unless part of recent canonical lows in active wave!)
           const isRecentCanonicalLow = recentCanonicalLows.some((l) => Math.abs(l.price - s.price) / s.price <= tol);
           const ancientLowPenalty = (activeWaveLow && s.price < activeWaveLow * (1 - tol * 2) && !isRecentCanonicalLow) ? 500 : 0;
 
-          // 5. Proximity to current price
+          // 7. Proximity to current price: penalize far-away ceilings/floors so immediate boundaries are favored
           const distPct = Math.abs(r.price - currentPrice) / currentPrice + Math.abs(currentPrice - s.price) / currentPrice;
-          const distPenalty = distPct * 500;
+          const distPenalty = distPct * 2000;
 
-          score = 10000 + enclosesBonus + touchBonus + waveHighBonus + waveLowBonus - ancientLowPenalty - distPenalty;
-        } else if (widthPct < minSpanPct) {
-          // Too narrow: score higher for pairs that are closer to minSpanPct
+          score = 10000 + enclosesBonus + touchBonus + nearestMultiBonus + spanTargetBonus + waveHighBonus + waveLowBonus - ancientLowPenalty - distPenalty;
+        } else if (widthPct < effectiveTradeableMinSpan) {
+          // Too narrow: score higher for pairs that are closer to tradeable span
           score = widthPct * 100;
         } else {
           // Too wide (> maxSpanPct): VIOLATES MAX CHANNEL WIDTH!
@@ -663,8 +676,8 @@ export class DowStructureEngine {
     return {
       resistance: bestRes,
       support: bestSup,
-      allResistanceClusters: resClusters.filter((c) => c.touchCount >= minTouchCount && !isResistanceBroken(c.price, c.points)),
-      allSupportClusters: supClusters.filter((c) => c.touchCount >= minTouchCount && !isSupportBroken(c.price, c.points)),
+      allResistanceClusters: resClusters.filter((c) => c.touchCount >= minTouchCount && !isResistanceBroken(c.price)),
+      allSupportClusters: supClusters.filter((c) => c.touchCount >= minTouchCount && !isSupportBroken(c.price)),
     };
   }
 
