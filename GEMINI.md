@@ -78,6 +78,16 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - **Credentials Masking Protection (`******`)**: ฟรอนต์เอนด์และแบ็กเอนด์แยกแยะระหว่างค่า Masking (`******`) กับ Private Key จริงอย่างเข้มงวด โดยจะไม่ส่งหรือเผลอ parse ข้อความ `******` เป็น private key เข้า `viem` อีกต่อไป ป้องกันปัญหา `invalid private key, expected hex or 32 bytes` ขณะบันทึกการตั้งค่า
    - **True Select Dropdown for Trading Pair in Settings Modal**: เปลี่ยนช่องกรอกคู่เทรดในหน้าต่าง Settings จาก input text เป็น `<select id="cfg_symbol" class="form-select">` เต็มรูปแบบ กดเลือกรายการเหรียญ (`WBTC:USDso`, `WETH:USDso`, `SOMI:USDso`, `USDC.e:USDso`) ได้ทันทีโดยไม่ต้องพิมพ์เอง
    - **Instant Pair Switching (`symbolChanged`)**: ปรับปรุงตรรกะการตรวจจับการสลับเหรียญใน `index.ts` โดยเทียบ Symbol ที่ normalize แล้วล่วงหน้า ทำให้การกดเปลี่ยนเหรียญทั้งจากแถบด้านบนหรือใน Settings สลับกระดาน ดึง Info คู่เทรดใหม่ และรีเฟรชกราฟแท่งเทียนได้ทันที 100%
+   - **DreamDEX Native Gas Reserve Protection (`minGasReserveSomi`)**:
+     - เนื่องจากบน Somnia Network ค่าแก๊สในการส่งคำสั่งทั้งหมด (Place/Cancel Order, Token Approvals) ต้องจ่ายด้วย Native SOMI เสมอ
+     - เพิ่มช่องกรอก `⛽ DreamDEX Gas Safety Reserve (SOMI)` ใน Settings Modal (ค่าเริ่มต้น `2.0` SOMI) บันทึกลงใน `settings.db.json`
+     - ใน `src/strategy.ts`:
+       - เมื่อเทรดคู่เหรียญที่ Base Asset เป็น SOMI (เช่น `SOMI:USDSO`): ฟังก์ชัน `getEffectiveGasReserveBase()` จะกันยอด `minGasReserveSomi` ออกจาก Inventory และยอดที่พร้อมเทรด/พร้อมขายโดยเด็ดขาด ป้องกันไม่ให้บอทเทขาย SOMI หมดเกลี้ยงกระเป๋าตอนเกิด Sell All หรือ Cut Loss
+       - ใน `reconcileInventory`, `placeSellOrders`, `sellTrancheIOC`, `sellAll`: ป้องกันไม่ให้บอทดึง SOMI ในส่วน Gas Reserve ไปตั้งขาย
+       - ใน `refreshWalletBalances`: ดึงยอดคงเหลือ Native SOMI มาอัปเดต telemetry เสมอแม้จะเทรดคู่เหรียญอื่น (เช่น `WETH:USDSO`)
+     - ใน `src/exchange/dreamdex/client.ts`:
+       - `getAccountBalances`: คืนค่ายอด Native SOMI ใน `allBalances["SOMI"]` เสมอ
+       - `placeOrder`: ตรวจสอบยอด Native SOMI หากต่ำกว่า `< 0.05 SOMI` จะแจ้งเตือน `⚠️ [DREAMDEX LOW GAS WARNING]` ป้องกันธุรกรรม Revert จาก On-chain
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

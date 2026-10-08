@@ -58,6 +58,8 @@ export const defaultStrategyConfig = {
   dreamdexPrivateKey: process.env.DREAMDEX_PRIVATE_KEY || process.env.PRIVATE_KEY || "",
   dreamdexRpcUrl: process.env.RPC_URL || "https://api.infra.mainnet.somnia.network",
   dreamdexNetwork: "mainnet" as "mainnet" | "testnet",
+  /** Native SOMI gas reserve on DreamDEX (Somnia Network) to prevent wallet running out of gas for txs (default 2.0 SOMI). */
+  minGasReserveSomi: 2.0,
 
   // ── Dynamic-grid specific: volatility-driven step sizing ────────────────
   /** "binance" (external WS feed) or "dreamdex" (self-sampled from pool.topOfBook()). */

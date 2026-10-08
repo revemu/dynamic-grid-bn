@@ -301,10 +301,12 @@ export class DreamDexClient implements IExchangeClient {
     }
 
     let baseBal = 0;
+    let nativeSomiBal = 0;
     try {
+      const somiRaw = await this.publicClient.getBalance({ address: this.account.address });
+      nativeSomiBal = Number(formatUnits(somiRaw, 18));
       if (market.baseIsNative) {
-        const balRaw = await this.publicClient.getBalance({ address: this.account.address });
-        baseBal = Number(formatUnits(balRaw, market.baseDecimals));
+        baseBal = nativeSomiBal;
       } else if (market.baseToken) {
         const balRaw = await this.publicClient.readContract({
           address: market.baseToken,
@@ -345,6 +347,7 @@ export class DreamDexClient implements IExchangeClient {
       allBalances: {
         [market.baseAsset]: { free: baseBal, locked: 0 },
         [market.quoteAsset]: { free: quoteBal, locked: 0 },
+        SOMI: { free: nativeSomiBal, locked: 0 },
       },
     };
   }
@@ -447,6 +450,15 @@ export class DreamDexClient implements IExchangeClient {
 
     const market = this.resolveMarket(params.symbol);
     const isBid = params.side === "BUY";
+
+    // Check native SOMI balance for gas fees
+    try {
+      const somiBal = await this.publicClient.getBalance({ address: this.account.address });
+      if (somiBal < parseUnits("0.05", 18)) {
+        this.log(`⚠️ [DREAMDEX LOW GAS WARNING] Wallet has only ${formatUnits(somiBal, 18)} SOMI for gas. Transactions may revert!`);
+      }
+    } catch {}
+
     const price = params.price || 0;
     const qty = params.qty;
     const priceRaw = parseUnits(price.toFixed(6), market.quoteDecimals);

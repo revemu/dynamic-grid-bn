@@ -447,18 +447,20 @@ export class DynamicGrid {
     return this.getRuntimeConfig();
   }
 
-  /** Fetch current live balances for base asset and quote asset from Binance */
+  /** Fetch current live balances for base asset and quote asset from Exchange */
   public async refreshWalletBalances(): Promise<{ base: number; quote: number; somi: number; usdso: number; address: string }> {
+    let somiBal = 0;
     try {
       if (this.binance.hasCredentials()) {
         const b = await this.binance.getAccountBalances(this.symbol);
         this.walletBaseBalance = b.baseFree;
         this.walletQuoteBalance = b.quoteFree;
+        somiBal = b.allBalances?.SOMI?.free ?? (this.baseAsset === "SOMI" ? b.baseFree : 0);
         this.walletAddress = `${this.baseAsset}/${this.quoteAsset}`;
         this.lastObservedBaseBalance = this.walletBaseBalance;
         this.lastObservedQuoteBalance = this.walletQuoteBalance;
       } else {
-        this.walletAddress = "Binance-Public";
+        this.walletAddress = `${this.binance.exchangeName}-Public`;
       }
     } catch {
       // Retain last known balances on transient errors
@@ -466,7 +468,7 @@ export class DynamicGrid {
     return {
       base: this.walletBaseBalance,
       quote: this.walletQuoteBalance,
-      somi: this.walletBaseBalance,
+      somi: somiBal,
       usdso: this.walletQuoteBalance,
       address: this.walletAddress,
     };
@@ -761,15 +763,22 @@ export class DynamicGrid {
   }
 
   /**
-   * On Binance Spot, gas reserve is completely unnecessary because:
-   * 1. Binance uses CEX ledger balances rather than EVM native gas transactions.
-   * 2. Trading fees are deducted as standard spot taker/maker percentage fees (or BNB).
-   * Therefore, 100% of wallet base balance can be traded without locking or reserving any gas.
+   * Gas Reserve Management:
+   * - On DreamDEX (Somnia DEX): Every on-chain transaction consumes native SOMI for gas.
+   *   If trading SOMI:USDSO, SOMI is the Base Asset itself, so minGasReserveSomi MUST be reserved
+   *   and excluded from sellable trading capacity to prevent the wallet from running out of gas.
+   * - On Binance Spot (CEX): Ledger balances & standard trading fees apply; 100% of base asset is tradeable.
    */
   public getEffectiveGasReserveSomi(): number {
+    if (this.binance.exchangeName === "dreamdex") {
+      return this.cfg.minGasReserveSomi ?? 2.0;
+    }
     return 0;
   }
   public getEffectiveGasReserveBase(): number {
+    if (this.binance.exchangeName === "dreamdex" && this.baseAsset === "SOMI") {
+      return this.cfg.minGasReserveSomi ?? 2.0;
+    }
     return 0;
   }
 
@@ -1312,12 +1321,12 @@ export class DynamicGrid {
         walletTotalValueQuote: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
         walletSomiValueUsdso: this.walletBaseBalance * mid,
         walletTotalValueUsdso: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
-        tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
-        freeTradingBaseBalance: this.walletBaseBalance,
-        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
-        freeTradingSomiBalance: this.walletBaseBalance,
-        gasReserveSomi: 0,
-        minGasReserveSomi: 0,
+        tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
+        freeTradingBaseBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
+        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
+        freeTradingSomiBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
+        gasReserveSomi: this.getEffectiveGasReserveBase(),
+        minGasReserveSomi: this.getEffectiveGasReserveSomi(),
         dryRun: this.cfg.dryRun,
       };
       this.lastTelemetryData = merged;
@@ -1364,12 +1373,12 @@ export class DynamicGrid {
         walletTotalValueQuote: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
         walletSomiValueUsdso: this.walletBaseBalance * mid,
         walletTotalValueUsdso: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
-        tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
-        freeTradingBaseBalance: this.walletBaseBalance,
-        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
-        freeTradingSomiBalance: this.walletBaseBalance,
-        gasReserveSomi: 0,
-        minGasReserveSomi: 0,
+        tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
+        freeTradingBaseBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
+        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
+        freeTradingSomiBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
+        gasReserveSomi: this.getEffectiveGasReserveBase(),
+        minGasReserveSomi: this.getEffectiveGasReserveSomi(),
         dryRun: this.cfg.dryRun,
       },
     });
@@ -2309,12 +2318,12 @@ export class DynamicGrid {
         walletQuoteBalance: this.walletQuoteBalance,
         walletSomiBalance: this.walletBaseBalance,
         walletUsdsoBalance: this.walletQuoteBalance,
-        tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
-        freeTradingBaseBalance: this.walletBaseBalance,
-        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
-        freeTradingSomiBalance: this.walletBaseBalance,
-        gasReserveSomi: 0,
-        minGasReserveSomi: 0,
+        tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
+        freeTradingBaseBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
+        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
+        freeTradingSomiBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
+        gasReserveSomi: this.getEffectiveGasReserveBase(),
+        minGasReserveSomi: this.getEffectiveGasReserveSomi(),
         walletBaseValueQuote: this.walletBaseBalance * refPrice,
         walletTotalValueQuote: (this.walletBaseBalance * refPrice) + this.walletQuoteBalance,
         walletSomiValueUsdso: this.walletBaseBalance * refPrice,

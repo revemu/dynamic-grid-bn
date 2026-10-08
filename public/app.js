@@ -3033,7 +3033,7 @@
       setVal("cfg_laggardThresholdPct", data.laggardThresholdPct);
       setVal("cfg_orderPriceTolerancePct", data.orderPriceTolerancePct);
       setVal("cfg_orderQtyTolerancePct", data.orderQtyTolerancePct);
-      setVal("cfg_minGasReserveSomi", data.minGasReserveSomi ?? 0.5);
+      setVal("cfg_minGasReserveSomi", data.minGasReserveSomi ?? 2.0);
       setCheck("cfg_enableLaggardSnipe", data.enableLaggardSnipe);
       setCheck("cfg_enableLaggardGuard", data.enableLaggardGuard);
     } catch (e) {
