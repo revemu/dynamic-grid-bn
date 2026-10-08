@@ -3,12 +3,13 @@
  * Provides a unified entry point to initialize any supported exchange client.
  */
 
-import { BinanceClient, type BinanceClientOptions } from "../binance-client.js";
-import { DreamDexClient, type DreamDexClientOptions } from "./dreamdex-client.js";
+import { BinanceClient, type BinanceClientOptions } from "./binance/client.js";
+import { DreamDexClient, type DreamDexClientOptions } from "./dreamdex/client.js";
 import type { IExchangeClient } from "./types.js";
 
 export * from "./types.js";
-export * from "./dreamdex-client.js";
+export * from "./binance/index.js";
+export * from "./dreamdex/index.js";
 
 export type SupportedExchange = "binance" | "dreamdex" | "bybit" | "okx";
 

@@ -7,7 +7,7 @@ import { config } from "./config.js";
 import { createExchangeClient, type IExchangeClient } from "./exchange/index.js";
 import { DynamicGrid } from "./strategy.js";
 import { VolatilityEngine } from "./volatility.js";
-import { BinanceAtrFeed, BinanceBookTickerFeed, BinanceUserDataFeed } from "./binance-feed.js";
+import { BinanceAtrFeed, BinanceBookTickerFeed, BinanceUserDataFeed } from "./exchange/binance/feed.js";
 import { DowStructureEngine } from "./market-structure.js";
 import { DashboardServer } from "./server.js";
 import type { AtrSource } from "./types.js";

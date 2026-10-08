@@ -32,9 +32,14 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     ├── exchange/                    # Exchange Adapter Layer (Pluggable Multi-Exchange Support)
     │   ├── types.ts                 # IExchangeClient interface & standardized exchange types
     │   ├── index.ts                 # createExchangeClient factory loader
-    │   └── dreamdex-client.ts       # DreamDEX On-Chain Adapter (implements IExchangeClient via viem)
-    ├── binance-client.ts            # Binance Spot Adapter (implements IExchangeClient)
-    ├── binance-feed.ts              # Binance WebSocket kline client for real-time ATR & candle updates
+    │   ├── binance/                 # 🟡 Binance Module Folder
+    │   │   ├── client.ts            # Binance Spot Adapter (implements IExchangeClient)
+    │   │   ├── feed.ts              # Binance WebSocket feed (ATR, bookTicker, User Data Stream)
+    │   │   └── index.ts             # Binance barrel export
+    │   └── dreamdex/                # 🟣 DreamDEX Module Folder
+    │       ├── client.ts            # DreamDEX On-Chain Adapter (implements IExchangeClient via viem)
+    │       ├── indexer.ts           # Somnia GraphQL Indexer client
+    │       └── index.ts             # DreamDEX barrel export
     ├── strategy.ts                  # Core DynamicGrid state machine, lots management, safeguards
     ├── market-structure.ts          # Dow Theory swing pivots, trendlines, 4 channel modes
     ├── config.ts                    # Strategy environment & DB settings loader
@@ -53,11 +58,11 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - ประกาศ Standard Interface: `IExchangeClient` เพื่อรองรับการสลับระหว่าง Binance Spot (CEX) และ DreamDEX Spot (DEX) โดยไม่แตะต้องตรรกะใน Strategy
    - เมธอดมาตรฐาน: `getExchangeInfo`, `getAccountBalances`, `getOpenOrders`, `getOrder`, `getTopOfBook`, `placeOrder`, `cancelOrder`, `cancelAllOpenOrders`, `syncTime`
    - Factory function: `createExchangeClient({ exchange, ... })` เลือกกระดานผ่าน DB (`settings.exchange = "binance" | "dreamdex"`)
-2. **Binance Spot Implementation (`src/binance-client.ts`)**:
+2. **Binance Spot Implementation (`src/exchange/binance/client.ts` & `src/exchange/binance/feed.ts`)**:
    - `BinanceClient implements IExchangeClient` (Default CEX Adapter)
    - เชื่อมต่อกับ Binance Spot REST API (`https://api.binance.com`)
    - รองรับโหมด `DRY_RUN=true` และ Live Trading (`apiKey`, `apiSecret`)
-3. **DreamDEX On-Chain Implementation (`src/exchange/dreamdex-client.ts`)**:
+3. **DreamDEX On-Chain Implementation (`src/exchange/dreamdex/client.ts` & `src/exchange/dreamdex/indexer.ts`)**:
    - `DreamDexClient implements IExchangeClient` (DEX Adapter for Somnia Network)
    - เชื่อมต่อ Somnia RPC ผ่าน `viem` (`publicClient`, `walletClient`) และเซ็นคำสั่งด้วย `privateKey`
    - เรียก Smart Contract `SpotPool` (`placeOrder`, `cancelOrder`, `getPoolParams`)

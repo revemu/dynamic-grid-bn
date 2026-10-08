@@ -24,8 +24,8 @@ import type {
   ExchangeOpenOrder,
   ExchangeAccountBalances,
   PlaceOrderParams,
-} from "./types.js";
-import { SomniaIndexerClient } from "../indexer.js";
+} from "../types.js";
+import { SomniaIndexerClient } from "./indexer.js";
 
 export const SPOT_POOL_ABI = [
   {

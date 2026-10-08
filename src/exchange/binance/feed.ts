@@ -18,8 +18,8 @@
  */
 
 import WebSocket from "ws";
-import type { AtrSource } from "./types.js";
-import type { Candle } from "./market-structure.js";
+import type { AtrSource } from "../../types.js";
+import type { Candle } from "../../market-structure.js";
 
 export interface BinanceFeedConfig {
   /** Lowercase Binance symbol, e.g. "somiusdt". */

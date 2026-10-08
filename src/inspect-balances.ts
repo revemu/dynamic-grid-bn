@@ -1,4 +1,4 @@
-import { BinanceClient } from "./binance-client.js";
+import { BinanceClient } from "./exchange/binance/client.js";
 import { config } from "./config.js";
 
 async function main() {

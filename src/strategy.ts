@@ -21,8 +21,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BinanceClient, type BinanceSymbolInfo, roundToStep, roundToTick } from "./binance-client.js";
-import type { BookTickerData, BinanceExecutionReport, BinanceAccountUpdate } from "./binance-feed.js";
+import { BinanceClient, type BinanceSymbolInfo, roundToStep, roundToTick } from "./exchange/binance/client.js";
+import type { BookTickerData, BinanceExecutionReport, BinanceAccountUpdate } from "./exchange/binance/feed.js";
 import type { IExchangeClient, ExchangeSymbolInfo } from "./exchange/types.js";
 import { ORDER_TYPE, shiftBps, spreadBps, createStatusLogger } from "./utils.js";
 import type { Config } from "./config.js";

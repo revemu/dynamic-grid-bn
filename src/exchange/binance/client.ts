@@ -31,7 +31,7 @@ import type {
   ExchangeOpenOrder,
   ExchangeAccountBalances,
   PlaceOrderParams,
-} from "./exchange/types.js";
+} from "../types.js";
 
 export type BinanceSymbolInfo = ExchangeSymbolInfo;
 export type BinanceTopOfBook = ExchangeTopOfBook;
