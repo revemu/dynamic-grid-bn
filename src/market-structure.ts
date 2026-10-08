@@ -351,12 +351,12 @@ export class DowStructureEngine {
       macroLow &&
       macroPeak &&
       macroLow.index > macroPeak.index &&
-      canonicalHighs.some((h) => h.index >= macroLow.index)
+      canonicalHighs.some((h) => h.index > macroLow.index)
     );
 
     let candidateHighSwings = canonicalHighs;
     if (isNewCycleFromLow && macroLow) {
-      const postLowHighs = canonicalHighs.filter((h) => h.index >= macroLow.index);
+      const postLowHighs = canonicalHighs.filter((h) => h.index > macroLow.index);
       const maxPostLow = postLowHighs.length > 0 ? Math.max(...postLowHighs.map((h) => h.price)) : 0;
       if (postLowHighs.length > 0 && currentPrice <= maxPostLow * 1.002) {
         candidateHighSwings = postLowHighs;
@@ -835,6 +835,17 @@ export class DowStructureEngine {
           if (!other) continue;
           if (getEffectiveHigh(other, this.useTrueWick, this.wickThresholdPct) >= cEffHigh) isHigh = false;
           if (getEffectiveLow(other, this.useTrueWick, this.wickThresholdPct) <= cEffLow) isLow = false;
+        }
+      }
+
+      // 🔒 Outside-Bar Dedup: a single candle can NEVER be both a swing peak and a swing valley.
+      // If an engulfing/outside bar qualifies on both sides, keep only the side matching its close direction:
+      // bearish close (close < open) -> valley (LOW), bullish close -> peak (HIGH).
+      if (isHigh && isLow) {
+        if (c.close < c.open) {
+          isHigh = false;
+        } else {
+          isLow = false;
         }
       }
 
@@ -1896,12 +1907,12 @@ export class DowStructureEngine {
       macroLow &&
       macroPeak &&
       macroLow.index > macroPeak.index &&
-      canonicalHighs.some((h) => h.index >= macroLow.index)
+      canonicalHighs.some((h) => h.index > macroLow.index)
     );
 
     // Active cycle swings: When in new cycle from bottom, candidate swings MUST be formed at or after macroLow!
     const activeCycleHighs = (isNewCycleFromLow && macroLow)
-      ? canonicalHighs.filter((h) => h.index >= macroLow.index)
+      ? canonicalHighs.filter((h) => h.index > macroLow.index)
       : (macroPeak && price < macroPeak.price * 0.999 ? canonicalHighs.filter((h) => h.index >= macroPeak.index) : canonicalHighs);
     const activeCycleLows = (isNewCycleFromLow && macroLow)
       ? canonicalLows.filter((l) => l.index >= macroLow.index)

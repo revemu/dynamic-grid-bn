@@ -469,6 +469,13 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - Candle timestamp & trade count badge.
       - Individual order breakdown: Action badge (`BUY`, `SELL`, `CUT LOSS`), execution time (`HH:mm:ss`), price (`$0.207500`), quantity (`48.20 SOMI`), USDso value (`$10.00`), realized PnL (`+$0.27 (+1.35%)`), level description, and explorer Tx link.
       - Consolidated multi-fill summary (Total SOMI, Total USDso value, Net Realized PnL).
+- **Outside-Bar Swing Dedup (No Single-Candle Channel)**:
+  - **สาเหตุของปัญหาเดิม**: แท่ง outside bar (เช่น ETHFDUSD 15m 20:30 H `2544.33` / L `2512.38`) ผ่านเงื่อนไข pivot ทั้งยอดและเหวพร้อมกันใน `recalculateSwings` → ZigZag ได้ `LH` และ `LL` ที่ index เดียวกัน → `isNewCycleFromLow` (`h.index >= macroLow.index`) เข้าใจผิดว่าราคาเด้งจากก้นแล้ว → candidate ยอดเหลือแค่ยอดของแท่งนั้น → กรอบบน/ล่างกลายเป็น High/Low ของแท่งเดียว (กว้าง 1.27% < min 3%) และ Badge LL ถูกบัง
+  - **การแก้ไข** (`src/market-structure.ts`):
+    1. `recalculateSwings`: ถ้าแท่งเดียวเป็นทั้ง HIGH และ LOW ให้เก็บเพียงฝั่งเดียวตามทิศปิด — แท่งแดง (close < open) = LOW, แท่งเขียว = HIGH
+    2. `findMultiTouchSR` และ `getStructure`: `isNewCycleFromLow` / `postLowHighs` / `activeCycleHighs` นับเฉพาะยอดที่เกิด **หลัง** macroLow อย่างเคร่งครัด (`h.index > macroLow.index`)
+  - ผลลัพธ์ (ตัวอย่างจริง): กรอบบนกลับไปอิง LH 2 จุดสัมผัส `2574.86`, กรอบล่างอิง LL `2512.38`
+  - หมายเหตุ: ไส้ยาวที่เกิน `wickThresholdPct` (เมื่อ `useTrueWick=false`) จะถูกตัดเป็นตัวแท่ง จึงอาจไม่ถูกนับเป็น LL — เป็นพฤติกรรมตาม setting
 
 ---
 
