@@ -234,14 +234,16 @@ export class DreamDexClient implements IExchangeClient {
   }
 
   public updateCredentials(apiKey: string, _apiSecret?: string, rpcUrl?: string): void {
-    if (apiKey) {
+    if (apiKey && apiKey !== "******") {
       this.setPrivateKey(apiKey);
     }
-    if (rpcUrl) {
+    // Strictly prevent Binance REST base URLs (e.g. https://api.binance.com) from overwriting Somnia EVM RPC endpoint!
+    if (rpcUrl && !rpcUrl.includes("binance.com") && rpcUrl.startsWith("http")) {
       this.rpcUrl = rpcUrl;
       this.publicClient = createPublicClient({
         transport: http(this.rpcUrl),
       });
+      this.log(`🌐 Updated DreamDEX RPC endpoint: ${this.rpcUrl}`);
     }
   }
 

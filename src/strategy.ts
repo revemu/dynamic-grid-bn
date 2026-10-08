@@ -412,13 +412,23 @@ export class DynamicGrid {
         (this.cfg as any)[key] = val;
       }
     }
-    if (newSettings.binanceApiKey !== undefined || newSettings.binanceApiSecret !== undefined || newSettings.binanceBaseUrl !== undefined) {
-      const newKey = newSettings.binanceApiKey !== undefined ? newSettings.binanceApiKey : this.cfg.binanceApiKey;
-      const newSecret = (newSettings.binanceApiSecret !== undefined && newSettings.binanceApiSecret !== "******")
-        ? newSettings.binanceApiSecret
-        : this.cfg.binanceApiSecret;
-      const newBase = newSettings.binanceBaseUrl !== undefined ? newSettings.binanceBaseUrl : this.cfg.binanceBaseUrl;
-      this.binance.updateCredentials(newKey, newSecret, newBase);
+    if (this.binance.exchangeName === "binance") {
+      if (newSettings.binanceApiKey !== undefined || newSettings.binanceApiSecret !== undefined || newSettings.binanceBaseUrl !== undefined) {
+        const newKey = newSettings.binanceApiKey !== undefined ? newSettings.binanceApiKey : this.cfg.binanceApiKey;
+        const newSecret = (newSettings.binanceApiSecret !== undefined && newSettings.binanceApiSecret !== "******")
+          ? newSettings.binanceApiSecret
+          : this.cfg.binanceApiSecret;
+        const newBase = newSettings.binanceBaseUrl !== undefined ? newSettings.binanceBaseUrl : this.cfg.binanceBaseUrl;
+        this.binance.updateCredentials(newKey, newSecret, newBase);
+      }
+    } else if (this.binance.exchangeName === "dreamdex") {
+      if (newSettings.dreamdexPrivateKey !== undefined || newSettings.dreamdexRpcUrl !== undefined) {
+        const privKey = (newSettings.dreamdexPrivateKey !== undefined && newSettings.dreamdexPrivateKey !== "******")
+          ? newSettings.dreamdexPrivateKey
+          : this.cfg.dreamdexPrivateKey;
+        const rpc = newSettings.dreamdexRpcUrl !== undefined ? newSettings.dreamdexRpcUrl : this.cfg.dreamdexRpcUrl;
+        this.binance.updateCredentials(privKey, "", rpc);
+      }
     }
     if (newSettings.maxCandleCount !== undefined) {
       this.cfg.maxCandleCount = Math.max(50, Math.round(Number(newSettings.maxCandleCount)));

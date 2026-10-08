@@ -88,6 +88,11 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
      - ใน `src/exchange/dreamdex/client.ts`:
        - `getAccountBalances`: คืนค่ายอด Native SOMI ใน `allBalances["SOMI"]` เสมอ
        - `placeOrder`: ตรวจสอบยอด Native SOMI หากต่ำกว่า `< 0.05 SOMI` จะแจ้งเตือน `⚠️ [DREAMDEX LOW GAS WARNING]` ป้องกันธุรกรรม Revert จาก On-chain
+   - **Cross-Exchange Credentials Isolation & RPC Overwrite Protection**:
+     - **สาเหตุของปัญหาเดิม**: ใน `strategy.ts` เมธอด `updateRuntimeSettings` เคยเรียก `this.binance.updateCredentials(newKey, newSecret, newBase)` โดยไม่เช็ค exchange ทำให้เมื่อผู้ใช้รัน DreamDEX แต่บันทึกการตั้งค่าที่มี `binanceBaseUrl = https://api.binance.com` ค่า URL ของ Binance จะถูกส่งเข้าไปในพารามิเตอร์ที่ 3 ของ `DreamDexClient.updateCredentials` ซึ่งเป็นช่อง `rpcUrl` ส่งผลให้ Somnia RPC Node โดนเขียนทับด้วย URL ของ Binance และเวลาดึงยอด on-chain balance (`eth_getBalance`) จะยิงไปที่ Binance REST API จนเกิดข้อผิดพลาด `Status: 403 Forbidden`
+     - **การแก้ไข**:
+       1. ใน `src/strategy.ts`: ตรวจสอบ `this.binance.exchangeName` หากเป็น `binance` ให้อัปเดตเฉพาะ Binance keys & URL หากเป็น `dreamdex` ให้อัปเดตเฉพาะ `dreamdexPrivateKey` และ `dreamdexRpcUrl`
+       2. ใน `src/exchange/dreamdex/client.ts`: เพิ่ม Guard ใน `updateCredentials` ปฏิเสธ URL ใดๆ ที่มี `binance.com` ไม่ให้เขียนทับ Somnia EVM RPC endpoint อย่างเด็ดขาด
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:
