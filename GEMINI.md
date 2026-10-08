@@ -226,6 +226,10 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     - When an active descending trendline is present and lower than grid sell levels, `sellTrigger` dynamically reflects the Trendline price (`tlPrice`) instead of an unreachable upper grid level, and the HUD displays `"TL Exit (Active 🔴)"`.
   - **Truthful Buy Trigger Status**:
     - When inventory is full, the HUD subtitle under Buy Trigger switches from `"Ready to Accumulate"` to `"Capacity Full (100%)"`, avoiding confusing traders about why no buy orders are being placed.
+  - **Rate-Limited Console HUD Logging (`hudLogIntervalMs = 5000`)**:
+    - The terminal heartbeat HUD line (`Price: $... | Channel: ... | Zone: ... | Speed: ...`) in `src/strategy.ts` is throttled to at most once every 5 seconds (`lastHudLogTime`).
+    - Eliminates terminal log spamming every 200ms when running at high tick speeds (`intervalMs: 200`), keeping the console clean and readable.
+    - All critical trading events (`BUY`, `SELL`, `CUT LOSS`, errors) and WebSocket/SSE telemetry to the Web Dashboard remain 100% real-time on every tick without throttling.
 - **Startup Pause & Decoupled Monitoring Mode (`START_PAUSED`)**:
   - The bot boots into a safe **PAUSED** state by default (`startPaused: true`).
   - **Decoupled Monitoring**: Even while paused, the bot fully runs `topOfBook()`, `dowEngine.getStructure()`, S/R multi-touch clustering, wave cycle tracing, and live trendlines, streaming real-time telemetry to the web dashboard.

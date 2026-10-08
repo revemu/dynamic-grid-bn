@@ -106,6 +106,8 @@ export class DynamicGrid {
   };
   private lockedChannel?: LockedChannel;
   private lastTelemetryData?: any;
+  private lastHudLogTime = 0;
+  private readonly hudLogIntervalMs = 5_000;
   private tickCount = 0;
   private isPaused = true;
   private isSqueezePaused = false;
@@ -2346,23 +2348,27 @@ export class DynamicGrid {
       ? ` | TL Supp: $${uptrendLine.currentLinePrice.toFixed(6)} (${uptrendLine.isBroken ? `Broken 🔴 (${uptrendLine.brokenCandleCount} bars)` : uptrendLine.brokenCandleCount > 0 ? `Break 1/2 bars ⏳` : "Active 🟢"})`
       : "";
 
-    this.status(
-      `Price: $${effectiveMid.toFixed(6)} | Channel: [$${lowerBound.toFixed(6)} .. $${upperBound.toFixed(6)}] ` +
-        `| Zone: ${zoneName} | Position: ${positionSummary}${openOrdersSummary}` +
-        ` | Wallet: ${this.walletBaseBalance.toFixed(2)} ${this.baseAsset} / $${this.walletQuoteBalance.toFixed(2)} ${this.quoteAsset}` +
-        ` | Speed: ${((this.cfg.intervalMs ?? 2000) / 1000).toFixed(1)}s` +
-        ` | Next Buy: $${buyTrigger.toFixed(6)}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
-        ` | Next Sell: $${sellTrigger.toFixed(6)}` +
-        trendlineSummary +
-        uptrendSummary +
-        (tlSpreadPct !== Infinity ? ` | TL Squeeze: ${tlSpreadPct.toFixed(2)}%` : "") +
-        laggardSummary +
-        (candidateSummary ? ` | ${candidateSummary}` : "") +
-        (stuckRemainingMin !== undefined ? ` (Hold timeout in ${stuckRemainingMin}m)` : "") +
-        ` | Realized PnL: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(2)}` +
-        (offloadOnly ? " | Stop-loss reached: Offload only" : "") +
-        (this.isPaused ? " | ⏸️ [PAUSED - MONITORING ONLY]" : ""),
-    );
+    const now = Date.now();
+    if (now - this.lastHudLogTime >= this.hudLogIntervalMs) {
+      this.lastHudLogTime = now;
+      this.log(
+        `Price: $${effectiveMid.toFixed(6)} | Channel: [$${lowerBound.toFixed(6)} .. $${upperBound.toFixed(6)}] ` +
+          `| Zone: ${zoneName} | Position: ${positionSummary}${openOrdersSummary}` +
+          ` | Wallet: ${this.walletBaseBalance.toFixed(2)} ${this.baseAsset} / $${this.walletQuoteBalance.toFixed(2)} ${this.quoteAsset}` +
+          ` | Speed: ${((this.cfg.intervalMs ?? 2000) / 1000).toFixed(1)}s` +
+          ` | Next Buy: $${buyTrigger.toFixed(6)}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
+          ` | Next Sell: $${sellTrigger.toFixed(6)}` +
+          trendlineSummary +
+          uptrendSummary +
+          (tlSpreadPct !== Infinity ? ` | TL Squeeze: ${tlSpreadPct.toFixed(2)}%` : "") +
+          laggardSummary +
+          (candidateSummary ? ` | ${candidateSummary}` : "") +
+          (stuckRemainingMin !== undefined ? ` (Hold timeout in ${stuckRemainingMin}m)` : "") +
+          ` | Realized PnL: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(2)}` +
+          (offloadOnly ? " | Stop-loss reached: Offload only" : "") +
+          (this.isPaused ? " | ⏸️ [PAUSED - MONITORING ONLY]" : ""),
+      );
+    }
 
     // ── Trading Gate: When strategy is paused or spread is dislocated, all order placements, cancellations, and exits are strictly suspended ──
     if (this.isPaused || isSpreadDislocated) {
