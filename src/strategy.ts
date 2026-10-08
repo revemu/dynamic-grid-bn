@@ -151,7 +151,7 @@ export class DynamicGrid {
   private readonly status: (msg: string) => void;
 
   constructor(
-    private readonly binance: IExchangeClient,
+    private binance: IExchangeClient,
     private symbolInfo: ExchangeSymbolInfo,
     private readonly cfg: Config,
     private readonly atrSource: AtrSource,
@@ -189,6 +189,14 @@ export class DynamicGrid {
       this.db.setSettings(this.getRuntimeConfig());
     }
     this.loadState();
+  }
+
+  public updateExchangeClient(newClient: IExchangeClient, info?: ExchangeSymbolInfo): void {
+    this.binance = newClient;
+    if (info) {
+      this.updateSymbolInfo(info);
+    }
+    this.log(`🔄 [strategy] Switched exchange client to: ${newClient.exchangeName.toUpperCase()}`);
   }
 
   public updateSymbolInfo(info: ExchangeSymbolInfo): void {
@@ -352,10 +360,13 @@ export class DynamicGrid {
       intervalMs: this.cfg.intervalMs ?? 2000,
       dryRun: this.cfg.dryRun,
       symbol: this.symbol,
+      exchange: this.cfg.exchange || "binance",
       binanceApiKey: this.cfg.binanceApiKey || "",
       binanceApiSecret: this.cfg.binanceApiSecret ? "******" : "",
       binanceBaseUrl: this.cfg.binanceBaseUrl || "https://api.binance.com",
       binanceWsBase: this.cfg.binanceWsBase || "wss://stream.binance.com:9443",
+      dreamdexPrivateKey: this.cfg.dreamdexPrivateKey ? "******" : "",
+      dreamdexRpcUrl: this.cfg.dreamdexRpcUrl || "https://api.infra.mainnet.somnia.network",
       timezone: this.cfg.timezone || "Asia/Bangkok",
       dashboardPort: this.cfg.dashboardPort ?? 3333,
     };
@@ -368,8 +379,8 @@ export class DynamicGrid {
   public updateRuntimeSettings(newSettings: Record<string, any>): Record<string, any> {
     for (const [key, val] of Object.entries(newSettings)) {
       if (key in this.cfg && val !== undefined) {
-        // If updating secret and user kept the masked placeholder, do not overwrite
-        if (key === "binanceApiSecret" && val === "******") continue;
+        // If updating secret/key and user kept the masked placeholder, do not overwrite
+        if ((key === "binanceApiSecret" || key === "dreamdexPrivateKey") && val === "******") continue;
         (this.cfg as any)[key] = val;
       }
     }
@@ -396,12 +407,14 @@ export class DynamicGrid {
     this.syncDowEngineSettings();
     const configToPersist = {
       ...this.getRuntimeConfig(),
-      // Ensure real secret is persisted in DB if provided
+      // Ensure real secrets are persisted in DB if provided
       binanceApiSecret: this.cfg.binanceApiSecret,
+      dreamdexPrivateKey: this.cfg.dreamdexPrivateKey,
     };
     this.db.setSettings(configToPersist);
     const sanitizedLog = { ...newSettings };
     if (sanitizedLog.binanceApiSecret) sanitizedLog.binanceApiSecret = "******";
+    if (sanitizedLog.dreamdexPrivateKey) sanitizedLog.dreamdexPrivateKey = "******";
     this.log(`⚙️ [settings] updated runtime configuration in database: ${JSON.stringify(sanitizedLog)}`);
     return this.getRuntimeConfig();
   }

@@ -21,7 +21,8 @@ This document is the persistent operational and architectural knowledge base for
 dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-grid-bn)
 ├── package.json                     # Dependencies: dotenv, ws, viem, tsx, typescript
 ├── data/
-│   └── grid-bot.db.json             # ACID database for lots, orders, settings, and PnL persistence
+│   ├── settings.db.json             # Isolated Bot Settings configuration (clean & human-readable)
+│   └── grid-bot.db.json             # ACID database for lots, orders, trades, and PnL persistence
 ├── public/                          # TradingView Lightweight Charts Dashboard UI
 │   ├── index.html                   # Web dashboard layout & control modals
 │   ├── app.js                       # Frontend event handling, chart rendering, SSE listeners
@@ -37,7 +38,7 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     ├── strategy.ts                  # Core DynamicGrid state machine, lots management, safeguards
     ├── market-structure.ts          # Dow Theory swing pivots, trendlines, 4 channel modes
     ├── config.ts                    # Strategy environment & DB settings loader
-    ├── db.ts                        # JSON ACID state persistence
+    ├── db.ts                        # JSON ACID state persistence (separates settings & orders)
     ├── server.ts                    # Real-time WebSocket + SSE + HTTP dashboard server (default port 3333/3334)
     ├── trade-rounds.ts              # Trade round cycle & performance calculations
     ├── types.ts                     # Shared interfaces & data types
@@ -243,6 +244,18 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - `GRID_CASHFLOW` (Default): Places sell orders at all grid upper ladder levels (50%–100%) regardless of whether the price is above or below portfolio `avgEntry`. Ensures continuous turnover and cash-flow recovery when the channel shifts lower. Closes lots via FIFO.
   - `PORTFOLIO_AVG_PROFIT`: Strict safeguard. Only places sell orders if the price exceeds portfolio `avgEntry * 1.001` (+0.1% fee margin). Prevents any aggregate loss on inventory.
   - `LOT_BASED_PROFIT`: Per-lot profitability matching. Only allocates inventory for sell orders from lots acquired below the sell target price (`lot.buyPrice < targetPrice`). Closes lowest-cost (most profitable) lots first.
+- **Separation of Settings and Order/Trade Activity Files (`settings.db.json` vs `grid-bot.db.json`)**:
+  - **The Problem**: บันทึกการตั้งค่าบอท (Settings) และข้อมูลคำสั่งเทรด/Lots/Orders นับพันรายการถูกรวมอยู่ในไฟล์เดียว (`grid-bot.db.json`) ทำให้ไฟล์บวมและยากต่อการดู/แก้ไขคอนฟิกด้วยมือ
+  - **The Solution**: แยกการจัดเก็บอย่างชัดเจน:
+    - **`data/settings.db.json`**: จัดเก็บเฉพาะค่าการตั้งค่าบอท (Exchange, API Keys, Private Key, Grid Parameters, Timeframe ฯลฯ) เป็น JSON สะอาดตา อ่านและแก้ไขได้สะดวก
+    - **`data/grid-bot.db.json`**: จัดเก็บเฉพาะ State ภายในของบอท, Lots, Orders, Trades, Gas Logs และ PnL ตามเดิม
+    - เมื่อผู้ใช้กดบันทึกผ่าน Dashboard หรือเรียก `setSettings()` ระบบจะ Flush ลง `data/settings.db.json` ควบคู่กันเสมอ
+- **Dynamic Multi-Exchange Hot-Swap Support (Dashboard Switching to DreamDEX)**:
+  - แก้ไขปัญหา Dashboard ไม่ยอมสลับไป DreamDEX:
+    - `getRuntimeConfig()` ตอนนี้ส่งฟิลด์ `exchange`, `dreamdexPrivateKey`, และ `dreamdexRpcUrl` ไปยัง Frontend ครบถ้วน
+    - เมื่อผู้ใช้เลือก DreamDEX และใส่ Private Key แล้วกด Save ระบบ `onUpdateSettings` ใน `src/index.ts` จะทำการ Re-instantiate `createExchangeClient(...)` เป็น `DreamDexClient` ตัวใหม่
+    - เรียก `grid.updateExchangeClient(newExchange, nextInfo)` เพื่อสลับการทำงานทันทีขณะรัน (Hot-Swap) โดยไม่ต้อง Restart บอท
+    - สลับคู่เทรดเริ่มต้นเป็น `SOMI` (หรือเหรียญใน Somnia Network) อัตโนมัติหากเดิมเป็นคู่ CEX (เช่น `ETHFDUSD`)
 - **Binance WebSocket Streams & Rate-Limit Ban Mitigation (Elimination of IP Ban Error `-1003`)**:
   - **The Problem**: Polling REST API every 200–500ms in `tick()` (`/api/v3/account` weight 20, `/api/v3/openOrders` weight 6, `/api/v3/ticker/bookTicker` weight 2) exhausted Binance's 1,200 weight/minute limit (~8,000 weight/min used), triggering `Binance Error [-1003]: Way too much request weight used; IP banned`.
   - **Zero-Weight WebSocket Book Ticker (`<symbol>@bookTicker`)**:

@@ -180,20 +180,58 @@ export interface DatabaseOptions {
  */
 export class BotDatabase {
   private dbPath: string;
+  private settingsPath: string;
   private legacyStateFile: string;
   private log: (msg: string) => void;
   private data: BotDatabaseSchema;
   private isDirty = false;
+  private isSettingsDirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private maxHistoryRecords = 5000;
 
   constructor(opts: DatabaseOptions = {}) {
     this.dbPath = opts.dbPath ? path.resolve(opts.dbPath) : path.resolve(process.cwd(), "grid-state.db.json");
+    const dir = path.dirname(this.dbPath);
+    this.settingsPath = path.resolve(dir, "settings.db.json");
     this.legacyStateFile = opts.legacyStateFile ? path.resolve(opts.legacyStateFile) : path.resolve(process.cwd(), ".grid-state.json");
     this.log = opts.log || ((msg) => console.log(`[database] ${msg}`));
     this.data = this.initializeDatabase();
+    this.loadSeparateSettings();
     this.backfillMissingSellPnl();
     this.cleanupHijackedMakerFills();
+  }
+
+  private loadSeparateSettings(): void {
+    if (fs.existsSync(this.settingsPath)) {
+      try {
+        const raw = fs.readFileSync(this.settingsPath, "utf8");
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          this.data.settings = { ...this.data.settings, ...parsed };
+          this.log(`loaded separate settings from ${this.settingsPath}`);
+        }
+      } catch (err) {
+        this.log(`⚠️ failed to read settings file ${this.settingsPath}: ${(err as Error).message}`);
+      }
+    } else if (Object.keys(this.data.settings).length > 0) {
+      // Migrate existing settings to settings.db.json
+      this.flushSettingsSync();
+    }
+  }
+
+  public flushSettingsSync(): void {
+    try {
+      const dir = path.dirname(this.settingsPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const tempPath = `${this.settingsPath}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(this.data.settings, null, 2), "utf8");
+      fs.renameSync(tempPath, this.settingsPath);
+      this.isSettingsDirty = false;
+    } catch (err) {
+      this.log(`❌ critical: failed to flush settings to disk: ${(err as Error).message}`);
+    }
   }
 
   private getDefaultState(): StrategyStateRecord {
@@ -1196,6 +1234,7 @@ export class BotDatabase {
 
   public setSetting(key: string, value: any): void {
     this.data.settings[key] = value;
+    this.flushSettingsSync();
     this.flushSync();
   }
 
@@ -1204,6 +1243,7 @@ export class BotDatabase {
       ...this.data.settings,
       ...settings,
     };
+    this.flushSettingsSync();
     this.flushSync();
   }
 
@@ -1214,6 +1254,7 @@ export class BotDatabase {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
+    this.flushSettingsSync();
     this.flushSync();
   }
 }

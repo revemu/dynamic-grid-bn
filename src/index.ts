@@ -41,7 +41,7 @@ function log(msg: string, extra?: unknown): void {
 }
 
 async function main(): Promise<void> {
-  const exchange = createExchangeClient({
+  let exchange = createExchangeClient({
     exchange: config.exchange || "binance",
     apiKey: config.binanceApiKey,
     apiSecret: config.binanceApiSecret,
@@ -204,6 +204,18 @@ async function main(): Promise<void> {
     });
   };
 
+  const wireFeedsToGrid = () => {
+    if (bookTickerFeed) {
+      bookTickerFeed.onBook((b) => grid.handleWsBookTicker(b));
+      bookTickerFeed.start();
+    }
+    if (userDataFeed) {
+      userDataFeed.onExecutionReport((rep) => grid.handleWsExecutionReport(rep));
+      userDataFeed.onAccountUpdate((acc) => grid.handleWsAccountUpdate(acc));
+      userDataFeed.start().catch((err) => log(`⚠️ User data stream start error: ${(err as Error).message}`));
+    }
+  };
+
   // ── Real-Time Dashboard Server & Dynamic Config API ───────────────────────
   const dashboard = new DashboardServer({
     port: config.dashboardPort,
@@ -220,14 +232,56 @@ async function main(): Promise<void> {
 
       const res = grid.updateRuntimeSettings(s);
 
-      // Handle trading pair change dynamically
-      if (s.symbol && s.symbol.toUpperCase().replace(/[\/\-_:]/g, "") !== prevSymbol) {
+      const targetExchangeName = (s.exchange || prevConfig.exchange || "binance").toLowerCase();
+      const exchangeChanged = s.exchange && targetExchangeName !== (prevConfig.exchange || "binance").toLowerCase();
+      const privateKeyChanged = s.dreamdexPrivateKey && s.dreamdexPrivateKey !== "******";
+
+      // 1. Handle Exchange Adapter switch or credentials update dynamically
+      if (exchangeChanged || (targetExchangeName === "dreamdex" && privateKeyChanged)) {
+        try {
+          const newExchange = createExchangeClient({
+            exchange: targetExchangeName,
+            apiKey: s.binanceApiKey !== undefined ? s.binanceApiKey : prevConfig.binanceApiKey,
+            apiSecret: (s.binanceApiSecret !== undefined && s.binanceApiSecret !== "******") ? s.binanceApiSecret : prevConfig.binanceApiSecret,
+            baseUrl: s.binanceBaseUrl || prevConfig.binanceBaseUrl,
+            privateKey: (s.dreamdexPrivateKey !== undefined && s.dreamdexPrivateKey !== "******") ? s.dreamdexPrivateKey : (grid.getRuntimeConfig().dreamdexPrivateKey !== "******" ? grid.getRuntimeConfig().dreamdexPrivateKey : undefined),
+            rpcUrl: s.dreamdexRpcUrl || prevConfig.dreamdexRpcUrl,
+            log: (msg) => log(`[${targetExchangeName}] ${msg}`),
+          });
+          await newExchange.syncTime();
+          exchange = newExchange;
+
+          // If switching to dreamdex and symbol is still a Binance symbol like ETHFDUSD, suggest/switch to SOMI
+          let targetSymbol = (s.symbol || prevConfig.symbol || "BTCUSDT").toUpperCase().replace(/[\/\-_:]/g, "");
+          if (targetExchangeName === "dreamdex" && (targetSymbol.includes("FDUSD") || targetSymbol.includes("USDT") || targetSymbol === "BTCUSDT")) {
+            targetSymbol = "SOMI";
+          }
+
+          const nextInfo = await exchange.getExchangeInfo(targetSymbol);
+          symbolInfo = nextInfo;
+          grid.updateExchangeClient(newExchange, nextInfo);
+          await initFeeds(nextInfo.symbol);
+          wireFeedsToGrid();
+          dashboard.setInitialCandles(macroDowEngine.getCandles());
+          macroFeed?.onCandle((candle, isClosed) => {
+            macroDowEngine.addCandle(candle);
+            dashboard.addCandle(candle, isClosed);
+          });
+          macroFeed?.start();
+          tradingFeed?.start();
+          log(`🔄 Successfully switched Exchange Adapter to: ${exchange.exchangeName.toUpperCase()} (${nextInfo.symbol})`);
+        } catch (err) {
+          log(`⚠️ Failed to switch exchange adapter to ${targetExchangeName}: ${(err as Error).message}`);
+        }
+      } else if (s.symbol && s.symbol.toUpperCase().replace(/[\/\-_:]/g, "") !== prevSymbol) {
+        // 2. Handle trading pair change dynamically on same exchange
         const nextSymbolStr = s.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
         try {
           const nextInfo = await exchange.getExchangeInfo(nextSymbolStr);
           symbolInfo = nextInfo;
           grid.updateSymbolInfo(nextInfo);
           await initFeeds(nextInfo.symbol);
+          wireFeedsToGrid();
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
             macroDowEngine.addCandle(candle);
@@ -287,18 +341,6 @@ async function main(): Promise<void> {
   dashboard.setInitialCandles(macroDowEngine.getCandles());
   dashboard.setInitialOrders(grid.getRecentOrders());
   dashboard.start();
-
-  const wireFeedsToGrid = () => {
-    if (bookTickerFeed) {
-      bookTickerFeed.onBook((b) => grid.handleWsBookTicker(b));
-      bookTickerFeed.start();
-    }
-    if (userDataFeed) {
-      userDataFeed.onExecutionReport((rep) => grid.handleWsExecutionReport(rep));
-      userDataFeed.onAccountUpdate((acc) => grid.handleWsAccountUpdate(acc));
-      userDataFeed.start().catch((err) => log(`⚠️ User data stream start error: ${(err as Error).message}`));
-    }
-  };
 
   wireFeedsToGrid();
 
