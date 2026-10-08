@@ -133,6 +133,14 @@ export class BinanceClient implements IExchangeClient {
     return this.apiKey;
   }
 
+  public getApiSecret(): string {
+    return this.apiSecret;
+  }
+
+  public getCredentials(): { apiKey: string; apiSecret: string } {
+    return { apiKey: this.apiKey, apiSecret: this.apiSecret };
+  }
+
   public hasCredentials(): boolean {
     return Boolean(this.apiKey && this.apiSecret);
   }

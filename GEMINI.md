@@ -62,6 +62,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - `BinanceClient implements IExchangeClient` (Default CEX Adapter)
    - เชื่อมต่อกับ Binance Spot REST API (`https://api.binance.com`)
    - รองรับโหมด `DRY_RUN=true` และ Live Trading (`apiKey`, `apiSecret`)
+   - **Modern Binance WebSocket API v3 User Data Stream (`BinanceUserDataFeed`)**:
+     - เนื่องจาก Binance ได้ทำการ Deprecate ระบบขอ `listenKey` แบบดั้งเดิม (`POST /api/v3/userDataStream` -> `410 Gone`) อย่างถาวร
+     - ระบบได้รับการอัปเกรดเป็น **Binance WebSocket API v3 (`wss://ws-api.binance.com:443/ws-api/v3`)** เต็มรูปแบบ โดยสมัครรับข้อมูลผ่านเมธอด `userDataStream.subscribe.signature` พร้อมลายเซ็น HMAC-SHA256
+     - รองรับการรับ `executionReport` (Order Fills / Partials / Cancels) และ `outboundAccountPosition` แบบ Real-time ทันทีในระดับ Milliseconds และส่งตรงเข้า `strategy.handleWsExecutionReport` โดยไม่ต้องรอ REST Polling อีกต่อไป
+     - มีระบบ WebSocket Ping Keepalive อัตโนมัติทุก 3 นาที และ Reconnect พร้อม Resubscribe อัตโนมัติเมื่อหลุดการเชื่อมต่อ
+     - มีการ Encapsulate ตรรกะของ Binance WebSocket API ทั้งหมดไว้ใน Module `src/exchange/binance/` อย่างเป็นสัดส่วน ไม่รั่วไหลไปยัง Layer ของ Strategy
 3. **DreamDEX On-Chain Implementation (`src/exchange/dreamdex/client.ts` & `src/exchange/dreamdex/indexer.ts`)**:
    - `DreamDexClient implements IExchangeClient` (DEX Adapter for Somnia Network)
    - เชื่อมต่อ Somnia RPC ผ่าน `viem` (`publicClient`, `walletClient`) และเซ็นคำสั่งด้วย `privateKey`
@@ -117,7 +123,8 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - หากหารเฉลี่ยแล้วขนาดไม้ต่ำกว่า $5.00 (`rawTrancheQuote < minNotional`) ระบบจะรวบรวมงบที่เหลือเข้าด้วยกัน (`min(currentAvailableCapacity, minOrderNotional)`) เพื่อการันตีว่าออเดอร์มีมูลค่า $\ge \$5.00$ เสมอ ไม่โดนข้าม (Skip) โดย `MIN NOTIONAL GUARD` อีกต่อไป
 - **Dynamic Sell Tranche Allocation & CEX Rebalancing (Equal Sell Sizes & Zero Dump)**:
   - **Eligible Level Counting (`numEligibleLevels`)**: คำนวณจำนวนระดับที่อยู่เหนือราคาตลาดและพร้อมวางขายจริง (`lvl > minAllowedSellPrice`) และแบ่งขนาดไม้เฉลี่ยเท่ากันเป๊ะ (`trancheQty = held / numEligibleLevels`) แทนการหาร 4 แบบคงที่ ซึ่งเคยทำให้เกิดเศษค้างเมื่อราคาผ่าน Sell Target 1 ไปแล้ว
-  - **Zero Final Level Dump**: ไม้สุดท้าย (Exit All) จะรับเฉพาะเศษทศนิยมระดับ Satoshis/Wei เล็กๆ เท่านั้น ไม่ดูด Inventory ก้อนใหญ่มากองไว้ที่ Sell Target 4 จนขนาดไม้เบิ้ล 2 เท่าอีกต่อไป
+  - **Zero Final Level Dump & Anti-Hoarding**: ไม้สุดท้าย (Exit All) จะรับเฉพาะส่วนต่างเศษทศนิยมระดับ Satoshis/Wei เล็กๆ เท่านั้น (`Math.max(trancheQty, held - (trancheQty * (numEligible - 1)))`) ไม่ดูด Inventory ก้อนใหญ่ที่ยังไม่ได้ตั้งของไม้อื่นมากองไว้ที่ Sell Target 4 จนขนาดไม้เบิ้ล 2 เท่าอีกต่อไป
+  - **Missing Eligible Level Enforcement (`hasMissingEligibleSellOrders`)**: หากตรวจพบว่ายังมีระดับขายที่ยังไม่ได้วางออเดอร์ (เช่น Sell Target 3 ว่างอยู่) ระบบจะ **ไม่ถือว่า `isInventoryFullyCovered`** และสั่ง Rebalance ลดขนาดไม้ที่เบิ้ลเพื่อนำยอดมาวางออเดอร์ให้ระดับที่ขาดหายไปทันที ทำให้มีคำสั่งขายกระจายครบทุกระดับอย่างสม่ำเสมอ 100%
   - **Auto Rebalancing on CEX / BUY Fills**: เมื่อมี BUY แมตช์ (`needsSellRebalance = true`) หรือบน CEX (Binance) หากตรวจพบว่าขนาดออเดอร์ขายแต่ละไม้เบี่ยงเบนไปจากไม้เฉลี่ยเกิน 10% บอทจะทำการยกเลิกและตั้งออเดอร์ขายใหม่ให้ทุกไม้มีขนาดเท่ากันสม่ำเสมอทันที โดยไม่มีค่า Gas หรือ Fee บน Maker orders
 - **Holding Fraction Guard (Elimination of Repeated Buy Level 1 Fills)**:
   - In a stepped accumulation grid ladder, each buy level represents a target capacity threshold (Level 1 $\le 25\%$, Level 2 $\le 50\%$, Level 3 $\le 75\%$, Level 4 $\le 100\%$).

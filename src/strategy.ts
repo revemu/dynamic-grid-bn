@@ -3352,6 +3352,14 @@ export class DynamicGrid {
           const numEligible = eligibleIndices.length;
           const trancheQty = numEligible > 0 ? held / numEligible : held;
 
+          // Check if any eligible levels below TL are missing an open sell order
+          const hasMissingEligibleSellOrders = eligibleIndices.some((idx) => {
+            const lvlPrice = sellLevels[idx];
+            return !this.openOrders.some(
+              (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvlPrice && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
+            );
+          });
+
           // Rebalance Sell side: trigger rebalance on BUY fills or when order sizes deviate on CEX
           const doSellRebalance = this.needsSellRebalance;
           this.needsSellRebalance = false;
@@ -3359,7 +3367,9 @@ export class DynamicGrid {
           const totalBaseInOpenSells = this.openOrders
             .filter((o) => !o.isBid)
             .reduce((sum, o) => sum + o.qty, 0);
-          const isInventoryFullyCovered = totalBaseInOpenSells >= held * 0.98 || Math.abs(totalBaseInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5);
+          const isInventoryFullyCovered =
+            !hasMissingEligibleSellOrders &&
+            (totalBaseInOpenSells >= held * 0.98 || Math.abs(totalBaseInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5));
 
           for (let i = 0; i < sellLevels.length; i++) {
             const lvlPrice = sellLevels[i];
@@ -3405,7 +3415,7 @@ export class DynamicGrid {
                     if (Date.now() - lastIoc > 15_000) {
                       let desiredSellQty = trancheQty;
                       if (isLastEligible && mode !== "LOT_BASED_PROFIT") {
-                        desiredSellQty = heldNow;
+                        desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numEligible - 1)));
                       }
                       desiredSellQty = Math.min(this.baseHeld(), desiredSellQty);
 
@@ -3452,12 +3462,9 @@ export class DynamicGrid {
               desiredSellQty = Math.min(desiredSellQty, availableProfitableQty);
             }
 
-            // For the last eligible level: sell ALL remaining inventory (full exit)
+            // For the last eligible level: equal tranche + dust cleanup (no huge inventory dumps)
             if (isLastEligible && mode !== "LOT_BASED_PROFIT") {
-              const otherSellOrdersQty = this.openOrders
-                .filter((o) => !o.isBid && o !== currentOpenSellAtLvl)
-                .reduce((sum, o) => sum + o.qty, 0);
-              desiredSellQty = Math.max(0, this.baseHeld() - otherSellOrdersQty);
+              desiredSellQty = Math.max(trancheQty, this.baseHeld() - (trancheQty * (numEligible - 1)));
             }
 
             if (desiredSellQty < this.minQty) continue;
@@ -3473,7 +3480,7 @@ export class DynamicGrid {
               const priceDiffRatio = Math.abs(currentOpenSellAtLvl.price - effLvlPrice) / effLvlPrice;
               const shiftTol = this.cfg.minChannelShiftPct ? this.cfg.minChannelShiftPct / 100 : 0.008;
               const isCexExchange = this.binance.exchangeName !== "dreamdex";
-              const needsQtyResize = (doSellRebalance || (isCexExchange && qtyDiffRatio > 0.10)) && qtyDiffRatio > qtyTol;
+              const needsQtyResize = (doSellRebalance || hasMissingEligibleSellOrders || (isCexExchange && qtyDiffRatio > 0.10)) && qtyDiffRatio > qtyTol;
               if (needsQtyResize || priceDiffRatio > shiftTol) {
                 const reason = priceDiffRatio > shiftTol
                   ? `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${effLvlPrice.toFixed(6)})`
@@ -3552,6 +3559,14 @@ export class DynamicGrid {
       const numEligibleLevels = eligibleSellIndices.length > 0 ? eligibleSellIndices.length : (sellLevels.length || 4);
       const trancheQty = held / numEligibleLevels;
 
+      // Check if any eligible levels are missing an open sell order
+      const hasMissingEligibleSellOrders = eligibleSellIndices.some((idx) => {
+        const lvlPrice = sellLevels[idx];
+        return !this.openOrders.some(
+          (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvlPrice && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
+        );
+      });
+
       // Rebalance Sell side: trigger rebalance on BUY fills or when order sizes deviate on CEX
       const doSellRebalance = this.needsSellRebalance;
       this.needsSellRebalance = false;
@@ -3562,8 +3577,12 @@ export class DynamicGrid {
         .reduce((sum, o) => sum + o.qty, 0);
 
       // If existing resting sells cover the held inventory, NO NEW BUYS have occurred.
-      // Sells filling and reducing inventory should NEVER cause the remaining resting sells to be cancelled or resized!
-      const isInventoryFullyCovered = totalBaseInOpenSells >= held * 0.98 || Math.abs(totalBaseInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5);
+      // Inventory is ONLY considered fully covered if:
+      // 1. Total open sell quantity matches held inventory, AND
+      // 2. NO eligible sell levels are missing their orders! (If an eligible level has no order, we MUST place it!)
+      const isInventoryFullyCovered =
+        !hasMissingEligibleSellOrders &&
+        (totalBaseInOpenSells >= held * 0.98 || Math.abs(totalBaseInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5));
 
       for (let i = 0; i < sellLevels.length; i++) {
         const originalLvlPrice = sellLevels[i];
@@ -3604,8 +3623,9 @@ export class DynamicGrid {
                 if (Date.now() - lastIoc > 15_000) {
                   // Determine tranche quantity to sell
                   let desiredSellQty = trancheQty;
-                  if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
-                    desiredSellQty = heldNow;
+                  const isFinalEligibleLevel = eligibleSellIndices[eligibleSellIndices.length - 1] === i;
+                  if (isFinalEligibleLevel && mode !== "LOT_BASED_PROFIT") {
+                    desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numEligibleLevels - 1)));
                   }
                   desiredSellQty = Math.min(this.baseHeld(), desiredSellQty);
 
@@ -3637,12 +3657,10 @@ export class DynamicGrid {
         // Calculate equal tranche quantity for this level
         let desiredSellQty = trancheQty;
 
-        // For final exit level: clean up any sub-cent rounding dust (satoshis/wei)
-        if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
-          const otherSellOrdersQty = this.openOrders
-            .filter((o) => !o.isBid && o !== currentOpenSellAtLvl)
-            .reduce((sum, o) => sum + o.qty, 0);
-          desiredSellQty = Math.max(0, this.baseHeld() - otherSellOrdersQty);
+        // For final eligible level: clean up any sub-cent rounding dust (satoshis/wei) without hoarding missing tranches
+        const isFinalEligibleLevel = eligibleSellIndices[eligibleSellIndices.length - 1] === i;
+        if (isFinalEligibleLevel && mode !== "LOT_BASED_PROFIT") {
+          desiredSellQty = Math.max(trancheQty, this.baseHeld() - (trancheQty * (numEligibleLevels - 1)));
         }
 
         // If this level already has an active sell order:
@@ -3655,8 +3673,8 @@ export class DynamicGrid {
           const targetSellQty = desiredSellQty >= (this.minQty || 0.001) ? desiredSellQty : trancheQty;
           const qtyDiffRatio = Math.abs(currentOpenSellAtLvl.qty - targetSellQty) / Math.max(0.000001, targetSellQty);
           const qtyTol = this.cfg.orderQtyTolerancePct ? this.cfg.orderQtyTolerancePct / 100 : 0.05;
-          // Rebalance sell quantity if explicitly requested (BUY filled, startup, resume) OR on CEX if deviation is large (>10%)
-          const needsQtyResize = (doSellRebalance || (isCexExchange && qtyDiffRatio > 0.10)) && qtyDiffRatio > qtyTol;
+          // Rebalance sell quantity if explicitly requested (BUY filled, startup, resume) OR if missing eligible levels exist OR on CEX if deviation is large (>10%)
+          const needsQtyResize = (doSellRebalance || hasMissingEligibleSellOrders || (isCexExchange && qtyDiffRatio > 0.10)) && qtyDiffRatio > qtyTol;
 
           if (isPriceShifted || needsQtyResize) {
             const reason = isPriceShifted

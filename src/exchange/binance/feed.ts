@@ -18,6 +18,7 @@
  */
 
 import WebSocket from "ws";
+import crypto from "crypto";
 import type { AtrSource } from "../../types.js";
 import type { Candle } from "../../market-structure.js";
 
@@ -340,8 +341,8 @@ export class BinanceUserDataFeed {
   private ws?: WebSocket;
   private stopped = false;
   private connected = false;
-  private listenKey?: string;
-  private keepAliveTimer?: NodeJS.Timeout;
+  private subscriptionId?: number;
+  private pingTimer?: NodeJS.Timeout;
   private reconnectDelayMs = 1_000;
 
   private executionListeners: ((report: BinanceExecutionReport) => void)[] = [];
@@ -349,11 +350,12 @@ export class BinanceUserDataFeed {
 
   constructor(
     private readonly client: {
-      createUserDataStream: () => Promise<string>;
-      keepAliveUserDataStream: (key: string) => Promise<void>;
-      closeUserDataStream: (key: string) => Promise<void>;
+      getCredentials?: () => { apiKey: string; apiSecret: string };
+      createUserDataStream?: () => Promise<string>;
+      keepAliveUserDataStream?: (key: string) => Promise<void>;
+      closeUserDataStream?: (key: string) => Promise<void>;
     },
-    private readonly wsBase = "wss://stream.binance.com:9443",
+    private readonly wsBase = "wss://ws-api.binance.com:443/ws-api/v3",
     private readonly log: (msg: string) => void = () => {},
   ) {}
 
@@ -367,54 +369,71 @@ export class BinanceUserDataFeed {
 
   async start(): Promise<void> {
     this.stopped = false;
-    try {
-      this.listenKey = await this.client.createUserDataStream();
-      this.log(`Binance User Data Stream acquired listenKey: ${this.listenKey.slice(0, 8)}...`);
-      this.connect();
-      this.scheduleKeepAlive();
-    } catch (err: any) {
-      const msg = String(err?.message || "");
-      const cleanMsg = msg.includes("<html>") ? (msg.match(/<title>(.*?)<\/title>/i)?.[1] || "HTTP Error") : msg;
-      this.log(`⚠️ User Data Stream unavailable (${cleanMsg}). Bot continues using standard REST order tracking.`);
-    }
+    this.connect();
   }
 
   stop(): void {
     this.stopped = true;
-    if (this.keepAliveTimer) {
-      clearInterval(this.keepAliveTimer);
-      this.keepAliveTimer = undefined;
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = undefined;
     }
     this.ws?.close();
-    if (this.listenKey) {
-      this.client.closeUserDataStream(this.listenKey).catch(() => {});
-      this.listenKey = undefined;
-    }
-  }
-
-  private scheduleKeepAlive(): void {
-    if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
-    // Binance requires keep-alive ping every 30-60 mins; ping every 20 minutes
-    this.keepAliveTimer = setInterval(async () => {
-      if (this.stopped || !this.listenKey) return;
-      try {
-        await this.client.keepAliveUserDataStream(this.listenKey);
-        this.log(`🔄 User Data Stream listenKey keep-alive sent`);
-      } catch (err) {
-        this.log(`⚠️ User Data Stream keep-alive failed: ${(err as Error).message}`);
-      }
-    }, 20 * 60 * 1000);
   }
 
   private connect(): void {
-    if (!this.listenKey || this.stopped) return;
-    const url = `${this.wsBase}/ws/${this.listenKey}`;
+    if (this.stopped) return;
+
+    // Use WebSocket API endpoint (default: wss://ws-api.binance.com:443/ws-api/v3)
+    let url = this.wsBase;
+    if (!url.includes("ws-api.binance.com")) {
+      url = "wss://ws-api.binance.com:443/ws-api/v3";
+    }
+
+    const creds = this.client.getCredentials?.();
+    if (!creds?.apiKey || !creds?.apiSecret) {
+      this.log("⚠️ Binance User Data Stream skipped: API Key & Secret not provided");
+      return;
+    }
+
     this.ws = new WebSocket(url);
 
     this.ws.on("open", () => {
       this.connected = true;
       this.reconnectDelayMs = 1_000;
-      this.log(`Binance User Data Stream WebSocket connected`);
+      this.log(`Binance User Data Stream connected: ${url}`);
+
+      // Subscribe to user data stream using HMAC-SHA256 signature
+      const timestamp = Date.now();
+      const query = `apiKey=${creds.apiKey}&timestamp=${timestamp}`;
+      const signature = crypto.createHmac("sha256", creds.apiSecret).update(query).digest("hex");
+
+      const req = {
+        id: `user_stream_${Date.now()}`,
+        method: "userDataStream.subscribe.signature",
+        params: {
+          apiKey: creds.apiKey,
+          timestamp,
+          signature,
+        },
+      };
+
+      try {
+        this.ws?.send(JSON.stringify(req));
+        this.log(`Subscribed to Binance WebSocket API user data stream (ID: ${req.id})`);
+      } catch (err) {
+        this.log(`⚠️ Failed to send subscription request: ${(err as Error).message}`);
+      }
+
+      // Keep connection active with ping every 3 minutes
+      if (this.pingTimer) clearInterval(this.pingTimer);
+      this.pingTimer = setInterval(() => {
+        if (this.connected && this.ws?.readyState === WebSocket.OPEN) {
+          try {
+            this.ws.ping();
+          } catch {}
+        }
+      }, 3 * 60 * 1000);
     });
 
     this.ws.on("message", (raw: Buffer) => {
@@ -425,36 +444,50 @@ export class BinanceUserDataFeed {
         return;
       }
 
-      const eventType = msg.e;
+      // Handle subscription response
+      if (msg.status !== undefined) {
+        if (msg.status === 200) {
+          this.subscriptionId = msg.result?.subscriptionId;
+          this.log(`✅ Binance User Data Stream active (subscriptionId: ${this.subscriptionId})`);
+        } else {
+          this.log(`⚠️ Binance User Data Stream subscription error: ${JSON.stringify(msg.error ?? msg)}`);
+        }
+        return;
+      }
+
+      // Events can be wrapped in msg.event or directly in msg
+      const ev = msg.event ?? msg;
+      const eventType = ev.e;
+
       if (eventType === "executionReport") {
         const report: BinanceExecutionReport = {
-          symbol: msg.s,
-          clientOrderId: msg.c,
-          side: msg.S,
-          orderType: msg.o,
-          timeInForce: msg.f,
-          origQty: Number(msg.q),
-          price: Number(msg.p),
-          executionType: msg.x,
-          orderStatus: msg.X,
-          orderRejectReason: msg.r,
-          orderId: Number(msg.i),
-          lastExecutedQty: Number(msg.l),
-          cumulativeFilledQty: Number(msg.z),
-          lastExecutedPrice: Number(msg.L),
-          commissionAmount: Number(msg.n ?? 0),
-          commissionAsset: msg.N ?? null,
-          transactionTime: Number(msg.T ?? msg.E),
-          tradeId: Number(msg.t),
-          cummulativeQuoteQty: Number(msg.Z ?? 0),
+          symbol: ev.s,
+          clientOrderId: ev.c,
+          side: ev.S,
+          orderType: ev.o,
+          timeInForce: ev.f,
+          origQty: Number(ev.q),
+          price: Number(ev.p),
+          executionType: ev.x,
+          orderStatus: ev.X,
+          orderRejectReason: ev.r,
+          orderId: Number(ev.i),
+          lastExecutedQty: Number(ev.l),
+          cumulativeFilledQty: Number(ev.z),
+          lastExecutedPrice: Number(ev.L),
+          commissionAmount: Number(ev.n ?? 0),
+          commissionAsset: ev.N ?? null,
+          transactionTime: Number(ev.T ?? ev.E),
+          tradeId: Number(ev.t),
+          cummulativeQuoteQty: Number(ev.Z ?? 0),
         };
         for (const fn of this.executionListeners) {
           fn(report);
         }
       } else if (eventType === "outboundAccountPosition") {
-        // Balances updated: msg.B is array of { a: asset, f: free, l: locked }
-        const balances = Array.isArray(msg.B)
-          ? msg.B.map((b: any) => ({
+        // Balances updated: ev.B is array of { a: asset, f: free, l: locked }
+        const balances = Array.isArray(ev.B)
+          ? ev.B.map((b: any) => ({
               asset: String(b.a),
               free: Number(b.f),
               locked: Number(b.l),
@@ -462,7 +495,7 @@ export class BinanceUserDataFeed {
           : [];
         const update: BinanceAccountUpdate = {
           balances,
-          eventTime: Number(msg.E),
+          eventTime: Number(ev.E),
         };
         for (const fn of this.balanceListeners) {
           fn(update);
@@ -472,14 +505,14 @@ export class BinanceUserDataFeed {
 
     this.ws.on("close", () => {
       this.connected = false;
+      if (this.pingTimer) {
+        clearInterval(this.pingTimer);
+        this.pingTimer = undefined;
+      }
       if (this.stopped) return;
       this.log(`Binance User Data Stream disconnected — reconnecting in ${this.reconnectDelayMs}ms`);
-      setTimeout(async () => {
+      setTimeout(() => {
         if (!this.stopped) {
-          try {
-            // Refresh listenKey on reconnect
-            this.listenKey = await this.client.createUserDataStream();
-          } catch {}
           this.connect();
         }
       }, this.reconnectDelayMs);

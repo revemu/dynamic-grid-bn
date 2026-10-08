@@ -169,14 +169,15 @@ async function main(): Promise<void> {
     );
 
     // Real-Time User Data Stream WebSocket feed (if on Binance with API credentials)
-    if (exchange.exchangeName === "binance" && exchange.hasCredentials() && exchange.createUserDataStream) {
+    if (exchange.exchangeName === "binance" && exchange.hasCredentials()) {
       userDataFeed = new BinanceUserDataFeed(
         {
-          createUserDataStream: () => exchange.createUserDataStream!(),
-          keepAliveUserDataStream: (k) => exchange.keepAliveUserDataStream!(k),
-          closeUserDataStream: (k) => exchange.closeUserDataStream!(k),
+          getCredentials: () => (exchange as any).getCredentials?.() ?? {
+            apiKey: config.binanceApiKey,
+            apiSecret: config.binanceApiSecret,
+          },
         },
-        config.binanceWsBase,
+        "wss://ws-api.binance.com:443/ws-api/v3",
         (msg) => log(`[userData] ${msg}`),
       );
     }

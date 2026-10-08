@@ -104,6 +104,7 @@ export interface IExchangeClient {
   cancelOrder(symbol: string, orderId: string | number): Promise<any>;
   cancelAllOpenOrders(symbol: string): Promise<any>;
   updateCredentials(apiKey: string, apiSecret: string, baseUrl?: string): void;
+  getCredentials?(): { apiKey: string; apiSecret: string };
   createUserDataStream?(): Promise<string>;
   keepAliveUserDataStream?(listenKey: string): Promise<void>;
   closeUserDataStream?(listenKey: string): Promise<void>;
