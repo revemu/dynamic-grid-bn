@@ -63,6 +63,8 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - เรียก Smart Contract `SpotPool` (`placeOrder`, `cancelOrder`, `getPoolParams`)
    - ซิงค์ประวัติ Order ย้อนหลังผ่าน Somnia GraphQL Indexer API (`SomniaIndexerClient` / `https://prd.smk.somnia.host/v1/graphql`)
    - รองรับคู่เทรดหลัก: `SOMI:USDso`, `USDC.e:USDso`, `WBTC:USDso`, `WETH:USDso`
+   - **Real On-Chain ERC-20 Balances & Allowance**: ดึงยอดเงิน USDso และ Base token (WETH, WBTC, USDC.e) ผ่าน ERC-20 `balanceOf` บน Somnia RPC จริง โดยไม่ฮาร์ดโค้ด `quoteFree: 0` พร้อมระบบ `ensureAllowance` ตรวจสอบและ approve อัตโนมัติก่อนวางออเดอร์
+   - **Pool Address Corrections**: อัปเดตและยืนยัน pool address ถูกต้อง 100% เช่น WETH:USDso (`0xa936da11B57b50A344e1293AAaE5232885ea2bDE`) แก้ไขข้อผิดพลาด typo เดิม
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

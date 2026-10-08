@@ -493,8 +493,19 @@ export class BinanceClient implements IExchangeClient {
     if (!this.apiKey) {
       throw new Error("Binance API key is required to create a user data stream");
     }
-    const res = await this.publicRequest<{ listenKey: string }>("POST", "/api/v3/userDataStream");
-    return res.listenKey;
+    // Try POST /api/v3/userDataStream first, fallback to /sapi/v1/userDataStream if 404/410
+    try {
+      const res = await this.publicRequest<{ listenKey?: string }>("POST", "/api/v3/userDataStream");
+      if (res && res.listenKey) return res.listenKey;
+    } catch (err: any) {
+      if (String(err?.message || "").includes("410") || String(err?.message || "").includes("404")) {
+        // Try fallback endpoint
+        const res2 = await this.publicRequest<{ listenKey?: string }>("POST", "/sapi/v1/userDataStream");
+        if (res2 && res2.listenKey) return res2.listenKey;
+      }
+      throw err;
+    }
+    throw new Error("Empty listenKey received from Binance User Data Stream");
   }
 
   /**
@@ -502,7 +513,15 @@ export class BinanceClient implements IExchangeClient {
    */
   public async keepAliveUserDataStream(listenKey: string): Promise<void> {
     if (!this.apiKey) return;
-    await this.rawRequest<any>("PUT", "/api/v3/userDataStream", { listenKey }, false);
+    try {
+      await this.rawRequest<any>("PUT", "/api/v3/userDataStream", { listenKey }, false);
+    } catch {
+      try {
+        await this.rawRequest<any>("PUT", "/sapi/v1/userDataStream", { listenKey }, false);
+      } catch {
+        // Ignore keepalive failures
+      }
+    }
   }
 
   /**
@@ -513,7 +532,11 @@ export class BinanceClient implements IExchangeClient {
     try {
       await this.rawRequest<any>("DELETE", "/api/v3/userDataStream", { listenKey }, false);
     } catch {
-      // Ignore errors when closing
+      try {
+        await this.rawRequest<any>("DELETE", "/sapi/v1/userDataStream", { listenKey }, false);
+      } catch {
+        // Ignore errors when closing
+      }
     }
   }
 

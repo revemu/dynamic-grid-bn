@@ -113,6 +113,8 @@ export interface DreamDexMarketMeta {
   minQty: number;
   stepSize: number;
   tickSize: number;
+  baseToken?: `0x${string}`;
+  quoteToken?: `0x${string}`;
 }
 
 export const DREAMDEX_MARKETS: Record<string, DreamDexMarketMeta> = {
@@ -127,6 +129,8 @@ export const DREAMDEX_MARKETS: Record<string, DreamDexMarketMeta> = {
     minQty: 1.0,
     stepSize: 1.0,
     tickSize: 0.0001,
+    baseToken: "0x28f34DeFd2b4CB48d9eE6d89f2Be4Bc601694c00",
+    quoteToken: "0x00000022dA000002656c64D9eA6011ea952D008A",
   },
   "USDC.E:USDSO": {
     symbol: "USDC.E:USDSO",
@@ -139,6 +143,8 @@ export const DREAMDEX_MARKETS: Record<string, DreamDexMarketMeta> = {
     minQty: 1.0,
     stepSize: 0.01,
     tickSize: 0.0001,
+    baseToken: "0x28BEc7E30E6faee657a03e19Bf1128AaD7632A00",
+    quoteToken: "0x00000022dA000002656c64D9eA6011ea952D008A",
   },
   "WBTC:USDSO": {
     symbol: "WBTC:USDSO",
@@ -151,18 +157,22 @@ export const DREAMDEX_MARKETS: Record<string, DreamDexMarketMeta> = {
     minQty: 0.0001,
     stepSize: 0.0001,
     tickSize: 0.01,
+    baseToken: "0xC5098b3cA516784323872F17235fa074E167D3D2",
+    quoteToken: "0x00000022dA000002656c64D9eA6011ea952D008A",
   },
   "WETH:USDSO": {
     symbol: "WETH:USDSO",
-    pool: "0x3D188686d63C6573C65dC7C0b11C3c50A865b452",
+    pool: "0xa936da11B57b50A344e1293AAaE5232885ea2bDE",
     baseAsset: "WETH",
     quoteAsset: "USDSO",
     baseDecimals: 18,
     quoteDecimals: 18,
     baseIsNative: false,
     minQty: 0.001,
-    stepSize: 0.001,
+    stepSize: 0.0001,
     tickSize: 0.01,
+    baseToken: "0x936Ab8C674bcb567CD5dEB85D8A216494704E9D8",
+    quoteToken: "0x00000022dA000002656c64D9eA6011ea952D008A",
   },
 };
 
@@ -284,9 +294,36 @@ export class DreamDexClient implements IExchangeClient {
     }
 
     let baseBal = 0;
-    if (market.baseIsNative) {
-      const balRaw = await this.publicClient.getBalance({ address: this.account.address });
-      baseBal = Number(formatUnits(balRaw, market.baseDecimals));
+    try {
+      if (market.baseIsNative) {
+        const balRaw = await this.publicClient.getBalance({ address: this.account.address });
+        baseBal = Number(formatUnits(balRaw, market.baseDecimals));
+      } else if (market.baseToken) {
+        const balRaw = await this.publicClient.readContract({
+          address: market.baseToken,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: [this.account.address],
+        });
+        baseBal = Number(formatUnits(balRaw as bigint, market.baseDecimals));
+      }
+    } catch (err) {
+      this.log(`⚠️ Failed to read ${market.baseAsset} balance: ${(err as Error).message}`);
+    }
+
+    let quoteBal = 0;
+    try {
+      if (market.quoteToken) {
+        const balRaw = await this.publicClient.readContract({
+          address: market.quoteToken,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: [this.account.address],
+        });
+        quoteBal = Number(formatUnits(balRaw as bigint, market.quoteDecimals));
+      }
+    } catch (err) {
+      this.log(`⚠️ Failed to read ${market.quoteAsset} balance: ${(err as Error).message}`);
     }
 
     return {
@@ -295,11 +332,12 @@ export class DreamDexClient implements IExchangeClient {
       baseFree: baseBal,
       baseLocked: 0,
       baseTotal: baseBal,
-      quoteFree: 0,
+      quoteFree: quoteBal,
       quoteLocked: 0,
-      quoteTotal: 0,
+      quoteTotal: quoteBal,
       allBalances: {
         [market.baseAsset]: { free: baseBal, locked: 0 },
+        [market.quoteAsset]: { free: quoteBal, locked: 0 },
       },
     };
   }
@@ -364,6 +402,37 @@ export class DreamDexClient implements IExchangeClient {
     };
   }
 
+  private async ensureAllowance(token: `0x${string}`, spender: `0x${string}`, amount: bigint): Promise<void> {
+    if (!this.account || !this.walletClient) return;
+    try {
+      const current = await this.publicClient.readContract({
+        address: token,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: [this.account.address, spender],
+      });
+      if ((current as bigint) >= amount) return;
+      this.log(`🔐 Approving token for pool ${spender.slice(0, 8)}...`);
+      const hash = await this.walletClient.writeContract({
+        address: token,
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [spender, amount * 100n],
+        chain: {
+          id: this.chainId,
+          name: "Somnia",
+          nativeCurrency: { name: "Somnia", symbol: "SOMI", decimals: 18 },
+          rpcUrls: { default: { http: [this.rpcUrl] } },
+        },
+        account: this.account,
+      });
+      await this.publicClient.waitForTransactionReceipt({ hash });
+      this.log(`✅ Token approval confirmed: ${hash.slice(0, 10)}...`);
+    } catch (err) {
+      this.log(`⚠️ Token approval warning: ${(err as Error).message}`);
+    }
+  }
+
   public async placeOrder(params: PlaceOrderParams): Promise<ExchangeOrderResult> {
     if (!this.account || !this.walletClient) {
       throw new Error("Cannot place order on DreamDEX: Private key not configured");
@@ -375,6 +444,14 @@ export class DreamDexClient implements IExchangeClient {
     const qty = params.qty;
     const priceRaw = parseUnits(price.toFixed(6), market.quoteDecimals);
     const qtyRaw = parseUnits(qty.toFixed(4), market.baseDecimals);
+
+    // Ensure ERC-20 token allowance before placing order
+    if (isBid && market.quoteToken) {
+      const requiredQuoteRaw = (priceRaw * qtyRaw) / parseUnits("1", market.baseDecimals);
+      await this.ensureAllowance(market.quoteToken, market.pool, requiredQuoteRaw);
+    } else if (!isBid && !market.baseIsNative && market.baseToken) {
+      await this.ensureAllowance(market.baseToken, market.pool, qtyRaw);
+    }
 
     // orderType: 0 = Limit (Maker/Resting), 1 = IOC (ImmediateOrCancel)
     const orderType = params.type === "IOC" ? 1 : 0;

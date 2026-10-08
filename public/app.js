@@ -1192,6 +1192,13 @@
     if (elLegendTf) elLegendTf.textContent = macroTf;
     if (elLegendLivePrice && data.mid !== undefined) elLegendLivePrice.textContent = `$${data.mid.toFixed(6)}`;
 
+    // Top Brand Logo Badge (Exchange indicator)
+    const elLogoBadge = document.getElementById("logoBadge");
+    if (elLogoBadge) {
+      const isDreamdex = (data.exchange || "").toLowerCase() === "dreamdex" || rawSymbol.includes(":") || rawSymbol.includes("USDSO");
+      elLogoBadge.textContent = isDreamdex ? "DREAMDEX SPOT" : "BINANCE GRID";
+    }
+
     // Dry Run vs Live On-Chain Badge
     if (data.dryRun !== undefined && elDryRunBadge) {
       if (data.dryRun) {
@@ -3169,38 +3176,42 @@
 
   function renderTopSymbolOptions(exchange, currentSymbol) {
     const elTopSymbolSelect = document.getElementById("topSymbolSelect");
-    if (!elTopSymbolSelect) return;
+    const elPopularSymbolsList = document.getElementById("popularSymbolsList");
     const isDreamdex = exchange === "dreamdex";
-    if (isDreamdex) {
-      elTopSymbolSelect.innerHTML = `
-        <option value="SOMI">SOMI (SOMI/USDso)</option>
-        <option value="SOMI:USDSO">SOMI:USDso</option>
-        <option value="USDC.E:USDSO">USDC.e:USDso</option>
-        <option value="WBTC:USDSO">WBTC:USDso</option>
-        <option value="WETH:USDSO">WETH:USDso</option>
-      `;
-    } else {
-      elTopSymbolSelect.innerHTML = `
-        <option value="BTCUSDT">BTC/USDT</option>
-        <option value="ETHUSDT">ETH/USDT</option>
-        <option value="ETHFDUSD">ETH/FDUSD</option>
-        <option value="SOLUSDT">SOL/USDT</option>
-        <option value="BNBUSDT">BNB/USDT</option>
-        <option value="SOMIUSDT">SOMI/USDT</option>
-        <option value="DOGEUSDT">DOGE/USDT</option>
-        <option value="XRPUSDT">XRP/USDT</option>
-        <option value="ADAUSDT">ADA/USDT</option>
-        <option value="AVAXUSDT">AVAX/USDT</option>
-        <option value="SUIUSDT">SUI/USDT</option>
-        <option value="NEARUSDT">NEAR/USDT</option>
-        <option value="PEPEUSDT">PEPE/USDT</option>
-      `;
-    }
-    if (currentSymbol) {
-      elTopSymbolSelect.value = currentSymbol.toUpperCase();
-      if (!elTopSymbolSelect.value) {
-        elTopSymbolSelect.value = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
+    const dreamdexHtml = `
+      <option value="SOMI">SOMI (SOMI/USDso)</option>
+      <option value="SOMI:USDSO">SOMI:USDso</option>
+      <option value="USDC.E:USDSO">USDC.e:USDso</option>
+      <option value="WBTC:USDSO">WBTC:USDso</option>
+      <option value="WETH:USDSO">WETH:USDso</option>
+    `;
+    const binanceHtml = `
+      <option value="BTCUSDT">BTC/USDT</option>
+      <option value="ETHUSDT">ETH/USDT</option>
+      <option value="ETHFDUSD">ETH/FDUSD</option>
+      <option value="SOLUSDT">SOL/USDT</option>
+      <option value="BNBUSDT">BNB/USDT</option>
+      <option value="SOMIUSDT">SOMI/USDT</option>
+      <option value="DOGEUSDT">DOGE/USDT</option>
+      <option value="XRPUSDT">XRP/USDT</option>
+      <option value="ADAUSDT">ADA/USDT</option>
+      <option value="AVAXUSDT">AVAX/USDT</option>
+      <option value="SUIUSDT">SUI/USDT</option>
+      <option value="NEARUSDT">NEAR/USDT</option>
+      <option value="PEPEUSDT">PEPE/USDT</option>
+    `;
+    const targetHtml = isDreamdex ? dreamdexHtml : binanceHtml;
+    if (elTopSymbolSelect) {
+      elTopSymbolSelect.innerHTML = targetHtml;
+      if (currentSymbol) {
+        elTopSymbolSelect.value = currentSymbol.toUpperCase();
+        if (!elTopSymbolSelect.value) {
+          elTopSymbolSelect.value = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
+        }
       }
+    }
+    if (elPopularSymbolsList) {
+      elPopularSymbolsList.innerHTML = targetHtml;
     }
   }
 
@@ -4590,11 +4601,13 @@
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
+      loadSettings();
       initChart();
       connectSSE();
       checkBotPauseStatus();
     });
   } else {
+    loadSettings();
     initChart();
     connectSSE();
     checkBotPauseStatus();

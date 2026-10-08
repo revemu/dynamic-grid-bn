@@ -372,8 +372,10 @@ export class BinanceUserDataFeed {
       this.log(`Binance User Data Stream acquired listenKey: ${this.listenKey.slice(0, 8)}...`);
       this.connect();
       this.scheduleKeepAlive();
-    } catch (err) {
-      this.log(`⚠️ Failed to create Binance User Data Stream: ${(err as Error).message}`);
+    } catch (err: any) {
+      const msg = String(err?.message || "");
+      const cleanMsg = msg.includes("<html>") ? (msg.match(/<title>(.*?)<\/title>/i)?.[1] || "HTTP Error") : msg;
+      this.log(`⚠️ User Data Stream unavailable (${cleanMsg}). Bot continues using standard REST order tracking.`);
     }
   }
 

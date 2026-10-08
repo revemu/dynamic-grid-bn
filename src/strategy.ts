@@ -193,6 +193,7 @@ export class DynamicGrid {
 
   public updateExchangeClient(newClient: IExchangeClient, info?: ExchangeSymbolInfo): void {
     this.binance = newClient;
+    this.cfg.exchange = newClient.exchangeName as "binance" | "dreamdex";
     if (info) {
       this.updateSymbolInfo(info);
     }
@@ -202,6 +203,7 @@ export class DynamicGrid {
   public updateSymbolInfo(info: ExchangeSymbolInfo): void {
     this.symbolInfo = info;
     this.symbol = info.symbol;
+    this.cfg.symbol = info.symbol;
     this.baseAsset = info.baseAsset;
     this.quoteAsset = info.quoteAsset;
     this.minQty = info.minQty;
@@ -2403,7 +2405,8 @@ export class DynamicGrid {
           p1: { time: uptrendLine.p1.time, price: uptrendLine.p1.price },
           p2: { time: uptrendLine.p2.time, price: uptrendLine.p2.price },
         } : undefined,
-        symbol: this.cfg.symbol,
+        symbol: this.symbol,
+        exchange: this.binance.exchangeName,
         binanceSymbol: this.cfg.binanceSymbol,
         baseAsset: this.symbolInfo.baseAsset,
         quoteAsset: this.symbolInfo.quoteAsset,
