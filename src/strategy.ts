@@ -1589,30 +1589,7 @@ export class DynamicGrid {
     const span = Math.max(0.000001, upperBound - lowerBound);
     const positionPct = Math.max(-5, Math.min(105, ((refPrice - lowerBound) / span) * 100));
 
-    // Clear broken floor state if price is safely back at or above lowerBound (inside the channel)
-    if (this.waitingForHigherLow && refPrice >= lowerBound * 0.999) {
-      this.waitingForHigherLow = false;
-      this.breakdownFloorPrice = undefined;
-      this.breakdownTime = undefined;
-      this.breakdownLowPrice = undefined;
-      this.breakdownCandleTimes.clear();
-      this.saveState();
-    }
 
-    // Also clear broken floor state if price recovered above cutLossBound and the latest closed candle also closed >= cutLossBound
-    const lastClosedBarCheck = this.dowEngine?.getLastClosedCandle();
-    if (
-      this.waitingForHigherLow &&
-      refPrice >= cutLossBound &&
-      (!lastClosedBarCheck || lastClosedBarCheck.close >= cutLossBound)
-    ) {
-      this.waitingForHigherLow = false;
-      this.breakdownFloorPrice = undefined;
-      this.breakdownTime = undefined;
-      this.breakdownLowPrice = undefined;
-      this.breakdownCandleTimes.clear();
-      this.saveState();
-    }
 
     const isChannelReady = dow?.gridZone !== undefined && lowerBound > 0 && upperBound > lowerBound;
     const isBelowFloor = isChannelReady && (refPrice < cutLossBound || (this.waitingForHigherLow && this.breakdownFloorPrice !== undefined && refPrice < this.breakdownFloorPrice));

@@ -143,8 +143,13 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 - **Strict Closed-Candle Cut-Loss Confirmation (100% Closed Bar Close Price & Zero Wick Triggers)**:
   - **สาเหตุของปัญหาเดิม**: เดิมระบบนับแท่งเทียนที่หลุด Floor ผ่าน `breakdownCandleTimes.add(currentCandle.time)` โดย `currentCandle` คือแท่งปัจจุบันที่กำลังวิ่งอยู่ (ยังไม่ปิดแท่ง) ทำให้เมื่อราคาแลบไส้ (Wick) ลงไปแตะบัฟเฟอร์เพียง 1 วินาทีกลางแท่ง (เช่น นาทีที่ 18:16:04 ของแท่ง 18:15–18:30) บอทก็นับว่าครบ 1 แท่งทันทีและเทขาย Cut Loss ล้างพอร์ตกลางแท่งโดยที่แท่งเทียนยังไม่จบ
   - **ระบบยืนยันแท่งเทียนปิด 100% (`getClosedCandles`)**: ปรับปรุงให้การตรวจ Cut Loss ตรวจสอบเฉพาะแท่งเทียนที่ปิดสมบูรณ์แล้วเท่านั้น (`c.isClosed === true` หรือแท่งก่อนหน้าแท่งปัจจุบัน) โดยราคาปิดแท่ง (`c.close`) ต้องต่ำกว่า Cut-Loss Buffer จริง
-  - **Intra-Bar Wick Safety**: หากราคาวิ่งหลุดต่ำกว่า Floor ระหว่างแท่งที่ยังไม่ปิด บอทจะทำการยกเลิก/หยุดส่งคำสั่งซื้อใหม่ (เพื่อป้องกันการรับมีดตก) และขึ้นสถานะ `⏳ CUT LOSS PENDING CONFIRMATION: Waiting for confirmed CLOSED candle` แต่จะ **ยังไม่เทขาย Cut Loss เด็ดขาด** จนกว่าแท่งนั้นจะปิดสมบูรณ์
-  - **Reclaim Reset**: หากแท่งเทียนดีดกลับขึ้นมาปิดเหนือ Cut-Loss Buffer ได้ หรือราคากลับเข้าสู่กรอบ บอทจะรีเซ็ตสถานะหลุดกรอบทันที ถือว่าเป็นการสะบัดไส้ (Fakeout) และไม่เกิดการ Panic Sell
+  - **Strict Post-Cutloss Safeguards (Mandatory Higher Low or Explicit Optional Recovery)**:
+    - เมื่อเกิด Cut Loss / Floor หลุดกรอบ ระบบจะเปิดสถานะ `waitingForHigherLow = true` และระงับคำสั่งซื้อใหม่ (`canBuy = false`) อย่างเด็ดขาด
+    - **ลบเงื่อนไขแตะ Floor แล้วปลดล็อคทันที**: ยกเลิกตรรกะเดิมที่เคยปลดล็อคเพียงเพราะราคาดีดกลับมาแตะ Floor หรือ Cut-Loss Buffer เพื่อป้องกันปัญหาการเข้าช้อนซื้อทันที (Dead Cat Bounce)
+    - **เงื่อนไขปลดล็อคที่ได้รับอนุญาตเท่านั้น**:
+      1. **Confirmed Higher Low (HL) (บังคับเป็นแกนหลัก Mandatory Baseline)**: ราคาต้องสร้าง Swing Low Pivot ตัวใหม่ที่ยกสูงกว่าก้นเหว (`Lowest Dump`) และมีแท่งยืนยันตามทฤษฎี Dow Theory
+      2. **Trendline Breakout (กรณีเปิด `trendlineFilter`)**: ราคาต้องปิดแท่งทะลุเหนือเส้นกดขาลงอย่างน้อย 2 แท่งเทียน
+      3. **Buy Level 2 Recovery (กรณีเปิด `enableBuyLevel2Recovery`)**: ราคาต้องฟื้นตัวขึ้นมายืนเหนือ Buy Level 2 (30% Zone) ได้อย่างน้อย 1 แท่งเทียน
 - **4 Channel Modes (`CHANNEL_MODE`)**:
   - `DOW_ATR_CLAMP` (Default): Dow Theory swing pivots clamped to $2.5\times$ – $5.0\times$ ATR.
   - `FIXED_PCT_CLAMP`: Clamped between `MIN_CHANNEL_WIDTH_PCT` (1.8%) and `MAX_CHANNEL_WIDTH_PCT` (4.0%).
