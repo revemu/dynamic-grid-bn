@@ -580,7 +580,7 @@ export class DynamicGrid {
               const notionalUsdso = notionalQuote;
               const sideStr = isBid ? "BUY" : "SELL";
 
-              // Attempt to match with existing known grid levels by price (within 0.3%)
+              // Attempt to match with existing known grid levels by closest price (within 0.15%)
               let matchedLevelDesc: string | undefined;
               let matchedTargetFraction = 0;
               const currentBounds = this.lockedChannel || this.lastDynamicBounds;
@@ -588,24 +588,40 @@ export class DynamicGrid {
                 if (isBid && currentBounds.buyLevels) {
                   const buyNames = ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
                   const buyTargets = [0.25, 0.50, 0.75, 1.0];
+                  let bestBuyIdx = -1;
+                  let minBuyDiff = Infinity;
                   for (let i = 0; i < currentBounds.buyLevels.length; i++) {
                     const bPrice = currentBounds.buyLevels[i];
-                    if (bPrice && Math.abs(bPrice - price) / price <= 0.003) {
-                      matchedLevelDesc = buyNames[i] || `Buy Level ${i + 1}`;
-                      matchedTargetFraction = buyTargets[i] || 1.0;
-                      break;
+                    if (bPrice) {
+                      const diff = Math.abs(bPrice - price) / price;
+                      if (diff < minBuyDiff) {
+                        minBuyDiff = diff;
+                        bestBuyIdx = i;
+                      }
                     }
+                  }
+                  if (bestBuyIdx >= 0 && minBuyDiff <= 0.0015) {
+                    matchedLevelDesc = buyNames[bestBuyIdx] || `Buy Level ${bestBuyIdx + 1}`;
+                    matchedTargetFraction = buyTargets[bestBuyIdx] || 1.0;
                   }
                 } else if (!isBid && currentBounds.sellLevels) {
                   const sellNames = ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
                   const sellTargets = [0.75, 0.50, 0.25, 0.0];
+                  let bestSellIdx = -1;
+                  let minSellDiff = Infinity;
                   for (let i = 0; i < currentBounds.sellLevels.length; i++) {
                     const sPrice = currentBounds.sellLevels[i];
-                    if (sPrice && Math.abs(sPrice - price) / price <= 0.003) {
-                      matchedLevelDesc = sellNames[i] || `Sell Target ${i + 1}`;
-                      matchedTargetFraction = sellTargets[i] ?? 0.0;
-                      break;
+                    if (sPrice) {
+                      const diff = Math.abs(sPrice - price) / price;
+                      if (diff < minSellDiff) {
+                        minSellDiff = diff;
+                        bestSellIdx = i;
+                      }
                     }
+                  }
+                  if (bestSellIdx >= 0 && minSellDiff <= 0.0015) {
+                    matchedLevelDesc = sellNames[bestSellIdx] || `Sell Target ${bestSellIdx + 1}`;
+                    matchedTargetFraction = sellTargets[bestSellIdx] ?? 0.0;
                   }
                 }
               }
@@ -2964,20 +2980,34 @@ export class DynamicGrid {
 
       const buyTargets = [0.25, 0.50, 0.75, 1.0];
 
-      // Clean up stale resting buy orders whose level name is no longer in active buy levels
-      // (If order price matches an active buy level within 0.1%, re-link levelDesc instead of cancelling!)
+      // Clean up stale resting buy orders or correct mislabeled levelDesc to closest buyLevel
       const remainingStaleBuys: OpenOrder[] = [];
       for (const o of this.openOrders) {
-        if (!o.isBid || !o.levelDesc || effectiveLevelNames.includes(o.levelDesc)) {
-          continue;
+        if (!o.isBid) continue;
+
+        // Find the closest buy level by price
+        let closestIdx = -1;
+        let minDiff = Infinity;
+        for (let idx = 0; idx < effectiveBuyLevels.length; idx++) {
+          const lvl = effectiveBuyLevels[idx];
+          if (lvl) {
+            const diff = Math.abs(lvl - o.price) / o.price;
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestIdx = idx;
+            }
+          }
         }
-        const matchedLevelIdx = effectiveBuyLevels.findIndex((lvl) => lvl && Math.abs(lvl - o.price) / o.price <= 0.001);
-        if (matchedLevelIdx >= 0) {
-          const oldName = o.levelDesc;
-          o.levelDesc = effectiveLevelNames[matchedLevelIdx];
-          o.targetFraction = buyTargets[matchedLevelIdx] || 1.0;
-          this.log(`🔗 [sync] Re-linked resting BUY order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${o.price.toFixed(6)}`);
-        } else {
+
+        if (closestIdx >= 0 && minDiff <= 0.0015) {
+          const expectedName = effectiveLevelNames[closestIdx];
+          if (o.levelDesc !== expectedName) {
+            const oldName = o.levelDesc || "unlabeled";
+            o.levelDesc = expectedName;
+            o.targetFraction = buyTargets[closestIdx] || 1.0;
+            this.log(`🔗 [sync] Re-linked resting BUY order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${o.price.toFixed(6)}`);
+          }
+        } else if (!o.levelDesc || !effectiveLevelNames.includes(o.levelDesc)) {
           remainingStaleBuys.push(o);
         }
       }
@@ -3517,20 +3547,34 @@ export class DynamicGrid {
       // ── Standard Sell Order Logic (no active trendline) ────────────────────────
       const sellHoldingTargets = [0.75, 0.50, 0.25, 0.0];
 
-      // Clean up stale resting sell orders whose level name is no longer in active sell targets
-      // (If order price matches an active sell level within 0.1%, re-link levelDesc instead of cancelling!)
+      // Clean up stale resting sell orders or correct mislabeled levelDesc to closest sellLevel
       const remainingStaleSells: OpenOrder[] = [];
       for (const o of this.openOrders) {
-        if (o.isBid || !o.levelDesc || sellNames.includes(o.levelDesc)) {
-          continue;
+        if (o.isBid) continue;
+
+        // Find the closest sell level by price
+        let closestIdx = -1;
+        let minDiff = Infinity;
+        for (let idx = 0; idx < sellLevels.length; idx++) {
+          const lvl = sellLevels[idx];
+          if (lvl) {
+            const diff = Math.abs(lvl - o.price) / o.price;
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestIdx = idx;
+            }
+          }
         }
-        const matchedLevelIdx = sellLevels.findIndex((lvl) => lvl && Math.abs(lvl - o.price) / o.price <= 0.001);
-        if (matchedLevelIdx >= 0) {
-          const oldName = o.levelDesc;
-          o.levelDesc = sellNames[matchedLevelIdx];
-          o.targetFraction = sellHoldingTargets[matchedLevelIdx] ?? 0.0;
-          this.log(`🔗 [sync] Re-linked resting SELL order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${o.price.toFixed(6)}`);
-        } else {
+
+        if (closestIdx >= 0 && minDiff <= 0.0015) {
+          const expectedName = sellNames[closestIdx];
+          if (o.levelDesc !== expectedName) {
+            const oldName = o.levelDesc || "unlabeled";
+            o.levelDesc = expectedName;
+            o.targetFraction = sellHoldingTargets[closestIdx] ?? 0.0;
+            this.log(`🔗 [sync] Re-linked resting SELL order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${o.price.toFixed(6)}`);
+          }
+        } else if (!o.levelDesc || !sellNames.includes(o.levelDesc)) {
           remainingStaleSells.push(o);
         }
       }

@@ -1009,41 +1009,65 @@
 
     // 3. Match each resting order strictly to its corresponding grid zone
     const openOrders = data.openOrders || [];
-    openOrders.forEach((order) => {
+    const usedSteps = new Set();
+
+    // Sort orders: prioritize orders with known target names first
+    const sortedOrders = [...openOrders].sort((a, b) => {
+      const aHas = Boolean(a.levelDesc && (a.levelDesc.includes("Sell Target") || a.levelDesc.includes("Buy Level")));
+      const bHas = Boolean(b.levelDesc && (b.levelDesc.includes("Sell Target") || b.levelDesc.includes("Buy Level")));
+      return (bHas ? 1 : 0) - (aHas ? 1 : 0);
+    });
+
+    sortedOrders.forEach((order) => {
       if (!order || !order.price) return;
 
       let matchedStep = null;
       const desc = (order.levelDesc || "").toLowerCase();
+      const isBid = order.isBid;
 
-      // Check levelDesc first for exact target matching
-      if (desc.includes("buy level 1") || desc.includes("40%")) matchedStep = ladderSteps.find((s) => s.pct === 40);
-      else if (desc.includes("buy level 2") || desc.includes("30%")) matchedStep = ladderSteps.find((s) => s.pct === 30);
-      else if (desc.includes("buy level 3") || desc.includes("20%")) matchedStep = ladderSteps.find((s) => s.pct === 20);
-      else if (desc.includes("buy level 4") || desc.includes("10%")) matchedStep = ladderSteps.find((s) => s.pct === 10);
-      else if (desc.includes("sell target 1") || desc.includes("60%")) matchedStep = ladderSteps.find((s) => s.pct === 60);
-      else if (desc.includes("sell target 2") || desc.includes("70%")) matchedStep = ladderSteps.find((s) => s.pct === 70);
-      else if (desc.includes("sell target 3") || desc.includes("80%")) matchedStep = ladderSteps.find((s) => s.pct === 80);
-      else if (desc.includes("sell target 4") || desc.includes("90%")) matchedStep = ladderSteps.find((s) => s.pct === 90);
+      // Available candidate steps on the corresponding side
+      const candidateSteps = ladderSteps.filter((s) => {
+        if (usedSteps.has(s)) return false;
+        if (isBid) return s.pct >= 10 && s.pct <= 40;
+        return s.pct >= 60 && s.pct <= 90;
+      });
 
-      // Fallback to nearest price step within half grid spacing
-      if (!matchedStep) {
-        let minDiff = Infinity;
-        ladderSteps.forEach((step) => {
-          if (!step.el) return;
-          const diff = Math.abs(step.price - order.price);
-          if (diff < minDiff) {
-            minDiff = diff;
-            matchedStep = step;
+      // 1. Try matching by levelDesc
+      if (desc.includes("buy level 1") || desc.includes("40%")) matchedStep = candidateSteps.find((s) => s.pct === 40);
+      else if (desc.includes("buy level 2") || desc.includes("30%")) matchedStep = candidateSteps.find((s) => s.pct === 30);
+      else if (desc.includes("buy level 3") || desc.includes("20%")) matchedStep = candidateSteps.find((s) => s.pct === 20);
+      else if (desc.includes("buy level 4") || desc.includes("10%")) matchedStep = candidateSteps.find((s) => s.pct === 10);
+      else if (desc.includes("sell target 1") || desc.includes("60%")) matchedStep = candidateSteps.find((s) => s.pct === 60);
+      else if (desc.includes("sell target 2") || desc.includes("70%")) matchedStep = candidateSteps.find((s) => s.pct === 70);
+      else if (desc.includes("sell target 3") || desc.includes("80%")) matchedStep = candidateSteps.find((s) => s.pct === 80);
+      else if (desc.includes("sell target 4") || desc.includes("90%")) matchedStep = candidateSteps.find((s) => s.pct === 90);
+
+      // 2. Find closest step by price among unused candidate steps
+      let closestStep = null;
+      let minDiff = Infinity;
+      candidateSteps.forEach((step) => {
+        const diff = Math.abs(step.price - order.price);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestStep = step;
+        }
+      });
+
+      // Price verification: if price is much closer to another step than matchedStep (or no matchedStep), use closestStep
+      if (closestStep) {
+        if (!matchedStep) {
+          if (minDiff < span * 0.08) matchedStep = closestStep;
+        } else {
+          const matchedDiff = Math.abs(matchedStep.price - order.price);
+          if (minDiff < matchedDiff * 0.4) {
+            matchedStep = closestStep;
           }
-        });
-        if (minDiff >= span * 0.055) {
-          matchedStep = null;
         }
       }
 
       // If zone has an active resting order, update price & badge
       if (matchedStep && matchedStep.el) {
-        const isBid = order.isBid;
+        usedSteps.add(matchedStep);
         matchedStep.el.classList.add(isBid ? "has-resting-buy" : "has-resting-sell");
         if (matchedStep.priceEl) matchedStep.priceEl.textContent = order.price.toFixed(6);
 
