@@ -93,7 +93,7 @@ export class BinanceAtrFeed implements AtrSource {
 
         if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
           this.latestPrice = close;
-          const candle: Candle = { time, open, high, low, close };
+          const candle: Candle = { time, open, high, low, close, isClosed: true };
           this.onClosedBar(high, low, close);
           for (const listener of this.candleListeners) {
             listener(candle, true);
@@ -141,7 +141,7 @@ export class BinanceAtrFeed implements AtrSource {
 
       if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
         this.latestPrice = close;
-        const candle: Candle = { time, open, high, low, close };
+        const candle: Candle = { time, open, high, low, close, isClosed };
         for (const listener of this.candleListeners) {
           listener(candle, isClosed);
         }

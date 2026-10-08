@@ -1583,6 +1583,21 @@ export class DynamicGrid {
       this.saveState();
     }
 
+    // Also clear broken floor state if price recovered above cutLossBound and the latest closed candle also closed >= cutLossBound
+    const lastClosedBarCheck = this.dowEngine?.getLastClosedCandle();
+    if (
+      this.waitingForHigherLow &&
+      refPrice >= cutLossBound &&
+      (!lastClosedBarCheck || lastClosedBarCheck.close >= cutLossBound)
+    ) {
+      this.waitingForHigherLow = false;
+      this.breakdownFloorPrice = undefined;
+      this.breakdownTime = undefined;
+      this.breakdownLowPrice = undefined;
+      this.breakdownCandleTimes.clear();
+      this.saveState();
+    }
+
     const isChannelReady = dow?.gridZone !== undefined && lowerBound > 0 && upperBound > lowerBound;
     const isBelowFloor = isChannelReady && (refPrice < cutLossBound || (this.waitingForHigherLow && this.breakdownFloorPrice !== undefined && refPrice < this.breakdownFloorPrice));
     const isAboveCeiling = isChannelReady && refPrice >= upperBound;
@@ -1667,12 +1682,19 @@ export class DynamicGrid {
       this.breakdownTime = this.breakdownTime ?? Math.floor(Date.now() / 1000);
       this.breakdownLowPrice = this.breakdownLowPrice !== undefined ? Math.min(this.breakdownLowPrice, refPrice) : refPrice;
 
-      // Track candle timestamps below floor (from candles feed or 5-min intervals)
-      const candles = this.dowEngine?.getCandles() ?? [];
-      const currentCandle = candles.length > 0 ? candles[candles.length - 1] : undefined;
-      const candleKey = currentCandle ? currentCandle.time : Math.floor(Date.now() / (5 * 60 * 1000));
-      this.breakdownCandleTimes.add(candleKey);
-      const confirmedCandlesCount = this.breakdownCandleTimes.size;
+      // Track confirmed CLOSED candle bars whose CLOSE price is strictly below Cut-Loss Buffer
+      // Intra-bar wicks (unclosed live candles) DO NOT count towards cut-loss confirmation.
+      const closedCandles = this.dowEngine?.getClosedCandles() ?? [];
+      let confirmedCandlesCount = 0;
+      this.breakdownCandleTimes.clear();
+      for (let i = closedCandles.length - 1; i >= 0; i--) {
+        if (closedCandles[i].close < cutLossBound) {
+          confirmedCandlesCount++;
+          this.breakdownCandleTimes.add(closedCandles[i].time);
+        } else {
+          break; // unbroken streak of closed candles below buffer
+        }
+      }
 
       if (!this.isPaused && this.lots.length > 0) {
         const dexBid = bestBid ?? effectiveMid;
@@ -1689,11 +1711,13 @@ export class DynamicGrid {
           );
         } else if (confirmedCandlesCount < requiredCutLossCandles) {
           this.status(
-            `⏳ CUT LOSS PENDING CONFIRMATION: Price $${refPrice.toFixed(6)} broke below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — waiting for ${requiredCutLossCandles} confirmed candle(s) (Current: ${confirmedCandlesCount}/${requiredCutLossCandles} bars below floor)`,
+            `⏳ CUT LOSS PENDING CONFIRMATION: Price $${refPrice.toFixed(6)} broke below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — waiting for ${requiredCutLossCandles} confirmed CLOSED candle(s) (Current: ${confirmedCandlesCount}/${requiredCutLossCandles} closed bar${requiredCutLossCandles > 1 ? "s" : ""} with close < buffer)`,
           );
         } else {
+          const lastClosed = closedCandles[closedCandles.length - 1];
+          const lastClosedStr = lastClosed ? `Last Closed Bar: $${lastClosed.close.toFixed(6)} | ` : "";
           this.log(
-            `🚨 CUT LOSS TRIGGERED (${requiredCutLossCandles} CANDLE${requiredCutLossCandles > 1 ? "S" : ""} CONFIRMED): Binance Price $${refPrice.toFixed(6)} (DEX Bid: $${dexBid.toFixed(6)} | Dislocation: ${bidDiscountPct >= 0 ? `-${bidDiscountPct.toFixed(2)}%` : `+${Math.abs(bidDiscountPct).toFixed(2)}%`}) confirmed ${confirmedCandlesCount} bar(s) below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — cancelling all resting orders & executing clean exit`,
+            `🚨 CUT LOSS TRIGGERED (${requiredCutLossCandles} CLOSED CANDLE${requiredCutLossCandles > 1 ? "S" : ""} CONFIRMED): ${lastClosedStr}Binance Price $${refPrice.toFixed(6)} (DEX Bid: $${dexBid.toFixed(6)} | Dislocation: ${bidDiscountPct >= 0 ? `-${bidDiscountPct.toFixed(2)}%` : `+${Math.abs(bidDiscountPct).toFixed(2)}%`}) confirmed ${confirmedCandlesCount} closed bar(s) below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — cancelling all resting orders & executing clean exit`,
           );
           await this.cancelAllRestingOrders();
           await this.sellAll(dexBid, "CUT");
@@ -1979,9 +2003,9 @@ export class DynamicGrid {
         const requiredCandles = this.cfg.cutLossConfirmCandles ?? 1;
         botActionState = {
           code: "BELOW_FLOOR_CUTLOSS",
-          title: candlesCount < requiredCandles ? "⏳ Cut Loss Confirming" : "🚨 Cut Loss Triggered",
+          title: candlesCount < requiredCandles ? "⏳ Cut Loss Confirming (Waiting Closed Bar)" : "🚨 Cut Loss Triggered",
           reason: `Price < 0% Floor ($${lowerBound.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
-          nextTrigger: `Liquidating to ${this.quoteAsset} / Waiting Confirmation (${candlesCount}/${requiredCandles} bar${requiredCandles > 1 ? "s" : ""})`,
+          nextTrigger: `Liquidating to ${this.quoteAsset} / Waiting Closed Bar (${candlesCount}/${requiredCandles} bar${requiredCandles > 1 ? "s" : ""})`,
           severity: "alert",
         };
       } else {

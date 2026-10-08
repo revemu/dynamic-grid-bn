@@ -71,6 +71,7 @@ export class VolatilityEngine {
       high: this.current.high,
       low: this.current.low,
       close: this.current.close,
+      isClosed,
     };
     for (const listener of this.candleListeners) {
       listener(candle, isClosed);

@@ -130,6 +130,11 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 - **Smart Order Level Re-linking (Zero Cancel-Replace at Identical Price)**:
   - แก้ไขปัญหาบอทยกเลิกออเดอร์เดิมแล้วสร้างใหม่ที่ราคาเท่าเดิม (เช่น ยกเลิก `SELL Order #...` แล้วสร้าง `Sell Target 1` ที่ราคาเดิม)
   - ทั้งในระบบ Reconcile (`reconcileActiveOrders`) และ Stale Orders Cleanup (`staleSells` / `staleBuys`): หากพบออเดอร์ที่มีราคาตรงกับระดับเป้าหมายของกรอบปัจจุบัน ($\le 0.1\%$) ระบบจะทำการ **Re-link / Rename `levelDesc`** ให้ตรงกับชื่อระดับนั้นทันที แทนการสั่ง Cancel ทิ้งแล้วตั้งใหม่ ช่วยให้ออเดอร์ Maker เดิมค้างอยู่บน Order Book อย่างต่อเนื่อง 100%
+- **Strict Closed-Candle Cut-Loss Confirmation (100% Closed Bar Close Price & Zero Wick Triggers)**:
+  - **สาเหตุของปัญหาเดิม**: เดิมระบบนับแท่งเทียนที่หลุด Floor ผ่าน `breakdownCandleTimes.add(currentCandle.time)` โดย `currentCandle` คือแท่งปัจจุบันที่กำลังวิ่งอยู่ (ยังไม่ปิดแท่ง) ทำให้เมื่อราคาแลบไส้ (Wick) ลงไปแตะบัฟเฟอร์เพียง 1 วินาทีกลางแท่ง (เช่น นาทีที่ 18:16:04 ของแท่ง 18:15–18:30) บอทก็นับว่าครบ 1 แท่งทันทีและเทขาย Cut Loss ล้างพอร์ตกลางแท่งโดยที่แท่งเทียนยังไม่จบ
+  - **ระบบยืนยันแท่งเทียนปิด 100% (`getClosedCandles`)**: ปรับปรุงให้การตรวจ Cut Loss ตรวจสอบเฉพาะแท่งเทียนที่ปิดสมบูรณ์แล้วเท่านั้น (`c.isClosed === true` หรือแท่งก่อนหน้าแท่งปัจจุบัน) โดยราคาปิดแท่ง (`c.close`) ต้องต่ำกว่า Cut-Loss Buffer จริง
+  - **Intra-Bar Wick Safety**: หากราคาวิ่งหลุดต่ำกว่า Floor ระหว่างแท่งที่ยังไม่ปิด บอทจะทำการยกเลิก/หยุดส่งคำสั่งซื้อใหม่ (เพื่อป้องกันการรับมีดตก) และขึ้นสถานะ `⏳ CUT LOSS PENDING CONFIRMATION: Waiting for confirmed CLOSED candle` แต่จะ **ยังไม่เทขาย Cut Loss เด็ดขาด** จนกว่าแท่งนั้นจะปิดสมบูรณ์
+  - **Reclaim Reset**: หากแท่งเทียนดีดกลับขึ้นมาปิดเหนือ Cut-Loss Buffer ได้ หรือราคากลับเข้าสู่กรอบ บอทจะรีเซ็ตสถานะหลุดกรอบทันที ถือว่าเป็นการสะบัดไส้ (Fakeout) และไม่เกิดการ Panic Sell
 - **4 Channel Modes (`CHANNEL_MODE`)**:
   - `DOW_ATR_CLAMP` (Default): Dow Theory swing pivots clamped to $2.5\times$ – $5.0\times$ ATR.
   - `FIXED_PCT_CLAMP`: Clamped between `MIN_CHANNEL_WIDTH_PCT` (1.8%) and `MAX_CHANNEL_WIDTH_PCT` (4.0%).

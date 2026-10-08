@@ -14,6 +14,7 @@ export interface Candle {
   high: number;
   low: number;
   close: number;
+  isClosed?: boolean;
 }
 
 export type MarketRegime = "RANGE" | "UPTREND" | "DOWNTREND" | "WARMUP";
@@ -261,6 +262,9 @@ export class DowStructureEngine {
     if (idx >= 0) {
       this.candles[idx] = candle;
     } else {
+      if (this.candles.length > 0) {
+        this.candles[this.candles.length - 1].isClosed = true;
+      }
       this.candles.push(candle);
       this.candles.sort((a, b) => a.time - b.time);
     }
@@ -274,6 +278,20 @@ export class DowStructureEngine {
 
   getCandles(): Candle[] {
     return this.candles;
+  }
+
+  getClosedCandles(): Candle[] {
+    if (this.candles.length === 0) return [];
+    const last = this.candles[this.candles.length - 1];
+    if (last.isClosed === true) {
+      return this.candles;
+    }
+    return this.candles.slice(0, -1);
+  }
+
+  getLastClosedCandle(): Candle | undefined {
+    const closed = this.getClosedCandles();
+    return closed.length > 0 ? closed[closed.length - 1] : undefined;
   }
 
   getSwingLows(): SwingPoint[] {
@@ -2569,15 +2587,18 @@ export class DowStructureEngine {
           candleMap.set(c.time, c);
         }
       }
+      const nowSec = Math.floor(Date.now() / 1000);
       for (const k of rawKlines) {
         const time = Math.floor(Number(k[0]) / 1000);
+        const closeTime = Math.floor(Number(k[6]) / 1000);
         const open = Number(k[1]);
         const high = Number(k[2]);
         const low = Number(k[3]);
         const close = Number(k[4]);
 
         if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
-          candleMap.set(time, { time, open, high, low, close });
+          const isClosed = closeTime <= nowSec;
+          candleMap.set(time, { time, open, high, low, close, isClosed });
         }
       }
       this.candles = Array.from(candleMap.values()).sort((a, b) => a.time - b.time);
