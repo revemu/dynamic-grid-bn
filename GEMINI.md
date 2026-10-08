@@ -216,6 +216,18 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - ถือ $20+: แบ่งขายเต็ม **4 ไม้ (25% ละ $5+)** ครบทุก Target
   - **Adaptive Buy Budget Expansion**:
     - ในฝั่งซื้อ IOC หาก `toSpendQuote < minNotional` แต่ Wallet และ Max Inventory มีความจุเพียงพอ บอทจะปรับขยายงบซื้อขึ้นมาเป็น `$5.0` อัตโนมัติ เพื่อให้สามารถเปิดออเดอร์สะสมเหรียญได้ตามเกณฑ์ขั้นต่ำของ Binance
+- **Binance ETH 4-Decimal Precision (`stepSize = 0.0001`) & 0% Fee FDUSD Integration**:
+  - **Single Source of Truth Configuration**: การตั้งค่าทั้งหมดอ่านและบันทึกผ่าน JSON Database (`data/grid-bot.db.json`) เท่านั้น ไม่ใช้ `.env`
+  - **ETH 4-Decimal Precision Enforcement**:
+    - บน Binance คู่เทรด ETH มี `stepSize = 0.0001` (อนุญาตทศนิยม 4 ตำแหน่งเท่านั้น)
+    - ทุกคำสั่งซื้อและขาย (`placeRestingOrder`, `buyTrancheIOC`, `sellTrancheIOC`, `sellAll`) ปัดเศษลงตาม `roundToStep(qty, this.stepSize, 4)` เสมอ 100% ป้องกันการ Reject จากกระดาน
+  - **Zero Maker Fee on FDUSD (`ETHFDUSD`)**:
+    - Binance มีสิทธิประโยชน์ **0% Maker Fee** สำหรับคู่เทรด FDUSD
+    - ในโหมด `MAKER_LIMIT` บนคู่ FDUSD ค่าธรรมเนียม Spot จะถูกคำนวณเป็น `0.0%` ทำให้เหรียญ ETH ที่ได้จากการซื้อเป็น 4 ตำแหน่งเต็มเม็ดเต็มหน่วย ไม่ถูกหักเหรียญเป็นเศษทศนิยม
+    - หากเป็นโหมด Taker หรือคู่เทรดอื่น (เช่น USDT): บันทึกหัก Fee สุทธิ 0.075% ลงใน Lot ทันที
+  - **Dust Purge & Residual Balance Reconcile**:
+    - **เมื่อขายไม้สุดท้าย (100% Exit)**: สั่งขายจำนวนสูงสุดที่ทำได้ 4 ตำแหน่ง และหากมีเศษเหรียญต่ำกว่า `minQty` (0.0001 ETH) ตกค้างใน Lots จะทำการเคลียร์ `lots = []` และปลดล็อก Channel ทันที เพื่อไม่ให้สถานะบอทค้าง
+    - **เศษสะสมในกระเป๋า**: เศษเหรียญในกระเป๋าจริงที่ต่ำกว่า 0.0001 ETH จะไม่ถูกส่งไปขายดื้อๆ แต่จะถูกสะสมไว้ในกระเป๋า เมื่อสะสมจนครบ `0.0001 ETH` ระบบ `reconcileInventory` จะตรวจพบและดึงกลับมารวมขายทำกำไรในรอบถัดไปอัตโนมัติ
 - **4-Level Equal Sell Tranches & Anti-Churn Rule**:
   - **4 Equal Tranches (25% each)**: Total held inventory is divided equally across the 4 sell targets (`held / 4`). If Level 1's grid price is below best bid, it is floated to the minimum valid Maker ask (`max(lvlPrice, currentBestAsk, refPrice * 1.0005)`) so Target 1 is NEVER skipped or abandoned. Eliminates dumping a 50% remainder on Target 4.
 - **Immediate-Or-Cancel (IOC) Take-Profit on Exceeded Sell Levels (`ENABLE_IOC_SELL_WHEN_EXCEEDED`)**:

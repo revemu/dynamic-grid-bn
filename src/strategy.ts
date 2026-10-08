@@ -606,23 +606,26 @@ export class DynamicGrid {
       // 1. Auto-compensate from lots: smoothly clamp lots to available trading capacity
       if (memoryHeld > maxAllowedTradingBase && maxAllowedTradingBase >= 0) {
         const diff = memoryHeld - maxAllowedTradingBase;
-        if (diff > 0.0001) {
+        if (diff > (this.minQty || 0.0001)) {
           this.clampLotsTo(maxAllowedTradingBase);
           this.saveState();
         }
-      } else if (maxAllowedTradingBase > memoryHeld + 1.0) {
+      } else if (maxAllowedTradingBase > memoryHeld + Math.max(this.minQty || 0.0001, 0.0001)) {
         // 2. Adopt Unallocated Trading Inventory: If physical trading capacity exceeds memory lots, adopt difference into lots
-        const unallocatedQty = maxAllowedTradingBase - memoryHeld;
-        const adoptPrice = this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : 0.21);
-        this.log(
-          `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} ${this.baseAsset} > memory ${memoryHeld.toFixed(4)} ${this.baseAsset}). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
-        );
-        this.lots.push({
-          price: adoptPrice,
-          qty: unallocatedQty,
-          time: Date.now(),
-        });
-        this.saveState();
+        const rawUnallocated = maxAllowedTradingBase - memoryHeld;
+        const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || 0.0001, 4);
+        if (unallocatedQty >= this.minQty) {
+          const adoptPrice = this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : 0.21);
+          this.log(
+            `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} ${this.baseAsset} > memory ${memoryHeld.toFixed(4)} ${this.baseAsset}). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
+          );
+          this.lots.push({
+            price: adoptPrice,
+            qty: unallocatedQty,
+            time: Date.now(),
+          });
+          this.saveState();
+        }
       }
 
       // 3. Guard against Excess Resting Sells: If resting sell orders exceed allowed trading base, cancel sell orders to refund balance to wallet
@@ -2534,7 +2537,14 @@ export class DynamicGrid {
     const fillNotional = price * qty;
     const now = Date.now();
 
-    // ── Instant Gas/Fee Compensation ───────────────
+    // ── Instant Gas/Fee Compensation & Binance Spot Trading Fee ───────────────
+    // On Binance Spot:
+    // If quote is FDUSD and Maker order: 0.0% fee
+    // Otherwise standard taker/maker spot fee (default 0.075% with BNB or 0.1% without)
+    const isZeroFeeMaker = this.quoteAsset.toUpperCase() === "FDUSD" && !isIoc;
+    const spotFeeRate = isZeroFeeMaker ? 0.0 : (this.cfg.dryRun ? 0.0 : 0.00075);
+    const spotTradingFeeBase = qty * spotFeeRate;
+
     let compBase = 0;
     let gasLossQuote = 0;
     const uncompensatedGas = Math.max(this.accumulatedGasBase, this.totalGasSpentBase - this.totalGasDeductedBase);
@@ -2550,12 +2560,19 @@ export class DynamicGrid {
         this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
       }
     }
-    const netQty = qty - compBase;
+    const rawNetQty = Math.max(0, qty - compBase - spotTradingFeeBase);
+    // Align lot qty with exchange stepSize and precision (4 decimals for ETH)
+    const netQty = roundToStep(rawNetQty, this.stepSize || 0.0001, 4);
     this.lots.push({ price, qty: netQty, time: now });
     this.needsSellRebalance = true;
 
+    const feeLog = spotTradingFeeBase > 0
+      ? ` | 🏷️ Spot Fee: ${spotTradingFeeBase.toFixed(6)} ${this.baseAsset}`
+      : isZeroFeeMaker
+      ? " | 🎁 0% Maker Fee (FDUSD)"
+      : "";
     const gasCompLog = compBase > 0
-      ? ` | ⛽ Fee Compensated: ${compBase.toFixed(4)} ${this.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet (Net Lot: ${netQty.toFixed(4)} ${this.baseAsset})`
+      ? ` | ⛽ Fee Compensated: ${compBase.toFixed(4)} ${this.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet`
       : "";
     const fillLabel = isIoc ? "IOC BUY FILLED" : "MAKER BUY FILLED";
     this.log(
@@ -3566,6 +3583,14 @@ export class DynamicGrid {
       }
     }
 
+    // Strictly round order quantity to exchange stepSize and precision (4 decimal places for ETH)
+    qty = roundToStep(qty, this.stepSize || 0.0001, 4);
+    if (qty < this.minQty) {
+      return;
+    }
+    notionalQuote = qty * price;
+    notionalUsdso = notionalQuote;
+
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     if (notionalQuote < minNotional) {
       this.log(
@@ -3987,7 +4012,10 @@ export class DynamicGrid {
     if (held < this.minQty || qty < this.minQty) {
       return false;
     }
-    const executeQty = Math.min(held, qty);
+    const executeQty = roundToStep(Math.min(held, qty), this.stepSize || 0.0001, 4);
+    if (executeQty < this.minQty) {
+      return false;
+    }
     const now = Date.now();
     // In IOC sell: price must NEVER be below targetPrice (Sell Level)
     const effectivePrice = Math.max(execPrice, targetPrice);
@@ -4046,7 +4074,7 @@ export class DynamicGrid {
       return false;
     }
 
-    const finalQty = Math.min(executeQty, availableBase);
+    const finalQty = roundToStep(Math.min(executeQty, availableBase), this.stepSize || 0.0001, 4);
     if (finalQty < this.minQty) return false;
 
     try {
@@ -4130,7 +4158,9 @@ export class DynamicGrid {
     const effectivePrice = Math.min(execPrice, targetPrice);
 
     if (this.cfg.dryRun) {
-      const buyQty = notionalQuote / effectivePrice;
+      const rawBuyQty = notionalQuote / effectivePrice;
+      const buyQty = roundToStep(rawBuyQty, this.stepSize || 0.0001, 4);
+      if (buyQty < this.minQty) return false;
       this.processBuyFill({
         price: effectivePrice,
         qty: buyQty,
@@ -4148,7 +4178,8 @@ export class DynamicGrid {
     await this.refreshWalletBalances();
 
     const availableBudgetQuote = Math.min(notionalQuote, this.walletQuoteBalance);
-    const finalQty = availableBudgetQuote / effectivePrice;
+    const rawFinalQty = availableBudgetQuote / effectivePrice;
+    const finalQty = roundToStep(rawFinalQty, this.stepSize || 0.0001, 4);
     if (finalQty < this.minQty) {
       this.log(`⚠️ [IOC BUY] Insufficient ${this.quoteAsset} balance ($${this.walletQuoteBalance.toFixed(2)} < $${notionalQuote.toFixed(2)})`);
       return false;
@@ -4261,14 +4292,18 @@ export class DynamicGrid {
     }
 
     // Liquidate all trading inventory: sell all physical trading base asset available above gas reserve
-    const executeQty = Math.min(held, availableBase);
+    const rawExecuteQty = Math.min(held, availableBase);
+    const executeQty = roundToStep(rawExecuteQty, this.stepSize || 0.0001, 4);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const orderNotional = executeQty * price;
 
-    if (orderNotional < minNotional) {
+    if (executeQty < this.minQty || orderNotional < minNotional) {
       this.log(
-        `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Order value $${orderNotional.toFixed(2)} is below Binance minimum ($${minNotional.toFixed(2)}).`,
+        `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Order quantity ${executeQty.toFixed(4)} or value $${orderNotional.toFixed(2)} is below Binance minimum.`,
       );
+      this.lots = [];
+      this.lockedChannel = undefined;
+      this.saveState();
       return;
     }
 
@@ -4355,7 +4390,9 @@ export class DynamicGrid {
       remaining -= take;
       if (lot.qty <= 1e-12) this.lots.shift();
     }
-    if (this.baseHeld() < 1e-6) {
+    // If remaining inventory is less than minQty (e.g. 0.0001 ETH) or 1e-5, treat position as completely flat/closed
+    const dustThreshold = Math.max(this.minQty || 0.0001, 0.0001);
+    if (this.baseHeld() < dustThreshold) {
       this.lots = [];
       this.lockedChannel = undefined;
     }
