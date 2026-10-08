@@ -3566,6 +3566,15 @@ export class DynamicGrid {
       }
     }
 
+    const minNotional = Math.max(this.minNotional || 5.0, 5.0);
+    if (notionalQuote < minNotional) {
+      this.log(
+        `⚠️ [MIN NOTIONAL GUARD] Skipping ${sideStr} order placement @ $${price.toFixed(6)}: Order notional $${notionalQuote.toFixed(2)} is below minimum requirement ($${minNotional.toFixed(2)}).`,
+      );
+      this.orderCooldowns.set(orderKey, now + 15000);
+      return;
+    }
+
     // Acquire in-flight lock for this order level
     this.inFlightOrders.add(orderKey);
 
@@ -3816,9 +3825,18 @@ export class DynamicGrid {
           // 10s cooldown per level, 3s global debounce
           if (now - lastBuyTime > 10_000 && now - globalBuyCooldown > 3_000) {
             const availableWalletQuote = this.cfg.dryRun ? maxInv : this.walletQuoteBalance;
-            const toSpendQuote = Math.min(deficitQuote, Math.max(0, maxInv - currentHeldQuote), availableWalletQuote);
+            let toSpendQuote = Math.min(deficitQuote, Math.max(0, maxInv - currentHeldQuote), availableWalletQuote);
+            const minNotional = Math.max(this.minNotional || 5.0, 5.0);
 
-            if (toSpendQuote >= (this.minQty * currentBestAsk)) {
+            // If toSpendQuote is below minNotional, try to expand to minNotional if wallet & maxInv headroom allow
+            if (toSpendQuote < minNotional) {
+              const maxPossibleSpend = Math.min(Math.max(0, maxInv - currentHeldQuote), availableWalletQuote);
+              if (maxPossibleSpend >= minNotional) {
+                toSpendQuote = minNotional;
+              }
+            }
+
+            if (toSpendQuote >= minNotional && toSpendQuote >= (this.minQty * currentBestAsk)) {
               this.orderCooldowns.set(cooldownKey, now);
               this.orderCooldowns.set("ioc_bracket_buy_global", now);
 
@@ -3841,65 +3859,100 @@ export class DynamicGrid {
       }
     }
 
-    // ── SELL SIDE (IOC Distribution with Tranche Aggregation) ─────────────────
+    // ── SELL SIDE (Adaptive IOC Distribution with Dynamic Tranches & minNotional) ──
     const minReserveBase = this.getEffectiveGasReserveBase();
     const availableTradingBase = Math.max(0, this.walletBaseBalance - minReserveBase);
     const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableTradingBase);
+    const minNotional = Math.max(this.minNotional || 5.0, 5.0);
+    const totalHeldQuote = held * currentBestBid;
 
-    if (this.sellOrdersActive && held >= this.minQty && currentHeldQuote >= 0.50 && currentBestBid > 0) {
-      // Determine which sell band the market bid has reached
-      // Target 1: currentBestBid >= sellLevels[0] (60%) -> Target remaining fraction = 0.75 (sell 25%)
-      // Target 2: currentBestBid >= sellLevels[1] (70%) -> Target remaining fraction = 0.50 (sell 50%)
-      // Target 3: currentBestBid >= sellLevels[2] (80%) -> Target remaining fraction = 0.25 (sell 75%)
-      // Target 4: currentBestBid >= sellLevels[3] (90%) -> Target remaining fraction = 0.00 (sell 100%)
-      let targetRemainingFraction = 1.0;
-      let matchedSellIndex = -1;
+    if (this.sellOrdersActive && held >= this.minQty && totalHeldQuote >= minNotional && currentBestBid > 0) {
+      // 1. Dynamic Sell Tranches Calculation:
+      // Starting from 4 tranches down to 1: ensure each tranche satisfies minNotional ($5.0)
+      // e.g.:
+      // If holding $12: 4 ($3 < 5) -> 3 ($4 < 5) -> 2 ($6 >= 5) -> 2 tranches ($6 each)
+      // If holding $8:  4 -> 3 -> 2 -> 1 ($8 >= 5) -> 1 single tranche (100% exit)
+      // If holding $16: 4 ($4 < 5) -> 3 ($5.33 >= 5) -> 3 tranches ($5.33 each)
+      // If holding $20+: 4 tranches ($5+ each)
+      let numSellTranches = 4;
+      while (numSellTranches > 1 && (totalHeldQuote / numSellTranches) < minNotional) {
+        numSellTranches--;
+      }
 
-      for (let i = 0; i < sellLevels.length; i++) {
-        const lvlPrice = sellLevels[i];
+      // 2. Map number of active sell tranches to target remaining inventory fractions
+      // Each tranche corresponds to a step index (0 to numSellTranches - 1)
+      // For 1 tranche:  Target 1 -> remaining 0.0 (100% full exit)
+      // For 2 tranches: Target 1 -> remaining 0.50, Target 4 -> remaining 0.0
+      // For 3 tranches: Target 1 -> remaining 0.67, Target 2 -> remaining 0.33, Target 4 -> remaining 0.0
+      // For 4 tranches: Target 1 -> remaining 0.75, Target 2 -> remaining 0.50, Target 3 -> remaining 0.25, Target 4 -> remaining 0.0
+      interface SellStep {
+        levelIndex: number;
+        targetRemainingFraction: number;
+        stepNum: number;
+      }
+      const activeSteps: SellStep[] = [];
+      if (numSellTranches === 1) {
+        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 0.0, stepNum: 1 });
+      } else if (numSellTranches === 2) {
+        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 0.50, stepNum: 1 });
+        activeSteps.push({ levelIndex: 3, targetRemainingFraction: 0.00, stepNum: 2 });
+      } else if (numSellTranches === 3) {
+        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 2 / 3, stepNum: 1 });
+        activeSteps.push({ levelIndex: 1, targetRemainingFraction: 1 / 3, stepNum: 2 });
+        activeSteps.push({ levelIndex: 3, targetRemainingFraction: 0.00, stepNum: 3 });
+      } else {
+        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 0.75, stepNum: 1 });
+        activeSteps.push({ levelIndex: 1, targetRemainingFraction: 0.50, stepNum: 2 });
+        activeSteps.push({ levelIndex: 2, targetRemainingFraction: 0.25, stepNum: 3 });
+        activeSteps.push({ levelIndex: 3, targetRemainingFraction: 0.00, stepNum: 4 });
+      }
+
+      // 3. Determine highest matched sell step reached by market bid
+      let matchedStep: SellStep | undefined;
+      for (const step of activeSteps) {
+        const lvlPrice = sellLevels[step.levelIndex];
         if (lvlPrice !== undefined && currentBestBid >= lvlPrice) {
-          targetRemainingFraction = 1.0 - ((i + 1) * 0.25);
-          matchedSellIndex = i;
+          matchedStep = step;
         }
       }
 
-      const matchedSellPrice = matchedSellIndex >= 0 ? sellLevels[matchedSellIndex] : undefined;
-      if (matchedSellIndex >= 0 && matchedSellPrice !== undefined) {
-        // Check requireProfitAboveAvgEntry
-        const avgEntry = this.getAvgEntryPrice();
-        const meetsProfitRequirement = !this.cfg.requireProfitAboveAvgEntry || (avgEntry <= 0 || currentBestBid >= avgEntry * 1.001);
+      if (matchedStep !== undefined) {
+        const matchedSellPrice = sellLevels[matchedStep.levelIndex];
+        if (matchedSellPrice !== undefined) {
+          const avgEntry = this.getAvgEntryPrice();
+          const meetsProfitRequirement = !this.cfg.requireProfitAboveAvgEntry || (avgEntry <= 0 || currentBestBid >= avgEntry * 1.001);
 
-        if (meetsProfitRequirement) {
-          const targetRemainingQuote = targetRemainingFraction * maxInv;
-          const excessQuote = currentHeldQuote - targetRemainingQuote;
+          if (meetsProfitRequirement) {
+            const targetRemainingQuote = matchedStep.targetRemainingFraction * totalHeldQuote;
+            const excessQuote = totalHeldQuote - targetRemainingQuote;
 
-          if (excessQuote >= (baseTrancheQuote * 0.70) || (targetRemainingFraction === 0 && held >= this.minQty)) {
-            const cooldownKey = `ioc_bracket_sell_level_${matchedSellIndex}`;
-            const lastSellTime = this.orderCooldowns.get(cooldownKey) ?? 0;
-            const globalSellCooldown = this.orderCooldowns.get("ioc_bracket_sell_global") ?? 0;
-            const now = Date.now();
+            // Trigger if excess quote meets minimum notional or final full-exit
+            if (excessQuote >= minNotional || (matchedStep.targetRemainingFraction === 0 && totalHeldQuote >= minNotional)) {
+              const cooldownKey = `ioc_bracket_sell_step_${matchedStep.stepNum}`;
+              const lastSellTime = this.orderCooldowns.get(cooldownKey) ?? 0;
+              const globalSellCooldown = this.orderCooldowns.get("ioc_bracket_sell_global") ?? 0;
+              const now = Date.now();
 
-            // 10s cooldown per level, 3s global debounce
-            if (now - lastSellTime > 10_000 && now - globalSellCooldown > 3_000) {
-              this.orderCooldowns.set(cooldownKey, now);
-              this.orderCooldowns.set("ioc_bracket_sell_global", now);
+              // 10s cooldown per step, 3s global debounce
+              if (now - lastSellTime > 10_000 && now - globalSellCooldown > 3_000) {
+                this.orderCooldowns.set(cooldownKey, now);
+                this.orderCooldowns.set("ioc_bracket_sell_global", now);
 
-              const sellQty = targetRemainingFraction === 0
-                ? held
-                : Math.min(held, excessQuote / currentBestBid);
+                let sellQty = matchedStep.targetRemainingFraction === 0
+                  ? held
+                  : Math.min(held, excessQuote / currentBestBid);
 
-              if (sellQty >= this.minQty) {
-                const tranchesAggregated = targetRemainingFraction === 0
-                  ? (matchedSellIndex + 1)
-                  : Math.max(1, Math.round(excessQuote / baseTrancheQuote));
-                const actionLabel = tranchesAggregated > 1
-                  ? `IOC Sell T1-T${matchedSellIndex + 1} (${tranchesAggregated}x)`
-                  : `IOC Sell Target ${matchedSellIndex + 1}`;
+                const sellNotional = sellQty * currentBestBid;
+                if (sellQty >= this.minQty && sellNotional >= minNotional) {
+                  const actionLabel = numSellTranches === 1
+                    ? `IOC Sell 100% Exit ($${sellNotional.toFixed(2)})`
+                    : `IOC Sell Step ${matchedStep.stepNum}/${numSellTranches} ($${sellNotional.toFixed(2)})`;
 
-                this.log(
-                  `🎯 [IOC BRACKET] Bid $${currentBestBid.toFixed(6)} >= Sell Band ${matchedSellIndex + 1} ($${matchedSellPrice.toFixed(6)}) — executing ${actionLabel} for ${sellQty.toFixed(4)} ${this.baseAsset}`,
-                );
-                await this.sellTrancheIOC(sellQty, currentBestBid, actionLabel, matchedSellPrice);
+                  this.log(
+                    `🎯 [IOC BRACKET] Bid $${currentBestBid.toFixed(6)} >= Sell Target ${matchedStep.levelIndex + 1} ($${matchedSellPrice.toFixed(6)}) — executing ${actionLabel} for ${sellQty.toFixed(4)} ${this.baseAsset}`,
+                  );
+                  await this.sellTrancheIOC(sellQty, currentBestBid, actionLabel, matchedSellPrice);
+                }
               }
             }
           }
@@ -3938,6 +3991,15 @@ export class DynamicGrid {
     const now = Date.now();
     // In IOC sell: price must NEVER be below targetPrice (Sell Level)
     const effectivePrice = Math.max(execPrice, targetPrice);
+    const minNotional = Math.max(this.minNotional || 5.0, 5.0);
+    const orderNotional = executeQty * effectivePrice;
+
+    if (orderNotional < minNotional) {
+      this.log(
+        `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Order value $${orderNotional.toFixed(2)} is below Binance minimum ($${minNotional.toFixed(2)}).`,
+      );
+      return false;
+    }
 
     if (this.cfg.dryRun) {
       const oldTradePnl = this.tradeRealizedPnl;
@@ -4053,7 +4115,13 @@ export class DynamicGrid {
     notionalQuote: number,
   ): Promise<boolean> {
     const actionLabel = levelName.startsWith("IOC") ? levelName : `IOC ${levelName}`;
-    if (qty < this.minQty || notionalQuote <= 0.05) {
+    const minNotional = Math.max(this.minNotional || 5.0, 5.0);
+    if (qty < this.minQty || notionalQuote < minNotional) {
+      if (notionalQuote < minNotional) {
+        this.log(
+          `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Buy budget $${notionalQuote.toFixed(2)} is below Binance minimum ($${minNotional.toFixed(2)}).`,
+        );
+      }
       return false;
     }
     const notionalUsdso = notionalQuote;
@@ -4194,6 +4262,15 @@ export class DynamicGrid {
 
     // Liquidate all trading inventory: sell all physical trading base asset available above gas reserve
     const executeQty = Math.min(held, availableBase);
+    const minNotional = Math.max(this.minNotional || 5.0, 5.0);
+    const orderNotional = executeQty * price;
+
+    if (orderNotional < minNotional) {
+      this.log(
+        `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Order value $${orderNotional.toFixed(2)} is below Binance minimum ($${minNotional.toFixed(2)}).`,
+      );
+      return;
+    }
 
     try {
       const res = await this.binance.placeOrder({

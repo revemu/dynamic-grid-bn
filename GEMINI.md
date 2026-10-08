@@ -195,6 +195,27 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - **Guard Against Redundant IOC Sells on Already-Matched Levels**:
     - In both standard and trendline sell routines, the bot verifies if a sell level has no resting order AND has already satisfied its inventory reduction target (`currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered`).
     - If fulfilled, the level is immediately skipped, preventing the bot from attempting repeated IOC taker sells on already-matched lower targets.
+- **Binance Spot Minimum Notional ($5.0) & Adaptive IOC Tranche Distribution**:
+  - **Binance Minimum Notional Rule (`minNotional = Math.max(this.minNotional || 5.0, 5.0)`)**:
+    - Binance Spot บังคับมูลค่าออเดอร์ขั้นต่ำต่อไม้ที่ $5.0 (หรือตาม `minNotional` ใน Symbol Filter)
+    - ป้องกันข้อผิดพลาด `Binance Error [-1013]: Filter failure: NOTIONAL` โดยเด็ดขาด ทั้งฝั่ง BUY, SELL (IOC, Maker Limit, Cut-Loss, Take-Profit liquidation)
+    - หากมูลค่าออเดอร์ต่ำกว่า $5.0 บอทจะทำการตรวจสอบและระงับการส่งออเดอร์พร้อมแจ้งเตือน `[MIN NOTIONAL GUARD]`
+  - **Dynamic Adaptive Sell Tranches (`4 -> 3 -> 2 -> 1`)**:
+    - ในโหมด `IOC_BRACKET` เมื่อถึงระดับราคาทำกำไร บอทจะไม่แบ่งขายดื้อๆ เป็น 4 ไม้หากแต่ละไม้มีมูลค่าน้อยกว่า $5.0
+    - คำนวณจำนวนไม้ขายที่เหมาะสมแบบ Dynamic:
+      ```ts
+      let numSellTranches = 4;
+      while (numSellTranches > 1 && (totalHeldQuote / numSellTranches) < minNotional) {
+        numSellTranches--;
+      }
+      ```
+    - **ตัวอย่างการแบ่งไม้ขายจริง**:
+      - ถือ $12: ลอง 4 ($3 < $5) ➔ ลอง 3 ($4 < $5) ➔ ลอง 2 ($6 >= $5) ➔ **แบ่งขาย 2 ไม้ ไม้ละ $6** (ที่ Target 1 ขาย 50%, Target 4 ขาย 100%)
+      - ถือ $8: ลอง 4 ➔ ลอง 3 ➔ ลอง 2 ➔ เหลือ 1 ($8 >= $5) ➔ **ขายรวดเดียว 100% ไม้เดียวจบที่ Target 1 ($8)**
+      - ถือ $16: ลอง 4 ($4 < $5) ➔ ลอง 3 ($5.33 >= $5) ➔ **แบ่งขาย 3 ไม้ ไม้ละ $5.33**
+      - ถือ $20+: แบ่งขายเต็ม **4 ไม้ (25% ละ $5+)** ครบทุก Target
+  - **Adaptive Buy Budget Expansion**:
+    - ในฝั่งซื้อ IOC หาก `toSpendQuote < minNotional` แต่ Wallet และ Max Inventory มีความจุเพียงพอ บอทจะปรับขยายงบซื้อขึ้นมาเป็น `$5.0` อัตโนมัติ เพื่อให้สามารถเปิดออเดอร์สะสมเหรียญได้ตามเกณฑ์ขั้นต่ำของ Binance
 - **4-Level Equal Sell Tranches & Anti-Churn Rule**:
   - **4 Equal Tranches (25% each)**: Total held inventory is divided equally across the 4 sell targets (`held / 4`). If Level 1's grid price is below best bid, it is floated to the minimum valid Maker ask (`max(lvlPrice, currentBestAsk, refPrice * 1.0005)`) so Target 1 is NEVER skipped or abandoned. Eliminates dumping a 50% remainder on Target 4.
 - **Immediate-Or-Cancel (IOC) Take-Profit on Exceeded Sell Levels (`ENABLE_IOC_SELL_WHEN_EXCEEDED`)**:
