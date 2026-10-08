@@ -29,7 +29,10 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 │   └── style.css                    # Dashboard dark theme styling
 └── src/
     ├── index.ts                     # Strategy entrypoint (bootstraps feeds, engines, dashboard)
-    ├── binance-client.ts            # Binance Spot REST API client (exchangeInfo, orders, balances)
+    ├── exchange/                    # Exchange Adapter Layer (Pluggable Multi-Exchange Support)
+    │   ├── types.ts                 # IExchangeClient interface & standardized exchange types
+    │   └── index.ts                 # createExchangeClient factory loader
+    ├── binance-client.ts            # Binance Spot Adapter (implements IExchangeClient)
     ├── binance-feed.ts              # Binance WebSocket kline client for real-time ATR & candle updates
     ├── strategy.ts                  # Core DynamicGrid state machine, lots management, safeguards
     ├── market-structure.ts          # Dow Theory swing pivots, trendlines, 4 channel modes
@@ -43,21 +46,25 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 
 ---
 
-## 2. Binance Spot Mechanics & Execution Routing
+## 2. Multi-Exchange Adapter Architecture & Spot Execution
 
-1. **Spot Client & Authentication (`src/binance-client.ts`)**:
+1. **Exchange Adapter Pattern (`src/exchange/types.ts` & `src/exchange/index.ts`)**:
+   - ประกาศ Standard Interface: `IExchangeClient` เพื่อรองรับการสลับไปกระดานเทรดอื่น (เช่น Bybit, OKX) โดยไม่แตะต้องตรรกะใน Strategy
+   - เมธอดมาตรฐาน: `getExchangeInfo`, `getAccountBalances`, `getOpenOrders`, `getOrder`, `getTopOfBook`, `placeOrder`, `cancelOrder`, `cancelAllOpenOrders`, `syncTime`
+   - มี Factory function: `createExchangeClient({ exchange, ... })` เลือกกระดานผ่าน config / `.env` (`EXCHANGE=binance`)
+2. **Binance Spot Implementation (`src/binance-client.ts`)**:
+   - `BinanceClient implements IExchangeClient` (Default Adapter)
    - เชื่อมต่อกับ Binance Spot REST API (`https://api.binance.com`)
    - รองรับโหมด **`DRY_RUN=true`**: ดึงข้อมูลตลาดสาธารณะ (Order Book, Klines, Ticks) และจำลองการส่งออเดอร์ในหน่วยความจำโดยไม่ต้องใช้ API Key
-   - รองรับโหมด **Live Trading (`DRY_RUN=false`)**: ใช้ `BINANCE_API_KEY` และ `BINANCE_API_SECRET` ในการซิงค์ยอดเงินใน Wallet, เช็ก Open Orders, และส่งออเดอร์จริงบน Binance Spot
-   - จัดการ Time Synchronization กับ Binance Server อัตโนมัติ (`syncTime()`)
-   - ปรับความละเอียดตาม Symbol Filter ของ Binance เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
-2. **Asset Precision & Terminology**:
+   - รองรับโหมด **Live Trading (`DRY_RUN=false`)**: ใช้ API Key และ Secret ในการซิงค์ยอดเงินใน Wallet, เช็ก Open Orders, และส่งออเดอร์จริง
+   - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
+   - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
+3. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT)
-   - ไม่มีการอิงเหรียญ SOMI หรือ USDso อีกต่อไป ทุกค่าคำนวณตาม Base / Quote ของคู่เทรดจริงบน Binance
-3. **Data Feeds**:
-   - ดึง Historical Klines ผ่าน Binance REST API สำหรับช่วง Warmup บน Timeframe ที่กำหนด (`initialCandleCount`, ค่าเริ่มต้น 300 แท่ง)
-   - สตรีมแท่งเทียน Real-time ผ่าน Binance WebSocket (`wss://stream.binance.com:9443/ws/<symbol>@kline_<tf>`) เพื่อคำนวณ ATR, Dow Swings, และพล็อตแท่งเทียนบน Dashboard
+4. **Data Feeds**:
+   - ดึง Historical Klines สำหรับช่วง Warmup บน Timeframe ที่กำหนด (`initialCandleCount`, ค่าเริ่มต้น 300 แท่ง)
+   - สตรีมแท่งเทียน Real-time เพื่อคำนวณ ATR, Dow Swings, และพล็อตแท่งเทียนบน Dashboard
 
 ---
 

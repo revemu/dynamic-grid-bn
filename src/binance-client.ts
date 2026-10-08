@@ -23,73 +23,22 @@ export interface SymbolFilterPrice {
 export interface SymbolFilterNotional {
   minNotional: number;
 }
+import type {
+  IExchangeClient,
+  ExchangeSymbolInfo,
+  ExchangeTopOfBook,
+  ExchangeOrderResult,
+  ExchangeOpenOrder,
+  ExchangeAccountBalances,
+  PlaceOrderParams,
+} from "./exchange/types.js";
 
-export interface BinanceSymbolInfo {
-  symbol: string;
-  status: string;
-  baseAsset: string;
-  quoteAsset: string;
-  baseAssetPrecision: number;
-  quotePrecision: number;
-  minQty: number;
-  maxQty: number;
-  stepSize: number;
-  qtyPrecision: number;
-  minPrice: number;
-  maxPrice: number;
-  tickSize: number;
-  pricePrecision: number;
-  minNotional: number;
-}
-
-export interface BinanceTopOfBook {
-  bestBid: number;
-  bestAsk: number;
-  mid: number;
-  bidQty: number;
-  askQty: number;
-  time: number;
-}
-
-export interface BinanceOrderResult {
-  symbol: string;
-  orderId: number;
-  clientOrderId: string;
-  transactTime: number;
-  price: number;
-  origQty: number;
-  executedQty: number;
-  cummulativeQuoteQty: number;
-  status: "NEW" | "PARTIALLY_FILLED" | "FILLED" | "CANCELED" | "REJECTED" | "EXPIRED";
-  timeInForce: string;
-  type: string;
-  side: "BUY" | "SELL";
-  txHash?: string;
-  fills?: Array<{
-    price: string;
-    qty: string;
-    commission: string;
-    commissionAsset: string;
-    tradeId: number;
-  }>;
-}
-
-export interface BinanceOpenOrder {
-  symbol: string;
-  orderId: number;
-  clientOrderId: string;
-  price: number;
-  origQty: number;
-  executedQty: number;
-  cummulativeQuoteQty: number;
-  status: string;
-  timeInForce: string;
-  type: string;
-  side: "BUY" | "SELL";
-  time: number;
-  updateTime: number;
-  isWorking: boolean;
-}
+export type BinanceSymbolInfo = ExchangeSymbolInfo;
+export type BinanceTopOfBook = ExchangeTopOfBook;
+export type BinanceOrderResult = ExchangeOrderResult;
+export type BinanceOpenOrder = ExchangeOpenOrder;
+export type BinanceAccountBalances = ExchangeAccountBalances;
+export type { PlaceOrderParams, IExchangeClient };
 
 export interface BinanceTrade {
   symbol: string;
@@ -103,27 +52,6 @@ export interface BinanceTrade {
   time: number;
   isBuyer: boolean;
   isMaker: boolean;
-}
-
-export interface BinanceAccountBalances {
-  baseAsset: string;
-  quoteAsset: string;
-  baseFree: number;
-  baseLocked: number;
-  baseTotal: number;
-  quoteFree: number;
-  quoteLocked: number;
-  quoteTotal: number;
-  allBalances: Record<string, { free: number; locked: number }>;
-}
-
-export interface PlaceOrderParams {
-  symbol: string;
-  side: "BUY" | "SELL";
-  type: "LIMIT" | "MARKET" | "IOC" | "LIMIT_MAKER";
-  price?: number;
-  qty: number;
-  clientOrderId?: string;
 }
 
 export interface BinanceClientOptions {
@@ -177,7 +105,8 @@ export function formatPrecisionString(val: number, precision: number): string {
   return val.toFixed(precision);
 }
 
-export class BinanceClient {
+export class BinanceClient implements IExchangeClient {
+  public readonly exchangeName = "binance";
   private apiKey: string;
   private apiSecret: string;
   private baseUrl: string;

@@ -4,7 +4,7 @@
  */
 
 import { config } from "./config.js";
-import { BinanceClient } from "./binance-client.js";
+import { createExchangeClient, type IExchangeClient } from "./exchange/index.js";
 import { DynamicGrid } from "./strategy.js";
 import { VolatilityEngine } from "./volatility.js";
 import { BinanceAtrFeed } from "./binance-feed.js";
@@ -41,20 +41,21 @@ function log(msg: string, extra?: unknown): void {
 }
 
 async function main(): Promise<void> {
-  const binance = new BinanceClient({
+  const exchange = createExchangeClient({
+    exchange: (config as any).exchange || process.env.EXCHANGE || "binance",
     apiKey: config.binanceApiKey,
     apiSecret: config.binanceApiSecret,
     baseUrl: config.binanceBaseUrl,
-    log: (msg) => log(`[binance] ${msg}`),
+    log: (msg) => log(`[${(config as any).exchange || "binance"}] ${msg}`),
   });
 
-  await binance.syncTime();
+  await exchange.syncTime();
 
   let activeSymbol = (config.symbol || "BTCUSDT").toUpperCase().replace(/[\/\-_:]/g, "");
-  let symbolInfo = await binance.getExchangeInfo(activeSymbol);
+  let symbolInfo = await exchange.getExchangeInfo(activeSymbol);
 
   log(
-    `📊 Binance Spot Market: ${symbolInfo.symbol} (${symbolInfo.baseAsset}/${symbolInfo.quoteAsset}) ` +
+    `📊 Spot Market (${exchange.exchangeName.toUpperCase()}): ${symbolInfo.symbol} (${symbolInfo.baseAsset}/${symbolInfo.quoteAsset}) ` +
       `| minQty: ${symbolInfo.minQty} | stepSize: ${symbolInfo.stepSize} | tickSize: ${symbolInfo.tickSize} | minNotional: $${symbolInfo.minNotional}`,
   );
 
@@ -137,25 +138,25 @@ async function main(): Promise<void> {
   // Fetch initial balances
   let initialBaseBal = 0;
   let initialQuoteBal = 0;
-  if (binance.hasCredentials()) {
+  if (exchange.hasCredentials()) {
     try {
-      const b = await binance.getAccountBalances(symbolInfo.symbol);
+      const b = await exchange.getAccountBalances(symbolInfo.symbol);
       initialBaseBal = b.baseFree;
       initialQuoteBal = b.quoteFree;
     } catch (err) {
-      log(`warning: failed to query initial Binance balance: ${(err as Error).message}`);
+      log(`warning: failed to query initial ${exchange.exchangeName} balance: ${(err as Error).message}`);
     }
   } else {
-    log(`ℹ️ Running without Binance API credentials (public market data / dryRun mode).`);
+    log(`ℹ️ Running without ${exchange.exchangeName} API credentials (public market data / dryRun mode).`);
   }
 
   log(
-    `Binance Spot balance=[${initialBaseBal} ${symbolInfo.baseAsset} | ${initialQuoteBal.toFixed(2)} ${symbolInfo.quoteAsset}] ` +
+    `${exchange.exchangeName.toUpperCase()} Spot balance=[${initialBaseBal} ${symbolInfo.baseAsset} | ${initialQuoteBal.toFixed(2)} ${symbolInfo.quoteAsset}] ` +
       `symbol=${symbolInfo.symbol} maxInv=$${config.maxInventoryQuote} dryRun=${config.dryRun} ` +
       `trendFilter=${config.dowTrendFilter} (${config.trendTimeframe})`,
   );
 
-  const grid = new DynamicGrid(binance, symbolInfo, config, atrSource!, log, macroDowEngine, localTrendEngine);
+  const grid = new DynamicGrid(exchange, symbolInfo, config, atrSource!, log, macroDowEngine, localTrendEngine);
   await grid.syncOnChainOrders();
 
   let wakeSleep: (() => void) | null = null;
@@ -196,7 +197,7 @@ async function main(): Promise<void> {
       if (s.symbol && s.symbol.toUpperCase().replace(/[\/\-_:]/g, "") !== prevSymbol) {
         const nextSymbolStr = s.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
         try {
-          const nextInfo = await binance.getExchangeInfo(nextSymbolStr);
+          const nextInfo = await exchange.getExchangeInfo(nextSymbolStr);
           symbolInfo = nextInfo;
           grid.updateSymbolInfo(nextInfo);
           await initFeeds(nextInfo.symbol);
@@ -207,7 +208,7 @@ async function main(): Promise<void> {
           });
           macroFeed?.start();
           tradingFeed?.start();
-          log(`🔄 Switched active Binance trading pair to: ${nextInfo.symbol}`);
+          log(`🔄 Switched active ${exchange.exchangeName} trading pair to: ${nextInfo.symbol}`);
         } catch (err) {
           log(`⚠️ Failed to switch symbol to ${nextSymbolStr}: ${(err as Error).message}`);
         }

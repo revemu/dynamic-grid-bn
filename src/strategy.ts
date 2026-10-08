@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BinanceClient, type BinanceSymbolInfo, roundToStep, roundToTick } from "./binance-client.js";
+import type { IExchangeClient, ExchangeSymbolInfo } from "./exchange/types.js";
 import { ORDER_TYPE, shiftBps, spreadBps, createStatusLogger } from "./utils.js";
 import type { Config } from "./config.js";
 import type { AtrSource } from "./types.js";
@@ -144,8 +145,8 @@ export class DynamicGrid {
   private readonly status: (msg: string) => void;
 
   constructor(
-    private readonly binance: BinanceClient,
-    private symbolInfo: BinanceSymbolInfo,
+    private readonly binance: IExchangeClient,
+    private symbolInfo: ExchangeSymbolInfo,
     private readonly cfg: Config,
     private readonly atrSource: AtrSource,
     private readonly log: (msg: string, extra?: unknown) => void,
@@ -184,7 +185,7 @@ export class DynamicGrid {
     this.loadState();
   }
 
-  public updateSymbolInfo(info: BinanceSymbolInfo): void {
+  public updateSymbolInfo(info: ExchangeSymbolInfo): void {
     this.symbolInfo = info;
     this.symbol = info.symbol;
     this.baseAsset = info.baseAsset;
