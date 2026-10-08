@@ -23,11 +23,17 @@ export const defaultStrategyConfig = {
   // ── Core Parameters ────────────────────────────────────────────────────
   symbol: envSymbol,
   /** Stop opening new longs once total base inventory exceeds this (Quote/USDT terms). */
-  maxInventoryUsdso: 40,
+  maxInventoryQuote: 40,
+  /** Backward compatibility alias for maxInventoryQuote */
+  get maxInventoryUsdso(): number { return this.maxInventoryQuote; },
+  set maxInventoryUsdso(v: number) { this.maxInventoryQuote = v; },
   /** Skip a cycle if the book spread is wider than this. */
   maxSpreadBps: 60,
   /** Halt buying (offload-only) once session PnL drops below −this. */
-  maxSessionLossUsdso: 25,
+  maxSessionLossQuote: 25,
+  /** Backward compatibility alias for maxSessionLossQuote */
+  get maxSessionLossUsdso(): number { return this.maxSessionLossQuote; },
+  set maxSessionLossUsdso(v: number) { this.maxSessionLossQuote = v; },
   /** Maximum allowable Bid discount (%) compared to reference price before allowing Cut Loss sell. */
   cutLossMaxBidDiscountPct: 0.75,
   /** If a lot can't hit its sell trigger within this long, cut it and re-anchor (ms). 0 = off / disabled. Default 0. */
@@ -36,8 +42,6 @@ export const defaultStrategyConfig = {
   intervalMs: 500,
   /** Expiration duration for resting Maker limit orders in hours (default 24h). */
   orderExpireHours: 24,
-  /** Minimum reserve balance to protect in wallet (never traded or sold). */
-  minGasReserveSomi: 0,
   /** Timezone for log timestamps and formatting. Default "Asia/Bangkok". */
   timezone: process.env.TZ || "Asia/Bangkok",
   dryRun: process.env.DRY_RUN === "true" || false,
@@ -222,6 +226,16 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.symbol) {
         merged.symbol = String(saved.symbol).toUpperCase().replace(/[\/\-_:]/g, "");
         merged.binanceSymbol = String(saved.symbol).toLowerCase().replace(/[\/\-_:]/g, "");
+      }
+      if (saved.maxInventoryQuote !== undefined) {
+        merged.maxInventoryQuote = Number(saved.maxInventoryQuote);
+      } else if (saved.maxInventoryUsdso !== undefined) {
+        merged.maxInventoryQuote = Number(saved.maxInventoryUsdso);
+      }
+      if (saved.maxSessionLossQuote !== undefined) {
+        merged.maxSessionLossQuote = Number(saved.maxSessionLossQuote);
+      } else if (saved.maxSessionLossUsdso !== undefined) {
+        merged.maxSessionLossQuote = Number(saved.maxSessionLossUsdso);
       }
       if (saved.binanceApiKey !== undefined) merged.binanceApiKey = String(saved.binanceApiKey);
       if (saved.binanceApiSecret !== undefined) merged.binanceApiSecret = String(saved.binanceApiSecret);

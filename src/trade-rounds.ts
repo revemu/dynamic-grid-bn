@@ -15,10 +15,13 @@ export interface TradeRoundTrade {
   action: string;
   price: number;
   qty: number;
-  notionalUsdso: number;
+  notionalQuote: number;
+  notionalUsdso?: number; // Backward compat
+  notional?: number;
   time: number;
   txHash?: string;
   pnl?: number;
+  gasFeeQuote?: number;
   gasFeeUsdso?: number;
   gasFeeSomi?: number;
   reason?: string;
@@ -33,29 +36,37 @@ export interface TradeRound {
   durationMs: number;
 
   // Buy statistics
-  buyQty: number;              // Total SOMI bought
-  buyCostUsdso: number;        // Total USDso spent
+  buyQty: number;              // Total base bought
+  buyCostQuote: number;        // Total quote spent
+  buyCostUsdso?: number;       // Backward compat alias
   avgBuyPrice: number;         // Average purchase price
   buyCount: number;            // Number of buy fills
 
   // Sell statistics
-  sellQty: number;             // Total SOMI sold
-  sellProceedsUsdso: number;   // Total USDso received
+  sellQty: number;             // Total base sold
+  sellProceedsQuote: number;   // Total quote received
+  sellProceedsUsdso?: number;  // Backward compat alias
   avgSellPrice: number;        // Average selling price
   sellCount: number;           // Number of sell fills
 
   // Position remainder
-  holdingQty: number;          // Remaining unsold SOMI in this round
+  holdingQty: number;          // Remaining unsold base in this round
 
-  // Profit & Loss and Complete Gas Breakdown (including all created & cancelled orders)
-  grossPnlUsdso: number;       // Gross realized PnL
+  // Profit & Loss and Complete Fee/Gas Breakdown
+  grossPnlQuote: number;       // Gross realized PnL
+  grossPnlUsdso?: number;      // Backward compat alias
   grossPnlPct: number;         // Gross PnL percentage
-  createGasUsdso: number;      // Gas spent placing orders during this round
-  cancelGasUsdso: number;      // Gas spent cancelling orders during this round
-  fillGasUsdso: number;        // Direct execution gas (market/IOC)
-  totalGasUsdso: number;       // Complete total gas spent (create + cancel + fill)
-  totalGasSomi: number;        // Total gas spent in SOMI
-  netPnlUsdso: number;         // Net realized PnL (Gross PnL - Total Gas)
+  createGasQuote: number;      // Fee/gas spent placing orders during this round
+  createGasUsdso?: number;
+  cancelGasQuote: number;      // Fee/gas spent cancelling orders during this round
+  cancelGasUsdso?: number;
+  fillGasQuote: number;        // Direct execution fee/gas
+  fillGasUsdso?: number;
+  totalGasQuote: number;       // Complete total fee/gas spent
+  totalGasUsdso?: number;
+  totalGasSomi?: number;
+  netPnlQuote: number;         // Net realized PnL (Gross PnL - Total Gas/Fee)
+  netPnlUsdso?: number;
 
   // Granular fill records inside this round
   buyTrades: TradeRoundTrade[];
@@ -69,17 +80,26 @@ export interface TradeRoundSummary {
   winRounds: number;
   lossRounds: number;
   winRatePct: number;
-  totalBoughtSomi: number;
-  totalBoughtUsdso: number;
+  totalBoughtBase: number;
+  totalBoughtSomi?: number;
+  totalBoughtQuote: number;
+  totalBoughtUsdso?: number;
   avgBuyPriceOverall: number;
-  totalSoldSomi: number;
-  totalSoldUsdso: number;
+  totalSoldBase: number;
+  totalSoldSomi?: number;
+  totalSoldQuote: number;
+  totalSoldUsdso?: number;
   avgSellPriceOverall: number;
-  totalGrossPnlUsdso: number;
-  totalCreateGasUsdso: number;
-  totalCancelGasUsdso: number;
-  totalGasUsdso: number;
-  totalNetPnlUsdso: number;
+  totalGrossPnlQuote: number;
+  totalGrossPnlUsdso?: number;
+  totalCreateGasQuote: number;
+  totalCreateGasUsdso?: number;
+  totalCancelGasQuote: number;
+  totalCancelGasUsdso?: number;
+  totalGasQuote: number;
+  totalGasUsdso?: number;
+  totalNetPnlQuote: number;
+  totalNetPnlUsdso?: number;
 }
 
 export interface TradeRoundsResult {
@@ -119,11 +139,11 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
       f.side === "BUY" || f.action === "BUY_FILL" || f.action === "SNIPE_BUY";
     const qty = Number(f.qty || 0);
     const price = Number(f.fillPrice || f.price || 0);
-    const notional = Number(f.notionalUsdso || qty * price);
+    const notional = Number(f.notionalQuote || f.notionalUsdso || f.notional || qty * price);
     const time = Number(f.fillTime || f.time || f.placedTime || 0);
-    const gasUsdso = Number(f.gasFeeUsdso || 0);
+    const gasQuote = Number(f.gasFeeQuote || f.gasFeeUsdso || 0);
     const gasSomi = Number(f.gasFeeSomi || 0);
-    const pnl = Number(f.pnlUsdso !== undefined ? f.pnlUsdso : (f.pnl || 0));
+    const pnl = Number(f.pnlQuote !== undefined ? f.pnlQuote : f.pnlUsdso !== undefined ? f.pnlUsdso : (f.pnl || 0));
 
     // Only split into a new round if previous round has completely closed its inventory or was sell-only
     if (currentRound && isBuy) {
@@ -150,21 +170,29 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
         endTime: time,
         durationMs: 0,
         buyQty: 0,
+        buyCostQuote: 0,
         buyCostUsdso: 0,
         avgBuyPrice: 0,
         buyCount: 0,
         sellQty: 0,
+        sellProceedsQuote: 0,
         sellProceedsUsdso: 0,
         avgSellPrice: 0,
         sellCount: 0,
         holdingQty: 0,
+        grossPnlQuote: 0,
         grossPnlUsdso: 0,
         grossPnlPct: 0,
+        createGasQuote: 0,
         createGasUsdso: 0,
+        cancelGasQuote: 0,
         cancelGasUsdso: 0,
+        fillGasQuote: 0,
         fillGasUsdso: 0,
+        totalGasQuote: 0,
         totalGasUsdso: 0,
         totalGasSomi: 0,
+        netPnlQuote: 0,
         netPnlUsdso: 0,
         buyTrades: [],
         sellTrades: [],
@@ -186,36 +214,42 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
       action: f.action,
       price,
       qty,
+      notionalQuote: notional,
       notionalUsdso: notional,
+      notional,
       time,
       txHash: f.txHash || f.fillTxHash || f.createTxHash,
       pnl: effectivePnl,
-      gasFeeUsdso: gasUsdso,
+      gasFeeQuote: gasQuote,
+      gasFeeUsdso: gasQuote,
       gasFeeSomi: gasSomi,
       reason: f.reason || f.levelDesc,
-      explorerUrl: f.explorerUrl || (f.txHash ? `https://explorer.somnia.network/tx/${f.txHash}` : undefined),
+      explorerUrl: f.explorerUrl,
     };
 
     if (isBuy) {
       currentRound.buyTrades.push(tradeRecord);
       currentRound.buyQty += qty;
-      currentRound.buyCostUsdso += notional;
+      currentRound.buyCostQuote += notional;
+      currentRound.buyCostUsdso = currentRound.buyCostQuote;
       currentRound.buyCount++;
       currentRound.avgBuyPrice =
         currentRound.buyQty > 0
-          ? currentRound.buyCostUsdso / currentRound.buyQty
+          ? currentRound.buyCostQuote / currentRound.buyQty
           : 0;
     } else {
       inSellPhase = true;
       currentRound.sellTrades.push(tradeRecord);
       currentRound.sellQty += qty;
-      currentRound.sellProceedsUsdso += notional;
+      currentRound.sellProceedsQuote += notional;
+      currentRound.sellProceedsUsdso = currentRound.sellProceedsQuote;
       currentRound.sellCount++;
       currentRound.avgSellPrice =
         currentRound.sellQty > 0
-          ? currentRound.sellProceedsUsdso / currentRound.sellQty
+          ? currentRound.sellProceedsQuote / currentRound.sellQty
           : 0;
-      currentRound.grossPnlUsdso += effectivePnl;
+      currentRound.grossPnlQuote += effectivePnl;
+      currentRound.grossPnlUsdso = currentRound.grossPnlQuote;
 
       // Check if this SELL completely closed out the inventory
       const remainingHeld = currentRound.buyQty - currentRound.sellQty;
@@ -247,9 +281,9 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
 
   // Attribute ALL order gas (including orders created, orders cancelled during rebalancing, and direct fills)
   for (const o of orders) {
-    const cGas = Number(o.createGasUsdso || 0);
+    const cGas = Number(o.createGasQuote || o.createGasUsdso || 0);
     const cGasSomi = Number(o.createGasSomi || 0);
-    const kGas = Number(o.cancelGasUsdso || 0);
+    const kGas = Number(o.cancelGasQuote || o.cancelGasUsdso || 0);
     const kGasSomi = Number(o.cancelGasSomi || 0);
     const pTime = Number(o.placedTime || o.time || 0);
     const kTime = Number(o.cancelTime || o.time || 0);
@@ -265,9 +299,11 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
         matchRound = pTime < (rounds[0]?.startTime ?? 0) ? rounds[0] : rounds[rounds.length - 1];
       }
       if (matchRound) {
-        matchRound.createGasUsdso += cGas;
-        matchRound.totalGasUsdso += cGas;
-        matchRound.totalGasSomi += cGasSomi;
+        matchRound.createGasQuote = (matchRound.createGasQuote || 0) + cGas;
+        matchRound.createGasUsdso = matchRound.createGasQuote;
+        matchRound.totalGasQuote = (matchRound.totalGasQuote || 0) + cGas;
+        matchRound.totalGasUsdso = matchRound.totalGasQuote;
+        matchRound.totalGasSomi = (matchRound.totalGasSomi || 0) + cGasSomi;
       }
     }
 
@@ -282,14 +318,16 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
         matchRound = kTime < (rounds[0]?.startTime ?? 0) ? rounds[0] : rounds[rounds.length - 1];
       }
       if (matchRound) {
-        matchRound.cancelGasUsdso += kGas;
-        matchRound.totalGasUsdso += kGas;
-        matchRound.totalGasSomi += kGasSomi;
+        matchRound.cancelGasQuote = (matchRound.cancelGasQuote || 0) + kGas;
+        matchRound.cancelGasUsdso = matchRound.cancelGasQuote;
+        matchRound.totalGasQuote = (matchRound.totalGasQuote || 0) + kGas;
+        matchRound.totalGasUsdso = matchRound.totalGasQuote;
+        matchRound.totalGasSomi = (matchRound.totalGasSomi || 0) + kGasSomi;
       }
     }
 
     // 3. Standalone fill gas (where neither createGas nor cancelGas was set, e.g. market IOC or take profit)
-    const directGas = Number(o.gasFeeUsdso || 0);
+    const directGas = Number(o.gasFeeQuote || o.gasFeeUsdso || 0);
     const directGasSomi = Number(o.gasFeeSomi || 0);
     if (directGas > 0 && !o.createGasUsdso && !o.cancelGasUsdso) {
       const fTime = Number(o.fillTime || o.time || o.placedTime || 0);
@@ -302,49 +340,52 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
         matchRound = fTime < (rounds[0]?.startTime ?? 0) ? rounds[0] : rounds[rounds.length - 1];
       }
       if (matchRound) {
-        matchRound.fillGasUsdso += directGas;
-        matchRound.totalGasUsdso += directGas;
-        matchRound.totalGasSomi += directGasSomi;
+        matchRound.fillGasQuote = (matchRound.fillGasQuote || 0) + directGas;
+        matchRound.fillGasUsdso = matchRound.fillGasQuote;
+        matchRound.totalGasQuote = (matchRound.totalGasQuote || 0) + directGas;
+        matchRound.totalGasUsdso = matchRound.totalGasQuote;
+        matchRound.totalGasSomi = (matchRound.totalGasSomi || 0) + directGasSomi;
       }
     }
   }
 
   // Recalculate net PnL for each round after complete gas attribution
   for (const r of rounds) {
-    r.netPnlUsdso = r.grossPnlUsdso - r.totalGasUsdso;
+    r.netPnlQuote = r.grossPnlQuote - (r.totalGasQuote || 0);
+    r.netPnlUsdso = r.netPnlQuote;
   }
 
   // Compute aggregate statistics
-  let totalBoughtSomi = 0;
-  let totalBoughtUsdso = 0;
-  let totalSoldSomi = 0;
-  let totalSoldUsdso = 0;
-  let totalGrossPnlUsdso = 0;
-  let totalCreateGasUsdso = 0;
-  let totalCancelGasUsdso = 0;
-  let totalGasUsdso = 0;
-  let totalNetPnlUsdso = 0;
+  let totalBoughtBase = 0;
+  let totalBoughtQuote = 0;
+  let totalSoldBase = 0;
+  let totalSoldQuote = 0;
+  let totalGrossPnlQuote = 0;
+  let totalCreateGasQuote = 0;
+  let totalCancelGasQuote = 0;
+  let totalGasQuote = 0;
+  let totalNetPnlQuote = 0;
   let winRounds = 0;
   let lossRounds = 0;
   let closedRounds = 0;
   let openRounds = 0;
 
   for (const r of rounds) {
-    totalBoughtSomi += r.buyQty;
-    totalBoughtUsdso += r.buyCostUsdso;
-    totalSoldSomi += r.sellQty;
-    totalSoldUsdso += r.sellProceedsUsdso;
-    totalGrossPnlUsdso += r.grossPnlUsdso;
-    totalCreateGasUsdso += r.createGasUsdso;
-    totalCancelGasUsdso += r.cancelGasUsdso;
-    totalGasUsdso += r.totalGasUsdso;
-    totalNetPnlUsdso += r.netPnlUsdso;
+    totalBoughtBase += r.buyQty;
+    totalBoughtQuote += r.buyCostQuote;
+    totalSoldBase += r.sellQty;
+    totalSoldQuote += r.sellProceedsQuote;
+    totalGrossPnlQuote += r.grossPnlQuote;
+    totalCreateGasQuote += r.createGasQuote || 0;
+    totalCancelGasQuote += r.cancelGasQuote || 0;
+    totalGasQuote += r.totalGasQuote || 0;
+    totalNetPnlQuote += r.netPnlQuote;
 
     if (r.status === "CLOSED" || r.status === "SELL_ONLY") {
       closedRounds++;
-      if (r.netPnlUsdso > 0.0001) {
+      if (r.netPnlQuote > 0.0001) {
         winRounds++;
-      } else if (r.netPnlUsdso < -0.0001) {
+      } else if (r.netPnlQuote < -0.0001) {
         lossRounds++;
       }
     } else {
@@ -362,17 +403,26 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
     winRounds,
     lossRounds,
     winRatePct,
-    totalBoughtSomi,
-    totalBoughtUsdso,
-    avgBuyPriceOverall: totalBoughtSomi > 0 ? totalBoughtUsdso / totalBoughtSomi : 0,
-    totalSoldSomi,
-    totalSoldUsdso,
-    avgSellPriceOverall: totalSoldSomi > 0 ? totalSoldUsdso / totalSoldSomi : 0,
-    totalGrossPnlUsdso,
-    totalCreateGasUsdso,
-    totalCancelGasUsdso,
-    totalGasUsdso,
-    totalNetPnlUsdso,
+    totalBoughtBase,
+    totalBoughtSomi: totalBoughtBase,
+    totalBoughtQuote,
+    totalBoughtUsdso: totalBoughtQuote,
+    avgBuyPriceOverall: totalBoughtBase > 0 ? totalBoughtQuote / totalBoughtBase : 0,
+    totalSoldBase,
+    totalSoldSomi: totalSoldBase,
+    totalSoldQuote,
+    totalSoldUsdso: totalSoldQuote,
+    avgSellPriceOverall: totalSoldBase > 0 ? totalSoldQuote / totalSoldBase : 0,
+    totalGrossPnlQuote,
+    totalGrossPnlUsdso: totalGrossPnlQuote,
+    totalCreateGasQuote,
+    totalCreateGasUsdso: totalCreateGasQuote,
+    totalCancelGasQuote,
+    totalCancelGasUsdso: totalCancelGasQuote,
+    totalGasQuote,
+    totalGasUsdso: totalGasQuote,
+    totalNetPnlQuote,
+    totalNetPnlUsdso: totalNetPnlQuote,
   };
 
   return { summary, rounds };
@@ -393,10 +443,12 @@ function finalizeRound(r: TradeRound, isLatestRound: boolean): void {
   }
 
   // Calculate gross PnL
-  if (Math.abs(r.grossPnlUsdso) < 0.000001 && r.sellCount > 0 && r.buyCostUsdso > 0) {
-    r.grossPnlUsdso = r.sellProceedsUsdso - (r.sellQty * r.avgBuyPrice);
+  if (Math.abs(r.grossPnlQuote) < 0.000001 && r.sellCount > 0 && r.buyCostQuote > 0) {
+    r.grossPnlQuote = r.sellProceedsQuote - (r.sellQty * r.avgBuyPrice);
+    r.grossPnlUsdso = r.grossPnlQuote;
   }
-  const costBasis = r.buyCostUsdso > 0 ? r.buyCostUsdso : (r.sellProceedsUsdso || 1);
-  r.grossPnlPct = (r.grossPnlUsdso / costBasis) * 100;
-  r.netPnlUsdso = r.grossPnlUsdso - r.totalGasUsdso;
+  const costBasis = r.buyCostQuote > 0 ? r.buyCostQuote : (r.sellProceedsQuote || 1);
+  r.grossPnlPct = (r.grossPnlQuote / costBasis) * 100;
+  r.netPnlQuote = r.grossPnlQuote - (r.totalGasQuote || 0);
+  r.netPnlUsdso = r.netPnlQuote;
 }

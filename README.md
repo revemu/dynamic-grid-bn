@@ -1,155 +1,127 @@
-# dynamic-grid
+# Dynamic Grid Bot — Binance Spot Trading Edition (`dynamic-grid-bn`)
 
-A drop-in replacement for `strategies/grid` from
-[`somnia-chain/dreamdex-bot-kit`](https://github.com/somnia-chain/dreamdex-bot-kit)
-where the grid step is **recomputed from live volatility (ATR)** instead of
-fixed at deploy time. Same FIFO-lot / maker-taker execution, spread gate,
-session stop-loss, and stuck-lot timeout as the original — only the sizing of
-the grid changes.
+บอทเทรด **Dynamic Grid & Dow Theory Market Structure** แบบ Standalone สำหรับ **Binance Spot** 
+ปรับปรุงสเต็ปกรอบราคาแบบไดนามิกตามความผันผวนของตลาด (ATR) และโครงสร้างราคาแนวนอน Support/Resistance Multi-Touch อัตโนมัติ โดยส่งคำสั่งซื้อขายตรงเข้ากระดาน **Binance Spot API** พร้อมระบบควบคุมผ่านหน้าต่าง **Real-Time Web Dashboard**
 
-## How the dynamic step works
+---
 
-ATR (Average True Range) drives the grid spacing, but **where ATR comes from
-and what actually executes the trade are two separate things**:
+## 🌟 จุดเด่นและฟีเจอร์สำคัญ (Key Features)
 
-- **Volatility source** (`DGRID_ATR_SOURCE`): where ATR is computed from.
-  Pluggable, via the `AtrSource` interface in `src/types.ts`.
-  - `binance` (default) — a Binance public WebSocket kline stream
-    (`DGRID_BINANCE_SYMBOL@kline_DGRID_BINANCE_INTERVAL`), e.g.
-    `somiusdt@kline_1m`. Real OHLC candles, external to DreamDEX, updates in
-    real time independent of how often this bot ticks. No API key needed —
-    it's public market data. See `src/binance-feed.ts`.
-  - `dreamdex` — self-sampled from DreamDEX's own `pool.topOfBook().mid`,
-    bucketed into synthetic bars (`DGRID_BAR_MS`) since DreamDEX's REST API
-    doesn't currently expose a candles endpoint. No external dependency, but
-    converges slower and depends on `GRID_INTERVAL_MS`. See `src/volatility.ts`.
-- **Execution**: always DreamDEX's own `pool.topOfBook()` / `pool.place()`,
-  regardless of which ATR source is selected. The buy/sell trigger prices,
-  the anchor price, and every order sent to the chain come from DreamDEX —
-  never from Binance or any other external feed.
+1. **เทรดบน Binance Spot โดยตรง (Native Binance Spot Trading)**:
+   - ทำงานแบบ Standalone ไม่ขึ้นกับบล็อกเชน EVM หรือสัญญา Smart Contract
+   - ส่งคำสั่งเทรดแบบ Spot (LIMIT, LIMIT_MAKER, IOC Market) ผ่าน Binance REST API พร้อม HMAC SHA-256 Signature
+   - ระบบ Auto Clock Synchronization ซิงค์เวลาเครื่องกับ Binance Server ป้องกัน Timestamp out of recvWindow (`-1021`)
+   - ระบบปัดเศษทศนิยมตามตัวกรองของคู่เทรด (`tickSize`, `stepSize`, `minNotional`) ป้องกันข้อผิดพลาด Precision
 
-Both sources implement the same interface and expose ATR as a **percentage of
-price** (`atrPct()`), not an absolute number. That's deliberate: SOMI/USDT on
-Binance and SOMI/USDso on DreamDEX are different order books on different
-exchanges, so their absolute prices can and do drift apart slightly (basis
-risk). A relative "ATR is currently 0.4% of price" figure transfers cleanly
-across that gap in a way an absolute ATR in USDT terms would not.
+2. **สลับคู่เทรดได้อิสระ (Dynamic Trading Pair Selection)**:
+   - เลือกลิสต์คู่เทรดได้จากเมนูบน Topbar หรือตั้งค่าคู่เหรียญใดก็ได้ใน Binance (เช่น `BTCUSDT`, `ETHUSDT`, `SOLUSDT`, `BNBUSDT`, `DOGEUSDT`, `PEPEUSDT`)
+   - ระบบเชื่อมต่อ WebSocket Kline Feed, โหลดข้อมูลแท่งเทียน และคำนวณกรอบราคาของคู่เหรียญใหม่ให้ทันทีแบบเรียลไทม์
 
-```
-TR(bar)   = max(high-low, |high-prevClose|, |low-prevClose|)
-atrPct    = average(TR/close) over the last DGRID_ATR_LOOKBACK bars
+3. **โครงสร้างราคา 5-Zone Channel & Dow Theory Multi-Touch**:
+   - **0% Floor (แนวรับ)**: ล็อกตามจุดเหว/ฐานราคาที่แท้จริง (`Multi-Touch Support`) และเป็นจุด Trigger Stop-Loss / Cut-Loss
+   - **0%–50% Buy Zone**: ทยอยสะสมออเดอร์ซื้อแบบ Stepped Laddering
+   - **50% Center**: จุดสมดุลของกรอบราคา
+   - **50%–100% Sell Zone**: ทยอยขายทำกำไร
+   - **100% Ceiling (แนวต้าน)**: ล็อกตามจุดยอดโครงสร้างราคา (`Multi-Touch Resistance`) และเป็นจุด Take Profit 100% เต็มจำนวน
+   - คำนวณแนวโน้มหลัก (Uptrend / Downtrend) และเส้น Trendline อัตโนมัติเพื่อหยุดการเปิด Buy ในจังหวะที่ราคาทิ้งตัวรุนแรง
 
-step_bps  = clamp(atrPct * 10_000 * DGRID_ATR_K,
-                   DGRID_MIN_STEP_BPS, DGRID_MAX_STEP_BPS)
-```
+4. **ควบคุมผ่าน Database (Single Source of Truth) & Web Dashboard**:
+   - การตั้งค่าทั้งหมด (API Keys, Secret, Symbol, Dry Run, Max Inventory, Port ฯลฯ) จัดเก็บในไฟล์ฐานข้อมูล JSON ACID (`data/grid-bot.db.json`)
+   - ไม่จำเป็นต้องพึ่งพาไฟล์ `.env` (สามารถเปิดบอทและตั้งค่า API ผ่านหน้าเว็บได้ทันที)
+   - หน้าต่าง Config ปรับเปลี่ยนค่าและมีผลทันทีแบบ Real-Time โดยไม่ต้อง Restart บอท
 
-- Quiet market → small ATR → tight grid → more fills, smaller profit each.
-- Volatile market → large ATR → wide grid → fewer fills, bigger profit each,
-  and less chance a lot gets stranded far from its sell trigger.
-- The step is recalculated every `DGRID_RECALC_EVERY_TICKS` ticks, not every
-  tick, so orders aren't re-priced on every poll.
-- Until enough bars have closed (`< 3`), it uses a fixed `DGRID_WARMUP_STEP_BPS`
-  instead of trading on a noisy 1–2 bar ATR.
-- If the Binance feed disconnects, `isFresh()` goes false after
-  `DGRID_BINANCE_STALE_MS` with no message — the bot holds its last known
-  step (doesn't freeze buying/selling) rather than sizing off a stale ATR, and
-  auto-reconnects with exponential backoff in the background.
-- A breakout guard re-anchors the grid (only while flat — it never abandons an
-  open lot) if price has moved more than `DGRID_BREAKOUT_ATR_MULT` × ATR away
-  from the current anchor.
-- **Stepped Buy Laddering**: Instead of piling into all inventory lots at the
-  same dip price on consecutive ticks, each subsequent lot requires price to drop
-  deeper below the lowest held lot by at least `step_bps`.
-- **Dow Theory Market Structure**:
-  - Automatically identifies **Swing Highs (Resistance / Upper Bound)** and
-    **Swing Lows (Support / Bottom Bound)** from rolling candle pivots.
-  - Classifies market regime: `RANGE`, `UPTREND` (Higher Highs + Higher Lows),
-    or `DOWNTREND` (Lower Highs + Lower Lows).
-  - Trend Filter (`DOW_TREND_FILTER=true`): Automatically pauses opening new buy
-    positions during a verified Dow downtrend, protecting you from catching
-    falling knives.
+5. **ไม่มีการกัน Gas Reserve (100% Spot Asset Efficiency)**:
+   - บอททำงานบน Binance Spot จึงไม่มีค่า Gas Fee เหมือนบล็อกเชน
+   - สามารถใช้ยอดเหรียญ Base Asset ในกระเป๋า Spot เพื่อวางคำสั่งขายทำกำไรหรือ Rebalance ได้เต็ม 100% ของพอร์ต
 
-## Visual Trading Dashboard
+---
 
-`dynamic-grid` includes a built-in real-time web dashboard running at
-`http://localhost:3333` (configurable via `DASHBOARD_PORT`).
+## 🖥️ หน้าต่าง Web Dashboard & TradingView Chart
 
-- **Interactive Candlestick Chart** powered by TradingView `lightweight-charts`.
-- **Live Bound & Trigger Lines**:
-  - 🔵 **Upper Bound** (Dow Theory Resistance)
-  - 🟣 **Bottom Bound** (Dow Theory Support)
-  - 🟡 **Anchor Price**
-  - 🟢 **Stepped Buy Trigger**
-  - 🔴 **Sell Target**
-- **Action Markers**:
-  - 🟢 **Buy fills** (arrow pointing up at entry price)
-  - 🔴 **Sell fills** (arrow pointing down with realized PnL)
-  - ⚠️ **Stuck Cuts** (unwound inventory marker)
-- **Live HUD**: Realized PnL, open lots table, stuck timer countdown, and Dow
-  market structure regime badge.
+บอทมาพร้อม Web Dashboard ในตัว (เข้าใช้งานที่ `http://localhost:3333`):
+- **Lightweight Candlestick Chart**: กราฟแท่งเทียน 15M / 1H เรียลไทม์
+- **Dynamic Channel Overlay**: เส้นกรอบแนวต้าน (Ceiling), เส้นกึ่งกลาง (Center), เส้นแนวรับ (Floor), และเส้น Cut Loss Buffer
+- **Structural Markers**: แสดงจุดยอด (Peaks ⛰️) และเหว (Valleys 🌊) ตามทฤษฎี Dow Theory พร้อมจำนวนจุดสัมผัส (🎯 2x / Multi-Touch)
+- **Order & Execution Markers**: จุดเข้าซื้อ (BUY) และขายทำกำไร (SELL) พร้อมแสดง Realized PnL ของแต่ละรอบ
+- **Control Bar**: ปุ่ม Pause / Resume, Cancel All Orders, Reset Position, จัดการ Fills/Lots และหน้าต่างตั้งค่า ⚙️ Config
 
+---
 
-### Before you point `DGRID_BINANCE_SYMBOL` at a real pair
+## 🚀 การติดตั้งและเริ่มต้นใช้งาน (Quick Start)
 
-`somiusdt` is the default because SOMI/USDT has traded on Binance Spot since
-September 2025 — but exchange listings change. Confirm the pair is still live
-(e.g. check https://www.binance.com/en/trade/SOMI_USDT) before relying on it,
-and if you point this at a different market/token, update the symbol to match
-what's actually tradable on both sides (Binance for ATR, DreamDEX for
-execution).
-
-## Install
-
-Drop this folder into the kit as `strategies/dynamic-grid/`, alongside the
-existing `strategies/grid/`:
-
-```
-cp -r dynamic-grid  dreamdex-bot-kit/strategies/dynamic-grid
-cd dreamdex-bot-kit
-npm install                      # picks up the new workspace package
-cp strategies/dynamic-grid/.env.example strategies/dynamic-grid/.env
-# .env still needs the root PRIVATE_KEY / NETWORK from the kit's own .env.example
+### 1. ติดตั้ง Dependencies
+```bash
+npm install
 ```
 
-Run the same read-only check the kit recommends before anything else:
-
-```
-npx tsx scripts/doctor.ts
-```
-
-Then run it dry:
-
-```
-npm run dev -w dynamic-grid      # DRY_RUN=true by default — logs, sends nothing
+### 2. ตรวจสอบโค้ด (Typecheck)
+```bash
+npm run typecheck
 ```
 
-Watch the log for a few `step recalculated: …` lines to confirm ATR is
-converging sensibly for the market you picked, **then** set `DRY_RUN=false` in
-`strategies/dynamic-grid/.env` and start on **testnet** (`NETWORK=testnet` in
-the kit's root `.env`) with small `GRID_LOT_USDSO` before touching mainnet.
+### 3. รันโปรแกรม
+```bash
+# รันบอทและเปิด Web Dashboard (Production)
+npm start
 
-## Tuning notes
+# หรือรันในโหมด Development (Hot-reload เมื่อแก้โค้ด)
+npm run dev
+```
 
-| Symptom | Try |
-|---|---|
-| Step barely moves even when the market is obviously calmer/wilder | Lower `DGRID_BINANCE_INTERVAL` (e.g. `1m`→`30s` isn't valid on Binance, so use more bars via lower `DGRID_ATR_LOOKBACK` instead) — or, on `dreamdex` source, lower `DGRID_BAR_MS` |
-| Step whipsaws around every recalc | Raise `DGRID_RECALC_EVERY_TICKS` or `DGRID_ATR_LOOKBACK` |
-| Grid barely trades in calm markets | Lower `DGRID_MIN_STEP_BPS` and/or `DGRID_ATR_K` |
-| Lots get stranded in trending moves | Lower `DGRID_MAX_STEP_BPS`... or accept that grids are fundamentally a range-bound strategy and rely on `GRID_STUCK_TIMEOUT_MS` / the session stop-loss to cut losses |
-| Log repeats "atr=feed stale — holding last step" | Binance WS dropped and hasn't reconnected yet, or `DGRID_BINANCE_SYMBOL`/interval is wrong — check the connect/error log lines; the strategy keeps running safely on the last known step meanwhile |
+เปิดเว็บเบราว์เซอร์ไปที่: **`http://localhost:3333`**
 
-## Before you point this at real funds
+---
 
-- **This is unaudited, educational-reference code** — same disclaimer as the
-  rest of the kit (see `DISCLAIMER.md` at the repo root). Any strategy,
-  dynamic or not, can lose money — grids in particular lose in a strong
-  one-directional trend, because every lot keeps averaging into the move.
-- Read the kit's own [`docs/session-keys.md`](https://github.com/somnia-chain/dreamdex-bot-kit/blob/main/docs/session-keys.md)
-  and run the bot with a hot **operator** key that cannot withdraw funds,
-  rather than your main wallet's private key.
-- Test on **Shannon testnet** (chain `50312`) with `DRY_RUN=true`, then
-  `DRY_RUN=false` with small size, before mainnet (chain `5031`).
-- This kit is third-party, open-source code, not something Anthropic
-  reviewed or vouches for — before wiring in a real private key, check the
-  repo yourself (contract addresses, recent commits/issues) rather than
-  trusting any single source blindly, this file included.
+## ⚙️ การตั้งค่าระบบ (Configuration)
+
+คุณสามารถตั้งค่าได้ **2 วิธี**:
+
+### วิธีที่ 1: ตั้งค่าผ่านหน้าเว็บ Dashboard (แนะนำ)
+1. เปิดเว็บ `http://localhost:3333`
+2. กดปุ่ม **⚙️ Config** ที่มุมขวาบน
+3. ไปที่แท็บ **🔑 Binance API & Env**:
+   - เปิด/ปิด **🧪 Dry Run Simulation Mode** (เปิด = จำลองการเทรด ไม่ส่งคำสั่งจริง, ปิด = ส่งออเดอร์จริงเข้า Binance)
+   - ใส่ **Binance API Key** และ **Binance API Secret** (เปิดสิทธิ์ *Enable Spot & Margin Trading*)
+   - ระบุ **Web Dashboard Port** (ค่าเริ่มต้น `3333`)
+4. กด **💾 Save & Apply** ข้อมูลจะถูกบันทึกลง Database และเริ่มทำงานทันที
+
+### วิธีที่ 2: ตั้งค่าผ่านไฟล์ `data/grid-bot.db.json` โดยตรง
+แก้ไขค่าในฟิลด์ `"settings"`:
+```json
+{
+  "settings": {
+    "symbol": "BTCUSDT",
+    "binanceApiKey": "YOUR_BINANCE_API_KEY",
+    "binanceApiSecret": "YOUR_BINANCE_API_SECRET",
+    "binanceBaseUrl": "https://api.binance.com",
+    "binanceWsBase": "wss://stream.binance.com:9443",
+    "dryRun": true,
+    "dashboardPort": 3333,
+    "maxInventoryUsdso": 100,
+    "channelMode": "MULTI_TOUCH_SR",
+    "intervalMs": 500
+  }
+}
+```
+
+*(หรือหากต้องการใช้ `.env` ก็สามารถคัดลอกจาก `.env.example` ได้เช่นกัน)*
+
+---
+
+## 🛠️ คำสั่ง Command-Line (CLI Utilities)
+
+| คำสั่ง | หน้าที่การทำงาน |
+| :--- | :--- |
+| `npm start` | รันบอทเทรดหลักและเปิดเซิร์ฟเวอร์ Dashboard |
+| `npm run dev` | รันบอทในโหมด Development พร้อม Hot-reload (`tsx watch`) |
+| `npm run typecheck` | ตรวจสอบความถูกต้องของ Type ด้วย TypeScript (`tsc --noEmit`) |
+| `npm run cancel-all [SYMBOL]` | ยกเลิกคำสั่ง Open Orders ทั้งหมดของคู่เทรดบน Binance |
+| `npm run inspect-balances [SYMBOL]` | ตรวจสอบยอดเงินคงเหลือในกระเป๋า Spot (Free / Locked) และคำสั่งที่เปิดอยู่ |
+| `npm run inspect-orders [SYMBOL]` | ตรวจสอบรายการออเดอร์ย้อนหลังจาก Binance API |
+| `npm run history [SYMBOL]` | ตรวจสอบประวัติการจับคู่เทรด (Trade Fills) จากบัญชี Binance |
+
+---
+
+## ⚠️ คำเตือนความเสี่ยง (Risk Disclaimer)
+
+การเทรดคริปโทเคอร์เรนซีมีความเสี่ยงจากความผันผวนของราคา กลยุทธ์ Grid Trading ได้รับการออกแบบมาสำหรับสภาวะตลาดที่มีการแกว่งตัวในกรอบ (Sideway / Consolidation) หากตลาดเกิดแนวโน้มทิศทางเดียวรุนแรง (Strong Trend) หรือหลุดกรอบแนวรับสำคัญ บอทจะมีระบบ Cut-Loss เพื่อรักษาเงินทุน โปรดทดสอบในโหมด **Dry Run (`dryRun: true`)** และบริหารจัดการความเสี่ยง (Money Management) ให้เหมาะสมกับเงินทุนของคุณเสมอ

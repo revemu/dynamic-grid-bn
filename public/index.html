@@ -137,7 +137,8 @@
             </div>
             <div class="kpi-val pnl-neutral" id="realizedPnl">$0.0000</div>
             <div class="pnl-half-sub" id="lossStopInfo">
-              <span id="kpiTradePnl" style="color: #4ade80; font-weight: 600;">Trade: +$0.00</span> • ⛽ <span id="kpiGasSpent" style="color: #fbbf24; font-weight: 600;">Gas: 0.0000 SOMI</span>
+              <span id="kpiTradePnl" style="color: #4ade80; font-weight: 600;">Trade: +$0.00</span>
+              <span id="kpiGasSpent" style="color: #fbbf24; font-weight: 600; display: none;"></span>
             </div>
           </div>
         </div>
@@ -218,7 +219,7 @@
           <div class="panel-header">
             <div class="panel-title-group">
               <h2>
-                <span class="chart-symbol-badge" id="chartSymbolBadge">SOMI / USDso</span>
+                <span class="chart-symbol-badge" id="chartSymbolBadge">BTC / USDT</span>
                 <span class="chart-timeframe-sub" id="chartTimeframeSub">(1h Macro Candles)</span>
                 <span class="channel-status-pill" id="channelStatusPill">
                   <span class="channel-pulse-dot"></span>
@@ -246,7 +247,7 @@
             <!-- In-Chart Clean Lightweight Legend (Top-Left) -->
             <div class="chart-canvas-legend" id="chartCanvasLegend">
               <div class="legend-symbol-row">
-                <span class="legend-symbol" id="legendSymbol">SOMI / USDso</span>
+                <span class="legend-symbol" id="legendSymbol">BTC / USDT</span>
                 <span class="legend-tf-pill" id="legendTf">1H</span>
                 <span class="legend-live-dot"></span>
                 <span class="legend-live-price" id="legendLivePrice">--.------</span>
@@ -542,7 +543,7 @@
             <div class="form-group">
               <label for="cfg_cutLossMaxBidDiscountPct">
                 Max Bid Discount for Cut Loss (%)
-                <span class="help-tip" title="Max allowed discount on DreamDEX bid vs reference price before allowing market cut loss">ℹ️</span>
+                <span class="help-tip" title="Max allowed discount on Binance orderbook bid vs reference price before allowing market cut loss">ℹ️</span>
               </label>
               <div class="input-with-unit">
                 <input type="number" id="cfg_cutLossMaxBidDiscountPct" step="0.1" min="0.5" max="10.0" />
@@ -553,7 +554,7 @@
             <div class="form-group">
               <label for="cfg_orderExpireHours">
                 Limit Order Duration (Hours)
-                <span class="help-tip" title="Expiration time for resting limit orders on DreamDEX">ℹ️</span>
+                <span class="help-tip" title="Expiration time for resting limit orders on Binance">ℹ️</span>
               </label>
               <div class="input-with-unit">
                 <input type="number" id="cfg_orderExpireHours" step="1" min="1" max="72" />
@@ -897,7 +898,7 @@
             <div class="form-group switch-group">
               <div class="switch-label-group">
                 <span class="switch-title">Triangle Squeeze Protection (เส้นรับ-ต้านบีบตัดกัน)</span>
-                <span class="switch-desc">ขายล้าง Position ถือ USDso 100% ทันทีเมื่อเส้นแนวรับและแนวต้านบีบแคบเข้าหากันจนใกล้ตัดกัน แล้วพักรอจนกว่ากรอบจะกว้างพอ</span>
+                <span class="switch-desc">ขายล้าง Position ถือ Quote (USDT) 100% ทันทีเมื่อเส้นแนวรับและแนวต้านบีบแคบเข้าหากันจนใกล้ตัดกัน แล้วพักรอจนกว่ากรอบจะกว้างพอ</span>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="cfg_enableTriangleSqueezeExit" />
@@ -913,10 +914,10 @@
             <div class="form-group">
               <label for="cfg_orderExecutionMode">
                 Order Execution Mode (รูปแบบการส่งคำสั่ง)
-                <span class="help-tip" title="เลือกรูปแบบการทำงาน: IOC_BRACKET (ยิง IOC ตามกรอบ ไม่ตั้งคำสั่งรอ ประหยัด Gas สูงสุด) หรือ MAKER_LIMIT (ตั้ง Limit Order รอใน Orderbook)">ℹ️</span>
+                <span class="help-tip" title="เลือกรูปแบบการทำงาน: IOC_BRACKET (ยิง IOC ตามกรอบ ไม่ตั้งคำสั่งรอ) หรือ MAKER_LIMIT (ตั้ง Limit Order รอใน Orderbook)">ℹ️</span>
               </label>
               <select id="cfg_orderExecutionMode" class="form-select">
-                <option value="IOC_BRACKET">⚡ IOC_BRACKET (ยิง IOC ตามกรอบ ไม่ตั้งคำสั่งรอ, รวบไม้ ประหยัด Gas สูงสุด)</option>
+                <option value="IOC_BRACKET">⚡ IOC_BRACKET (ยิง IOC ตามกรอบ ไม่ตั้งคำสั่งรอ, รวบไม้ทำงานเร็วที่สุด)</option>
                 <option value="MAKER_LIMIT">📖 MAKER_LIMIT (ตั้ง Maker Limit Orders รอใน Orderbook)</option>
               </select>
             </div>
@@ -1000,8 +1001,8 @@
 
             <div class="form-group switch-group">
               <div class="switch-label-group">
-                <span class="switch-title">Laggard Snipe</span>
-                <span class="switch-desc">Opportunistically take discounted asks or sell to premium bids on DreamDEX</span>
+                <span class="switch-title">Opportunistic Snipe</span>
+                <span class="switch-desc">Opportunistically take discounted asks or sell to premium bids against reference price</span>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="cfg_enableLaggardSnipe" />
@@ -1011,8 +1012,8 @@
 
             <div class="form-group switch-group">
               <div class="switch-label-group">
-                <span class="switch-title">Laggard Dump Guard</span>
-                <span class="switch-desc">Prevent buying on DreamDEX if DreamDEX price is lagging above a dumping Binance market</span>
+                <span class="switch-title">Dump Guard</span>
+                <span class="switch-desc">Prevent buying when local order book is lagging above a dumping market</span>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="cfg_enableLaggardGuard" />
@@ -1038,9 +1039,9 @@
             </div>
 
             <div class="db-metric-card">
-              <div class="db-metric-title">TOTAL GAS RECEIPTS</div>
+              <div class="db-metric-title">TOTAL GAS &amp; FEES</div>
               <div class="db-metric-val highlight-purple" id="dbGasCount">0 Tx</div>
-              <div class="db-metric-sub" id="dbGasTotalSomi">0.0000 SOMI Spent</div>
+              <div class="db-metric-sub" id="dbGasTotalSomi">0.0000 Fees Spent</div>
             </div>
 
             <div class="db-metric-card">
@@ -1178,8 +1179,8 @@
                   <th style="width: 140px;">เวลา (Time)</th>
                   <th style="width: 120px;">ประเภท (Action)</th>
                   <th style="width: 110px; text-align: right;">ราคา (Price)</th>
-                  <th style="width: 110px; text-align: right;">จำนวน (SOMI)</th>
-                  <th style="width: 110px; text-align: right;">มูลค่า ($ USDso)</th>
+                  <th style="width: 110px; text-align: right;">จำนวน (Base Qty)</th>
+                  <th style="width: 110px; text-align: right;">มูลค่า (Quote / USDT)</th>
                   <th style="width: 100px; text-align: right;">PnL</th>
                   <th style="width: 100px; text-align: center;">สถานะ (Status)</th>
                   <th style="width: 150px; text-align: center;">จัดการ (Actions)</th>
@@ -1199,7 +1200,7 @@
           <div class="tm-toolbar">
             <div class="tm-summary-pills">
               <div class="tm-pill">Total Lots: <b id="tmSummaryLotsCount">0</b></div>
-              <div class="tm-pill text-cyan">Holding Qty: <b id="tmSummaryLotsQty">0.00 SOMI</b></div>
+              <div class="tm-pill text-cyan">Holding Qty: <b id="tmSummaryLotsQty">0.00 BASE</b></div>
               <div class="tm-pill text-purple">Avg Entry: <b id="tmSummaryLotsAvgPrice">$0.0000</b></div>
             </div>
             <button class="btn btn-primary btn-sm" id="tmBtnOpenAddLot">
@@ -1226,15 +1227,15 @@
             </div>
             <div class="round-kpi-card">
               <span class="round-kpi-label">ยอดซื้อสะสมรวม (Total Bought)</span>
-              <div class="round-kpi-val text-cyan" id="roundsKpiBought">$0.00 <span class="round-kpi-sub" id="roundsKpiBoughtQty">(0.00 SOMI)</span></div>
+              <div class="round-kpi-val text-cyan" id="roundsKpiBought">$0.00 <span class="round-kpi-sub" id="roundsKpiBoughtQty">(0.00 BASE)</span></div>
             </div>
             <div class="round-kpi-card">
               <span class="round-kpi-label">ยอดขายสะสมรวม (Total Sold)</span>
-              <div class="round-kpi-val text-orange" id="roundsKpiSold">$0.00 <span class="round-kpi-sub" id="roundsKpiSoldQty">(0.00 SOMI)</span></div>
+              <div class="round-kpi-val text-orange" id="roundsKpiSold">$0.00 <span class="round-kpi-sub" id="roundsKpiSoldQty">(0.00 BASE)</span></div>
             </div>
             <div class="round-kpi-card">
               <span class="round-kpi-label">กำไรสุทธิรวม (Total Realized PnL)</span>
-              <div class="round-kpi-val" id="roundsKpiPnl">$0.00 <span class="round-kpi-sub" id="roundsKpiGas">(Gas: $0.00)</span></div>
+              <div class="round-kpi-val" id="roundsKpiPnl">$0.00</div>
             </div>
           </div>
 
@@ -1341,19 +1342,19 @@
 
           <div class="tm-form-row">
             <div class="form-group" style="flex: 1;">
-              <label for="etf_price">ราคา (Price USDso)</label>
+              <label for="etf_price">ราคา (Price / Quote)</label>
               <input type="number" id="etf_price" step="0.00001" min="0.00001" class="form-control" required />
             </div>
 
             <div class="form-group" style="flex: 1;">
-              <label for="etf_qty">จำนวน (Quantity SOMI)</label>
+              <label for="etf_qty">จำนวน (Quantity / Base)</label>
               <input type="number" id="etf_qty" step="0.0001" min="0.0001" class="form-control" required />
             </div>
           </div>
 
           <div class="tm-form-row">
             <div class="form-group" style="flex: 1;">
-              <label for="etf_pnl">PnL กำไร/ขาดทุน (USDso - สำหรับ Sell)</label>
+              <label for="etf_pnl">PnL กำไร/ขาดทุน (Quote - สำหรับ Sell)</label>
               <input type="number" id="etf_pnl" step="0.0001" class="form-control" placeholder="0.0000" />
             </div>
 
@@ -1414,18 +1415,18 @@
 
           <div class="tm-form-row">
             <div class="form-group" style="flex: 1;">
-              <label for="atf_price">ราคา (Price USDso)</label>
+              <label for="atf_price">ราคา (Price / Quote)</label>
               <input type="number" id="atf_price" step="0.00001" min="0.00001" class="form-control" placeholder="0.22000" required />
             </div>
             <div class="form-group" style="flex: 1;">
-              <label for="atf_qty">จำนวน (Quantity SOMI)</label>
+              <label for="atf_qty">จำนวน (Quantity / Base)</label>
               <input type="number" id="atf_qty" step="0.0001" min="0.0001" class="form-control" placeholder="45.0000" required />
             </div>
           </div>
 
           <div class="tm-form-row">
             <div class="form-group" style="flex: 1;">
-              <label for="atf_pnl">PnL USDso (ถ้ามี)</label>
+              <label for="atf_pnl">PnL (Quote ถ้ามี)</label>
               <input type="number" id="atf_pnl" step="0.0001" class="form-control" placeholder="0.0000" />
             </div>
             <div class="form-group" style="flex: 1;">
@@ -1464,11 +1465,11 @@
           <input type="hidden" id="el_index" />
           <div class="tm-form-row">
             <div class="form-group" style="flex: 1;">
-              <label for="el_price">ราคาต้นทุน (Entry Price USDso)</label>
+              <label for="el_price">ราคาต้นทุน (Entry Price / Quote)</label>
               <input type="number" id="el_price" step="0.00001" min="0.00001" class="form-control" required />
             </div>
             <div class="form-group" style="flex: 1;">
-              <label for="el_qty">จำนวนคงเหลือ (Quantity SOMI)</label>
+              <label for="el_qty">จำนวนคงเหลือ (Quantity / Base)</label>
               <input type="number" id="el_qty" step="0.0001" min="0.0001" class="form-control" required />
             </div>
           </div>
@@ -1500,11 +1501,11 @@
         <form id="addLotForm" class="tm-form">
           <div class="tm-form-row">
             <div class="form-group" style="flex: 1;">
-              <label for="al_price">ราคาต้นทุน (Entry Price USDso)</label>
+              <label for="al_price">ราคาต้นทุน (Entry Price / Quote)</label>
               <input type="number" id="al_price" step="0.00001" min="0.00001" class="form-control" placeholder="0.22000" required />
             </div>
             <div class="form-group" style="flex: 1;">
-              <label for="al_qty">จำนวนคงเหลือ (Quantity SOMI)</label>
+              <label for="al_qty">จำนวนคงเหลือ (Quantity / Base)</label>
               <input type="number" id="al_qty" step="0.0001" min="0.0001" class="form-control" placeholder="35.0000" required />
             </div>
           </div>
@@ -1520,7 +1521,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0"></script>
+  <script src="app.js?v=2.1"></script>
 </body>
 
 </html>

@@ -1,95 +1,76 @@
-# Dynamic Grid Strategy — Project Knowledge & Memory (`GEMINI.md`)
+# Dynamic Grid Binance Spot — Project Knowledge & Memory (`GEMINI.md`)
 
-This document is the persistent operational and architectural knowledge base for `dynamic-grid`. It is automatically loaded into the agent's context to ensure continuity across sessions without re-analyzing the codebase from scratch.
+This document is the persistent operational and architectural knowledge base for `dynamic-grid-bn`. It is automatically loaded into the agent's context to ensure continuity across sessions without re-analyzing the codebase from scratch.
 
 ---
 
-## 1. Monorepo Relationship & Architecture
-
 > [!IMPORTANT]
-> `dynamic-grid` is **NOT** an independent standalone bot. It is a **strategy package inside the `dreamdex-bot-kit` monorepo** (`strategies/dynamic-grid`).
-> It cannot run in isolation — it depends on `@dreamdex-bot-kit/core` (`packages/core`) and the root monorepo workspace.
+> ### 🚨 GOLDEN RULE: ถามยืนยันผู้ใช้ทุกครั้ง (STRICT CONFIRMATION PROTOCOL)
+> 1. **ก่อนเริ่มแก้ไขโค้ด (Before Code Edits)**: ต้องอธิบายสาเหตุของปัญหาและแนวทางแก้ไขให้ชัดเจน จากนั้นถามยืนยันกับผู้ใช้ก่อนแตะต้องหรือแก้ไขไฟล์โค้ดเสมอ
+> 2. **ก่อน Commit และ Push ขึ้น Git (Before Git Commit & Push)**: เมื่อแก้ไขโค้ดเสร็จและรัน `npm run typecheck` ผ่าน 100% แล้ว ให้สรุปสิ่งที่แก้ไขและใช้เครื่องมือ `ask_question` ถามยืนยันกับผู้ใช้ทุกครั้ง ห้ามรัน `git commit` หรือ `git push` เองโดยเด็ดขาดหากยังไม่ได้รับการกดยืนยันจากผู้ใช้
+> 3. **อัปเดต Persistent Knowledge (`GEMINI.md`) เสมอ**: เมื่อใดก็ตามที่มีการแก้ไขโค้ด, ปรับแต่งตรรกะ, แก้ไขบั๊ก หรือเพิ่มฟีเจอร์ ต้องอัปเดตเนื้อหาลงใน `GEMINI.md` ทันที เพื่อให้ Memory ของ AI ตรงกับโค้ดปัจจุบันเสมอ
+
+---
+
+## 1. Project Architecture (`dynamic-grid-bn`)
+
+> [!NOTE]
+> `dynamic-grid-bn` เป็น **Standalone Trading Bot สำหรับ Binance Spot** (แยกตัวเป็นอิสระ ไม่ได้ขึ้นตรงกับ Monorepo หรือ On-chain Smart Contract ของเครือข่ายอื่นอีกต่อไป)
 
 ```text
-dreamdex-bot-kit-main/               # Monorepo root
-├── package.json                     # Root workspace configuration ("workspaces": ["packages/*", "strategies/*", ...])
-├── .env                             # Global credentials (PRIVATE_KEY, NETWORK, RPC_URL, OWNER_ADDRESS)
-├── scripts/
-│   ├── doctor.ts                    # Global health check (reads wallet, gas, and all order books)
-│   ├── quickstart.mjs               # Interactive bot setup script
-│   └── railway-start.mjs            # Production Railway process launcher
-├── packages/
-│   ├── core/                        # @dreamdex-bot-kit/core (the engine driving all strategies)
-│   │   ├── src/pool.ts              # Pool class: topOfBook(), place(), cancel(), walletBase()
-│   │   ├── src/client.ts            # Chain context, Viem public/wallet clients
-│   │   ├── src/env.ts               # loadEnv(): walks UP directories to read root .env
-│   │   ├── src/execute.ts           # Order simulation, auto-pull payable placeOrder(), gas headroom
-│   │   └── src/gotchas.ts           # Protocol-level validation rules & checks
-│   └── backtest/                    # @dreamdex-bot-kit/backtest simulation engine
-└── strategies/
-    ├── grid/                        # Original static grid strategy
-    └── dynamic-grid/                # <-- THIS PACKAGE (volatility & Dow-driven dynamic grid)
-        ├── package.json             # Workspace package referencing "@dreamdex-bot-kit/core": "*"
-        ├── .env                     # Local strategy tuning knobs (DGRID_*, DOW_*, CHANNEL_MODE)
-        ├── data/grid-bot.db.json    # ACID database for lots, orders, and PnL persistence
-        ├── public/                  # Static web dashboard UI
-        └── src/
-            ├── index.ts             # Strategy entrypoint (bootstraps feeds, engines, dashboard)
-            ├── strategy.ts          # Core DynamicGrid state machine, lots, and safeguards
-            ├── market-structure.ts  # Dow Theory swing pivots, trendlines, 3 channel modes
-            ├── config.ts            # Strategy environment loader (calls loadEnv() from core)
-            ├── db.ts                # JSON ACID state persistence
-            ├── indexer.ts           # Somnia Markets GraphQL Indexer client (https://prd.smk.somnia.host/v1/graphql)
-            ├── inspect-orders.ts    # CLI order inspector (open orders & fill history via GraphQL)
-            ├── server.ts            # Real-time WebSocket + HTTP TradingView dashboard (port 3333)
-            ├── binance-feed.ts      # Binance WebSocket kline client for live ATR
-            └── types.ts             # Shared interfaces
+dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-grid-bn)
+├── package.json                     # Dependencies: dotenv, ws, tsx, typescript
+├── .env                             # Environment config (BINANCE_API_KEY, SECRET, SYMBOL, DRY_RUN, PORT)
+├── data/
+│   └── grid-bot.db.json             # ACID database for lots, orders, settings, and PnL persistence
+├── public/                          # TradingView Lightweight Charts Dashboard UI
+│   ├── index.html                   # Web dashboard layout & control modals
+│   ├── app.js                       # Frontend event handling, chart rendering, SSE listeners
+│   └── style.css                    # Dashboard dark theme styling
+└── src/
+    ├── index.ts                     # Strategy entrypoint (bootstraps feeds, engines, dashboard)
+    ├── binance-client.ts            # Binance Spot REST API client (exchangeInfo, orders, balances)
+    ├── binance-feed.ts              # Binance WebSocket kline client for real-time ATR & candle updates
+    ├── strategy.ts                  # Core DynamicGrid state machine, lots management, safeguards
+    ├── market-structure.ts          # Dow Theory swing pivots, trendlines, 4 channel modes
+    ├── config.ts                    # Strategy environment & DB settings loader
+    ├── db.ts                        # JSON ACID state persistence
+    ├── server.ts                    # Real-time WebSocket + SSE + HTTP dashboard server (default port 3333/3334)
+    ├── trade-rounds.ts              # Trade round cycle & performance calculations
+    ├── types.ts                     # Shared interfaces & data types
+    └── volatility.ts                # ATR calculation engine
 ```
 
 ---
 
-## 2. Core Dependencies & Protocol Mechanics (`@dreamdex-bot-kit/core`)
+## 2. Binance Spot Mechanics & Execution Routing
 
-All interaction with the Somnia blockchain and DreamDEX CLOB contracts goes through `@dreamdex-bot-kit/core`:
-
-1. **Environment Cascading (`loadEnv`)**:
-   - `packages/core/src/env.ts` walks up directories from `strategies/dynamic-grid` to the monorepo root.
-   - **Root `.env`**: Sets `PRIVATE_KEY`, `NETWORK` (`testnet` or `mainnet`), `RPC_URL`.
-   - **Local `.env`** (`strategies/dynamic-grid/.env`): Overrides or sets strategy knobs (`DGRID_ATR_SOURCE`, `GRID_MAX_INVENTORY_USDSO`, `CHANNEL_MODE`, etc.).
-2. **Post-Upgrade Spot Contract (June 2026)**:
-   - Single entrypoint `placeOrder(...)` with `payable` auto-pull — funds are pulled directly from the wallet, no separate vault deposit required.
-   - `expireTimestampNs` must be a future nanosecond timestamp (`(Date.now() + ms) * 1_000_000`).
-   - Native SOMI buy transactions require $\ge 5,000,000$ gas limit.
-   - `USDso` has **18 decimals** (never assume 6 decimals).
-3. **Execution Routing**:
-   - `AtrSource` (Binance WebSocket or DreamDEX synthetic candles) calculates relative volatility (`atrPct()`).
-   - **Execution is 100% on DreamDEX**: All order placements, cancellations, and prices use `pool.topOfBook()` and `pool.place()` via `@dreamdex-bot-kit/core`.
+1. **Spot Client & Authentication (`src/binance-client.ts`)**:
+   - เชื่อมต่อกับ Binance Spot REST API (`https://api.binance.com`)
+   - รองรับโหมด **`DRY_RUN=true`**: ดึงข้อมูลตลาดสาธารณะ (Order Book, Klines, Ticks) และจำลองการส่งออเดอร์ในหน่วยความจำโดยไม่ต้องใช้ API Key
+   - รองรับโหมด **Live Trading (`DRY_RUN=false`)**: ใช้ `BINANCE_API_KEY` และ `BINANCE_API_SECRET` ในการซิงค์ยอดเงินใน Wallet, เช็ก Open Orders, และส่งออเดอร์จริงบน Binance Spot
+   - จัดการ Time Synchronization กับ Binance Server อัตโนมัติ (`syncTime()`)
+   - ปรับความละเอียดตาม Symbol Filter ของ Binance เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
+2. **Asset Precision & Terminology**:
+   - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB)
+   - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT)
+   - ไม่มีการอิงเหรียญ SOMI หรือ USDso อีกต่อไป ทุกค่าคำนวณตาม Base / Quote ของคู่เทรดจริงบน Binance
+3. **Data Feeds**:
+   - ดึง Historical Klines ผ่าน Binance REST API สำหรับช่วง Warmup บน Timeframe ที่กำหนด (`initialCandleCount`, ค่าเริ่มต้น 300 แท่ง)
+   - สตรีมแท่งเทียน Real-time ผ่าน Binance WebSocket (`wss://stream.binance.com:9443/ws/<symbol>@kline_<tf>`) เพื่อคำนวณ ATR, Dow Swings, และพล็อตแท่งเทียนบน Dashboard
 
 ---
 
-## 3. Operational Runbook & How to Run
+## 3. Operational Runbook & Commands
 
-Because `dynamic-grid` is part of the npm workspace, commands should be executed from the **monorepo root** or inside the workspace with workspace links established:
+คำสั่งทั้งหมดรันโดยตรงในโฟลเดอร์โปรเจกต์ `dynamic-grid-bn`:
 
-### From Monorepo Root (`c:\Sites\github\dreamdex-bot-kit-main`):
 | Purpose | Command | Notes |
 | :--- | :--- | :--- |
-| **Workspace Build** | `npm run build` | Builds `@dreamdex-bot-kit/core` and dependencies. Run first if core changes. |
-| **System Diagnostics** | `npx tsx scripts/doctor.ts` | Read-only check: prints wallet address, gas, token balances, and live market books. |
-| **Dry Run (Dev)** | `npm run dev -w dynamic-grid` | Starts `dynamic-grid` with hot-reload (`DRY_RUN=true`). Logs orders, sends no txs. |
-| **Live Production** | `npm start -w dynamic-grid` | Runs live on-chain trading (`DRY_RUN=false` in `.env`). |
-| **Global Type Check** | `npm run typecheck` | Validates TypeScript across all workspaces including `dynamic-grid`. |
-
-### From Workspace Directory (`strategies/dynamic-grid/`):
-| Purpose | Command | Notes |
-| :--- | :--- | :--- |
-| **Local Type Check** | `npm run typecheck` | Runs `tsc --noEmit` locally. |
-| **Local Dry Run** | `npm run dev` | Runs `tsx watch src/index.ts`. |
-| **Cancel All Orders**| `npm run cancel-all` | Emergency cancel for all resting Maker orders on the pool contract. |
-| **Claim Proceeds** | `npm run claim` | Claims tokens from matched/settled limit orders on DreamDEX. |
-| **Inspect Balances** | `npx tsx src/inspect-balances.ts` | Detailed inspect of native SOMI and USDso balances. |
-| **Inspect Orders** | `npm run inspect-orders [addr]` | Inspects active resting orders & recent fill/cancel history via GraphQL Indexer. |
-| **Trade History** | `npm run history` | Queries trade logs and realized PnL. |
+| **Development (Hot-Reload)** | `npm run dev` | รันบอทด้วย `tsx watch src/index.ts` รีโหลดอัตโนมัติเมื่อแก้โค้ด |
+| **Production Start** | `npm start` | รันบอทด้วย `tsx src/index.ts` |
+| **TypeScript Typecheck** | `npm run typecheck` | ตรวจสอบประเภทข้อมูล TypeScript ด้วย `tsc --noEmit` |
+| **Dashboard UI** | เปิดเบราว์เซอร์ไปที่ `http://localhost:3333` หรือ `http://localhost:3334` | พอร์ตถูกกำหนดใน `.env` (`PORT`) หรือ `data/grid-bot.db.json` (`dashboardPort`) |
 
 ---
 
@@ -326,11 +307,13 @@ Because `dynamic-grid` is part of the npm workspace, commands should be executed
 ## 5. Coding Standards & Maintenance Rules
 
 1. **ESM `.js` Extension**: Local imports must always include the `.js` extension (e.g. `import { config } from "./config.js";`).
-2. **Decimals & BigInt**: Base token (SOMI) = 18 decimals, Quote token (USDso) = 18 decimals. Always use `fromRaw`, `toRaw`, and Viem helpers.
-3. **State Consistency**: Any modification to lots or active orders in `strategy.ts` must call `this.db.saveState(...)`.
-4. **Core Synchronization**: Do not bypass `@dreamdex-bot-kit/core` when placing or cancelling orders to ensure proper gotcha handling and nonces.
-5. **ALWAYS Ask for Confirmation (Before Editing AND Before Push)**: The user explicitly instructed: **"ถามยืนยันทุกครั้งที่แก้ไข อันนี้ไม่จำไว้ซักที"** = ALWAYS ask for confirmation every time before modifying code. Workflow: (1) explain the root cause + proposed fix and ask the user to confirm BEFORE editing any file; (2) after editing and passing `npm run typecheck`, summarize the changes and ask again (`ask_question`, e.g. "(Recommended) ยืนยัน Commit และ Push ขึ้น GitHub") BEFORE running `git commit` / `git push origin main`. Never push without explicit confirmation.
-6. **Mandatory Persistent Knowledge Update**: Whenever code modifications, new features, or bug fixes are introduced, `GEMINI.md` must be updated immediately with the architecture, operational logic, and rationale. This ensures that in any future session or check, the agent never needs to re-read or re-analyze the codebase from scratch.
+2. **Binance Precision & Filters**: Always apply Binance `tickSize` (price rounding) and `stepSize` (quantity rounding) via `roundToStep()` and enforce `minQty` and `minNotional` before order dispatch.
+3. **State Consistency**: Any modification to lots, open orders, or parameters in `strategy.ts` must persist to `this.db.saveState(...)`.
+4. **Spot Execution Safety**: In Live Mode (`DRY_RUN=false`), ensure API key permissions and network connectivity. In `DRY_RUN=true` mode, simulate order lifecycle safely in memory.
+5. **🚨 ALWAYS Ask for Confirmation (ถามยืนยันทุกครั้งทั้งก่อนแก้และก่อน Push)**:
+   - **ก่อนเริ่มแก้ไขไฟล์โค้ด (Before Editing Code)**: อธิบายปัญหา สาเหตุ และแนวทางแก้ไขให้ผู้ใช้ทราบ แล้วถามยืนยันก่อนลงมือแก้ไขไฟล์ทุกครั้ง
+   - **ก่อนรัน Git Commit & Push (Before Commit & Push)**: เมื่อแก้ไขโค้ดและผ่าน `npm run typecheck` 100% แล้ว ต้องสรุปรายละเอียดการแก้ไขและเรียกใช้เครื่องมือ `ask_question` เสมอ เพื่อให้ผู้ใช้กดยืนยันอย่างชัดเจน **ห้ามรัน `git commit` หรือ `git push` โดยเด็ดขาดหากยังไม่ได้รับการกดยืนยัน**
+6. **Mandatory Persistent Knowledge Update**: ทุกครั้งที่มีการแก้ไขบั๊ก, ปรับ logic หรือเพิ่มฟีเจอร์ ต้องอัปเดต `GEMINI.md` ทันที เพื่อให้บริบทของโปรเจกต์ถูกต้องและตรงกับโค้ดจริงเสมอ
 
 ---
 

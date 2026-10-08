@@ -134,15 +134,23 @@ export class DashboardServer {
     this.broadcast("order", order);
   }
 
-  updateOrderGas(txHash: string, gasFeeSomi: number, gasFeeUsdso: number): void {
+  updateOrderGas(txHash: string, gasFeeBase: number, gasFeeQuote: number): void {
     const match = this.recentOrders.find(
       (o) => o.createTxHash === txHash || o.cancelTxHash === txHash || o.txHash === txHash,
     );
     if (match) {
-      match.gasFeeSomi = (match.gasFeeSomi || 0) + gasFeeSomi;
-      match.gasFeeUsdso = (match.gasFeeUsdso || 0) + gasFeeUsdso;
+      match.gasFeeBase = (match.gasFeeBase || 0) + gasFeeBase;
+      match.gasFeeQuote = (match.gasFeeQuote || 0) + gasFeeQuote;
+      match.gasFeeSomi = (match.gasFeeSomi || 0) + gasFeeBase;
+      match.gasFeeUsdso = (match.gasFeeUsdso || 0) + gasFeeQuote;
     }
-    this.broadcast("order_gas", { txHash, gasFeeSomi, gasFeeUsdso });
+    this.broadcast("order_gas", {
+      txHash,
+      gasFeeBase,
+      gasFeeQuote,
+      gasFeeSomi: gasFeeBase,
+      gasFeeUsdso: gasFeeQuote,
+    });
   }
 
   updateTick(tickData: any): void {

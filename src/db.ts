@@ -52,12 +52,18 @@ export interface StrategyStateRecord {
   walletQuoteBalance?: number;
   baseAsset?: string;
   quoteAsset?: string;
-  totalGasDeductedSomi?: number;   // Cumulative gas/fee compensated
-  totalGasDeductedUsdso?: number;
-  accumulatedGasSomi?: number;
-  accumulatedGasUsdso?: number;
-  totalGasSpentSomi?: number;
-  totalGasSpentUsdso?: number;
+  totalGasDeductedBase?: number;
+  totalGasDeductedQuote?: number;
+  totalGasDeductedSomi?: number;   // Cumulative gas/fee compensated (compat)
+  totalGasDeductedUsdso?: number;  // (compat)
+  accumulatedGasBase?: number;
+  accumulatedGasQuote?: number;
+  accumulatedGasSomi?: number;     // (compat)
+  accumulatedGasUsdso?: number;    // (compat)
+  totalGasSpentBase?: number;
+  totalGasSpentQuote?: number;
+  totalGasSpentSomi?: number;      // (compat)
+  totalGasSpentUsdso?: number;     // (compat)
   totalTxCount?: number;
   stuckSince?: number;
   waitingForHigherLow?: boolean;
@@ -85,9 +91,9 @@ export interface UnifiedOrderRecord {
   side: "BUY" | "SELL";
   price: number;
   qty: number;
-  notional?: number;
   notionalQuote?: number;
-  notionalUsdso: number;
+  notional?: number;
+  notionalUsdso?: number;        // Backward compat alias
   baseAsset?: string;
   quoteAsset?: string;
   levelDesc?: string;
@@ -110,17 +116,25 @@ export interface UnifiedOrderRecord {
   dryRun?: boolean;
 
   // Gas Tracking & Immediate Buy Compensation
-  gasCompSomi?: number;          // Gas compensated back to wallet from this buy
-  gasLossUsdso?: number;         // USDso value of compensated gas booked as loss
-  netQty?: number;               // Remaining SOMI added to trading lot after gas compensation
+  gasCompBase?: number;
+  gasCompSomi?: number;          // Gas compensated back to wallet from this buy (compat)
+  gasLossQuote?: number;
+  gasLossUsdso?: number;         // Value of compensated gas booked as loss (compat)
+  netQty?: number;               // Remaining base asset added to trading lot after gas compensation
   createTxHash?: string;
+  createGasBase?: number;
+  createGasQuote?: number;
   createGasSomi?: number;
   createGasUsdso?: number;
   cancelTxHash?: string;
+  cancelGasBase?: number;
+  cancelGasQuote?: number;
   cancelGasSomi?: number;
   cancelGasUsdso?: number;
   fillTxHash?: string;
   txHash?: string;               // Primary/latest txHash
+  gasFeeBase?: number;
+  gasFeeQuote?: number;
   gasFeeSomi?: number;           // Total gas for this order (create + cancel)
   gasFeeUsdso?: number;
   explorerUrl?: string;
@@ -138,6 +152,8 @@ export interface GasLogRecord {
   label: string;
   gasUsed: number;
   effectiveGasPriceGwei: number;
+  gasBase?: number;
+  gasQuote?: number;
   gasSomi: number;
   gasUsdso: number;
   explorerUrl: string;
@@ -359,14 +375,19 @@ export class BotDatabase {
 
     let modified = false;
 
-    // 1. Align pnl and pnlUsdso if one is present and the other is missing
+    // 1. Align pnl, pnlQuote, and pnlUsdso if one is present
     for (const o of this.data.orders) {
-      if (o.pnl !== undefined && o.pnlUsdso === undefined) {
-        o.pnlUsdso = o.pnl;
-        modified = true;
-      } else if (o.pnlUsdso !== undefined && o.pnl === undefined) {
-        o.pnl = o.pnlUsdso;
-        modified = true;
+      const existingPnl = o.pnlQuote !== undefined ? o.pnlQuote : o.pnl !== undefined ? o.pnl : o.pnlUsdso;
+      if (existingPnl !== undefined) {
+        if (o.pnlQuote === undefined) { o.pnlQuote = existingPnl; modified = true; }
+        if (o.pnl === undefined) { o.pnl = existingPnl; modified = true; }
+        if (o.pnlUsdso === undefined) { o.pnlUsdso = existingPnl; modified = true; }
+      }
+      const existingNotional = o.notionalQuote !== undefined ? o.notionalQuote : o.notional !== undefined ? o.notional : o.notionalUsdso;
+      if (existingNotional !== undefined) {
+        if (o.notionalQuote === undefined) { o.notionalQuote = existingNotional; modified = true; }
+        if (o.notional === undefined) { o.notional = existingNotional; modified = true; }
+        if (o.notionalUsdso === undefined) { o.notionalUsdso = existingNotional; modified = true; }
       }
     }
 
@@ -396,8 +417,9 @@ export class BotDatabase {
         const avgBuyPrice = invQty > 0 ? invCost / invQty : price;
         const calcPnl = (price - avgBuyPrice) * qty;
 
-        if (f.pnl === undefined && f.pnlUsdso === undefined) {
+        if (f.pnl === undefined && f.pnlQuote === undefined && f.pnlUsdso === undefined) {
           f.pnl = calcPnl;
+          f.pnlQuote = calcPnl;
           f.pnlUsdso = calcPnl;
           modified = true;
         }
@@ -649,7 +671,9 @@ export class BotDatabase {
     const side: "BUY" | "SELL" = eventData.side || (action?.includes("BUY") ? "BUY" : "SELL");
     const price = Number(eventData.price || 0);
     const qty = Number(eventData.qty || 0);
-    const notionalUsdso = Number(eventData.notionalUsdso || (price * qty) || 0);
+    const notionalQuote = Number(eventData.notionalQuote || eventData.notionalUsdso || eventData.notional || (price * qty) || 0);
+    const notionalUsdso = notionalQuote;
+    const pnlVal = eventData.pnlQuote !== undefined ? eventData.pnlQuote : eventData.pnl !== undefined ? eventData.pnl : eventData.pnlUsdso;
     const orderId = eventData.orderId ? String(eventData.orderId) : (action.startsWith("CREATE_") ? `ord_${now}` : "");
 
     let record: UnifiedOrderRecord;
@@ -662,6 +686,7 @@ export class BotDatabase {
       if (existing) {
         existing.price = price;
         existing.qty = qty;
+        existing.notionalQuote = notionalQuote;
         existing.notionalUsdso = notionalUsdso;
         existing.time = now;
         if (eventData.txHash) existing.txHash = eventData.txHash;
@@ -673,6 +698,7 @@ export class BotDatabase {
         side,
         price,
         qty,
+        notionalQuote,
         notionalUsdso,
         levelDesc: eventData.levelDesc,
         status: "OPEN",
@@ -712,8 +738,9 @@ export class BotDatabase {
         existing.action = action;
         existing.time = now;
         existing.fillTxHash = eventData.txHash;
-        existing.pnl = eventData.pnl !== undefined ? eventData.pnl : eventData.pnlUsdso;
-        existing.pnlUsdso = eventData.pnlUsdso !== undefined ? eventData.pnlUsdso : eventData.pnl;
+        existing.pnl = pnlVal;
+        existing.pnlQuote = pnlVal;
+        existing.pnlUsdso = pnlVal;
         if (eventData.txHash) existing.txHash = eventData.txHash;
         record = existing;
       } else {
@@ -723,6 +750,7 @@ export class BotDatabase {
           side,
           price,
           qty,
+          notionalQuote,
           notionalUsdso,
           levelDesc: eventData.levelDesc,
           status: "FILLED",
@@ -730,8 +758,9 @@ export class BotDatabase {
           placedTime: now,
           fillTime: now,
           fillPrice: price,
-          pnl: eventData.pnl !== undefined ? eventData.pnl : eventData.pnlUsdso,
-          pnlUsdso: eventData.pnlUsdso !== undefined ? eventData.pnlUsdso : eventData.pnl,
+          pnl: pnlVal,
+          pnlQuote: pnlVal,
+          pnlUsdso: pnlVal,
           time: now,
           fillTxHash: eventData.txHash,
           txHash: eventData.txHash,
@@ -747,6 +776,7 @@ export class BotDatabase {
         side,
         price,
         qty,
+        notionalQuote,
         notionalUsdso,
         levelDesc: eventData.levelDesc || action,
         status: "FILLED",
@@ -754,8 +784,9 @@ export class BotDatabase {
         placedTime: now,
         fillTime: now,
         fillPrice: price,
-        pnl: eventData.pnl !== undefined ? eventData.pnl : eventData.pnlUsdso,
-        pnlUsdso: eventData.pnlUsdso !== undefined ? eventData.pnlUsdso : eventData.pnl,
+        pnl: pnlVal,
+        pnlQuote: pnlVal,
+        pnlUsdso: pnlVal,
         reason: eventData.reason,
         time: now,
         txHash: eventData.txHash,
@@ -884,9 +915,11 @@ export class BotDatabase {
       if (order.placedTime) order.placedTime = Number(updates.time);
       if (order.fillTime) order.fillTime = Number(updates.time);
     }
-    if (updates.pnlUsdso !== undefined && Number.isFinite(updates.pnlUsdso)) {
-      order.pnlUsdso = Number(updates.pnlUsdso);
-      order.pnl = Number(updates.pnlUsdso);
+    const pnlUpdate = updates.pnlQuote !== undefined ? updates.pnlQuote : updates.pnlUsdso !== undefined ? updates.pnlUsdso : updates.pnl;
+    if (pnlUpdate !== undefined && Number.isFinite(pnlUpdate)) {
+      order.pnlQuote = Number(pnlUpdate);
+      order.pnlUsdso = Number(pnlUpdate);
+      order.pnl = Number(pnlUpdate);
     }
     if (updates.reason !== undefined) {
       order.reason = updates.reason;
@@ -895,10 +928,14 @@ export class BotDatabase {
       order.levelDesc = updates.levelDesc;
     }
 
-    order.notionalUsdso =
-      updates.notionalUsdso !== undefined && Number.isFinite(updates.notionalUsdso)
-        ? Number(updates.notionalUsdso)
-        : Number(order.price || 0) * Number(order.qty || 0);
+    const notionalUpdate = updates.notionalQuote !== undefined ? updates.notionalQuote : updates.notionalUsdso !== undefined ? updates.notionalUsdso : updates.notional;
+    const computedNotional = notionalUpdate !== undefined && Number.isFinite(notionalUpdate)
+      ? Number(notionalUpdate)
+      : Number(order.price || 0) * Number(order.qty || 0);
+
+    order.notionalQuote = computedNotional;
+    order.notionalUsdso = computedNotional;
+    order.notional = computedNotional;
 
     // If syncLot is requested and order is a BUY fill, update corresponding lot in state.lots
     if (updates.syncLot && this.data.state?.lots) {
@@ -965,7 +1002,8 @@ export class BotDatabase {
     const side = trade.side || (trade.action?.includes("BUY") ? "BUY" : "SELL");
     const action = trade.action || (side === "BUY" ? "BUY_FILL" : "SELL_FILL");
     const status = trade.status || "FILLED";
-    const notionalUsdso = Number(trade.notionalUsdso || price * qty);
+    const notionalQuote = Number(trade.notionalQuote || trade.notionalUsdso || trade.notional || price * qty);
+    const pnlVal = trade.pnlQuote !== undefined ? trade.pnlQuote : trade.pnlUsdso !== undefined ? trade.pnlUsdso : trade.pnl;
 
     const record: UnifiedOrderRecord = {
       id: trade.id || `manual_${now}_${Math.random().toString(36).slice(2, 7)}`,
@@ -973,15 +1011,18 @@ export class BotDatabase {
       side,
       price,
       qty,
-      notionalUsdso,
+      notionalQuote,
+      notionalUsdso: notionalQuote,
+      notional: notionalQuote,
       levelDesc: trade.levelDesc || "Manual Trade Fill",
       status,
       action: action as any,
       placedTime: now,
       fillTime: status === "FILLED" ? now : undefined,
       fillPrice: status === "FILLED" ? price : undefined,
-      pnlUsdso: trade.pnlUsdso,
-      pnl: trade.pnlUsdso,
+      pnlQuote: pnlVal,
+      pnlUsdso: pnlVal,
+      pnl: pnlVal,
       reason: trade.reason || "Manual Entry via Trade Manager",
       time: now,
       txHash: trade.txHash,

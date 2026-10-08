@@ -156,6 +156,8 @@
   let structureMarkers = [];
   let pendingCandles = null;
   let pendingTick = null;
+  let activeBaseAsset = "BASE";
+  let activeQuoteAsset = "USDT";
   const ordersByCandleTime = new Map();
   const elChartOrderTooltip = document.getElementById("chartOrderTooltip");
 
@@ -231,7 +233,7 @@
             </div>
             <div class="cot-card-row">
               <span class="cot-label">Amount:</span>
-              <span class="cot-val-qty">${qty.toFixed(2)} SOMI <span class="cot-dim">($${notional.toFixed(2)})</span></span>
+              <span class="cot-val-qty">${qty.toFixed(4)} ${activeBaseAsset} <span class="cot-dim">($${notional.toFixed(2)})</span></span>
             </div>
             ${pnlHtml ? `
             <div class="cot-card-row">
@@ -254,7 +256,7 @@
         <div class="cot-summary-bar">
           <div class="cot-card-row">
             <span class="cot-label">Total (${sorted.length} fills):</span>
-            <span class="cot-val-qty">${totalQty.toFixed(2)} SOMI ($${totalNotional.toFixed(2)})</span>
+            <span class="cot-val-qty">${totalQty.toFixed(4)} ${activeBaseAsset} ($${totalNotional.toFixed(2)})</span>
           </div>
           ${hasAnyPnl ? `
           <div class="cot-card-row">
@@ -615,7 +617,7 @@
           horzAlign: "center",
           vertAlign: "center",
           color: "rgba(255, 255, 255, 0.04)",
-          text: "SOMI / USDso • 15M",
+          text: "BINANCE SPOT • 15M",
         },
         localization: {
           priceFormatter: (price) =>
@@ -1070,10 +1072,10 @@
     let zoneBadgeClass = "active-zone-pill badge-inzone";
 
     if (data.isBelowFloor || pos < 0) {
-      const hasLots = (data.lots && data.lots.length > 0) || (data.positionUsdso && data.positionUsdso > 0.05);
+      const hasLots = (data.lots && data.lots.length > 0) || ((data.positionQuote || data.positionUsdso) && (data.positionQuote || data.positionUsdso) > 0.05);
       activeStep = elStepFloor;
       levelName = "0% Floor (Below Channel)";
-      targetText = hasLots ? "CUT LOSS ACTIVE (0%)" : "PROTECTED IN CASH (100% USDso)";
+      targetText = hasLots ? "CUT LOSS ACTIVE (0%)" : `PROTECTED IN CASH (100% ${activeQuoteAsset || "Quote"})`;
       colorClass = hasLots ? "highlight-red" : "highlight-blue";
       zoneBadgeText = hasLots ? "0% FLOOR (CUT)" : "0% FLOOR (100% CASH)";
       zoneBadgeClass = hasLots ? "active-zone-pill badge-breakdown" : "active-zone-pill badge-warmup";
@@ -1372,14 +1374,16 @@
     lots.forEach((lot) => totalBase += (lot.qty || 0));
 
     // 0. Binance Account Balance Updates
-    const baseSym = data.baseAsset || "BASE";
-    const quoteSym = data.quoteAsset || "USDT";
+    activeBaseAsset = data.baseAsset || activeBaseAsset || "BASE";
+    activeQuoteAsset = data.quoteAsset || activeQuoteAsset || "USDT";
+    const baseSym = activeBaseAsset;
+    const quoteSym = activeQuoteAsset;
     const walletAddr = data.walletAddress || "";
     const shortAddr = walletAddr ? `${walletAddr.slice(0, 6)}...${walletAddr.slice(-4)}` : "Binance Spot";
-    const somiBal = data.walletSomiBalance !== undefined ? data.walletSomiBalance : 0;
-    const usdsoBal = data.walletUsdsoBalance !== undefined ? data.walletUsdsoBalance : 0;
-    const somiVal = data.walletSomiValueUsdso !== undefined ? data.walletSomiValueUsdso : (somiBal * (data.mid || 0));
-    const totalVal = data.walletTotalValueUsdso !== undefined ? data.walletTotalValueUsdso : (somiVal + usdsoBal);
+    const somiBal = data.walletBaseBalance !== undefined ? data.walletBaseBalance : (data.walletSomiBalance !== undefined ? data.walletSomiBalance : 0);
+    const usdsoBal = data.walletQuoteBalance !== undefined ? data.walletQuoteBalance : (data.walletUsdsoBalance !== undefined ? data.walletUsdsoBalance : 0);
+    const somiVal = somiBal * (data.mid || 0);
+    const totalVal = data.walletTotalValueQuote !== undefined ? data.walletTotalValueQuote : (somiVal + usdsoBal);
 
     const tradingSomi = data.tradingSomiBalance !== undefined ? data.tradingSomiBalance : totalBase;
     const gasReserve = data.gasReserveSomi !== undefined ? data.gasReserveSomi : Math.max(0, somiBal - tradingSomi);
@@ -2037,7 +2041,7 @@
         <tr class="empty-row">
           <td colspan="4">No open position (0% Allocation)</td>
         </tr>`;
-      if (elLotsTotalBase) elLotsTotalBase.textContent = "0 SOMI";
+      if (elLotsTotalBase) elLotsTotalBase.textContent = `0.00 ${activeBaseAsset}`;
       return;
     }
 
@@ -2063,7 +2067,7 @@
     });
 
     elLotsTableBody.innerHTML = html;
-    elLotsTotalBase.textContent = `${totalBase.toFixed(2)} SOMI ($${totalValue.toFixed(2)})`;
+    elLotsTotalBase.textContent = `${totalBase.toFixed(4)} ${activeBaseAsset} ($${totalValue.toFixed(2)})`;
   }
 
   function renderOpenOrdersTable(openOrders, mid) {
@@ -2226,8 +2230,8 @@
       ? "CUT LOSS EXECUTED"
       : "100% TAKE PROFIT EXIT";
     const timeStr = new Date(order.time || Date.now()).toLocaleTimeString();
-    const notional = order.notionalUsdso ? `$${order.notionalUsdso.toFixed(2)}` : "";
-    const qtyStr = order.qty ? `${order.qty.toFixed(2)} SOMI` : "";
+    const notional = (order.notionalQuote || order.notionalUsdso) ? `$${(order.notionalQuote || order.notionalUsdso).toFixed(2)}` : "";
+    const qtyStr = order.qty ? `${order.qty.toFixed(4)} ${activeBaseAsset}` : "";
     const pnlStr = order.pnl !== undefined
       ? `<span class="${order.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight:700;">${order.pnl >= 0 ? '+$' : '-$'}${Math.abs(order.pnl).toFixed(2)}</span>`
       : "";
@@ -2469,7 +2473,7 @@
       <div class="act-left">
         <span class="act-badge ${badgeClass}">${badgeText}</span>
         <span class="act-price">$${(order.price || 0).toFixed(6)}</span>
-        <span style="color: #94a3b8; font-size: 10.5px;">(${notionalStr}${order.qty ? order.qty.toFixed(2) : ""} SOMI${orderIdStr})</span>
+        <span style="color: #94a3b8; font-size: 10.5px;">(${notionalStr}${order.qty ? Number(order.qty).toFixed(4) : ""} ${activeBaseAsset}${orderIdStr})</span>
         <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">${targetStr}${subDesc}${expStr}${reasonStr}</span>
         ${txBadge}
         ${gasBadge}
@@ -2659,7 +2663,7 @@
     const lowestP = Math.min(...candles.map((c) => c.low));
 
     updateTick({
-      symbol: "SOMI / USDso",
+      symbol: `${activeBaseAsset} / ${activeQuoteAsset}`,
       dowTimeframe: "15m",
       tradingTimeframe: "15m",
       mid: lastC.close,
@@ -3007,7 +3011,7 @@
         const elGasCount = document.getElementById("dbGasCount");
         const elGasTotal = document.getElementById("dbGasTotalSomi");
         if (elGasCount) elGasCount.textContent = `${gasData.summary?.totalTxCount || 0} Tx`;
-        if (elGasTotal) elGasTotal.textContent = `${(gasData.summary?.totalGasSpentSomi || 0).toFixed(6)} SOMI Spent`;
+        if (elGasTotal) elGasTotal.textContent = `${(gasData.summary?.totalGasSpentSomi || 0).toFixed(6)} Fees Spent`;
       }
     } catch (err) {
       console.error("Failed to load DB metrics:", err);
@@ -3023,6 +3027,7 @@
       elSettingsSaveStatus.textContent = "Saving to database…";
     }
 
+    const maxInvVal = parseFloat(document.getElementById("cfg_maxInventoryUsdso").value);
     const payload = {
       symbol: document.getElementById("cfg_symbol") ? document.getElementById("cfg_symbol").value.trim().toUpperCase() : undefined,
       binanceApiKey: document.getElementById("cfg_binanceApiKey") ? document.getElementById("cfg_binanceApiKey").value.trim() : undefined,
@@ -3031,7 +3036,8 @@
       binanceWsBase: document.getElementById("cfg_binanceWsBase") ? document.getElementById("cfg_binanceWsBase").value.trim() : undefined,
       dashboardPort: document.getElementById("cfg_dashboardPort") ? parseInt(document.getElementById("cfg_dashboardPort").value, 10) : undefined,
       dryRun: document.getElementById("cfg_dryRun") ? document.getElementById("cfg_dryRun").checked : false,
-      maxInventoryUsdso: parseFloat(document.getElementById("cfg_maxInventoryUsdso").value),
+      maxInventoryQuote: maxInvVal,
+      maxInventoryUsdso: maxInvVal,
       intervalMs: parseFloat(document.getElementById("cfg_intervalMs").value),
       floorBufferPct: parseFloat(document.getElementById("cfg_floorBufferPct").value),
       cutLossMaxBidDiscountPct: parseFloat(document.getElementById("cfg_cutLossMaxBidDiscountPct").value),
@@ -3263,7 +3269,7 @@
   const elBtnResetPosition = document.getElementById("btnResetPosition");
   if (elBtnResetPosition) {
     elBtnResetPosition.addEventListener("click", async () => {
-      const ok = confirm("🎯 Reset Position?\n\nThis will clear all in-memory lots to 0.00 SOMI and cancel any resting SELL orders, allowing the bot to start accumulating fresh from Level 1.\n\n(Wallet balance will NOT be touched). Continue?");
+      const ok = confirm(`🎯 Reset Position?\n\nThis will clear all in-memory lots to 0.00 ${activeBaseAsset} and cancel any resting SELL orders, allowing the bot to start accumulating fresh from Level 1.\n\n(Wallet balance will NOT be touched). Continue?`);
       if (!ok) return;
       try {
         elBtnResetPosition.disabled = true;
@@ -3663,7 +3669,7 @@
     const avgPrice = totalQty > 0 ? totalCost / totalQty : 0;
 
     if (elTmSummaryLotsCount) elTmSummaryLotsCount.textContent = totalLots;
-    if (elTmSummaryLotsQty) elTmSummaryLotsQty.textContent = `${totalQty.toFixed(4)} SOMI`;
+    if (elTmSummaryLotsQty) elTmSummaryLotsQty.textContent = `${totalQty.toFixed(4)} ${activeBaseAsset}`;
     if (elTmSummaryLotsAvgPrice) elTmSummaryLotsAvgPrice.textContent = `$${avgPrice.toFixed(5)}`;
 
     if (tmLots.length === 0) {
@@ -3694,11 +3700,11 @@
             </div>
             <div class="tm-lot-field">
               <span class="tm-lot-label">Quantity (จำนวน)</span>
-              <span class="tm-lot-val" style="color: #38bdf8;">${q.toFixed(4)} SOMI</span>
+              <span class="tm-lot-val" style="color: #38bdf8;">${q.toFixed(4)} ${activeBaseAsset}</span>
             </div>
             <div class="tm-lot-field">
               <span class="tm-lot-label">Est. Value (มูลค่า)</span>
-              <span class="tm-lot-val">$${val.toFixed(2)} USDso</span>
+              <span class="tm-lot-val">$${val.toFixed(2)} ${activeQuoteAsset}</span>
             </div>
             <div class="tm-lot-field">
               <span class="tm-lot-label">Entry Time (เวลา)</span>
@@ -3766,16 +3772,17 @@
         elRoundsKpiWinRate.innerHTML = `${s.winRatePct.toFixed(1)}% <span class="round-kpi-sub" id="roundsKpiWinLoss">(${s.winRounds} ชนะ / ${s.lossRounds} แพ้)</span>`;
       }
       if (elRoundsKpiBought) {
-        elRoundsKpiBought.innerHTML = `$${s.totalBoughtUsdso.toFixed(2)} <span class="round-kpi-sub" id="roundsKpiBoughtQty">(${s.totalBoughtSomi.toFixed(1)} SOMI)</span>`;
+        elRoundsKpiBought.innerHTML = `$${(s.totalBoughtQuote !== undefined ? s.totalBoughtQuote : s.totalBoughtUsdso || 0).toFixed(2)} <span class="round-kpi-sub" id="roundsKpiBoughtQty">(${(s.totalBoughtBase !== undefined ? s.totalBoughtBase : s.totalBoughtSomi || 0).toFixed(2)} ${activeBaseAsset})</span>`;
       }
       if (elRoundsKpiSold) {
-        elRoundsKpiSold.innerHTML = `$${s.totalSoldUsdso.toFixed(2)} <span class="round-kpi-sub" id="roundsKpiSoldQty">(${s.totalSoldSomi.toFixed(1)} SOMI)</span>`;
+        elRoundsKpiSold.innerHTML = `$${(s.totalSoldQuote !== undefined ? s.totalSoldQuote : s.totalSoldUsdso || 0).toFixed(2)} <span class="round-kpi-sub" id="roundsKpiSoldQty">(${(s.totalSoldBase !== undefined ? s.totalSoldBase : s.totalSoldSomi || 0).toFixed(2)} ${activeBaseAsset})</span>`;
       }
       if (elRoundsKpiPnl) {
-        const pnlColor = s.totalNetPnlUsdso >= 0 ? "text-green" : "text-rose";
-        const sign = s.totalNetPnlUsdso >= 0 ? "+" : "";
+        const netPnlVal = s.totalNetPnlQuote !== undefined ? s.totalNetPnlQuote : (s.totalNetPnlUsdso || 0);
+        const pnlColor = netPnlVal >= 0 ? "text-green" : "text-rose";
+        const sign = netPnlVal >= 0 ? "+" : "";
         elRoundsKpiPnl.className = `round-kpi-val ${pnlColor}`;
-        elRoundsKpiPnl.innerHTML = `${sign}$${s.totalNetPnlUsdso.toFixed(3)} <span class="round-kpi-sub" id="roundsKpiGas">(Gas: $${s.totalGasUsdso.toFixed(4)})</span>`;
+        elRoundsKpiPnl.innerHTML = `${sign}$${netPnlVal.toFixed(3)} <span class="round-kpi-sub" id="roundsKpiGas">(Fee: $${(s.totalGasQuote !== undefined ? s.totalGasQuote : s.totalGasUsdso || 0).toFixed(4)})</span>`;
       }
     }
 
@@ -3792,8 +3799,9 @@
 
     let list = tmRounds.filter((r) => {
       // Status filter
-      if (filterStatus === "WIN" && r.grossPnlUsdso <= 0.0001) return false;
-      if (filterStatus === "LOSS" && r.grossPnlUsdso >= -0.0001) return false;
+      const roundPnl = r.grossPnlQuote !== undefined ? r.grossPnlQuote : (r.grossPnlUsdso || 0);
+      if (filterStatus === "WIN" && roundPnl <= 0.0001) return false;
+      if (filterStatus === "LOSS" && roundPnl >= -0.0001) return false;
       if (filterStatus === "HOLDING" && r.status !== "HOLDING") return false;
       if (filterStatus === "CLOSED" && r.status !== "CLOSED") return false;
       if (filterStatus === "SELL_ONLY" && r.status !== "SELL_ONLY") return false;
@@ -3811,8 +3819,10 @@
     list.sort((a, b) => {
       if (sortOrder === "NEWEST") return b.roundNumber - a.roundNumber;
       if (sortOrder === "OLDEST") return a.roundNumber - b.roundNumber;
-      if (sortOrder === "PNL_DESC") return (b.netPnlUsdso || 0) - (a.netPnlUsdso || 0);
-      if (sortOrder === "PNL_ASC") return (a.netPnlUsdso || 0) - (b.netPnlUsdso || 0);
+      const pnlA = a.netPnlQuote !== undefined ? a.netPnlQuote : (a.netPnlUsdso || 0);
+      const pnlB = b.netPnlQuote !== undefined ? b.netPnlQuote : (b.netPnlUsdso || 0);
+      if (sortOrder === "PNL_DESC") return pnlB - pnlA;
+      if (sortOrder === "PNL_ASC") return pnlA - pnlB;
       return b.roundNumber - a.roundNumber;
     });
 
@@ -3825,10 +3835,15 @@
     let html = "";
     for (const r of list) {
       const isExpanded = expandedRoundNumbers.has(r.roundNumber);
-      const isWin = r.grossPnlUsdso > 0.0001;
-      const isLoss = r.grossPnlUsdso < -0.0001;
+      const grossPnl = r.grossPnlQuote !== undefined ? r.grossPnlQuote : (r.grossPnlUsdso || 0);
+      const netPnl = r.netPnlQuote !== undefined ? r.netPnlQuote : (r.netPnlUsdso !== undefined ? r.netPnlUsdso : grossPnl);
+      const buyCost = r.buyCostQuote !== undefined ? r.buyCostQuote : (r.buyCostUsdso || 0);
+      const sellProceeds = r.sellProceedsQuote !== undefined ? r.sellProceedsQuote : (r.sellProceedsUsdso || 0);
+      const totalGas = r.totalGasQuote !== undefined ? r.totalGasQuote : (r.totalGasUsdso || 0);
+      const isWin = grossPnl > 0.0001;
+      const isLoss = grossPnl < -0.0001;
       const pnlColor = isWin ? "color: #34d399;" : isLoss ? "color: #f87171;" : "color: #94a3b8;";
-      const pnlSign = r.grossPnlUsdso >= 0 ? "+" : "";
+      const pnlSign = grossPnl >= 0 ? "+" : "";
 
       let statusBadge = "";
       if (r.status === "CLOSED") {
@@ -3854,26 +3869,26 @@
             ${statusBadge}
           </td>
           <td style="text-align: right;">
-            <div class="round-buy-val">${r.buyQty.toFixed(2)} SOMI</div>
-            <span class="round-dim-info">$${r.buyCostUsdso.toFixed(2)} @ $${r.avgBuyPrice.toFixed(4)} (${r.buyCount} ไม้)</span>
+            <div class="round-buy-val">${r.buyQty.toFixed(4)} ${activeBaseAsset}</div>
+            <span class="round-dim-info">$${buyCost.toFixed(2)} @ $${r.avgBuyPrice.toFixed(4)} (${r.buyCount} ไม้)</span>
           </td>
           <td style="text-align: right;">
-            <div class="round-sell-val">${r.sellQty.toFixed(2)} SOMI</div>
-            <span class="round-dim-info">$${r.sellProceedsUsdso.toFixed(2)} @ $${r.avgSellPrice.toFixed(4)} (${r.sellCount} ไม้)</span>
+            <div class="round-sell-val">${r.sellQty.toFixed(4)} ${activeBaseAsset}</div>
+            <span class="round-dim-info">$${sellProceeds.toFixed(2)} @ $${r.avgSellPrice.toFixed(4)} (${r.sellCount} ไม้)</span>
           </td>
           <td style="text-align: right;">
-            <span style="font-weight: 600; ${r.holdingQty > 0.05 ? "color: #38bdf8;" : "color: #64748b;"}">
-              ${r.holdingQty.toFixed(2)} SOMI
+            <span style="font-weight: 600; ${r.holdingQty > 0.0001 ? "color: #38bdf8;" : "color: #64748b;"}">
+              ${r.holdingQty.toFixed(4)} ${activeBaseAsset}
             </span>
           </td>
           <td style="text-align: right;">
-            <div style="font-weight: 700; ${pnlColor}">${pnlSign}$${(r.netPnlUsdso !== undefined ? r.netPnlUsdso : r.grossPnlUsdso).toFixed(3)}</div>
-            <span class="round-dim-info" style="${pnlColor}">${pnlSign}${r.grossPnlPct.toFixed(2)}% (Gross: ${pnlSign}$${r.grossPnlUsdso.toFixed(2)})</span>
+            <div style="font-weight: 700; ${pnlColor}">${pnlSign}$${netPnl.toFixed(3)}</div>
+            <span class="round-dim-info" style="${pnlColor}">${pnlSign}${r.grossPnlPct.toFixed(2)}% (Gross: ${pnlSign}$${grossPnl.toFixed(2)})</span>
           </td>
           <td style="text-align: right; color: #94a3b8; font-size: 11px;">
-            <div title="สร้างคำสั่ง: $${(r.createGasUsdso || 0).toFixed(4)} | ยกเลิกคำสั่ง: $${(r.cancelGasUsdso || 0).toFixed(4)}">
-              <span style="font-weight: 600; color: #cbd5e1;">$${(r.totalGasUsdso || 0).toFixed(4)}</span>
-              <span class="round-dim-info" style="font-size: 9.5px;" title="รวมทั้ง order ที่สร้างขึ้นและที่ใช้ในการยกเลิก">สร้าง+ยกเลิก</span>
+            <div>
+              <span style="font-weight: 600; color: #cbd5e1;">$${totalGas.toFixed(4)}</span>
+              <span class="round-dim-info" style="font-size: 9.5px;">Fee</span>
             </div>
           </td>
           <td style="text-align: center;">
@@ -3894,7 +3909,7 @@
                 <div class="round-sub-card">
                   <div class="round-sub-header header-buy">
                     <span>🟢 ไม้เข้าซื้อ (Buys Accumulation - ${r.buyTrades.length} ไม้)</span>
-                    <span>รวม: $${r.buyCostUsdso.toFixed(2)} USDso (${r.buyQty.toFixed(2)} SOMI)</span>
+                    <span>รวม: $${buyCost.toFixed(2)} ${activeQuoteAsset} (${r.buyQty.toFixed(4)} ${activeBaseAsset})</span>
                   </div>
                   <table class="round-subtable">
                     <thead>
@@ -3904,7 +3919,7 @@
                         <th style="text-align: right;">ราคา</th>
                         <th style="text-align: right;">จำนวน</th>
                         <th style="text-align: right;">มูลค่า ($)</th>
-                        <th style="text-align: center;">Tx</th>
+                        <th style="text-align: center;">ID</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3918,14 +3933,10 @@
                           <td>${formatShortDate(b.time)}</td>
                           <td><span class="tm-badge tm-badge-buy">${b.action}</span></td>
                           <td style="text-align: right; color: #34d399;">$${b.price.toFixed(5)}</td>
-                          <td style="text-align: right;">${b.qty.toFixed(2)}</td>
-                          <td style="text-align: right;">$${b.notionalUsdso.toFixed(2)}</td>
-                          <td style="text-align: center;">
-                            ${
-                              b.txHash
-                                ? `<a href="https://explorer.somnia.network/tx/${b.txHash}" target="_blank" class="tm-tx-link" title="${b.txHash}">🔗</a>`
-                                : "-"
-                            }
+                          <td style="text-align: right;">${b.qty.toFixed(4)}</td>
+                          <td style="text-align: right;">$${(b.notionalQuote || b.notionalUsdso || 0).toFixed(2)}</td>
+                          <td style="text-align: center; font-size: 10.5px; color: #94a3b8;">
+                            ${b.orderId || "-"}
                           </td>
                         </tr>
                       `,
@@ -3940,7 +3951,7 @@
                 <div class="round-sub-card">
                   <div class="round-sub-header header-sell">
                     <span>🔴 ไม้ขายออก (Sells Distribution - ${r.sellTrades.length} ไม้)</span>
-                    <span>รวม: $${r.sellProceedsUsdso.toFixed(2)} USDso (${r.sellQty.toFixed(2)} SOMI)</span>
+                    <span>รวม: $${sellProceeds.toFixed(2)} ${activeQuoteAsset} (${r.sellQty.toFixed(4)} ${activeBaseAsset})</span>
                   </div>
                   <table class="round-subtable">
                     <thead>
@@ -3951,7 +3962,7 @@
                         <th style="text-align: right;">จำนวน</th>
                         <th style="text-align: right;">มูลค่า ($)</th>
                         <th style="text-align: right;">PnL ($)</th>
-                        <th style="text-align: center;">Tx</th>
+                        <th style="text-align: center;">ID</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3968,15 +3979,11 @@
                           <td>${formatShortDate(s.time)}</td>
                           <td><span class="tm-badge tm-badge-sell">${s.action}</span></td>
                           <td style="text-align: right; color: #fb923c;">$${s.price.toFixed(5)}</td>
-                          <td style="text-align: right;">${s.qty.toFixed(2)}</td>
-                          <td style="text-align: right;">$${s.notionalUsdso.toFixed(2)}</td>
+                          <td style="text-align: right;">${s.qty.toFixed(4)}</td>
+                          <td style="text-align: right;">$${(s.notionalQuote || s.notionalUsdso || 0).toFixed(2)}</td>
                           <td style="text-align: right; font-weight: 600; ${trPnlColor}">${trPnlSign}$${trPnl.toFixed(4)}</td>
-                          <td style="text-align: center;">
-                            ${
-                              s.txHash
-                                ? `<a href="https://explorer.somnia.network/tx/${s.txHash}" target="_blank" class="tm-tx-link" title="${s.txHash}">🔗</a>`
-                                : "-"
-                            }
+                          <td style="text-align: center; font-size: 10.5px; color: #94a3b8;">
+                            ${s.orderId || "-"}
                           </td>
                         </tr>
                       `;
@@ -4017,27 +4024,29 @@
       return;
     }
 
+    const baseLabel = activeBaseAsset || "Base";
+    const quoteLabel = activeQuoteAsset || "Quote";
     const headers = [
       "Round #",
       "Status",
       "Start Time",
       "End Time",
       "Duration (mins)",
-      "Bought SOMI",
-      "Buy Cost USDso",
+      `Bought ${baseLabel}`,
+      `Buy Cost ${quoteLabel}`,
       "Avg Buy Price",
       "Buy Orders Count",
-      "Sold SOMI",
-      "Sell Proceeds USDso",
+      `Sold ${baseLabel}`,
+      `Sell Proceeds ${quoteLabel}`,
       "Avg Sell Price",
       "Sell Orders Count",
-      "Remaining Holding SOMI",
-      "Gross PnL USDso",
+      `Remaining Holding ${baseLabel}`,
+      `Gross PnL ${quoteLabel}`,
       "Gross PnL %",
-      "Create Gas USDso",
-      "Cancel Gas USDso",
-      "Total Gas USDso",
-      "Net PnL USDso",
+      `Create Gas/Fee ${quoteLabel}`,
+      `Cancel Gas/Fee ${quoteLabel}`,
+      `Total Gas/Fee ${quoteLabel}`,
+      `Net PnL ${quoteLabel}`,
     ];
 
     const rows = tmRounds.map((r) => [
@@ -4047,20 +4056,20 @@
       new Date(r.endTime).toISOString(),
       Math.round(r.durationMs / 60000),
       r.buyQty.toFixed(4),
-      r.buyCostUsdso.toFixed(4),
+      ((r.buyCostQuote !== undefined ? r.buyCostQuote : r.buyCostUsdso) || 0).toFixed(4),
       r.avgBuyPrice.toFixed(6),
       r.buyCount,
       r.sellQty.toFixed(4),
-      r.sellProceedsUsdso.toFixed(4),
+      ((r.sellProceedsQuote !== undefined ? r.sellProceedsQuote : r.sellProceedsUsdso) || 0).toFixed(4),
       r.avgSellPrice.toFixed(6),
       r.sellCount,
       r.holdingQty.toFixed(4),
-      r.grossPnlUsdso.toFixed(4),
+      ((r.grossPnlQuote !== undefined ? r.grossPnlQuote : r.grossPnlUsdso) || 0).toFixed(4),
       r.grossPnlPct.toFixed(2),
-      (r.createGasUsdso || 0).toFixed(6),
-      (r.cancelGasUsdso || 0).toFixed(6),
-      r.totalGasUsdso.toFixed(6),
-      r.netPnlUsdso.toFixed(4),
+      (((r.createGasQuote !== undefined ? r.createGasQuote : r.createGasUsdso) || 0)).toFixed(6),
+      (((r.cancelGasQuote !== undefined ? r.cancelGasQuote : r.cancelGasUsdso) || 0)).toFixed(6),
+      (((r.totalGasQuote !== undefined ? r.totalGasQuote : r.totalGasUsdso) || 0)).toFixed(6),
+      ((r.netPnlQuote !== undefined ? r.netPnlQuote : r.netPnlUsdso) || 0).toFixed(4),
     ]);
 
     const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");

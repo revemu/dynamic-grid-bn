@@ -151,7 +151,7 @@ async function main(): Promise<void> {
 
   log(
     `Binance Spot balance=[${initialBaseBal} ${symbolInfo.baseAsset} | ${initialQuoteBal.toFixed(2)} ${symbolInfo.quoteAsset}] ` +
-      `symbol=${symbolInfo.symbol} maxInv=$${config.maxInventoryUsdso} dryRun=${config.dryRun} ` +
+      `symbol=${symbolInfo.symbol} maxInv=$${config.maxInventoryQuote} dryRun=${config.dryRun} ` +
       `trendFilter=${config.dowTrendFilter} (${config.trendTimeframe})`,
   );
 

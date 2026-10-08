@@ -42,7 +42,7 @@ export interface OpenOrder {
   qty: number;
   targetFraction: number;
   notional?: number;
-  notionalQuote?: number;
+  notionalQuote: number;
   notionalUsdso: number;
   levelDesc: string;
   placedTime: number;
@@ -66,12 +66,24 @@ export class DynamicGrid {
   private orderCooldowns = new Map<string, number>();
   private realizedPnl = 0;
   private tradeRealizedPnl = 0;
-  private totalGasDeductedSomi = 0;
-  private totalGasDeductedUsdso = 0;
-  private accumulatedGasSomi = 0;
-  private accumulatedGasUsdso = 0;
-  private totalGasSpentSomi = 0;
-  private totalGasSpentUsdso = 0;
+  private totalGasDeductedBase = 0;
+  private totalGasDeductedQuote = 0;
+  private accumulatedGasBase = 0;
+  private accumulatedGasQuote = 0;
+  private totalGasSpentBase = 0;
+  private totalGasSpentQuote = 0;
+  public get totalGasDeductedSomi(): number { return this.totalGasDeductedBase; }
+  public set totalGasDeductedSomi(v: number) { this.totalGasDeductedBase = v; }
+  public get totalGasDeductedUsdso(): number { return this.totalGasDeductedQuote; }
+  public set totalGasDeductedUsdso(v: number) { this.totalGasDeductedQuote = v; }
+  public get accumulatedGasSomi(): number { return this.accumulatedGasBase; }
+  public set accumulatedGasSomi(v: number) { this.accumulatedGasBase = v; }
+  public get accumulatedGasUsdso(): number { return this.accumulatedGasQuote; }
+  public set accumulatedGasUsdso(v: number) { this.accumulatedGasQuote = v; }
+  public get totalGasSpentSomi(): number { return this.totalGasSpentBase; }
+  public set totalGasSpentSomi(v: number) { this.totalGasSpentBase = v; }
+  public get totalGasSpentUsdso(): number { return this.totalGasSpentQuote; }
+  public set totalGasSpentUsdso(v: number) { this.totalGasSpentQuote = v; }
   private totalTxCount = 0;
   private lastRefPrice = 0.2;
   private stuckSince?: number;
@@ -119,8 +131,12 @@ export class DynamicGrid {
   public set walletSomiBalance(v: number) { this.walletBaseBalance = v; }
   public get walletUsdsoBalance(): number { return this.walletQuoteBalance; }
   public set walletUsdsoBalance(v: number) { this.walletQuoteBalance = v; }
-  private lastObservedSomiBalance = 0;
-  private lastObservedUsdsoBalance = 0;
+  private lastObservedBaseBalance = 0;
+  private lastObservedQuoteBalance = 0;
+  private get lastObservedSomiBalance(): number { return this.lastObservedBaseBalance; }
+  private set lastObservedSomiBalance(v: number) { this.lastObservedBaseBalance = v; }
+  private get lastObservedUsdsoBalance(): number { return this.lastObservedQuoteBalance; }
+  private set lastObservedUsdsoBalance(v: number) { this.lastObservedQuoteBalance = v; }
 
   /** Throttled status logger */
   private readonly status: (msg: string) => void;
@@ -197,7 +213,8 @@ export class DynamicGrid {
 
   public getRuntimeConfig(): Record<string, any> {
     return {
-      maxInventoryUsdso: this.cfg.maxInventoryUsdso,
+      maxInventoryQuote: this.cfg.maxInventoryQuote,
+      maxInventoryUsdso: this.cfg.maxInventoryQuote,
       floorBufferPct: this.cfg.floorBufferPct,
       cutLossAtLowerBound: this.cfg.cutLossAtLowerBound,
       takeProfitAtUpperBound: this.cfg.takeProfitAtUpperBound,
@@ -229,7 +246,6 @@ export class DynamicGrid {
       orderQtyTolerancePct: this.cfg.orderQtyTolerancePct,
       orderExpireHours: this.cfg.orderExpireHours,
       cutLossMaxBidDiscountPct: this.cfg.cutLossMaxBidDiscountPct,
-      minGasReserveSomi: this.cfg.minGasReserveSomi,
       enableTriangleSqueezeExit: this.cfg.enableTriangleSqueezeExit,
       triangleSqueezeSpreadPct: this.cfg.triangleSqueezeSpreadPct,
       minTradeableChannelWidthPct: this.cfg.minTradeableChannelWidthPct,
@@ -293,22 +309,28 @@ export class DynamicGrid {
   }
 
   /** Fetch current live balances for base asset and quote asset from Binance */
-  public async refreshWalletBalances(): Promise<{ somi: number; usdso: number; address: string }> {
+  public async refreshWalletBalances(): Promise<{ base: number; quote: number; somi: number; usdso: number; address: string }> {
     try {
       if (this.binance.hasCredentials()) {
         const b = await this.binance.getAccountBalances(this.symbol);
         this.walletBaseBalance = b.baseFree;
         this.walletQuoteBalance = b.quoteFree;
         this.walletAddress = `${this.baseAsset}/${this.quoteAsset}`;
-        this.lastObservedSomiBalance = this.walletBaseBalance;
-        this.lastObservedUsdsoBalance = this.walletQuoteBalance;
+        this.lastObservedBaseBalance = this.walletBaseBalance;
+        this.lastObservedQuoteBalance = this.walletQuoteBalance;
       } else {
         this.walletAddress = "Binance-Public";
       }
     } catch {
       // Retain last known balances on transient errors
     }
-    return { somi: this.walletBaseBalance, usdso: this.walletQuoteBalance, address: this.walletAddress };
+    return {
+      base: this.walletBaseBalance,
+      quote: this.walletQuoteBalance,
+      somi: this.walletBaseBalance,
+      usdso: this.walletQuoteBalance,
+      address: this.walletAddress,
+    };
   }
 
   /**
@@ -318,15 +340,15 @@ export class DynamicGrid {
   public async syncOnChainOrders(): Promise<void> {
     if (this.cfg.dryRun || !this.binance.hasCredentials()) return;
     try {
-      const prevSomi = this.lastObservedSomiBalance > 0 ? this.lastObservedSomiBalance : this.walletSomiBalance;
-      const prevUsdso = this.lastObservedUsdsoBalance > 0 ? this.lastObservedUsdsoBalance : this.walletUsdsoBalance;
+      const prevBase = this.lastObservedBaseBalance > 0 ? this.lastObservedBaseBalance : this.walletBaseBalance;
+      const prevQuote = this.lastObservedQuoteBalance > 0 ? this.lastObservedQuoteBalance : this.walletQuoteBalance;
 
       await this.refreshWalletBalances();
-      const curSomi = this.walletSomiBalance;
-      const curUsdso = this.walletUsdsoBalance;
+      const curBase = this.walletBaseBalance;
+      const curQuote = this.walletQuoteBalance;
 
-      const deltaSomi = curSomi - prevSomi;
-      const deltaUsdso = curUsdso - prevUsdso;
+      const deltaBase = curBase - prevBase;
+      const deltaQuote = curQuote - prevQuote;
 
       // 1. Query active open orders directly from Binance Spot API
       const liveOrders = await this.binance.getOpenOrders(this.symbol);
@@ -357,6 +379,7 @@ export class DynamicGrid {
                 action: "CANCEL_BUY",
                 price: lb.price,
                 qty: lb.qty,
+                notionalQuote: lb.notionalQuote !== undefined ? lb.notionalQuote : lb.notionalUsdso,
                 notionalUsdso: lb.notionalUsdso,
                 levelDesc: lb.levelDesc,
                 orderId: lb.onChainOrderId,
@@ -384,7 +407,8 @@ export class DynamicGrid {
           if (liveOrder.executedQty > 0 && remainingQty < prevRemaining - 1e-8) {
             const filledQty = prevRemaining - remainingQty;
             alreadyTracked.qty = remainingQty;
-            alreadyTracked.notionalUsdso = remainingQty * alreadyTracked.price;
+            alreadyTracked.notionalQuote = remainingQty * alreadyTracked.price;
+            alreadyTracked.notionalUsdso = alreadyTracked.notionalQuote;
 
             const sideStr = isBid ? "BUY" : "SELL";
             this.log(
@@ -431,10 +455,11 @@ export class DynamicGrid {
               matchByPrice.onChainOrderId = idStr;
               matchByPrice.qty = remainingQty;
             } else {
-              const notionalUsdso = price * remainingQty;
+              const notionalQuote = price * remainingQty;
+              const notionalUsdso = notionalQuote;
               const sideStr = isBid ? "BUY" : "SELL";
               this.log(
-                `[sync] 🔗 Reconciled active Binance ${sideStr} order #${idStr} @ $${price} (${remainingQty} ${this.baseAsset} | $${notionalUsdso.toFixed(2)})`,
+                `[sync] 🔗 Reconciled active Binance ${sideStr} order #${idStr} @ $${price} (${remainingQty} ${this.baseAsset} | $${notionalQuote.toFixed(2)} ${this.quoteAsset})`,
               );
               this.openOrders.push({
                 id: `order_${isBid ? "buy" : "sell"}_${idStr}`,
@@ -443,6 +468,8 @@ export class DynamicGrid {
                 price,
                 qty: remainingQty,
                 targetFraction: 0,
+                notional: notionalQuote,
+                notionalQuote,
                 notionalUsdso,
                 levelDesc: `${sideStr} Order #${idStr}`,
                 placedTime: liveOrder.time || Date.now(),
@@ -516,6 +543,7 @@ export class DynamicGrid {
                 action: stale.isBid ? "CANCEL_BUY" : "CANCEL_SELL",
                 price: stale.price,
                 qty: stale.qty,
+                notionalQuote: stale.notionalQuote !== undefined ? stale.notionalQuote : stale.notionalUsdso,
                 notionalUsdso: stale.notionalUsdso,
                 levelDesc: stale.levelDesc,
                 orderId: stale.onChainOrderId,
@@ -534,7 +562,8 @@ export class DynamicGrid {
 
       // Always update last observed balances at end of sync
       this.lastObservedSomiBalance = this.walletSomiBalance;
-      this.lastObservedUsdsoBalance = this.walletUsdsoBalance;
+      this.lastObservedBaseBalance = this.walletBaseBalance;
+      this.lastObservedQuoteBalance = this.walletQuoteBalance;
       this.saveState();
     } catch (err) {
       this.log(`[sync] warning: failed to sync on-chain open orders: ${(err as Error).message}`);
@@ -550,40 +579,40 @@ export class DynamicGrid {
   public getEffectiveGasReserveSomi(): number {
     return 0;
   }
+  public getEffectiveGasReserveBase(): number {
+    return 0;
+  }
 
   /**
    * Multi-Pillar Active Inventory Reconcile.
-   * Compares physical assets (wallet balance + resting limit sells) with strategy lots and minGasReserveSomi.
-   * Enforces:
-   * 1. Strategy lots (this.lots) CAN NEVER exceed physical trading capacity (totalOwnedSomi - minGasReserveSomi).
-   * 2. Resting limit sells CAN NEVER escrow or sell the user's initial gas reserve balance (minGasReserveSomi).
+   * Compares physical assets (wallet balance + resting limit sells) with strategy lots.
    */
   public async reconcileInventory(): Promise<void> {
     if (this.cfg.dryRun) return;
     try {
-      const minGasReserveSomi = this.getEffectiveGasReserveSomi();
-      const somiInOpenSells = this.openOrders
+      const minReserveBase = this.getEffectiveGasReserveBase();
+      const baseInOpenSells = this.openOrders
         .filter((o) => !o.isBid)
         .reduce((sum, o) => sum + (o.qty || 0), 0);
 
-      const totalOwnedSomi = this.walletSomiBalance + somiInOpenSells;
-      const maxAllowedTradingSomi = Math.max(0, totalOwnedSomi - minGasReserveSomi);
+      const totalOwnedBase = this.walletBaseBalance + baseInOpenSells;
+      const maxAllowedTradingBase = Math.max(0, totalOwnedBase - minReserveBase);
       const memoryHeld = this.baseHeld();
-      const gasTolerance = Math.max(0.5, (this.minQty || 1) * 0.5);
+      const tolerance = Math.max(0.5, (this.minQty || 1) * 0.5);
 
-      // 1. Auto-compensate gas from lots: smoothly clamp lots to available trading capacity
-      if (memoryHeld > maxAllowedTradingSomi && maxAllowedTradingSomi >= 0) {
-        const gasDiff = memoryHeld - maxAllowedTradingSomi;
-        if (gasDiff > 0.0001) {
-          this.clampLotsTo(maxAllowedTradingSomi);
+      // 1. Auto-compensate from lots: smoothly clamp lots to available trading capacity
+      if (memoryHeld > maxAllowedTradingBase && maxAllowedTradingBase >= 0) {
+        const diff = memoryHeld - maxAllowedTradingBase;
+        if (diff > 0.0001) {
+          this.clampLotsTo(maxAllowedTradingBase);
           this.saveState();
         }
-      } else if (maxAllowedTradingSomi > memoryHeld + 1.0) {
+      } else if (maxAllowedTradingBase > memoryHeld + 1.0) {
         // 2. Adopt Unallocated Trading Inventory: If physical trading capacity exceeds memory lots, adopt difference into lots
-        const unallocatedQty = maxAllowedTradingSomi - memoryHeld;
+        const unallocatedQty = maxAllowedTradingBase - memoryHeld;
         const adoptPrice = this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : 0.21);
         this.log(
-          `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} SOMI > memory ${memoryHeld.toFixed(4)} SOMI). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
+          `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} ${this.baseAsset} > memory ${memoryHeld.toFixed(4)} ${this.baseAsset}). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
         );
         this.lots.push({
           price: adoptPrice,
@@ -593,12 +622,12 @@ export class DynamicGrid {
         this.saveState();
       }
 
-      // 3. Guard against Excess Resting Sells: If resting sell orders exceed allowed trading SOMI, cancel sell orders to refund gas reserve to wallet
-      if (somiInOpenSells > maxAllowedTradingSomi + gasTolerance) {
+      // 3. Guard against Excess Resting Sells: If resting sell orders exceed allowed trading base, cancel sell orders to refund balance to wallet
+      if (baseInOpenSells > maxAllowedTradingBase + tolerance) {
         this.log(
-          `🛑 [INVENTORY RECONCILE] Open sell orders (${somiInOpenSells.toFixed(4)} SOMI) exceed trading capacity (${maxAllowedTradingSomi.toFixed(4)} SOMI). Cancelling resting sell orders to return gas reserve to wallet!`,
+          `🛑 [INVENTORY RECONCILE] Open sell orders (${baseInOpenSells.toFixed(4)} ${this.baseAsset}) exceed trading capacity (${maxAllowedTradingBase.toFixed(4)} ${this.baseAsset}). Cancelling resting sell orders to return balance to wallet!`,
         );
-        await this.cancelAllRestingOrders("SELL", "Reconciling sell orders to protect initial gas reserve");
+        await this.cancelAllRestingOrders("SELL", "Reconciling sell orders to protect initial wallet balance");
         await this.refreshWalletBalances();
         this.saveState();
       }
@@ -664,28 +693,34 @@ export class DynamicGrid {
       } else if (typeof data.realizedPnl === "number" && Number.isFinite(data.realizedPnl)) {
         this.tradeRealizedPnl = data.realizedPnl;
       }
-      if (typeof data.totalGasDeductedSomi === "number" && Number.isFinite(data.totalGasDeductedSomi)) {
-        this.totalGasDeductedSomi = data.totalGasDeductedSomi;
+      const gasDeductedBase = data.totalGasDeductedBase ?? data.totalGasDeductedSomi;
+      if (typeof gasDeductedBase === "number" && Number.isFinite(gasDeductedBase)) {
+        this.totalGasDeductedBase = gasDeductedBase;
       }
-      if (typeof data.totalGasDeductedUsdso === "number" && Number.isFinite(data.totalGasDeductedUsdso)) {
-        this.totalGasDeductedUsdso = data.totalGasDeductedUsdso;
+      const gasDeductedQuote = data.totalGasDeductedQuote ?? data.totalGasDeductedUsdso;
+      if (typeof gasDeductedQuote === "number" && Number.isFinite(gasDeductedQuote)) {
+        this.totalGasDeductedQuote = gasDeductedQuote;
       }
-      if (typeof data.accumulatedGasSomi === "number" && Number.isFinite(data.accumulatedGasSomi)) {
-        this.accumulatedGasSomi = data.accumulatedGasSomi;
+      const accGasBase = data.accumulatedGasBase ?? data.accumulatedGasSomi;
+      if (typeof accGasBase === "number" && Number.isFinite(accGasBase)) {
+        this.accumulatedGasBase = accGasBase;
       }
-      if (typeof data.accumulatedGasUsdso === "number" && Number.isFinite(data.accumulatedGasUsdso)) {
-        this.accumulatedGasUsdso = data.accumulatedGasUsdso;
+      const accGasQuote = data.accumulatedGasQuote ?? data.accumulatedGasUsdso;
+      if (typeof accGasQuote === "number" && Number.isFinite(accGasQuote)) {
+        this.accumulatedGasQuote = accGasQuote;
       }
       if (typeof data.realizedPnl === "number" && Number.isFinite(data.realizedPnl)) {
         this.realizedPnl = data.realizedPnl;
       } else {
-        this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedUsdso;
+        this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
       }
-      if (typeof data.totalGasSpentSomi === "number" && Number.isFinite(data.totalGasSpentSomi)) {
-        this.totalGasSpentSomi = data.totalGasSpentSomi;
+      const gasSpentBase = data.totalGasSpentBase ?? data.totalGasSpentSomi;
+      if (typeof gasSpentBase === "number" && Number.isFinite(gasSpentBase)) {
+        this.totalGasSpentBase = gasSpentBase;
       }
-      if (typeof data.totalGasSpentUsdso === "number" && Number.isFinite(data.totalGasSpentUsdso)) {
-        this.totalGasSpentUsdso = data.totalGasSpentUsdso;
+      const gasSpentQuote = data.totalGasSpentQuote ?? data.totalGasSpentUsdso;
+      if (typeof gasSpentQuote === "number" && Number.isFinite(gasSpentQuote)) {
+        this.totalGasSpentQuote = gasSpentQuote;
       }
       if (typeof data.totalTxCount === "number") {
         this.totalTxCount = data.totalTxCount;
@@ -791,12 +826,18 @@ export class DynamicGrid {
         walletQuoteBalance: this.walletQuoteBalance,
         baseAsset: this.baseAsset,
         quoteAsset: this.quoteAsset,
-        totalGasDeductedSomi: this.totalGasDeductedSomi,
-        totalGasDeductedUsdso: this.totalGasDeductedUsdso,
-        accumulatedGasSomi: this.accumulatedGasSomi,
-        accumulatedGasUsdso: this.accumulatedGasUsdso,
-        totalGasSpentSomi: this.totalGasSpentSomi,
-        totalGasSpentUsdso: this.totalGasSpentUsdso,
+        totalGasDeductedBase: this.totalGasDeductedBase,
+        totalGasDeductedQuote: this.totalGasDeductedQuote,
+        totalGasDeductedSomi: this.totalGasDeductedBase,
+        totalGasDeductedUsdso: this.totalGasDeductedQuote,
+        accumulatedGasBase: this.accumulatedGasBase,
+        accumulatedGasQuote: this.accumulatedGasQuote,
+        accumulatedGasSomi: this.accumulatedGasBase,
+        accumulatedGasUsdso: this.accumulatedGasQuote,
+        totalGasSpentBase: this.totalGasSpentBase,
+        totalGasSpentQuote: this.totalGasSpentQuote,
+        totalGasSpentSomi: this.totalGasSpentBase,
+        totalGasSpentUsdso: this.totalGasSpentQuote,
         totalTxCount: this.totalTxCount,
         stuckSince: this.stuckSince,
         waitingForHigherLow: this.waitingForHigherLow,
@@ -950,12 +991,12 @@ export class DynamicGrid {
     if (opts?.resetPnl) {
       this.realizedPnl = 0;
       this.tradeRealizedPnl = 0;
-      this.totalGasDeductedSomi = 0;
-      this.totalGasDeductedUsdso = 0;
-      this.accumulatedGasSomi = 0;
-      this.accumulatedGasUsdso = 0;
-      this.totalGasSpentSomi = 0;
-      this.totalGasSpentUsdso = 0;
+      this.totalGasDeductedBase = 0;
+      this.totalGasDeductedQuote = 0;
+      this.accumulatedGasBase = 0;
+      this.accumulatedGasQuote = 0;
+      this.totalGasSpentBase = 0;
+      this.totalGasSpentQuote = 0;
       this.totalTxCount = 0;
     }
 
@@ -992,7 +1033,7 @@ export class DynamicGrid {
 
     this.saveState(true);
     this.emitTelemetryTick();
-    this.log(`✅ Position successfully reset to 0.00 SOMI (Ready for fresh trading from level 1).`);
+    this.log(`✅ Position successfully reset to 0.00 ${this.baseAsset} (Ready for fresh trading from level 1).`);
     return { success: true, clearedLots: count };
   }
 
@@ -1014,13 +1055,20 @@ export class DynamicGrid {
         unrealizedPnl,
         realizedPnl: this.realizedPnl,
         tradeRealizedPnl: this.tradeRealizedPnl,
-        totalGasDeductedSomi: this.totalGasDeductedSomi,
-        totalGasDeductedUsdso: this.totalGasDeductedUsdso,
-        accumulatedGasSomi: this.accumulatedGasSomi,
-        accumulatedGasUsdso: this.accumulatedGasUsdso,
-        totalGasSpentSomi: this.totalGasSpentSomi,
-        totalGasSpentUsdso: this.totalGasSpentUsdso,
+        totalGasDeductedBase: this.totalGasDeductedBase,
+        totalGasDeductedQuote: this.totalGasDeductedQuote,
+        totalGasDeductedSomi: this.totalGasDeductedBase,
+        totalGasDeductedUsdso: this.totalGasDeductedQuote,
+        accumulatedGasBase: this.accumulatedGasBase,
+        accumulatedGasQuote: this.accumulatedGasQuote,
+        accumulatedGasSomi: this.accumulatedGasBase,
+        accumulatedGasUsdso: this.accumulatedGasQuote,
+        totalGasSpentBase: this.totalGasSpentBase,
+        totalGasSpentQuote: this.totalGasSpentQuote,
+        totalGasSpentSomi: this.totalGasSpentBase,
+        totalGasSpentUsdso: this.totalGasSpentQuote,
         totalTxCount: this.totalTxCount,
+        netPnlQuote: this.realizedPnl,
         netPnlUsdso: this.realizedPnl,
         avgEntryPrice: avgEntry,
         lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time })),
@@ -1030,6 +1078,8 @@ export class DynamicGrid {
           isBid: o.isBid,
           price: o.price,
           qty: o.qty,
+          notional: o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso,
+          notionalQuote: o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso,
           notionalUsdso: o.notionalUsdso,
           levelDesc: o.levelDesc,
           placedTime: o.placedTime,
@@ -1041,14 +1091,18 @@ export class DynamicGrid {
         walletAddress: this.walletAddress,
         walletBaseBalance: this.walletBaseBalance,
         walletQuoteBalance: this.walletQuoteBalance,
-        walletSomiBalance: this.walletSomiBalance,
-        walletUsdsoBalance: this.walletUsdsoBalance,
+        walletSomiBalance: this.walletBaseBalance,
+        walletUsdsoBalance: this.walletQuoteBalance,
+        walletBaseValueQuote: this.walletBaseBalance * mid,
+        walletTotalValueQuote: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
+        walletSomiValueUsdso: this.walletBaseBalance * mid,
+        walletTotalValueUsdso: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
         tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
         freeTradingBaseBalance: this.walletBaseBalance,
-        tradingSomiBalance: Math.max(0, (this.walletSomiBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveSomi()),
-        freeTradingSomiBalance: Math.max(0, this.walletSomiBalance - this.getEffectiveGasReserveSomi()),
-        gasReserveSomi: Math.min(this.walletSomiBalance, this.getEffectiveGasReserveSomi()),
-        minGasReserveSomi: this.cfg.minGasReserveSomi ?? 0.5,
+        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
+        freeTradingSomiBalance: this.walletBaseBalance,
+        gasReserveSomi: 0,
+        minGasReserveSomi: 0,
         dryRun: this.cfg.dryRun,
       };
       this.lastTelemetryData = merged;
@@ -1068,24 +1122,39 @@ export class DynamicGrid {
         unrealizedPnl,
         realizedPnl: this.realizedPnl,
         tradeRealizedPnl: this.tradeRealizedPnl,
-        totalGasDeductedSomi: this.totalGasDeductedSomi,
-        totalGasDeductedUsdso: this.totalGasDeductedUsdso,
-        accumulatedGasSomi: this.accumulatedGasSomi,
-        accumulatedGasUsdso: this.accumulatedGasUsdso,
-        totalGasSpentSomi: this.totalGasSpentSomi,
-        totalGasSpentUsdso: this.totalGasSpentUsdso,
+        totalGasDeductedBase: this.totalGasDeductedBase,
+        totalGasDeductedQuote: this.totalGasDeductedQuote,
+        totalGasDeductedSomi: this.totalGasDeductedBase,
+        totalGasDeductedUsdso: this.totalGasDeductedQuote,
+        accumulatedGasBase: this.accumulatedGasBase,
+        accumulatedGasQuote: this.accumulatedGasQuote,
+        accumulatedGasSomi: this.accumulatedGasBase,
+        accumulatedGasUsdso: this.accumulatedGasQuote,
+        totalGasSpentBase: this.totalGasSpentBase,
+        totalGasSpentQuote: this.totalGasSpentQuote,
+        totalGasSpentSomi: this.totalGasSpentBase,
+        totalGasSpentUsdso: this.totalGasSpentQuote,
         totalTxCount: this.totalTxCount,
+        netPnlQuote: this.realizedPnl,
         netPnlUsdso: this.realizedPnl,
         avgEntry,
         lots: this.lots,
         openOrders: this.openOrders,
         walletAddress: this.walletAddress,
-        walletSomiBalance: this.walletSomiBalance,
-        walletUsdsoBalance: this.walletUsdsoBalance,
-        tradingSomiBalance: Math.max(0, (this.walletSomiBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveSomi()),
-        freeTradingSomiBalance: Math.max(0, this.walletSomiBalance - this.getEffectiveGasReserveSomi()),
-        gasReserveSomi: Math.min(this.walletSomiBalance, this.getEffectiveGasReserveSomi()),
-        minGasReserveSomi: this.cfg.minGasReserveSomi ?? 0.5,
+        walletBaseBalance: this.walletBaseBalance,
+        walletQuoteBalance: this.walletQuoteBalance,
+        walletSomiBalance: this.walletBaseBalance,
+        walletUsdsoBalance: this.walletQuoteBalance,
+        walletBaseValueQuote: this.walletBaseBalance * mid,
+        walletTotalValueQuote: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
+        walletSomiValueUsdso: this.walletBaseBalance * mid,
+        walletTotalValueUsdso: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
+        tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
+        freeTradingBaseBalance: this.walletBaseBalance,
+        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
+        freeTradingSomiBalance: this.walletBaseBalance,
+        gasReserveSomi: 0,
+        minGasReserveSomi: 0,
         dryRun: this.cfg.dryRun,
       },
     });
@@ -1534,17 +1603,19 @@ export class DynamicGrid {
       activeLevelName = "100% Ceiling (Exit All)";
     }
 
-    const targetInventoryUsdso = targetHoldingFraction * this.cfg.maxInventoryUsdso;
+    const targetInventoryQuote = targetHoldingFraction * this.cfg.maxInventoryQuote;
+    const targetInventoryUsdso = targetInventoryQuote;
     const currentBestBid = bestBid ?? effectiveMid;
     const currentBestAsk = bestAsk ?? effectiveMid;
-    const inventoryUsdso = this.baseHeld() * refPrice;
-    const currentHoldPct = this.cfg.maxInventoryUsdso > 0 ? (inventoryUsdso / this.cfg.maxInventoryUsdso) * 100 : 0;
+    const inventoryQuote = this.baseHeld() * refPrice;
+    const inventoryUsdso = inventoryQuote;
+    const currentHoldPct = this.cfg.maxInventoryQuote > 0 ? (inventoryQuote / this.cfg.maxInventoryQuote) * 100 : 0;
     const avgEntry = this.getAvgEntryPrice();
     const unrealizedPnl = this.baseHeld() > 0 && avgEntry > 0 ? (refPrice - avgEntry) * this.baseHeld() : 0;
 
     // Active Buy Trigger in Buy Zone
     let buyTrigger: number;
-    if (inventoryUsdso < targetInventoryUsdso - 1.0) {
+    if (inventoryQuote < targetInventoryQuote - 1.0) {
       const activeZoneCeiling = buyLevels.find((lvl) => lvl >= refPrice * 0.9995) ?? buyLevels[0] ?? (lowerBound + span * 0.40);
       buyTrigger = activeZoneCeiling;
     } else {
@@ -1735,8 +1806,8 @@ export class DynamicGrid {
         botActionState = {
           code: "BELOW_FLOOR_CUTLOSS",
           title: candlesCount < requiredCandles ? "⏳ Cut Loss Confirming" : "🚨 Cut Loss Triggered",
-          reason: `Price < 0% Floor ($${lowerBound.toFixed(4)}) • Holding $${inventoryUsdso.toFixed(1)}`,
-          nextTrigger: `Liquidating to USDso / Waiting Confirmation (${candlesCount}/${requiredCandles} bar${requiredCandles > 1 ? "s" : ""})`,
+          reason: `Price < 0% Floor ($${lowerBound.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
+          nextTrigger: `Liquidating to ${this.quoteAsset} / Waiting Confirmation (${candlesCount}/${requiredCandles} bar${requiredCandles > 1 ? "s" : ""})`,
           severity: "alert",
         };
       } else {
@@ -1859,13 +1930,13 @@ export class DynamicGrid {
       };
     } else if (inBuyZone) {
       const openBuys = this.openOrders.filter((o) => o.isBid);
-      const isCapacityFull = currentHoldPct >= 95 || inventoryUsdso >= this.cfg.maxInventoryUsdso - 1.0;
+      const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
 
       if (isCapacityFull) {
         botActionState = {
           code: "CAPACITY_FULL",
           title: `📦 Capacity Full (${currentHoldPct.toFixed(0)}%)`,
-          reason: `Holding $${inventoryUsdso.toFixed(1)} / $${this.cfg.maxInventoryUsdso.toFixed(0)} • Buying full`,
+          reason: `Holding $${inventoryQuote.toFixed(1)} / $${this.cfg.maxInventoryQuote.toFixed(0)} • Buying full`,
           nextTrigger: isTlSellTrigger
             ? `IOC Sell @ Trendline ($${sellTrigger.toFixed(4)})`
             : `Sell target: >$${sellTrigger.toFixed(4)}`,
@@ -1875,7 +1946,7 @@ export class DynamicGrid {
         botActionState = {
           code: "WAITING_TRENDLINE_EXIT",
           title: "📉 Waiting TL Sell Exit",
-          reason: `Sells paused below TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryUsdso.toFixed(1)}`,
+          reason: `Sells paused below TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
           nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)})`,
           severity: "info",
         };
@@ -1891,7 +1962,7 @@ export class DynamicGrid {
         botActionState = {
           code: "BUY_ZONE_TARGET_MET",
           title: "🎯 Level Target Met",
-          reason: `Holding $${inventoryUsdso.toFixed(1)} (Target $${targetInventoryUsdso.toFixed(0)} for ${activeLevelName})`,
+          reason: `Holding $${inventoryQuote.toFixed(1)} (Target $${targetInventoryQuote.toFixed(0)} for ${activeLevelName})`,
           nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(4)} • Sell: >$${sellTrigger.toFixed(4)}`,
           severity: "info",
         };
@@ -1899,7 +1970,7 @@ export class DynamicGrid {
     } else {
       // In Sell Zone (50% - 100%)
       const openSells = this.openOrders.filter((o) => !o.isBid);
-      const isCapacityFull = currentHoldPct >= 95 || inventoryUsdso >= this.cfg.maxInventoryUsdso - 1.0;
+      const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
 
       if (openSells.length > 0) {
         botActionState = {
@@ -1913,7 +1984,7 @@ export class DynamicGrid {
         botActionState = {
           code: "WAITING_TRENDLINE_EXIT",
           title: "📉 Waiting TL Sell Exit",
-          reason: `Sells suppressed by TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryUsdso.toFixed(1)}`,
+          reason: `Sells suppressed by TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
           nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)})`,
           severity: "info",
         };
@@ -1921,7 +1992,7 @@ export class DynamicGrid {
         botActionState = {
           code: isCapacityFull ? "CAPACITY_FULL" : "WAITING_FOR_DIP",
           title: isCapacityFull ? `📦 Capacity Full (${currentHoldPct.toFixed(0)}%)` : "⏸️ Waiting for Dip",
-          reason: `Holding $${inventoryUsdso.toFixed(1)} (Zone ${positionPct.toFixed(0)}%)`,
+          reason: `Holding $${inventoryQuote.toFixed(1)} (Zone ${positionPct.toFixed(0)}%)`,
           nextTrigger: `Buy: <$${centerPrice.toFixed(4)} • Sell: >$${sellTrigger.toFixed(4)}`,
           severity: "info",
         };
@@ -1979,38 +2050,45 @@ export class DynamicGrid {
         positionPct,
         activeLevelName,
         targetHoldingPct: targetHoldingFraction * 100,
-        targetInventoryQuote: targetInventoryUsdso,
-        targetInventoryUsdso,
+        targetInventoryQuote,
+        targetInventoryUsdso: targetInventoryQuote,
         currentHoldPct,
-        inventoryQuote: inventoryUsdso,
-        inventoryUsdso,
+        inventoryQuote,
+        inventoryUsdso: inventoryQuote,
         baseHeld: this.baseHeld(),
         walletAddress: this.walletAddress,
         walletBaseBalance: this.walletBaseBalance,
         walletQuoteBalance: this.walletQuoteBalance,
-        walletSomiBalance: this.walletSomiBalance,
-        walletUsdsoBalance: this.walletUsdsoBalance,
+        walletSomiBalance: this.walletBaseBalance,
+        walletUsdsoBalance: this.walletQuoteBalance,
         tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
         freeTradingBaseBalance: this.walletBaseBalance,
-        tradingSomiBalance: Math.max(0, (this.walletSomiBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveSomi()),
-        freeTradingSomiBalance: Math.max(0, this.walletSomiBalance - this.getEffectiveGasReserveSomi()),
-        gasReserveSomi: Math.min(this.walletSomiBalance, this.getEffectiveGasReserveSomi()),
-        minGasReserveSomi: this.cfg.minGasReserveSomi ?? 0.5,
+        tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0))),
+        freeTradingSomiBalance: this.walletBaseBalance,
+        gasReserveSomi: 0,
+        minGasReserveSomi: 0,
         walletBaseValueQuote: this.walletBaseBalance * refPrice,
         walletTotalValueQuote: (this.walletBaseBalance * refPrice) + this.walletQuoteBalance,
-        walletSomiValueUsdso: this.walletSomiBalance * refPrice,
-        walletTotalValueUsdso: (this.walletSomiBalance * refPrice) + this.walletUsdsoBalance,
+        walletSomiValueUsdso: this.walletBaseBalance * refPrice,
+        walletTotalValueUsdso: (this.walletBaseBalance * refPrice) + this.walletQuoteBalance,
         avgEntryPrice: avgEntry,
         unrealizedPnl,
         realizedPnl: this.realizedPnl,
         tradeRealizedPnl: this.tradeRealizedPnl,
-        totalGasDeductedSomi: this.totalGasDeductedSomi,
-        totalGasDeductedUsdso: this.totalGasDeductedUsdso,
-        accumulatedGasSomi: this.accumulatedGasSomi,
-        accumulatedGasUsdso: this.accumulatedGasUsdso,
-        totalGasSpentSomi: this.totalGasSpentSomi,
-        totalGasSpentUsdso: this.totalGasSpentUsdso,
+        totalGasDeductedBase: this.totalGasDeductedBase,
+        totalGasDeductedQuote: this.totalGasDeductedQuote,
+        totalGasDeductedSomi: this.totalGasDeductedBase,
+        totalGasDeductedUsdso: this.totalGasDeductedQuote,
+        accumulatedGasBase: this.accumulatedGasBase,
+        accumulatedGasQuote: this.accumulatedGasQuote,
+        accumulatedGasSomi: this.accumulatedGasBase,
+        accumulatedGasUsdso: this.accumulatedGasQuote,
+        totalGasSpentBase: this.totalGasSpentBase,
+        totalGasSpentQuote: this.totalGasSpentQuote,
+        totalGasSpentSomi: this.totalGasSpentBase,
+        totalGasSpentUsdso: this.totalGasSpentQuote,
         totalTxCount: this.totalTxCount,
+        netPnlQuote: this.realizedPnl,
         netPnlUsdso: this.realizedPnl,
         zoneType: gridZone?.zoneType ?? (inBuyZone ? "BUY_ZONE" : "SELL_ZONE"),
         buyOrdersActive: this.buyOrdersActive,
@@ -2023,6 +2101,8 @@ export class DynamicGrid {
           isBid: o.isBid,
           price: o.price,
           qty: o.qty,
+          notional: o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso,
+          notionalQuote: o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso,
           notionalUsdso: o.notionalUsdso,
           levelDesc: o.levelDesc,
           placedTime: o.placedTime,
@@ -2158,7 +2238,8 @@ export class DynamicGrid {
         } : undefined,
         regime: activeRegime,
         isSwingConfirmed: dow?.isSwingConfirmed ?? false,
-        maxInventoryUsdso: this.cfg.maxInventoryUsdso,
+        maxInventoryQuote: this.cfg.maxInventoryQuote,
+        maxInventoryUsdso: this.cfg.maxInventoryQuote,
         intervalMs: this.cfg.intervalMs ?? 2000,
         stuckSince: this.stuckSince,
         stuckTimeoutMs: this.cfg.stuckTimeoutMs,
@@ -2234,8 +2315,8 @@ export class DynamicGrid {
 
     // Human-readable status line in % target holding terms
     const positionSummary = this.baseHeld() > 0
-      ? `$${inventoryUsdso.toFixed(2)}/$${this.cfg.maxInventoryUsdso} (${currentHoldPct.toFixed(0)}% Held | Avg: $${avgEntry.toFixed(6)})`
-      : `$0.00/$${this.cfg.maxInventoryUsdso} (0% Held)`;
+      ? `$${inventoryQuote.toFixed(2)}/$${this.cfg.maxInventoryQuote} (${currentHoldPct.toFixed(0)}% Held | Avg: $${avgEntry.toFixed(6)})`
+      : `$0.00/$${this.cfg.maxInventoryQuote} (0% Held)`;
 
     const openOrdersSummary = this.cfg.orderExecutionMode === "IOC_BRACKET"
       ? " | Mode: ⚡ IOC (Zero resting orders)"
@@ -2268,7 +2349,7 @@ export class DynamicGrid {
     this.status(
       `Price: $${effectiveMid.toFixed(6)} | Channel: [$${lowerBound.toFixed(6)} .. $${upperBound.toFixed(6)}] ` +
         `| Zone: ${zoneName} | Position: ${positionSummary}${openOrdersSummary}` +
-        ` | Wallet: ${this.walletSomiBalance.toFixed(2)} SOMI / $${this.walletUsdsoBalance.toFixed(2)} USDso` +
+        ` | Wallet: ${this.walletBaseBalance.toFixed(2)} ${this.baseAsset} / $${this.walletQuoteBalance.toFixed(2)} ${this.quoteAsset}` +
         ` | Speed: ${((this.cfg.intervalMs ?? 2000) / 1000).toFixed(1)}s` +
         ` | Next Buy: $${buyTrigger.toFixed(6)}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
         ` | Next Sell: $${sellTrigger.toFixed(6)}` +
@@ -2321,7 +2402,7 @@ export class DynamicGrid {
           if (Date.now() - lastIocTime > iocCooldownMs) {
             this.orderCooldowns.set(iocCooldownKey, Date.now());
             this.log(
-              `📉 [TL IOC] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} (${tlState}) — executing IOC sell at TL price for all ${this.baseHeld().toFixed(4)} SOMI`,
+              `📉 [TL IOC] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} (${tlState}) — executing IOC sell at TL price for all ${this.baseHeld().toFixed(4)} ${this.baseAsset}`,
             );
             await this.cancelAllRestingOrders(undefined, "Trendline IOC sell: cancelling resting orders before IOC execution");
             await this.sellAll(tlPrice, "SELL");
@@ -2446,32 +2527,32 @@ export class DynamicGrid {
     const fillNotional = price * qty;
     const now = Date.now();
 
-    // ── Instant Gas Compensation from Purchased SOMI ───────────────
-    let compSomi = 0;
-    let gasLossUsdso = 0;
-    const uncompensatedGas = Math.max(this.accumulatedGasSomi, this.totalGasSpentSomi - this.totalGasDeductedSomi);
+    // ── Instant Gas/Fee Compensation ───────────────
+    let compBase = 0;
+    let gasLossQuote = 0;
+    const uncompensatedGas = Math.max(this.accumulatedGasBase, this.totalGasSpentBase - this.totalGasDeductedBase);
     if (uncompensatedGas > 0) {
       const maxComp = Math.max(0, qty * 0.5);
-      compSomi = Math.min(uncompensatedGas, maxComp);
-      if (compSomi > 0) {
-        gasLossUsdso = compSomi * price;
-        this.accumulatedGasSomi = Math.max(0, this.accumulatedGasSomi - compSomi);
-        this.accumulatedGasUsdso = Math.max(0, this.accumulatedGasUsdso - gasLossUsdso);
-        this.totalGasDeductedSomi += compSomi;
-        this.totalGasDeductedUsdso += gasLossUsdso;
-        this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedUsdso;
+      compBase = Math.min(uncompensatedGas, maxComp);
+      if (compBase > 0) {
+        gasLossQuote = compBase * price;
+        this.accumulatedGasBase = Math.max(0, this.accumulatedGasBase - compBase);
+        this.accumulatedGasQuote = Math.max(0, this.accumulatedGasQuote - gasLossQuote);
+        this.totalGasDeductedBase += compBase;
+        this.totalGasDeductedQuote += gasLossQuote;
+        this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
       }
     }
-    const netQty = qty - compSomi;
+    const netQty = qty - compBase;
     this.lots.push({ price, qty: netQty, time: now });
     this.needsSellRebalance = true;
 
-    const gasCompLog = compSomi > 0
-      ? ` | ⛽ Gas Compensated: ${compSomi.toFixed(4)} SOMI (-$${gasLossUsdso.toFixed(4)}) returned to wallet (Net Lot: ${netQty.toFixed(4)} SOMI)`
+    const gasCompLog = compBase > 0
+      ? ` | ⛽ Fee Compensated: ${compBase.toFixed(4)} ${this.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet (Net Lot: ${netQty.toFixed(4)} ${this.baseAsset})`
       : "";
     const fillLabel = isIoc ? "IOC BUY FILLED" : "MAKER BUY FILLED";
     this.log(
-      `⚡ ${logPrefix}${fillLabel}: ${qty.toFixed(4)} SOMI ($${fillNotional.toFixed(2)}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""}${gasCompLog}`,
+      `⚡ ${logPrefix}${fillLabel}: ${qty.toFixed(4)} ${this.baseAsset} ($${fillNotional.toFixed(2)} ${this.quoteAsset}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""}${gasCompLog}`,
     );
     this.emit({
       type: "order",
@@ -2480,15 +2561,19 @@ export class DynamicGrid {
         price,
         qty,
         netQty,
-        gasCompSomi: compSomi,
-        gasLossUsdso,
+        gasCompBase: compBase,
+        gasCompSomi: compBase,
+        gasLossQuote,
+        gasLossUsdso: gasLossQuote,
+        notional: fillNotional,
+        notionalQuote: fillNotional,
         notionalUsdso: fillNotional,
         levelDesc,
         orderId,
         txHash,
         reason: isIoc
-          ? `IOC Fill${compSomi > 0 ? ` (Gas Comp: ${compSomi.toFixed(4)} SOMI)` : ""}`
-          : `Maker Buy Filled${orderId ? ` #${orderId}` : ""}${compSomi > 0 ? ` (Gas Comp: ${compSomi.toFixed(4)} SOMI)` : ""}`,
+          ? `IOC Fill${compBase > 0 ? ` (Comp: ${compBase.toFixed(4)} ${this.baseAsset})` : ""}`
+          : `Maker Buy Filled${orderId ? ` #${orderId}` : ""}${compBase > 0 ? ` (Comp: ${compBase.toFixed(4)} ${this.baseAsset})` : ""}`,
         time: now,
         dryRun,
         maker: !isIoc,
@@ -2518,7 +2603,7 @@ export class DynamicGrid {
     this.needsBuyRebalance = true;
 
     this.log(
-      `🔥 ${logPrefix}MAKER SELL FILLED: ${qty.toFixed(4)} SOMI ($${fillNotional.toFixed(2)}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
+      `🔥 ${logPrefix}MAKER SELL FILLED: ${qty.toFixed(4)} ${this.baseAsset} ($${fillNotional.toFixed(2)} ${this.quoteAsset}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
     );
     this.emit({
       type: "order",
@@ -2526,11 +2611,15 @@ export class DynamicGrid {
         action: "SELL_FILL",
         price,
         qty,
+        notional: fillNotional,
+        notionalQuote: fillNotional,
         notionalUsdso: fillNotional,
         levelDesc,
         orderId,
         txHash,
         pnl: roundPnl,
+        pnlQuote: roundPnl,
+        pnlUsdso: roundPnl,
         reason: `Maker Sell Filled${orderId ? ` #${orderId}` : ""}`,
         time: now,
         dryRun,
@@ -2609,8 +2698,9 @@ export class DynamicGrid {
     activeUptrendLine?: import("./market-structure.js").TrendLine,
     uptrendBroken?: boolean,
   ): Promise<void> {
-    const currentHeldUsdso = this.baseHeld() * refPrice;
-    const maxInv = this.cfg.maxInventoryUsdso;
+    const currentHeldQuote = this.baseHeld() * refPrice;
+    const currentHeldUsdso = currentHeldQuote;
+    const maxInv = this.cfg.maxInventoryQuote;
 
     const priceTol = (this.cfg.orderPriceTolerancePct ?? 0.8) / 100;
     const qtyTol = (this.cfg.orderQtyTolerancePct ?? 20) / 100;
@@ -2678,10 +2768,11 @@ export class DynamicGrid {
 
       // Rebalance Buy side: track available capacity across all buy levels
       const openBuys = this.openOrders.filter((o) => o.isBid);
-      const currentAvailableCapacity = Math.max(0, maxInv - currentHeldUsdso);
+      const currentAvailableCapacity = Math.max(0, maxInv - currentHeldQuote);
       const numBuyLevels = effectiveBuyLevels.length || 4;
       // Dynamic equal tranche sizing: remaining available capacity divided equally across all 4 levels (no hardcoded $10!)
-      const trancheUsdso = numBuyLevels > 0 ? (currentAvailableCapacity / numBuyLevels) : 0;
+      const trancheQuote = numBuyLevels > 0 ? (currentAvailableCapacity / numBuyLevels) : 0;
+      const trancheUsdso = trancheQuote;
       const doBuyRebalance = this.needsBuyRebalance;
       this.needsBuyRebalance = false;
 
@@ -2780,21 +2871,22 @@ export class DynamicGrid {
             // Preserve resting buy order! Only re-align price if channel shifted significantly OR if rebalancing to equal 4-level tranche
             const priceDiffRatio = Math.abs(currentOpenBuyAtLvl.price - lvlPrice) / lvlPrice;
             const priceTolerance = priceTol;
-            const notionalDiffRatio = Math.abs(currentOpenBuyAtLvl.notionalUsdso - trancheUsdso) / Math.max(0.01, trancheUsdso);
+            const currentOrderNotional = currentOpenBuyAtLvl.notionalQuote !== undefined ? currentOpenBuyAtLvl.notionalQuote : currentOpenBuyAtLvl.notionalUsdso;
+            const notionalDiffRatio = Math.abs(currentOrderNotional - trancheQuote) / Math.max(0.01, trancheQuote);
             // Rebalance tranche if explicitly requested (sell filled, startup, resume) OR if deviation is large (>15%) when orders are incomplete
             const needsResize = (doBuyRebalance || (notionalDiffRatio > 0.15 && openBuys.length < numBuyLevels)) && notionalDiffRatio > 0.05;
 
             if (priceDiffRatio > priceTolerance || needsResize) {
               const reason = priceDiffRatio > priceTolerance
                 ? `Channel shifted: aligning buy price ($${currentOpenBuyAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
-                : `Rebalancing buy quantity to equal 4-level tranche ($${currentOpenBuyAtLvl.notionalUsdso.toFixed(2)} -> $${trancheUsdso.toFixed(2)})`;
+                : `Rebalancing buy quantity to equal 4-level tranche ($${currentOrderNotional.toFixed(2)} -> $${trancheQuote.toFixed(2)})`;
               await this.cancelOrderInternal(currentOpenBuyAtLvl, reason);
               this.openOrders = this.openOrders.filter((o) => o !== currentOpenBuyAtLvl);
 
               // Equal tranche sizing for replaced order
               const maxPossibleBudget = this.cfg.dryRun
-                ? trancheUsdso
-                : Math.min(trancheUsdso, this.walletUsdsoBalance + currentOpenBuyAtLvl.notionalUsdso);
+                ? trancheQuote
+                : Math.min(trancheQuote, this.walletQuoteBalance + currentOrderNotional);
               const effectiveBuyQty = maxPossibleBudget / lvlPrice;
               if (effectiveBuyQty >= this.minQty) {
                 await this.placeRestingOrder(
@@ -2812,11 +2904,11 @@ export class DynamicGrid {
           }
 
           const isEligibleForNewOrder = lvlPrice < maxAllowedBuyPrice && canBuy;
-          if (isEligibleForNewOrder && trancheUsdso > 0) {
+          if (isEligibleForNewOrder && trancheQuote > 0) {
             // Place new equal tranche buy order (proportional 4-level average of remaining capacity)
             const availableBudget = this.cfg.dryRun
-              ? trancheUsdso
-              : Math.min(trancheUsdso, currentAvailableCapacity, this.walletUsdsoBalance);
+              ? trancheQuote
+              : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance);
             const desiredBuyQty = availableBudget / lvlPrice;
             if (desiredBuyQty >= this.minQty) {
               await this.placeRestingOrder(
@@ -2834,11 +2926,11 @@ export class DynamicGrid {
     }
 
     // ── 2. Maintain Resting Sell Limit Orders when holding inventory ──────────
-    const minGasReserveSomi = this.getEffectiveGasReserveSomi();
-    const totalSomiInOpenSellsInit = this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0);
-    const totalTradingCapacity = Math.max(0, (this.walletSomiBalance + totalSomiInOpenSellsInit) - minGasReserveSomi);
+    const minReserveBase = this.getEffectiveGasReserveBase();
+    const totalBaseInOpenSellsInit = this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0);
+    const totalTradingCapacity = Math.max(0, (this.walletBaseBalance + totalBaseInOpenSellsInit) - minReserveBase);
     const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), totalTradingCapacity);
-    const isDustPosition = held < this.minQty || currentHeldUsdso < 0.05;
+    const isDustPosition = held < this.minQty || currentHeldQuote < 0.05;
 
     // Rule: Legacy Fallback Hysteresis Band (only if enableSellAboveBuyLevel1 is false)
     if (this.cfg.enableSellAboveBuyLevel1 === false) {
@@ -2987,10 +3079,10 @@ export class DynamicGrid {
           // Rebalance Sell side: preserve existing valid resting sells
           this.needsSellRebalance = false;
 
-          const totalSomiInOpenSells = this.openOrders
+          const totalBaseInOpenSells = this.openOrders
             .filter((o) => !o.isBid)
             .reduce((sum, o) => sum + o.qty, 0);
-          const isInventoryFullyCovered = totalSomiInOpenSells >= held * 0.98 || Math.abs(totalSomiInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5);
+          const isInventoryFullyCovered = totalBaseInOpenSells >= held * 0.98 || Math.abs(totalBaseInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5);
 
           for (let i = 0; i < sellLevels.length; i++) {
             const lvlPrice = sellLevels[i];
@@ -3019,7 +3111,7 @@ export class DynamicGrid {
               const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= lvlPrice) || (refPrice >= lvlPrice && currentBestBid >= lvlPrice * 0.998);
               if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
                 // Guard: If no active resting order exists for this level, verify whether it was ALREADY SOLD!
-                const currentHoldFraction = maxInv > 0 ? (currentHeldUsdso / maxInv) : 0;
+                const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
                 const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
                 if (isLevelAlreadyFulfilled) {
                   continue; // Level already sold / satisfied. Do not IOC sell again!
@@ -3165,13 +3257,13 @@ export class DynamicGrid {
       this.needsSellRebalance = false;
 
       // Check if existing resting sell orders already fully cover the held inventory
-      const totalSomiInOpenSells = this.openOrders
+      const totalBaseInOpenSells = this.openOrders
         .filter((o) => !o.isBid)
         .reduce((sum, o) => sum + o.qty, 0);
 
       // If existing resting sells cover the held inventory, NO NEW BUYS have occurred.
       // Sells filling and reducing inventory should NEVER cause the remaining resting sells to be cancelled or resized!
-      const isInventoryFullyCovered = totalSomiInOpenSells >= held * 0.98 || Math.abs(totalSomiInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5);
+      const isInventoryFullyCovered = totalBaseInOpenSells >= held * 0.98 || Math.abs(totalBaseInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5);
 
       for (let i = 0; i < sellLevels.length; i++) {
         const originalLvlPrice = sellLevels[i];
@@ -3195,7 +3287,7 @@ export class DynamicGrid {
           const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= originalLvlPrice) || (refPrice >= originalLvlPrice && currentBestBid >= originalLvlPrice * 0.998);
           if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
             // Guard: If no active resting order exists for this level, verify whether it was ALREADY SOLD!
-            const currentHoldFraction = maxInv > 0 ? (currentHeldUsdso / maxInv) : 0;
+            const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
             const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
             if (isLevelAlreadyFulfilled) {
               continue; // Level already sold / satisfied. Do not IOC sell again!
@@ -3299,17 +3391,18 @@ export class DynamicGrid {
    */
   private async cancelOrderInternal(order: OpenOrder, reason: string): Promise<void> {
     const sideStr = order.isBid ? "BUY" : "SELL";
+    const orderNotional = (order.notionalQuote !== undefined ? order.notionalQuote : order.notionalUsdso) || (order.price * order.qty);
     if (this.cfg.dryRun) {
-      const dryGasSomi = 0.001;
-      const dryGasUsdso = dryGasSomi * order.price;
-      this.accumulatedGasSomi += dryGasSomi;
-      this.accumulatedGasUsdso += dryGasUsdso;
-      this.totalGasSpentSomi += dryGasSomi;
-      this.totalGasSpentUsdso += dryGasUsdso;
+      const dryGasBase = 0.001;
+      const dryGasQuote = dryGasBase * order.price;
+      this.accumulatedGasBase += dryGasBase;
+      this.accumulatedGasQuote += dryGasQuote;
+      this.totalGasSpentBase += dryGasBase;
+      this.totalGasSpentQuote += dryGasQuote;
       this.totalTxCount++;
 
       this.log(
-        `[dry-run] 🗑️ CANCELLED ${sideStr} LIMIT @ $${order.price.toFixed(6)} (${order.qty.toFixed(4)} SOMI | $${order.notionalUsdso.toFixed(2)}) • ${order.levelDesc} [${reason}]`,
+        `[dry-run] 🗑️ CANCELLED ${sideStr} LIMIT @ $${order.price.toFixed(6)} (${order.qty.toFixed(4)} ${this.baseAsset} | $${orderNotional.toFixed(2)} ${this.quoteAsset}) • ${order.levelDesc} [${reason}]`,
       );
       this.emit({
         type: "order",
@@ -3318,7 +3411,9 @@ export class DynamicGrid {
           action: order.isBid ? "CANCEL_BUY" : "CANCEL_SELL",
           price: order.price,
           qty: order.qty,
-          notionalUsdso: order.notionalUsdso,
+          notional: orderNotional,
+          notionalQuote: orderNotional,
+          notionalUsdso: orderNotional,
           levelDesc: order.levelDesc,
           reason,
           time: Date.now(),
@@ -3335,7 +3430,7 @@ export class DynamicGrid {
         const txHash = typeof res === "string" ? res : ((res as any)?.txHash || (res as any)?.hash || undefined);
         const txStr = txHash ? ` (tx: ${txHash})` : "";
         this.log(
-          `🗑️ ON-CHAIN CANCELLED ${sideStr} LIMIT #${order.onChainOrderId} @ $${order.price.toFixed(6)} (${order.qty.toFixed(4)} SOMI | $${order.notionalUsdso.toFixed(2)}) • ${order.levelDesc} [${reason}]${txStr}`,
+          `🗑️ ON-CHAIN CANCELLED ${sideStr} LIMIT #${order.onChainOrderId} @ $${order.price.toFixed(6)} (${order.qty.toFixed(4)} ${this.baseAsset} | $${orderNotional.toFixed(2)} ${this.quoteAsset}) • ${order.levelDesc} [${reason}]${txStr}`,
         );
         this.emit({
           type: "order",
@@ -3344,7 +3439,9 @@ export class DynamicGrid {
             action: order.isBid ? "CANCEL_BUY" : "CANCEL_SELL",
             price: order.price,
             qty: order.qty,
-            notionalUsdso: order.notionalUsdso,
+            notional: orderNotional,
+            notionalQuote: orderNotional,
+            notionalUsdso: orderNotional,
             levelDesc: order.levelDesc,
             orderId: order.onChainOrderId,
             reason,
@@ -3373,10 +3470,11 @@ export class DynamicGrid {
     price: number,
     qty: number,
     targetFraction: number,
-    notionalUsdso: number,
+    notionalQuote: number,
     levelDesc: string,
   ): Promise<void> {
     if (qty < this.minQty) return;
+    let notionalUsdso = notionalQuote;
     const now = Date.now();
     const sideStr = isBid ? "BUY" : "SELL";
     const orderKey = `${sideStr}_${price.toFixed(6)}`;
@@ -3404,47 +3502,47 @@ export class DynamicGrid {
     if (!this.cfg.dryRun) {
       await this.refreshWalletBalances();
       if (isBid) {
-        // ── BUY Order Guard: Ensure sufficient USDso balance ─────────────
-        if (this.walletUsdsoBalance < notionalUsdso) {
-          if (this.walletUsdsoBalance >= this.minQty * price) {
-            const adjustedQty = this.walletUsdsoBalance / price;
+        // ── BUY Order Guard: Ensure sufficient Quote balance ─────────────
+        if (this.walletQuoteBalance < notionalQuote) {
+          if (this.walletQuoteBalance >= this.minQty * price) {
+            const adjustedQty = this.walletQuoteBalance / price;
             this.log(
-              `ℹ️ Auto-adjusting BUY budget from $${notionalUsdso.toFixed(2)} to $${this.walletUsdsoBalance.toFixed(2)} to fit available USDso balance`,
+              `ℹ️ Auto-adjusting BUY budget from $${notionalQuote.toFixed(2)} to $${this.walletQuoteBalance.toFixed(2)} to fit available ${this.quoteAsset} balance`,
             );
             qty = adjustedQty;
-            notionalUsdso = this.walletUsdsoBalance;
+            notionalQuote = this.walletQuoteBalance;
+            notionalUsdso = notionalQuote;
           } else {
             this.log(
-              `⚠️ Insufficient USDso balance for BUY order (Wallet: $${this.walletUsdsoBalance.toFixed(2)} | Needed: $${notionalUsdso.toFixed(2)}). Skipping placement.`,
+              `⚠️ Insufficient ${this.quoteAsset} balance for BUY order (Wallet: $${this.walletQuoteBalance.toFixed(2)} | Needed: $${notionalQuote.toFixed(2)}). Skipping placement.`,
             );
             this.orderCooldowns.set(orderKey, now + 15000);
             return;
           }
         }
       } else {
-        // ── SELL Order Guards: Inventory + Gas Reserve ────────────────────
-        // 1. Strict Gas Reserve Guard: DreamDEX pulls SOMI directly from wallet. Never allow wallet SOMI to drop below effective gas reserve!
-        const minGasReserveSomi = this.getEffectiveGasReserveSomi();
-        const availableSomiInWallet = Math.max(0, this.walletSomiBalance - minGasReserveSomi);
+        // ── SELL Order Guards: Inventory + Balance Reserve ────────────────────
+        const minReserveBase = this.getEffectiveGasReserveBase();
+        const availableBaseInWallet = Math.max(0, this.walletBaseBalance - minReserveBase);
 
-        if (availableSomiInWallet < this.minQty) {
+        if (availableBaseInWallet < this.minQty) {
           this.log(
-            `🛑 [GAS GUARD] Skipping SELL order: Wallet has ${this.walletSomiBalance.toFixed(4)} SOMI, which is at or below the gas safety reserve (${minGasReserveSomi.toFixed(4)} SOMI). Refusing to sell or escrow initial gas balance.`,
+            `🛑 [BALANCE GUARD] Skipping SELL order: Wallet has ${this.walletBaseBalance.toFixed(4)} ${this.baseAsset}, which is below minimum trading size.`,
           );
           this.orderCooldowns.set(orderKey, now + 15000);
           return;
         }
 
-        // 2. Strict Trading Inventory Guard: Never sell more than what is held in trading inventory (this.baseHeld())
+        // Strict Trading Inventory Guard: Never sell more than what is held in trading inventory (this.baseHeld())
         const tradingHeld = this.baseHeld();
         const otherSellOrdersQty = this.openOrders
           .filter((o) => !o.isBid && o.levelDesc !== levelDesc)
           .reduce((sum, o) => sum + o.qty, 0);
-        const remainingTradingQty = Math.max(0, Math.min(tradingHeld - otherSellOrdersQty, availableSomiInWallet));
+        const remainingTradingQty = Math.max(0, Math.min(tradingHeld - otherSellOrdersQty, availableBaseInWallet));
 
         if (remainingTradingQty < this.minQty) {
           this.log(
-            `🛑 [INVENTORY GUARD] Skipping SELL order: Strategy trading inventory is ${tradingHeld.toFixed(4)} SOMI (Active sells: ${otherSellOrdersQty.toFixed(4)} SOMI | Safe wallet available: ${availableSomiInWallet.toFixed(4)} SOMI). Protected wallet balance from non-trading dilution (Wallet: ${this.walletSomiBalance.toFixed(4)} SOMI).`,
+            `🛑 [INVENTORY GUARD] Skipping SELL order: Strategy trading inventory is ${tradingHeld.toFixed(4)} ${this.baseAsset} (Active sells: ${otherSellOrdersQty.toFixed(4)} ${this.baseAsset} | Safe wallet available: ${availableBaseInWallet.toFixed(4)} ${this.baseAsset}). Protected wallet balance from non-trading dilution (Wallet: ${this.walletBaseBalance.toFixed(4)} ${this.baseAsset}).`,
           );
           this.orderCooldowns.set(orderKey, now + 15000);
           return;
@@ -3452,10 +3550,11 @@ export class DynamicGrid {
 
         if (qty > remainingTradingQty) {
           this.log(
-            `ℹ️ [INVENTORY GUARD] Clamping SELL order qty from ${qty.toFixed(4)} to ${remainingTradingQty.toFixed(4)} SOMI to protect wallet gas reserve and inventory.`,
+            `ℹ️ [INVENTORY GUARD] Clamping SELL order qty from ${qty.toFixed(4)} to ${remainingTradingQty.toFixed(4)} ${this.baseAsset} to protect wallet balance and inventory.`,
           );
           qty = remainingTradingQty;
-          notionalUsdso = qty * price;
+          notionalQuote = qty * price;
+          notionalUsdso = notionalQuote;
         }
       }
     }
@@ -3471,12 +3570,12 @@ export class DynamicGrid {
 
     if (this.cfg.dryRun) {
       try {
-        const dryGasSomi = 0.002;
-        const dryGasUsdso = dryGasSomi * price;
-        this.accumulatedGasSomi += dryGasSomi;
-        this.accumulatedGasUsdso += dryGasUsdso;
-        this.totalGasSpentSomi += dryGasSomi;
-        this.totalGasSpentUsdso += dryGasUsdso;
+        const dryGasBase = 0.002;
+        const dryGasQuote = dryGasBase * price;
+        this.accumulatedGasBase += dryGasBase;
+        this.accumulatedGasQuote += dryGasQuote;
+        this.totalGasSpentBase += dryGasBase;
+        this.totalGasSpentQuote += dryGasQuote;
         this.totalTxCount++;
 
         this.openOrders.push({
@@ -3485,13 +3584,15 @@ export class DynamicGrid {
           price,
           qty,
           targetFraction,
+          notional: notionalQuote,
+          notionalQuote,
           notionalUsdso,
           levelDesc,
           placedTime: now,
           expireTime,
         });
         this.log(
-          `[dry-run] 📋 CREATED ${sideStr} LIMIT @ $${price.toFixed(6)} (${qty.toFixed(4)} SOMI | $${notionalUsdso.toFixed(2)}) • ${levelDesc} [Expires in ${expireHours}h]`,
+          `[dry-run] 📋 CREATED ${sideStr} LIMIT @ $${price.toFixed(6)} (${qty.toFixed(4)} ${this.baseAsset} | $${notionalQuote.toFixed(2)} ${this.quoteAsset}) • ${levelDesc} [Expires in ${expireHours}h]`,
         );
         this.emit({
           type: "order",
@@ -3499,6 +3600,8 @@ export class DynamicGrid {
             action: isBid ? "CREATE_BUY" : "CREATE_SELL",
             price,
             qty,
+            notional: notionalQuote,
+            notionalQuote,
             notionalUsdso,
             levelDesc,
             time: now,
@@ -3531,6 +3634,8 @@ export class DynamicGrid {
         price,
         qty,
         targetFraction,
+        notional: notionalQuote,
+        notionalQuote,
         notionalUsdso,
         levelDesc,
         placedTime: now,
@@ -3538,7 +3643,7 @@ export class DynamicGrid {
         txHash: res.txHash,
       });
       this.log(
-        `🚀 ON-CHAIN CREATED ${sideStr} LIMIT ${orderIdStr ? `#${orderIdStr} ` : ""}@ $${price.toFixed(6)} (${qty.toFixed(4)} SOMI | $${notionalUsdso.toFixed(2)}) • ${levelDesc} [Expires in ${expireHours}h] (tx: ${res.txHash})`,
+        `🚀 ON-CHAIN CREATED ${sideStr} LIMIT ${orderIdStr ? `#${orderIdStr} ` : ""}@ $${price.toFixed(6)} (${qty.toFixed(4)} ${this.baseAsset} | $${notionalQuote.toFixed(2)} ${this.quoteAsset}) • ${levelDesc} [Expires in ${expireHours}h] (tx: ${res.txHash})`,
       );
       this.emit({
         type: "order",
@@ -3546,6 +3651,8 @@ export class DynamicGrid {
           action: isBid ? "CREATE_BUY" : "CREATE_SELL",
           price,
           qty,
+          notional: notionalQuote,
+          notionalQuote,
           notionalUsdso,
           levelDesc,
           orderId: orderIdStr,
@@ -3636,10 +3743,12 @@ export class DynamicGrid {
       await this.cancelAllRestingOrders(undefined, "IOC_BRACKET mode active — clearing resting maker orders");
     }
 
-    const maxInv = this.cfg.maxInventoryUsdso ?? 40;
-    const currentHeldUsdso = this.baseHeld() * refPrice;
+    const maxInv = this.cfg.maxInventoryQuote ?? 40;
+    const currentHeldQuote = this.baseHeld() * refPrice;
+    const currentHeldUsdso = currentHeldQuote;
     const numBuyLevels = buyLevels.length || 4;
-    const baseTrancheUsdso = maxInv / numBuyLevels; // e.g. $10 per tranche
+    const baseTrancheQuote = maxInv / numBuyLevels; // e.g. $10 per tranche
+    const baseTrancheUsdso = baseTrancheQuote;
 
     // ── BUY SIDE (IOC Accumulation with Tranche Aggregation) ──────────────────
     if (canBuy && this.buyOrdersActive && currentBestAsk > 0) {
@@ -3687,11 +3796,11 @@ export class DynamicGrid {
       }
 
       if (targetTranches > 0 && matchedLevelIndex >= 0 && matchedBuyPrice !== undefined) {
-        const targetCapacityUsdso = targetTranches * baseTrancheUsdso;
-        const deficitUsdso = targetCapacityUsdso - currentHeldUsdso;
+        const targetCapacityQuote = targetTranches * baseTrancheQuote;
+        const deficitQuote = targetCapacityQuote - currentHeldQuote;
 
         // Only trigger if deficit is significant (at least 70% of a tranche, avoiding micro-dust churn)
-        if (deficitUsdso >= (baseTrancheUsdso * 0.70)) {
+        if (deficitQuote >= (baseTrancheQuote * 0.70)) {
           const cooldownKey = isTlBuy ? `ioc_bracket_buy_tl` : `ioc_bracket_buy_level_${matchedLevelIndex}`;
           const lastBuyTime = this.orderCooldowns.get(cooldownKey) ?? 0;
           const globalBuyCooldown = this.orderCooldowns.get("ioc_bracket_buy_global") ?? 0;
@@ -3699,16 +3808,16 @@ export class DynamicGrid {
 
           // 10s cooldown per level, 3s global debounce
           if (now - lastBuyTime > 10_000 && now - globalBuyCooldown > 3_000) {
-            const availableWalletUsdso = this.cfg.dryRun ? maxInv : this.walletUsdsoBalance;
-            const toSpendUsdso = Math.min(deficitUsdso, Math.max(0, maxInv - currentHeldUsdso), availableWalletUsdso);
+            const availableWalletQuote = this.cfg.dryRun ? maxInv : this.walletQuoteBalance;
+            const toSpendQuote = Math.min(deficitQuote, Math.max(0, maxInv - currentHeldQuote), availableWalletQuote);
 
-            if (toSpendUsdso >= (this.minQty * currentBestAsk)) {
+            if (toSpendQuote >= (this.minQty * currentBestAsk)) {
               this.orderCooldowns.set(cooldownKey, now);
               this.orderCooldowns.set("ioc_bracket_buy_global", now);
 
               // Calculate how many tranches are being aggregated
-              const tranchesAggregated = Math.max(1, Math.round(toSpendUsdso / baseTrancheUsdso));
-              const buyQty = toSpendUsdso / currentBestAsk;
+              const tranchesAggregated = Math.max(1, Math.round(toSpendQuote / baseTrancheQuote));
+              const buyQty = toSpendQuote / currentBestAsk;
               const actionLabel = isTlBuy
                 ? `IOC Buy @ Trendline Support ($${matchedBuyPrice.toFixed(6)})`
                 : tranchesAggregated > 1
@@ -3716,9 +3825,9 @@ export class DynamicGrid {
                 : `IOC Buy Level ${matchedLevelIndex + 1}`;
 
               this.log(
-                `🎯 [IOC BRACKET] Ask $${currentBestAsk.toFixed(6)} <= ${isTlBuy ? "TL Support" : `Buy Band ${matchedLevelIndex + 1}`} ($${matchedBuyPrice.toFixed(6)}) — executing ${actionLabel} for $${toSpendUsdso.toFixed(2)}`,
+                `🎯 [IOC BRACKET] Ask $${currentBestAsk.toFixed(6)} <= ${isTlBuy ? "TL Support" : `Buy Band ${matchedLevelIndex + 1}`} ($${matchedBuyPrice.toFixed(6)}) — executing ${actionLabel} for $${toSpendQuote.toFixed(2)} ${this.quoteAsset}`,
               );
-              await this.buyTrancheIOC(buyQty, currentBestAsk, actionLabel, matchedBuyPrice, toSpendUsdso);
+              await this.buyTrancheIOC(buyQty, currentBestAsk, actionLabel, matchedBuyPrice, toSpendQuote);
             }
           }
         }
@@ -3726,11 +3835,11 @@ export class DynamicGrid {
     }
 
     // ── SELL SIDE (IOC Distribution with Tranche Aggregation) ─────────────────
-    const minGasReserveSomi = this.getEffectiveGasReserveSomi();
-    const availableTradingSomi = Math.max(0, this.walletSomiBalance - minGasReserveSomi);
-    const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableTradingSomi);
+    const minReserveBase = this.getEffectiveGasReserveBase();
+    const availableTradingBase = Math.max(0, this.walletBaseBalance - minReserveBase);
+    const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableTradingBase);
 
-    if (this.sellOrdersActive && held >= this.minQty && currentHeldUsdso >= 0.50 && currentBestBid > 0) {
+    if (this.sellOrdersActive && held >= this.minQty && currentHeldQuote >= 0.50 && currentBestBid > 0) {
       // Determine which sell band the market bid has reached
       // Target 1: currentBestBid >= sellLevels[0] (60%) -> Target remaining fraction = 0.75 (sell 25%)
       // Target 2: currentBestBid >= sellLevels[1] (70%) -> Target remaining fraction = 0.50 (sell 50%)
@@ -3754,10 +3863,10 @@ export class DynamicGrid {
         const meetsProfitRequirement = !this.cfg.requireProfitAboveAvgEntry || (avgEntry <= 0 || currentBestBid >= avgEntry * 1.001);
 
         if (meetsProfitRequirement) {
-          const targetRemainingUsdso = targetRemainingFraction * maxInv;
-          const excessUsdso = currentHeldUsdso - targetRemainingUsdso;
+          const targetRemainingQuote = targetRemainingFraction * maxInv;
+          const excessQuote = currentHeldQuote - targetRemainingQuote;
 
-          if (excessUsdso >= (baseTrancheUsdso * 0.70) || (targetRemainingFraction === 0 && held >= this.minQty)) {
+          if (excessQuote >= (baseTrancheQuote * 0.70) || (targetRemainingFraction === 0 && held >= this.minQty)) {
             const cooldownKey = `ioc_bracket_sell_level_${matchedSellIndex}`;
             const lastSellTime = this.orderCooldowns.get(cooldownKey) ?? 0;
             const globalSellCooldown = this.orderCooldowns.get("ioc_bracket_sell_global") ?? 0;
@@ -3770,18 +3879,18 @@ export class DynamicGrid {
 
               const sellQty = targetRemainingFraction === 0
                 ? held
-                : Math.min(held, excessUsdso / currentBestBid);
+                : Math.min(held, excessQuote / currentBestBid);
 
               if (sellQty >= this.minQty) {
                 const tranchesAggregated = targetRemainingFraction === 0
                   ? (matchedSellIndex + 1)
-                  : Math.max(1, Math.round(excessUsdso / baseTrancheUsdso));
+                  : Math.max(1, Math.round(excessQuote / baseTrancheQuote));
                 const actionLabel = tranchesAggregated > 1
                   ? `IOC Sell T1-T${matchedSellIndex + 1} (${tranchesAggregated}x)`
                   : `IOC Sell Target ${matchedSellIndex + 1}`;
 
                 this.log(
-                  `🎯 [IOC BRACKET] Bid $${currentBestBid.toFixed(6)} >= Sell Band ${matchedSellIndex + 1} ($${matchedSellPrice.toFixed(6)}) — executing ${actionLabel} for ${sellQty.toFixed(4)} SOMI`,
+                  `🎯 [IOC BRACKET] Bid $${currentBestBid.toFixed(6)} >= Sell Band ${matchedSellIndex + 1} ($${matchedSellPrice.toFixed(6)}) — executing ${actionLabel} for ${sellQty.toFixed(4)} ${this.baseAsset}`,
                 );
                 await this.sellTrancheIOC(sellQty, currentBestBid, actionLabel, matchedSellPrice);
               }
@@ -3828,7 +3937,7 @@ export class DynamicGrid {
       this.closeLots(executeQty, effectivePrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `[dry-run] ⚡ ${actionLabel}: Sold ${executeQty.toFixed(4)} SOMI @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}`,
+        `[dry-run] ⚡ ${actionLabel}: Sold ${executeQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}`,
       );
       this.emit({
         type: "order",
@@ -3836,8 +3945,11 @@ export class DynamicGrid {
           action: "SELL_FILL",
           price: effectivePrice,
           qty: executeQty,
+          notional: executeQty * effectivePrice,
+          notionalQuote: executeQty * effectivePrice,
           notionalUsdso: executeQty * effectivePrice,
           pnl: roundPnl,
+          pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
           levelDesc: actionLabel,
           reason: actionLabel,
@@ -3855,17 +3967,17 @@ export class DynamicGrid {
     // In live mode: Refresh wallet balance to ensure 100% accurate available balance
     await this.refreshWalletBalances();
 
-    const minGasReserveSomi = this.getEffectiveGasReserveSomi();
-    const availableSomi = Math.max(0, this.walletSomiBalance - minGasReserveSomi);
+    const minGasReserveBase = this.getEffectiveGasReserveBase();
+    const availableBase = Math.max(0, this.walletBaseBalance - minGasReserveBase);
 
-    if (availableSomi < this.minQty) {
+    if (availableBase < this.minQty) {
       this.log(
-        `⚠️ [GAS GUARD] Cannot execute ${actionLabel}: Wallet has ${this.walletSomiBalance.toFixed(4)} SOMI, which is within the ${minGasReserveSomi.toFixed(4)} SOMI gas safety reserve.`,
+        `⚠️ [GAS GUARD] Cannot execute ${actionLabel}: Wallet has ${this.walletBaseBalance.toFixed(4)} ${this.baseAsset}, which is within the ${minGasReserveBase.toFixed(4)} ${this.baseAsset} gas safety reserve.`,
       );
       return false;
     }
 
-    const finalQty = Math.min(executeQty, availableSomi);
+    const finalQty = Math.min(executeQty, availableBase);
     if (finalQty < this.minQty) return false;
 
     try {
@@ -3885,7 +3997,7 @@ export class DynamicGrid {
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
 
       this.log(
-        `⚡ ON-CHAIN ${actionLabel}: Sold ${finalQty.toFixed(4)} SOMI @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} (tx: ${res.txHash})`,
+        `⚡ ON-CHAIN ${actionLabel}: Sold ${finalQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} (tx: ${res.txHash})`,
       );
       this.emit({
         type: "order",
@@ -3893,8 +4005,11 @@ export class DynamicGrid {
           action: "SELL_FILL",
           price: effectivePrice,
           qty: finalQty,
+          notional: finalQty * effectivePrice,
+          notionalQuote: finalQty * effectivePrice,
           notionalUsdso: finalQty * effectivePrice,
           pnl: roundPnl,
+          pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
           levelDesc: actionLabel,
           reason: actionLabel,
@@ -3909,8 +4024,8 @@ export class DynamicGrid {
         this.trackTxGas(res.txHash, actionLabel);
       }
       await this.refreshWalletBalances();
-      this.lastObservedSomiBalance = this.walletSomiBalance;
-      this.lastObservedUsdsoBalance = this.walletUsdsoBalance;
+      this.lastObservedBaseBalance = this.walletBaseBalance;
+      this.lastObservedQuoteBalance = this.walletQuoteBalance;
       this.saveState();
       this.emitTelemetryTick();
       return true;
@@ -3928,18 +4043,19 @@ export class DynamicGrid {
     execPrice: number,
     levelName: string,
     targetPrice: number,
-    notionalUsdso: number,
+    notionalQuote: number,
   ): Promise<boolean> {
     const actionLabel = levelName.startsWith("IOC") ? levelName : `IOC ${levelName}`;
-    if (qty < this.minQty || notionalUsdso <= 0.05) {
+    if (qty < this.minQty || notionalQuote <= 0.05) {
       return false;
     }
+    const notionalUsdso = notionalQuote;
     const now = Date.now();
     // In IOC buy: effective price is strictly capped to targetPrice so cost NEVER exceeds Buy Level
     const effectivePrice = Math.min(execPrice, targetPrice);
 
     if (this.cfg.dryRun) {
-      const buyQty = notionalUsdso / effectivePrice;
+      const buyQty = notionalQuote / effectivePrice;
       this.processBuyFill({
         price: effectivePrice,
         qty: buyQty,
@@ -3956,10 +4072,10 @@ export class DynamicGrid {
     // In live mode: Refresh wallet balance to ensure 100% accurate available balance
     await this.refreshWalletBalances();
 
-    const availableBudgetUsdso = Math.min(notionalUsdso, this.walletUsdsoBalance);
-    const finalQty = availableBudgetUsdso / effectivePrice;
+    const availableBudgetQuote = Math.min(notionalQuote, this.walletQuoteBalance);
+    const finalQty = availableBudgetQuote / effectivePrice;
     if (finalQty < this.minQty) {
-      this.log(`⚠️ [IOC BUY] Insufficient USDso balance ($${this.walletUsdsoBalance.toFixed(2)} < $${notionalUsdso.toFixed(2)})`);
+      this.log(`⚠️ [IOC BUY] Insufficient ${this.quoteAsset} balance ($${this.walletQuoteBalance.toFixed(2)} < $${notionalQuote.toFixed(2)})`);
       return false;
     }
 
@@ -3988,8 +4104,8 @@ export class DynamicGrid {
         this.trackTxGas(res.txHash, actionLabel);
       }
       await this.refreshWalletBalances();
-      this.lastObservedSomiBalance = this.walletSomiBalance;
-      this.lastObservedUsdsoBalance = this.walletUsdsoBalance;
+      this.lastObservedBaseBalance = this.walletBaseBalance;
+      this.lastObservedQuoteBalance = this.walletQuoteBalance;
       this.saveState();
       this.emitTelemetryTick();
       return true;
@@ -4002,7 +4118,7 @@ export class DynamicGrid {
   private async sellAll(price: number, action: "SELL" | "CUT"): Promise<void> {
     const actionLabel = action === "CUT" ? "CUT LOSS (SELL ALL)" : "100% FULL EXIT (TAKE PROFIT)";
 
-    // 1. Always cancel ALL resting open orders first so SOMI is unlocked from limit sells and no buys occur
+    // 1. Always cancel ALL resting open orders first so base asset is unlocked from limit sells and no buys occur
     if (this.openOrders.length > 0) {
       await this.cancelAllRestingOrders(undefined, `Cancelling open orders before ${actionLabel}`);
     }
@@ -4020,7 +4136,7 @@ export class DynamicGrid {
       this.closeLots(held, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `[dry-run] 🚨 ${actionLabel}: ${held.toFixed(4)} SOMI @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
+        `[dry-run] 🚨 ${actionLabel}: ${held.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
       );
       this.emit({
         type: "order",
@@ -4028,8 +4144,11 @@ export class DynamicGrid {
           action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
           price,
           qty: held,
+          notional: held * price,
+          notionalQuote: held * price,
           notionalUsdso: held * price,
           pnl: roundPnl,
+          pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
           levelDesc: actionLabel,
           reason: actionLabel,
@@ -4047,27 +4166,27 @@ export class DynamicGrid {
     // 2. In live mode: Refresh wallet balance to ensure 100% accurate available balance
     await this.refreshWalletBalances();
 
-    const minGasReserveSomi = this.getEffectiveGasReserveSomi();
-    const availableSomi = Math.max(0, this.walletSomiBalance - minGasReserveSomi);
+    const minGasReserveBase = this.getEffectiveGasReserveBase();
+    const availableBase = Math.max(0, this.walletBaseBalance - minGasReserveBase);
 
     if (held < this.minQty) {
       this.log(
-        `🛑 [INVENTORY GUARD] ${actionLabel} aborted: Trading inventory is empty (${held.toFixed(4)} SOMI). Refusing to sell wallet gas balance (${this.walletSomiBalance.toFixed(4)} SOMI).`,
+        `🛑 [INVENTORY GUARD] ${actionLabel} aborted: Trading inventory is empty (${held.toFixed(4)} ${this.baseAsset}). Refusing to sell wallet gas balance (${this.walletBaseBalance.toFixed(4)} ${this.baseAsset}).`,
       );
       this.lots = [];
       this.saveState();
       return;
     }
 
-    if (availableSomi < this.minQty) {
+    if (availableBase < this.minQty) {
       this.log(
-        `⚠️ [GAS GUARD] Cannot execute ${actionLabel}: Wallet has ${this.walletSomiBalance.toFixed(4)} SOMI, which is within the ${minGasReserveSomi.toFixed(4)} SOMI gas safety reserve. Standing by for balance.`,
+        `⚠️ [GAS GUARD] Cannot execute ${actionLabel}: Wallet has ${this.walletBaseBalance.toFixed(4)} ${this.baseAsset}, which is within the ${minGasReserveBase.toFixed(4)} ${this.baseAsset} gas safety reserve. Standing by for balance.`,
       );
       return;
     }
 
-    // Liquidate all trading inventory: sell all physical trading SOMI available above gas reserve
-    const executeQty = Math.min(held, availableSomi);
+    // Liquidate all trading inventory: sell all physical trading base asset available above gas reserve
+    const executeQty = Math.min(held, availableBase);
 
     try {
       const res = await this.binance.placeOrder({
@@ -4081,7 +4200,7 @@ export class DynamicGrid {
       this.closeLots(executeQty, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `🚨 ON-CHAIN ${actionLabel}: ${executeQty.toFixed(4)} SOMI @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash})`,
+        `🚨 ON-CHAIN ${actionLabel}: ${executeQty.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash})`,
       );
       this.emit({
         type: "order",
@@ -4089,8 +4208,11 @@ export class DynamicGrid {
           action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
           price,
           qty: executeQty,
+          notional: executeQty * price,
+          notionalQuote: executeQty * price,
           notionalUsdso: executeQty * price,
           pnl: roundPnl,
+          pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
           levelDesc: actionLabel,
           reason: actionLabel,
@@ -4132,7 +4254,7 @@ export class DynamicGrid {
         if (remaining <= 1e-12) break;
         const take = Math.min(lot.qty, remaining);
         this.tradeRealizedPnl += (exitPrice - lot.price) * take;
-        this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedUsdso;
+        this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
         lot.qty -= take;
         remaining -= take;
       }
@@ -4144,7 +4266,7 @@ export class DynamicGrid {
       const lot = this.lots[0]!;
       const take = Math.min(lot.qty, remaining);
       this.tradeRealizedPnl += (exitPrice - lot.price) * take;
-      this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedUsdso;
+      this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
       lot.qty -= take;
       remaining -= take;
       if (lot.qty <= 1e-12) this.lots.shift();
