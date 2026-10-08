@@ -64,6 +64,7 @@ export class DynamicGrid {
   private lots: Lot[] = [];
   private openOrders: OpenOrder[] = [];
   private cancelledOrderIds = new Map<string, number>(); // orderId → timestamp of cancellation
+  private handledExitOrderIds = new Map<string, number>(); // orderId → timestamp of exit/IOC execution
   private inFlightOrders = new Set<string>();
   private orderCooldowns = new Map<string, number>();
   private realizedPnl = 0;
@@ -268,6 +269,14 @@ export class DynamicGrid {
     this.log(
       `⚡ [WS EXEC] ${report.side} Order #${idStr} -> status: ${status} (lastQty: ${lastFilledQty}, price: $${lastFilledPrice})`,
     );
+
+    // 🔒 Exit / IOC Order De-duplication:
+    // If this order was already processed synchronously by sellAll / sellTrancheIOC / buyTrancheIOC,
+    // do not create a duplicate fill record!
+    if (this.handledExitOrderIds.has(idStr)) {
+      this.log(`⚡ [WS EXEC] Order #${idStr} was already handled synchronously (${status}) — skipping duplicate fill processing`);
+      return;
+    }
 
     // 1. Partial or Full Fill
     if (status === "FILLED" || status === "PARTIALLY_FILLED") {
@@ -657,10 +666,13 @@ export class DynamicGrid {
         }
       }
 
-      // 4. Periodic cleanup: remove cancelled order IDs older than 1 hour
+      // 4. Periodic cleanup: remove cancelled/handled order IDs older than 1 hour
       const cleanupThreshold = Date.now() - 3600_000;
       for (const [id, ts] of this.cancelledOrderIds) {
         if (ts < cleanupThreshold) this.cancelledOrderIds.delete(id);
+      }
+      for (const [id, ts] of this.handledExitOrderIds) {
+        if (ts < cleanupThreshold) this.handledExitOrderIds.delete(id);
       }
 
       // 5. Pillar 2: Process in-memory orders whose ID is no longer open on Binance
@@ -4465,6 +4477,11 @@ export class DynamicGrid {
       this.closeLots(finalQty, effectivePrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
 
+      const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
+      if (orderIdStr) {
+        this.handledExitOrderIds.set(orderIdStr, Date.now());
+      }
+
       this.log(
         `⚡ ON-CHAIN ${actionLabel}: Sold ${finalQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} (tx: ${res.txHash})`,
       );
@@ -4485,6 +4502,7 @@ export class DynamicGrid {
           time: now,
           dryRun: false,
           txHash: res.txHash,
+          orderId: orderIdStr,
           maker: false,
           isIoc: true,
         },
@@ -4569,10 +4587,16 @@ export class DynamicGrid {
         qty: finalQty,
       });
 
+      const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
+      if (orderIdStr) {
+        this.handledExitOrderIds.set(orderIdStr, Date.now());
+      }
+
       this.processBuyFill({
         price: effectivePrice,
         qty: finalQty,
         levelDesc: actionLabel,
+        orderId: orderIdStr,
         txHash: res?.txHash,
         logPrefix: "⚡ ",
         dryRun: false,
@@ -4687,6 +4711,10 @@ export class DynamicGrid {
         price,
         qty: executeQty,
       });
+      const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
+      if (orderIdStr) {
+        this.handledExitOrderIds.set(orderIdStr, Date.now());
+      }
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(executeQty, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
@@ -4710,6 +4738,7 @@ export class DynamicGrid {
           time: now,
           dryRun: false,
           txHash: res.txHash,
+          orderId: orderIdStr,
           maker: false,
           isIoc: true,
         },

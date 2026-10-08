@@ -160,6 +160,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       1. **Confirmed Higher Low (HL) (บังคับเป็นแกนหลัก Mandatory Baseline)**: ราคาต้องสร้าง Swing Low Pivot ตัวใหม่ที่ยกสูงกว่าก้นเหว (`Lowest Dump`) และมีแท่งยืนยันตามทฤษฎี Dow Theory
       2. **Trendline Breakout (กรณีเปิด `trendlineFilter`)**: ราคาต้องปิดแท่งทะลุเหนือเส้นกดขาลงอย่างน้อย 2 แท่งเทียน
       3. **Buy Level 2 Recovery (กรณีเปิด `enableBuyLevel2Recovery`)**: ราคาต้องฟื้นตัวขึ้นมายืนเหนือ Buy Level 2 (30% Zone) ได้อย่างน้อย 1 แท่งเทียน
+- **Cut-Loss / IOC WS Fill Deduplication (Zero Duplicate Trade Records & Zero Ghost SELL Fills)**:
+  - **สาเหตุของปัญหาเดิม**: เมื่อเกิด Cut Loss / Full Exit คำสั่ง `sellAll()` จะส่ง IOC Order ไปยัง Exchange และบันทึกผลการปิดออเดอร์ (`CUT` / `TAKE_PROFIT`) ทันทีที่ REST ส่งผลลัพธ์กลับมา แต่หลังจากนั้นเพียง 2-3 มิลลิวินาที Binance WebSocket User Data Stream จะส่งข้อความ `executionReport (FILLED)` ตามมา เนื่องจากระบบ `handleWsExecutionReport` เดิมไม่มีการติดตาม ID ของคำสั่งฝั่ง IOC/Exit จึงเข้าใจผิดคิดว่าเป็น Maker Sell Order ปกติ และเรียก `processSellFill()` ซ้ำ ส่งผลให้เกิดรายการ `SELL FILL $0.00 PnL` ซ้ำซ้อนกับ `CUT LOSS` ในหน้ารายการ Trade และแสดง Marker `CUT` กับ `S` ซ้ำกันบนแท่งเทียนเดียวกัน
+  - **การแก้ไข**:
+    1. ใน `src/strategy.ts`: เพิ่ม `handledExitOrderIds = new Map<string, number>()` เมื่อมีการส่ง IOC ใน `sellAll()`, `sellTrancheIOC()`, หรือ `buyTrancheIOC()` บอทจะลงทะเบียน `orderIdStr` ไว้ทันที และใน `handleWsExecutionReport` จะมี Guard ตรวจสอบ `if (this.handledExitOrderIds.has(idStr)) return;` ข้ามการประมวลผล fill ซ้ำจาก WS อย่างสมบูรณ์
+    2. ใน `src/db.ts`: ใน `recordEvent` เพิ่ม Guard ตรวจสอบ `orderId` หรือ `txHash` หากพบว่ามีสถานะ `FILLED` อยู่แล้วในระบบ จะไม่สร้างแถว `SELL_FILL` ซ้ำ และหากเป็นอีเวนต์ `CUT` / `TAKE_PROFIT` จะทำการ Update แถวเดิมแทนการ Unshift แถวใหม่
+    3. Auto-Purge Historical Duplicates (`cleanupDuplicateExitFills`): รันอัตโนมัติในคอนสตรัคเตอร์ของ `BotDatabase` เพื่อตรวจจับและลบแถว `SELL_FILL` เก่าในอดีตที่มี `orderId` หรือ `txHash` ซ้ำกับแถว `CUT` หรือ `TAKE_PROFIT` ออกจากฐานข้อมูล `data/grid-bot.db.json` ทันทีที่สตาร์ทบอท
 - **4 Channel Modes (`CHANNEL_MODE`)**:
   - `DOW_ATR_CLAMP` (Default): Dow Theory swing pivots clamped to $2.5\times$ – $5.0\times$ ATR.
   - `FIXED_PCT_CLAMP`: Clamped between `MIN_CHANNEL_WIDTH_PCT` (1.8%) and `MAX_CHANNEL_WIDTH_PCT` (4.0%).

@@ -201,6 +201,7 @@ export class BotDatabase {
     this.loadSeparateSettings();
     this.backfillMissingSellPnl();
     this.cleanupHijackedMakerFills();
+    this.cleanupDuplicateExitFills();
   }
 
   private loadSeparateSettings(): void {
@@ -530,6 +531,43 @@ export class BotDatabase {
   }
 
   /**
+   * Cleans up duplicate SELL_FILL records that share the same orderId or txHash
+   * with a CUT or TAKE_PROFIT record (from WS race conditions).
+   */
+  public cleanupDuplicateExitFills(): void {
+    if (!this.data || !Array.isArray(this.data.orders) || this.data.orders.length === 0) return;
+
+    const exitOrderIds = new Set<string>();
+    const exitTxHashes = new Set<string>();
+
+    for (const o of this.data.orders) {
+      if (o.action === "CUT" || o.action === "TAKE_PROFIT") {
+        if (o.orderId && !o.orderId.startsWith("ord_")) exitOrderIds.add(o.orderId);
+        if (o.txHash) exitTxHashes.add(o.txHash);
+      }
+    }
+
+    if (exitOrderIds.size === 0 && exitTxHashes.size === 0) return;
+
+    const beforeLen = this.data.orders.length;
+    this.data.orders = this.data.orders.filter((o) => {
+      if (o.action === "SELL_FILL") {
+        const isDupOrderId = Boolean(o.orderId && exitOrderIds.has(o.orderId));
+        const isDupTx = Boolean(o.txHash && exitTxHashes.has(o.txHash));
+        if (isDupOrderId || isDupTx) {
+          return false; // Remove spurious SELL_FILL duplicate!
+        }
+      }
+      return true;
+    });
+
+    if (this.data.orders.length !== beforeLen) {
+      this.log(`🧹 [cleanup] Purged ${beforeLen - this.data.orders.length} duplicate SELL_FILL record(s) matching CUT/TAKE_PROFIT orders`);
+      this.flushSync();
+    }
+  }
+
+  /**
    * Authoritatively reconcile open orders in the database against the Somnia Markets GraphQL Indexer.
    * Any orders in db.orders marked as OPEN that are not active on DreamDEX are updated to their
    * genuine status (CANCELLED, FILLED, or EXPIRED).
@@ -798,6 +836,21 @@ export class BotDatabase {
         eventData.reason?.includes("IOC")
       );
 
+      // Check if this orderId or txHash is ALREADY recorded as FILLED (e.g. CUT, TAKE_PROFIT, or prior FILL)
+      const existingFilled = orderId && !orderId.startsWith("ord_")
+        ? this.data.orders.find(
+            (o) =>
+              (o.orderId === orderId || (eventData.txHash && o.txHash === eventData.txHash)) &&
+              o.status === "FILLED",
+          )
+        : undefined;
+
+      if (existingFilled) {
+        // If the existing record is CUT or TAKE_PROFIT or already FILLED, do NOT create a duplicate SELL_FILL row!
+        if (eventData.txHash && !existingFilled.txHash) existingFilled.txHash = eventData.txHash;
+        return existingFilled;
+      }
+
       // In IOC mode, orders are immediate taker executions and NEVER match resting maker orders
       const existing = !isIocOrder
         ? this.data.orders.find(
@@ -847,6 +900,27 @@ export class BotDatabase {
         this.data.orders.unshift(record);
       }
     } else if (action === "CUT" || action === "TAKE_PROFIT" || action === "SNIPE_BUY" || action === "SNIPE_SELL" || action === "CLAIM") {
+      // Prevent duplicate exit records if the same orderId or txHash was already recorded
+      const existing = orderId && !orderId.startsWith("ord_")
+        ? this.data.orders.find(
+            (o) =>
+              o.orderId === orderId ||
+              (eventData.txHash && o.txHash === eventData.txHash),
+          )
+        : undefined;
+      if (existing) {
+        existing.status = "FILLED";
+        existing.fillTime = now;
+        existing.fillPrice = price;
+        existing.action = action;
+        existing.pnl = pnlVal;
+        existing.pnlQuote = pnlVal;
+        existing.pnlUsdso = pnlVal;
+        existing.levelDesc = eventData.levelDesc || action;
+        existing.reason = eventData.reason;
+        if (eventData.txHash) existing.txHash = eventData.txHash;
+        return existing;
+      }
       record = {
         id: `mkt_${now}_${Math.random().toString(36).slice(2, 7)}`,
         orderId,
