@@ -1,0 +1,1526 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Channel Grid &amp; Dow Structure Dashboard</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=2.0" />
+  <!-- TradingView Lightweight Charts -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+
+<body>
+  <div class="app-layout">
+    <!-- ═══════════════════ Top Navigation Bar ═══════════════════ -->
+    <header class="top-nav">
+      <div class="brand">
+        <div class="logo-badge">BINANCE GRID</div>
+        <div class="symbol-pill" id="navSymbolBadge">BTC / USDT</div>
+        <div class="symbol-select-wrap">
+          <select id="topSymbolSelect" class="symbol-nav-select" title="Change Binance Trading Pair">
+            <option value="BTCUSDT">BTC/USDT</option>
+            <option value="ETHUSDT">ETH/USDT</option>
+            <option value="SOLUSDT">SOL/USDT</option>
+            <option value="BNBUSDT">BNB/USDT</option>
+            <option value="DOGEUSDT">DOGE/USDT</option>
+            <option value="XRPUSDT">XRP/USDT</option>
+            <option value="ADAUSDT">ADA/USDT</option>
+            <option value="AVAXUSDT">AVAX/USDT</option>
+            <option value="SUIUSDT">SUI/USDT</option>
+            <option value="NEARUSDT">NEAR/USDT</option>
+            <option value="PEPEUSDT">PEPE/USDT</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="nav-metrics">
+        <button class="ctrl-nav-btn ctrl-btn-pause" id="btnPauseBot" title="Pause / Resume Bot Execution">
+          <span class="btn-icon" id="pauseBtnIcon">⏸️</span>
+          <span id="pauseBtnText">Pause</span>
+        </button>
+        <button class="ctrl-nav-btn ctrl-btn-cancel" id="btnCancelAll" title="Emergency Cancel All Open Orders on Chain">
+          <span class="btn-icon">🛑</span>
+          <span>Cancel All</span>
+        </button>
+        <button class="ctrl-nav-btn ctrl-btn-pos-reset" id="btnResetPosition" title="Reset Position Lots (Clear Holding &amp; Start Fresh Trading)">
+          <span class="btn-icon">🎯</span>
+          <span>Reset Pos</span>
+        </button>
+        <button class="ctrl-nav-btn ctrl-btn-manage-trades" id="btnOpenTradeManager" title="จัดการรายการซื้อขาย Buy / Sell Fills และ Lots ในฐานข้อมูล">
+          <span class="btn-icon">📋</span>
+          <span>จัดการ Fills/Lots</span>
+        </button>
+        <button class="ctrl-nav-btn ctrl-btn-rounds" id="btnOpenRoundsModal" title="สรุปการซื้อขายแต่ละรอบ (Trade Rounds Summary) - เข้าซื้อจนถึงขายออก ได้เท่าไหร่">
+          <span class="btn-icon">📊</span>
+          <span>สรุปรอบการเทรด</span>
+        </button>
+        <button class="ctrl-nav-btn ctrl-btn-reset" id="btnOpenResetModal" title="Reset Bot State / Clear Lots / Reset Statistics">
+          <span class="btn-icon">🔄</span>
+          <span>Reset Bot</span>
+        </button>
+        <button class="settings-nav-btn" id="openSettingsBtn" title="Bot Configuration &amp; Settings">
+          <span class="btn-icon">⚙️</span>
+          <span>Config</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ═══════════════════ KPI Summary Row (5 consolidated cards across 1 sleek row) ═══════════════════ -->
+    <section class="kpi-summary-bar">
+      <!-- 1. Spot Wallet Balance -->
+      <div class="kpi-card kpi-wallet">
+        <div class="kpi-header">
+          <span class="kpi-tag">SPOT WALLET</span>
+          <span class="kpi-badge badge-wallet" id="topWalletAddrBadge">Binance</span>
+        </div>
+        <div class="kpi-val highlight-purple" id="topWalletSomi">0.00 BASE</div>
+        <div class="kpi-sub">
+          <span class="kpi-usd" id="topWalletUsdso">$0.00 USDT</span> <span class="kpi-dim">(<span id="topWalletTotalVal">$0.00</span>)</span>
+        </div>
+      </div>
+
+      <!-- 2. Position Allocation & Inventory Capacity (Merged) -->
+      <div class="kpi-card kpi-pos">
+        <div class="kpi-header">
+          <span class="kpi-tag">POSITION &amp; CAPACITY</span>
+          <div class="kpi-badge-group">
+            <span class="kpi-badge badge-cyan" id="topPosBadge">0.0%</span>
+            <span class="kpi-badge badge-soft" id="topCapPct">0% Load</span>
+          </div>
+        </div>
+        <div class="kpi-dual-val-row">
+          <div class="kpi-val" id="topPosBase">0.00 BASE</div>
+          <div class="kpi-val-sub"><span class="kpi-usd" id="topPosUsd">$0.00</span> <span class="kpi-dim">/ $<span id="topMaxInv">90</span></span></div>
+          <span id="inventoryUsd" style="display: none;">$0.00</span>
+        </div>
+        <div class="kpi-sub">
+          <div class="mini-progress-track">
+            <div class="mini-progress-fill" id="inventoryProgress" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Profit & Loss: Unrealized + Realized & Gas (Merged) -->
+      <div class="kpi-card kpi-pnl">
+        <div class="kpi-header">
+          <span class="kpi-tag">PROFIT &amp; LOSS (PNL)</span>
+          <div class="kpi-badge-group">
+            <span class="kpi-badge badge-neutral" id="topUnrealizedBadge">0.00%</span>
+            <span class="kpi-badge badge-soft" id="lotsCount">0 Open Lots</span>
+          </div>
+        </div>
+        <div class="pnl-dual-grid">
+          <!-- Unrealized Half -->
+          <div class="pnl-half">
+            <div class="pnl-half-top">
+              <span class="pnl-mini-tag">UNREALIZED</span>
+            </div>
+            <div class="kpi-val pnl-neutral" id="posUnrealizedPnl">+$0.00</div>
+            <div class="pnl-half-sub">
+              Avg: <span class="kpi-mono" id="posAvgEntry">--.------</span>
+            </div>
+          </div>
+          <div class="trigger-divider"></div>
+          <!-- Realized Half -->
+          <div class="pnl-half">
+            <div class="pnl-half-top">
+              <span class="pnl-mini-tag">NET REALIZED</span>
+            </div>
+            <div class="kpi-val pnl-neutral" id="realizedPnl">$0.0000</div>
+            <div class="pnl-half-sub" id="lossStopInfo">
+              <span id="kpiTradePnl" style="color: #4ade80; font-weight: 600;">Trade: +$0.00</span> • ⛽ <span id="kpiGasSpent" style="color: #fbbf24; font-weight: 600;">Gas: 0.0000 SOMI</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Next Buy & Sell Triggers (Merged Dual Slot) -->
+      <div class="kpi-card kpi-triggers">
+        <div class="kpi-header">
+          <span class="kpi-tag">NEXT TRIGGERS</span>
+          <span class="kpi-badge badge-soft">BUY &bull; SELL</span>
+        </div>
+        <div class="triggers-dual-grid">
+          <!-- Buy Half -->
+          <div class="trigger-half trigger-half-buy">
+            <div class="trigger-half-top">
+              <span class="trigger-mini-tag text-green">BUY</span>
+              <span class="kpi-badge badge-buy-pill" id="topBuyZonePill">&lt;50% Zone</span>
+            </div>
+            <div class="trigger-half-price highlight-green" id="hudBuyTrigger">--.------</div>
+            <div class="trigger-half-sub" id="hudBuySub">
+              <span id="topBuyStatusText">Waiting for dip</span>
+            </div>
+          </div>
+          <div class="trigger-divider"></div>
+          <!-- Sell Half -->
+          <div class="trigger-half trigger-half-sell">
+            <div class="trigger-half-top">
+              <span class="trigger-mini-tag text-orange">SELL</span>
+              <span class="kpi-badge badge-sell-pill" id="topSellZonePill">&gt;50% Zone</span>
+            </div>
+            <div class="trigger-half-price highlight-orange" id="hudSellTrigger">--.------</div>
+            <div class="trigger-half-sub" id="hudSellSub">
+              <span id="topSellStatusText">Waiting for rally</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ Bot Live Operational Status (Outside Chart) ═══════════════════ -->
+    <section class="bot-status-strip">
+      <div class="bot-status-banner banner-info" id="botStatusBanner">
+        <div class="banner-left-group">
+          <!-- Connection Status -->
+          <div class="status-pill connected" id="connectionStatus">
+            <span class="dot"></span>
+            <span id="connectionText">Live Feed</span>
+          </div>
+          <!-- Dow Market Regime -->
+          <div class="regime-badge badge-warmup" id="regimeBadge">DOW: WARMUP</div>
+          <!-- Dry Run Mode -->
+          <div class="dry-badge" id="dryRunBadge">DRY RUN</div>
+          <!-- Bot Tick Speed Badge -->
+          <div class="status-pill tick-speed-pill" id="tickSpeedBadge" title="Bot Loop Speed / Polling Interval">
+            <span class="dot"></span>
+            <span id="tickSpeedText">⚡ 2.0s</span>
+          </div>
+          <!-- Strategy Live Action Pill -->
+          <div class="banner-status-pill" id="bannerStatusPill">
+            <span class="banner-pulse-dot"></span>
+            <span id="bannerStatusTitle">⏳ Analyzing Market</span>
+          </div>
+        </div>
+
+        <div class="banner-compact-msg">
+          <span class="banner-reason-text" id="bannerReasonText">Synchronizing order book...</span>
+          <span class="banner-trigger-text" id="bannerTriggerText">Evaluating market tick</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ 2-Column Main Workspace ═══════════════════ -->
+    <div class="dashboard-grid">
+
+      <!-- ──── COLUMN 1: Large Primary Chart ──── -->
+      <div class="col-chart">
+        <section class="chart-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2>
+                <span class="chart-symbol-badge" id="chartSymbolBadge">SOMI / USDso</span>
+                <span class="chart-timeframe-sub" id="chartTimeframeSub">(1h Macro Candles)</span>
+                <span class="channel-status-pill" id="channelStatusPill">
+                  <span class="channel-pulse-dot"></span>
+                  <span id="channelStatusText">Channel: --%</span>
+                </span>
+                <span class="wave-status-pill" id="waveStatusPill" style="display: none;">
+                  <span class="wave-pulse-dot"></span>
+                  <span id="waveStatusText">รอบคลื่น: --</span>
+                </span>
+              </h2>
+            </div>
+            <div class="chart-actions">
+              <button class="btn-tool active" id="btnToggleWave" title="เปิด/ปิด การแสดงเส้นรอบคลื่นและจุดสวิง Dow">🌊 รอบคลื่น</button>
+              <button class="btn-tool" id="btnFitChart" title="Fit to Screen">⛶ Fit View</button>
+            </div>
+          </div>
+
+          <div class="chart-container" id="tvChart">
+            <!-- Circular Order Badges Overlay Layer (B / S) -->
+            <div class="chart-order-badges-layer" id="chartOrderBadgesLayer"></div>
+            <!-- Swing Point Badges Overlay Layer (HH / LH / HL / LL) -->
+            <div class="chart-swing-badges-layer" id="chartSwingBadgesLayer"></div>
+            <!-- Floating Order Details Hover Tooltip -->
+            <div class="chart-order-tooltip" id="chartOrderTooltip"></div>
+            <!-- In-Chart Clean Lightweight Legend (Top-Left) -->
+            <div class="chart-canvas-legend" id="chartCanvasLegend">
+              <div class="legend-symbol-row">
+                <span class="legend-symbol" id="legendSymbol">SOMI / USDso</span>
+                <span class="legend-tf-pill" id="legendTf">1H</span>
+                <span class="legend-live-dot"></span>
+                <span class="legend-live-price" id="legendLivePrice">--.------</span>
+              </div>
+              <div class="legend-ohlc-row" id="legendOhlcRow">
+                <span class="ohlc-item"><span class="ohlc-tag">O</span> <span id="legendO" class="ohlc-val">--.------</span></span>
+                <span class="ohlc-item"><span class="ohlc-tag">H</span> <span id="legendH" class="ohlc-val">--.------</span></span>
+                <span class="ohlc-item"><span class="ohlc-tag">L</span> <span id="legendL" class="ohlc-val">--.------</span></span>
+                <span class="ohlc-item"><span class="ohlc-tag">C</span> <span id="legendC" class="ohlc-val">--.------</span></span>
+                <span class="ohlc-item" id="legendChangeWrap"><span id="legendChange" class="ohlc-val pnl-neutral">0.00%</span></span>
+              </div>
+              <div class="legend-dow-row" id="legendDowRow">
+                <span class="dow-chip dow-chip-hh"><span class="dow-dot dot-hh"></span>⛰️ HH</span>
+                <span class="dow-chip dow-chip-lh"><span class="dow-dot dot-lh"></span>⛰️ LH</span>
+                <span class="dow-chip dow-chip-hl"><span class="dow-dot dot-hl"></span>🌊 HL</span>
+                <span class="dow-chip dow-chip-ll"><span class="dow-dot dot-ll"></span>🌊 LL</span>
+                <span class="dow-chip dow-chip-start">⭐ Start</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ──── COLUMN 2: Grid Meter + Trade Log Combined ──── -->
+      <aside class="col-sidebar">
+        <!-- 1. Grid Channel Meter (Ladder 100% to 0%) -->
+        <div class="hud-card glow-ladder-card" id="gridLadderCard">
+          <div class="card-header">
+            <div class="ladder-title-wrap">
+              <span class="card-label">Grid Channel Meter</span>
+              <span class="sub-label-dim" id="channelClampSub">100% Ceil ➔ 0% Floor</span>
+            </div>
+            <span class="active-zone-pill badge-inzone" id="ladderZoneBadge">Buy Zone (35%)</span>
+          </div>
+
+          <div class="ladder-active-summary">
+            <div class="summary-item">
+              <span class="sum-tag">ACTIVE LEVEL</span>
+              <span class="sum-val" id="ladderCurrentLevel">Buy Level 2 (30%)</span>
+            </div>
+            <div class="summary-item text-right">
+              <span class="sum-tag">TARGET ALLOCATION</span>
+              <span class="sum-val highlight-green" id="ladderTargetAlloc">67% ($60)</span>
+            </div>
+          </div>
+
+          <!-- Vertical Meter Ladder (Top = 100% Ceil, Bottom = 0% Floor) -->
+          <div class="vertical-ladder-meter" id="verticalLadderMeter">
+            <!-- 100% Upper Ceiling Exit -->
+            <div class="ladder-step step-ceiling" id="stepCeil" data-pct="100">
+              <div class="step-pct">100%</div>
+              <div class="step-desc">
+                <span class="step-title">Ceiling (Exit All)</span>
+                <span class="step-action">Flat 0%</span>
+              </div>
+              <div class="step-price" id="stepPriceCeil">--.------</div>
+            </div>
+
+            <!-- 90% Sell Target 4 -->
+            <div class="ladder-step step-sell" id="stepSell4" data-pct="90">
+              <div class="step-pct">90%</div>
+              <div class="step-desc">
+                <span class="step-title">Sell Target 4</span>
+                <span class="step-action">Hold 0%</span>
+              </div>
+              <div class="step-price" id="stepPriceSell4">--.------</div>
+            </div>
+
+            <!-- 80% Sell Target 3 -->
+            <div class="ladder-step step-sell" id="stepSell3" data-pct="80">
+              <div class="step-pct">80%</div>
+              <div class="step-desc">
+                <span class="step-title">Sell Target 3</span>
+                <span class="step-action">Hold 25%</span>
+              </div>
+              <div class="step-price" id="stepPriceSell3">--.------</div>
+            </div>
+
+            <!-- 70% Sell Target 2 -->
+            <div class="ladder-step step-sell" id="stepSell2" data-pct="70">
+              <div class="step-pct">70%</div>
+              <div class="step-desc">
+                <span class="step-title">Sell Target 2</span>
+                <span class="step-action">Hold 50%</span>
+              </div>
+              <div class="step-price" id="stepPriceSell2">--.------</div>
+            </div>
+
+            <!-- 60% Sell Target 1 -->
+            <div class="ladder-step step-sell" id="stepSell1" data-pct="60">
+              <div class="step-pct">60%</div>
+              <div class="step-desc">
+                <span class="step-title">Sell Target 1</span>
+                <span class="step-action">Hold 75%</span>
+              </div>
+              <div class="step-price" id="stepPriceSell1">--.------</div>
+            </div>
+
+            <!-- 50% Channel Center (Midline) -->
+            <div class="ladder-step step-center" id="stepCenter" data-pct="50">
+              <div class="step-pct">50%</div>
+              <div class="step-desc">
+                <span class="step-title">50% Center</span>
+                <span class="step-action">Midline</span>
+              </div>
+              <div class="step-price" id="stepPriceCenter">--.------</div>
+            </div>
+
+            <!-- 40% Buy Level 1 -->
+            <div class="ladder-step step-buy" id="stepBuy1" data-pct="40">
+              <div class="step-pct">40%</div>
+              <div class="step-desc">
+                <span class="step-title">Buy Level 1</span>
+                <span class="step-action">Hold 25%</span>
+              </div>
+              <div class="step-price" id="stepPriceBuy1">--.------</div>
+            </div>
+
+            <!-- 30% Buy Level 2 -->
+            <div class="ladder-step step-buy" id="stepBuy2" data-pct="30">
+              <div class="step-pct">30%</div>
+              <div class="step-desc">
+                <span class="step-title">Buy Level 2</span>
+                <span class="step-action">Hold 50%</span>
+              </div>
+              <div class="step-price" id="stepPriceBuy2">--.------</div>
+            </div>
+
+            <!-- 20% Buy Level 3 -->
+            <div class="ladder-step step-buy" id="stepBuy3" data-pct="20">
+              <div class="step-pct">20%</div>
+              <div class="step-desc">
+                <span class="step-title">Buy Level 3</span>
+                <span class="step-action">Hold 75%</span>
+              </div>
+              <div class="step-price" id="stepPriceBuy3">--.------</div>
+            </div>
+
+            <!-- 10% Buy Level 4 -->
+            <div class="ladder-step step-buy" id="stepBuy4" data-pct="10">
+              <div class="step-pct">10%</div>
+              <div class="step-desc">
+                <span class="step-title">Buy Level 4</span>
+                <span class="step-action">Hold 100%</span>
+              </div>
+              <div class="step-price" id="stepPriceBuy4">--.------</div>
+            </div>
+
+            <!-- 0-5% Safe Buffer -->
+            <div class="ladder-step step-buffer" id="stepBuffer" data-pct="5">
+              <div class="step-pct">0-5%</div>
+              <div class="step-desc">
+                <span class="step-title">Safe Buffer</span>
+                <span class="step-action">Hold 100%</span>
+              </div>
+              <div class="step-price" id="stepPriceBuffer">--.------</div>
+            </div>
+
+            <!-- 0% Lower Floor Cut -->
+            <div class="ladder-step step-floor" id="stepFloor" data-pct="0">
+              <div class="step-pct">0%</div>
+              <div class="step-desc">
+                <span class="step-title">Floor (0% Low)</span>
+                <span class="step-action">Cut Loss</span>
+              </div>
+              <div class="step-price" id="stepPriceFloor">--.------</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Activity Feed / Trade Log -->
+        <div class="hud-card sidebar-activity-card" id="activityFeedSection">
+          <div class="card-header activity-card-header">
+            <div class="activity-tabs">
+              <button class="act-tab-btn active" id="tabTradesBtn" data-target="trades">
+                <span class="tab-icon">⚡</span> Trade Matches (<span id="tradesCount">0</span>)
+              </button>
+              <button class="act-tab-btn" id="tabOnchainBtn" data-target="onchain">
+                <span class="tab-icon">⛓️</span> On-Chain (<span id="onchainCount">0</span>)
+              </button>
+              <button class="act-tab-btn" id="tabAllBtn" data-target="all">
+                All (<span id="ordersCount">0</span>)
+              </button>
+            </div>
+          </div>
+
+          <!-- 1. Trade Matches Feed (Buy / Sell / Cut / Take Profit Matches) -->
+          <div class="activity-feed" id="tradesFeed">
+            <div class="empty-feed">Waiting for trade executions...</div>
+          </div>
+
+          <!-- 2. On-Chain Order Lifecycle Feed (Create / Cancel / Rebalance) -->
+          <div class="activity-feed" id="onchainFeed" style="display: none;">
+            <div class="empty-feed">Waiting for on-chain order actions...</div>
+          </div>
+
+          <!-- 3. Combined All Activity Feed -->
+          <div class="activity-feed" id="allFeed" style="display: none;">
+            <div class="empty-feed">Waiting for strategy executions...</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Toast Notification System for Order Match & Cut Loss Alerts -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Settings & Config Modal -->
+  <div class="modal-overlay" id="settingsModalOverlay">
+    <div class="modal-card settings-modal">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">⚙️</span>
+          <div>
+            <h2>Bot Configuration &amp; Database Settings</h2>
+            <p class="modal-sub">Dynamic runtime parameter tuning &bull; Changes are saved to database immediately</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" id="closeSettingsBtn" title="Close modal">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Tab Navigation -->
+        <div class="settings-tabs">
+          <button class="tab-btn active" data-tab="tab-risk">🛡️ Risk &amp; Channel</button>
+          <button class="tab-btn" data-tab="tab-api">🔑 Binance API &amp; Env</button>
+          <button class="tab-btn" data-tab="tab-structure">📊 Market Structure</button>
+          <button class="tab-btn" data-tab="tab-execution">⚡ Execution &amp; Guard</button>
+          <button class="tab-btn" data-tab="tab-database">💾 Offline DB Status</button>
+        </div>
+
+        <!-- Tab 1: Risk & Channel -->
+        <div class="tab-pane active" id="tab-risk">
+          <div class="settings-grid">
+            <div class="form-group">
+              <label for="cfg_symbol">
+                Binance Trading Pair (Symbol)
+                <span class="help-tip" title="Choose or enter any Binance Spot trading pair (e.g. BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="text" id="cfg_symbol" placeholder="BTCUSDT" list="popularSymbolsList" style="text-transform: uppercase;" />
+                <datalist id="popularSymbolsList">
+                  <option value="BTCUSDT">BTC / USDT</option>
+                  <option value="ETHUSDT">ETH / USDT</option>
+                  <option value="SOLUSDT">SOL / USDT</option>
+                  <option value="BNBUSDT">BNB / USDT</option>
+                  <option value="DOGEUSDT">DOGE / USDT</option>
+                  <option value="XRPUSDT">XRP / USDT</option>
+                  <option value="ADAUSDT">ADA / USDT</option>
+                  <option value="AVAXUSDT">AVAX / USDT</option>
+                  <option value="SUIUSDT">SUI / USDT</option>
+                  <option value="NEARUSDT">NEAR / USDT</option>
+                  <option value="PEPEUSDT">PEPE / USDT</option>
+                </datalist>
+                <span class="unit">PAIR</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_maxInventoryUsdso">
+                Max Inventory Capacity (Quote / USDT)
+                <span class="help-tip" title="Maximum quote value (e.g. USDT) of base asset to accumulate in the grid">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_maxInventoryUsdso" step="5" min="10" max="10000" />
+                <span class="unit">QUOTE</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_intervalMs">
+                Bot Tick Speed / Polling Interval (ms)
+                <span class="help-tip" title="Interval between bot calculation ticks in milliseconds (e.g. 200 = 0.2s, 500 = 0.5s, 1000 = 1s). Lower = faster execution.">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_intervalMs" step="100" min="100" max="30000" />
+                <span class="unit">ms</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_floorBufferPct">
+                Floor Cut Loss Safety Buffer (%)
+                <span class="help-tip" title="Buffer distance below 0% structural floor low before triggering cut loss">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_floorBufferPct" step="0.1" min="0" max="5.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_cutLossMaxBidDiscountPct">
+                Max Bid Discount for Cut Loss (%)
+                <span class="help-tip" title="Max allowed discount on DreamDEX bid vs reference price before allowing market cut loss">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_cutLossMaxBidDiscountPct" step="0.1" min="0.5" max="10.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_orderExpireHours">
+                Limit Order Duration (Hours)
+                <span class="help-tip" title="Expiration time for resting limit orders on DreamDEX">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_orderExpireHours" step="1" min="1" max="72" />
+                <span class="unit">Hours</span>
+              </div>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">0% Floor Cut Loss (Stop-Loss)</span>
+                <span class="switch-desc">Sell all inventory if price breaks below the 0% Valley/Support Floor</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_cutLossAtLowerBound" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">100% Ceiling Take Profit</span>
+                <span class="switch-desc">Automatically liquidate 100% of lots when price reaches Peak/Resistance Ceiling</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_takeProfitAtUpperBound" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_timezone">
+                Bot Timezone (ไทม์โซนแสดงผล)
+                <span class="help-tip" title="ไทม์โซนที่บอทใช้ในการบันทึกเวลาและแสดงใน Log Console ของเซิร์ฟเวอร์ (ค่าแนะนำ: Asia/Bangkok สำหรับเวลาประเทศไทย UTC+7)">ℹ️</span>
+              </label>
+              <select id="cfg_timezone" class="form-select">
+                <option value="Asia/Bangkok">Asia/Bangkok (UTC+7 ประเทศไทย / เวลาเครื่อง)</option>
+                <option value="UTC">UTC (UTC+0 เวลาสากล)</option>
+                <option value="Asia/Singapore">Asia/Singapore (UTC+8 สิงคโปร์)</option>
+                <option value="Asia/Tokyo">Asia/Tokyo (UTC+9 ญี่ปุ่น)</option>
+                <option value="America/New_York">America/New_York (EST/EDT นิวยอร์ก)</option>
+                <option value="Europe/London">Europe/London (GMT/BST ลอนดอน)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Binance API & Environment Settings (Stored in DB) -->
+        <div class="tab-pane" id="tab-api">
+          <div class="settings-grid">
+            <div class="form-group switch-group" style="grid-column: 1 / -1;">
+              <div class="switch-label-group">
+                <span class="switch-title">🧪 Dry Run Simulation Mode (ทดลองเทรดจำลอง)</span>
+                <span class="switch-desc">ถ้าเปิด (ON): บอทจะจำลองการซื้อขายโดยไม่ส่งคำสั่งเทรดจริงไปยัง Binance Spot | ถ้าปิด (OFF): ส่งออเดอร์จริงเข้าตลาด Binance</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_dryRun" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label for="cfg_binanceApiKey">
+                Binance API Key
+                <span class="help-tip" title="API Key จาก Binance Spot (เปิดสิทธิ์ Read และ Enable Spot & Margin Trading)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="text" id="cfg_binanceApiKey" placeholder="ใส่ Binance API Key ที่นี่..." autocomplete="off" />
+                <span class="unit">KEY</span>
+              </div>
+            </div>
+
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label for="cfg_binanceApiSecret">
+                Binance API Secret
+                <span class="help-tip" title="API Secret จาก Binance Spot (จัดเก็บในฐานข้อมูล grid-bot.db.json โดยตรง)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="password" id="cfg_binanceApiSecret" placeholder="ใส่ Binance API Secret ที่นี่..." autocomplete="off" />
+                <span class="unit">SECRET</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_binanceBaseUrl">
+                Binance REST API Base URL
+                <span class="help-tip" title="Default: https://api.binance.com">ℹ️</span>
+              </label>
+              <input type="text" id="cfg_binanceBaseUrl" placeholder="https://api.binance.com" />
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_binanceWsBase">
+                Binance WebSocket Base URL
+                <span class="help-tip" title="Default: wss://stream.binance.com:9443">ℹ️</span>
+              </label>
+              <input type="text" id="cfg_binanceWsBase" placeholder="wss://stream.binance.com:9443" />
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_dashboardPort">
+                Web Dashboard Port
+                <span class="help-tip" title="Port ที่ Web Dashboard ให้บริการ (Default: 3333 หรือตามค่าใน DB)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_dashboardPort" placeholder="3333" min="1024" max="65535" />
+                <span class="unit">PORT</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Market Structure -->
+        <div class="tab-pane" id="tab-structure">
+          <div class="settings-grid">
+            <div class="form-group">
+              <label for="cfg_dowTimeframe">
+                Chart &amp; Dow Timeframe (ไทม์เฟรมของกราฟและ Dow)
+                <span class="help-tip" title="ไทม์เฟรมของแท่งเทียนที่นำมาคำนวณโครงสร้าง Dow Theory, กรอบ Channel และแสดงผลบนกราฟ (ค่าแนะนำ: 15m)">ℹ️</span>
+              </label>
+              <select id="cfg_dowTimeframe" class="form-select">
+                <option value="15m">15m (15 นาที - ค่าปกติสำหรับ Grid)</option>
+                <option value="1h">1h (1 ชั่วโมง - Macro)</option>
+                <option value="4h">4h (4 ชั่วโมง - Long Term)</option>
+                <option value="5m">5m (5 นาที - Scalp)</option>
+                <option value="1m">1m (1 นาที - Fast)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_initialCandleCount">
+                Initial Candle Load (โหลดแท่งเทียนเริ่มต้น)
+                <span class="help-tip" title="จำนวนแท่งเทียนเริ่มต้นที่ดึงจาก Binance เมื่อเปิดบอท (ค่าแนะนำ: 300 แท่ง, ปรับได้ 50 - 1000 แท่ง)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_initialCandleCount" step="10" min="50" max="1000" />
+                <span class="unit">แท่ง</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_maxCandleCount">
+                Max Stored Candles (จำนวนแท่งเทียนสูงสุดในความจำ)
+                <span class="help-tip" title="จำนวนแท่งเทียนสูงสุดที่บอทและหน้ากราฟเก็บไว้ในหน่วยความจำ (ค่าแนะนำ: 600 แท่ง, ปรับได้ 100 - 2000 แท่ง)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_maxCandleCount" step="50" min="100" max="2000" />
+                <span class="unit">แท่ง</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_srLookbackCandles">
+                Structure Lookback (แท่งย้อนหลังสำหรับหา Peak/Valley + แนวรับ-ต้าน)
+                <span class="help-tip" title="จำนวนแท่งย้อนหลังที่ใช้ร่วมกันในการหา Peak/Valley (รอบคลื่น), Trendline และจัดกลุ่มแนวรับ-แนวต้าน (ค่าแนะนำ: 300 = เท่ากับ Initial Candle Load, ไม่ควรเกิน Max Stored Candles)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_srLookbackCandles" step="10" min="20" max="1000" />
+                <span class="unit">แท่ง</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_channelMode">
+                Channel Calculation Mode
+                <span class="help-tip" title="Mode used to determine upper/lower boundaries of the channel">ℹ️</span>
+              </label>
+              <select id="cfg_channelMode" class="form-select">
+                <option value="DOW_ATR_CLAMP">DOW_ATR_CLAMP (Dow Swings + Dynamic ATR Clamping)</option>
+                <option value="FIXED_PCT_CLAMP">FIXED_PCT_CLAMP (Fixed Min/Max Channel % Width)</option>
+                <option value="DONCHIAN_ATR">DONCHIAN_ATR (Donchian Highest/Lowest + ATR)</option>
+                <option value="MULTI_TOUCH_SR">MULTI_TOUCH_SR (Horizontal S/R Clusters &ge; 2 Touches)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_srMinTouchCount">
+                S/R Min Touches (จำนวนครั้งที่ชนขั้นต่ำ)
+                <span class="help-tip" title="จำนวนครั้งขั้นต่ำที่ราคาต้องขึ้นไปชนหรือลงมาทดสอบที่ระดับเดิม เพื่อถือเป็นแนวรับ-แนวต้าน (ค่าแนะนำ: 2 ครั้ง)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_srMinTouchCount" step="1" min="2" max="10" />
+                <span class="unit">ครั้ง</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_srTouchTolerancePct">
+                S/R Touch Tolerance (%)
+                <span class="help-tip" title="เปอร์เซ็นต์ความคลาดเคลื่อนในการจัดกลุ่มจุดยอด/ก้น ให้ถือว่าเป็นแนวรับ-แนวต้านเดียวกัน (ค่าแนะนำ: 0.35%)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_srTouchTolerancePct" step="0.05" min="0.1" max="2.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_minChannelWidthPct">
+                Min Channel Width (%)
+                <span class="help-tip" title="Minimum percentage width between Floor and Ceiling">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_minChannelWidthPct" step="0.1" min="0.5" max="10" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_maxChannelWidthPct">
+                Max Channel Width (%)
+                <span class="help-tip" title="Maximum percentage width between Floor and Ceiling">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_maxChannelWidthPct" step="0.1" min="1.0" max="25" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_minChannelShiftPct">
+                Min Channel Shift Sensitivity (%)
+                <span class="help-tip" title="Minimum bound change required before moving resting orders">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_minChannelShiftPct" step="0.1" min="0.1" max="5.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_wickThresholdPct">
+                Wick Rejection Threshold (%)
+                <span class="help-tip" title="When True Wick is disabled: snap swing high/low to candle body if upper/lower wick exceeds this % of total candle range">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_wickThresholdPct" step="1.0" min="5" max="80" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Use True Candle Wick (High / Low)</span>
+                <span class="switch-desc">If ON, uses 100% candle High/Low for swings. If OFF, trims long rejection wicks exceeding threshold % to candle body</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_useTrueWick" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Dow Downtrend Pause (LH + LL)</span>
+                <span class="switch-desc">Pause opening new buy orders during a confirmed macro Downtrend</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_dowTrendFilter" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Downtrend Line Filter</span>
+                <span class="switch-desc">Pause buying when price is beneath a descending diagonal trendline</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_trendlineFilter" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Resume Buying on Buy Level 2 (30% Zone)</span>
+                <span class="switch-desc">Resume grid buying when price stands above Buy Level 2 for &ge; 1 closed candle after a floor breakdown</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableBuyLevel2Recovery" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Buy Above Trend Support (ซื้อเฉพาะเหนือเส้นรับ)</span>
+                <span class="switch-desc">วางคำสั่งซื้อเฉพาะกริดที่อยู่เหนือเส้น Uptrend Support และพักการซื้อเมื่อหลุดแนวรับ (ปิดเพื่อซื้อตามกริดปกติแม้ต่ำกว่าเส้นรับ)</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableBuyAboveTrendSupport" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Sell Below Trend Resistance (ขายเฉพาะใต้เส้นต้าน)</span>
+                <span class="switch-desc">วางคำสั่งขายเฉพาะกริดที่อยู่ใต้เส้น Downtrend Resistance และออก IOC เมื่อชนเส้นต้าน (ปิดเพื่อขายตามเป้ากริดปกติ 60-90%)</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableSellBelowTrendResistance" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_sellProfitMode">
+                Sell / Profit-Taking Mode (โหมดการขายทำกำไร)
+                <span class="help-tip" title="เลือกรูปแบบการวางเป้าขายทำกำไร: 1. Grid Cash Flow (ขายตามเป้ากรอบทั้งหมด) 2. Portfolio Avg Profit (ขายเมื่อกำไรเหนือต้นทุนเฉลี่ย) 3. Lot-Based Profit (จับคู่ขายเฉพาะไม้ที่ได้กำไร)">ℹ️</span>
+              </label>
+              <select id="cfg_sellProfitMode" class="form-select">
+                <option value="GRID_CASHFLOW">1. Grid Cash Flow (ขายตามกรอบทุกระดับ หมุนรอบเงินสด)</option>
+                <option value="PORTFOLIO_AVG_PROFIT">2. Portfolio Avg Profit (ขายเฉพาะเมื่อกำไรเหนือทุนเฉลี่ย)</option>
+                <option value="LOT_BASED_PROFIT">3. Lot-Based Profit (จับคู่ขายเฉพาะไม้ที่ได้กำไร)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_triangleSqueezeSpreadPct">
+                Triangle Squeeze Spread Threshold (%)
+                <span class="help-tip" title="When resistance and support trendline spread narrows below this %, trigger full position liquidation and enter squeeze standby (default 1.0%)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_triangleSqueezeSpreadPct" step="0.1" min="0.2" max="5.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_minTradeableChannelWidthPct">
+                Min Tradeable Channel Width (%)
+                <span class="help-tip" title="Minimum channel width required after triangle squeeze breakout before resuming dynamic grid accumulation (default 2.0%)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_minTradeableChannelWidthPct" step="0.1" min="0.5" max="10.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Triangle Squeeze Protection (เส้นรับ-ต้านบีบตัดกัน)</span>
+                <span class="switch-desc">ขายล้าง Position ถือ USDso 100% ทันทีเมื่อเส้นแนวรับและแนวต้านบีบแคบเข้าหากันจนใกล้ตัดกัน แล้วพักรอจนกว่ากรอบจะกว้างพอ</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableTriangleSqueezeExit" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Execution & Guard -->
+        <div class="tab-pane" id="tab-execution">
+          <div class="settings-grid">
+            <div class="form-group">
+              <label for="cfg_orderExecutionMode">
+                Order Execution Mode (รูปแบบการส่งคำสั่ง)
+                <span class="help-tip" title="เลือกรูปแบบการทำงาน: IOC_BRACKET (ยิง IOC ตามกรอบ ไม่ตั้งคำสั่งรอ ประหยัด Gas สูงสุด) หรือ MAKER_LIMIT (ตั้ง Limit Order รอใน Orderbook)">ℹ️</span>
+              </label>
+              <select id="cfg_orderExecutionMode" class="form-select">
+                <option value="IOC_BRACKET">⚡ IOC_BRACKET (ยิง IOC ตามกรอบ ไม่ตั้งคำสั่งรอ, รวบไม้ ประหยัด Gas สูงสุด)</option>
+                <option value="MAKER_LIMIT">📖 MAKER_LIMIT (ตั้ง Maker Limit Orders รอใน Orderbook)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_iocSlippagePct">
+                IOC Slippage Tolerance (%)
+                <span class="help-tip" title="ความคลาดเคลื่อนของราคาที่ยอมรับได้สำหรับคำสั่ง IOC เพื่อการันตีการ Fill 100% ทันที (ค่าแนะนำ: 0.35%)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_iocSlippagePct" step="0.05" min="0.1" max="2.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_stuckTimeoutMinutes">
+                Hold Timeout Limit (Minutes)
+                <span class="help-tip" title="ระยะเวลาถือครองสูงสุดก่อน Cut Loss อัตโนมัติ (นาที) หากไม่ต้องการ Cut Loss ตามเวลาให้ใส่ 0 เพื่อปิดการใช้งาน (แนะนำ 0 สำหรับ Grid)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_stuckTimeoutMinutes" step="5" min="0" max="1440" />
+                <span class="unit">min (0 = ปิด)</span>
+              </div>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Buy Only Below Sell Level 1 (&le; 60%)</span>
+                <span class="switch-desc">เริ่มตั้ง/ยิงซื้อเฉพาะเมื่อราคาอยู่ต่ำกว่า Sell Level 1 ลงมาเท่านั้น ป้องกันการเปิด-ปิดออเดอร์ซื้อบ่อยๆ ในโซนกำไร</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableBuyBelowSellLevel1" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Sell Only Above Buy Level 1 (&ge; 40%)</span>
+                <span class="switch-desc">เริ่มตั้ง/ยิงขายเฉพาะเมื่อราคาอยู่สูงกว่า Buy Level 1 ขึ้นไปเท่านั้น ป้องกันการเปิด-ปิดออเดอร์ขายบ่อยๆ ในโซนสะสม</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableSellAboveBuyLevel1" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_laggardThresholdPct">
+                Laggard Arbitrage Dislocation Threshold (%)
+                <span class="help-tip" title="Price divergence between DreamDEX and Binance to trigger Snipe/Guard">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_laggardThresholdPct" step="0.05" min="0.1" max="3.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_orderPriceTolerancePct">
+                Order Price Tolerance (%)
+                <span class="help-tip" title="Keep existing resting orders if price is within this % of desired grid level">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_orderPriceTolerancePct" step="0.1" min="0.1" max="3.0" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_orderQtyTolerancePct">
+                Order Qty Tolerance (%)
+                <span class="help-tip" title="Tolerance threshold before replacing an existing resting order with new size">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_orderQtyTolerancePct" step="5" min="5" max="50" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Laggard Snipe</span>
+                <span class="switch-desc">Opportunistically take discounted asks or sell to premium bids on DreamDEX</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableLaggardSnipe" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Laggard Dump Guard</span>
+                <span class="switch-desc">Prevent buying on DreamDEX if DreamDEX price is lagging above a dumping Binance market</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableLaggardGuard" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 4: Database Status -->
+        <div class="tab-pane" id="tab-database">
+          <div class="db-status-container">
+            <div class="db-metric-card">
+              <div class="db-metric-title">DATABASE ENGINE</div>
+              <div class="db-metric-val highlight-green">ACID Offline File DB</div>
+              <div class="db-metric-sub">Atomic Write + Backup Rotation</div>
+            </div>
+
+            <div class="db-metric-card">
+              <div class="db-metric-title">TOTAL EXECUTED TRADES</div>
+              <div class="db-metric-val" id="dbTradesCount">0 Trades</div>
+              <div class="db-metric-sub">Persisted in trades table</div>
+            </div>
+
+            <div class="db-metric-card">
+              <div class="db-metric-title">TOTAL GAS RECEIPTS</div>
+              <div class="db-metric-val highlight-purple" id="dbGasCount">0 Tx</div>
+              <div class="db-metric-sub" id="dbGasTotalSomi">0.0000 SOMI Spent</div>
+            </div>
+
+            <div class="db-metric-card">
+              <div class="db-metric-title">STORAGE FILE</div>
+              <div class="db-metric-val" style="font-size: 0.85rem; word-break: break-all;">data/grid-bot.db.json</div>
+              <div class="db-metric-sub">Automatic Crash Recovery Active</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="modal-footer-status" id="settingsSaveStatus"></div>
+        <div class="modal-footer-btns">
+          <button class="btn btn-secondary" id="resetSettingsBtn">🔄 Reset to Current</button>
+          <button class="btn btn-primary" id="saveSettingsBtn">💾 Save &amp; Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ Reset Bot Confirmation Modal ═══════════════════ -->
+  <div class="modal-overlay" id="resetBotModal" style="display: none;">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header" style="border-bottom: 1px solid rgba(239, 68, 68, 0.2);">
+        <div class="modal-title" style="color: #f87171;">
+          <span>⚠️</span> Reset Bot State
+        </div>
+        <button class="modal-close-btn" id="closeResetModalBtn" title="Close">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <p style="font-size: 12px; color: #94a3b8; line-height: 1.6; margin-bottom: 16px;">
+          Select what you want to reset. This allows you to start clean and re-synchronize directly with your live on-chain assets.
+        </p>
+
+        <div style="display: flex; flex-direction: column; gap: 12px; background: rgba(0, 0, 0, 0.2); padding: 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.05);">
+          <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 12px; color: #e2e8f0;">
+            <input type="checkbox" id="chkResetOrders" checked style="margin-top: 3px; accent-color: #ef4444; width: 16px; height: 16px;" />
+            <div>
+              <div style="font-weight: 600; color: #f87171;">🛑 Cancel Open Orders &amp; Clear Inventory Lots</div>
+              <div style="font-size: 11px; color: #64748b;">Cancels all resting orders on-chain and clears memory lots to 0.</div>
+            </div>
+          </label>
+
+          <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 12px; color: #e2e8f0;">
+            <input type="checkbox" id="chkResetPnl" checked style="margin-top: 3px; accent-color: #ef4444; width: 16px; height: 16px;" />
+            <div>
+              <div style="font-weight: 600; color: #fbbf24;">💰 Reset Realized PnL &amp; Gas Stats</div>
+              <div style="font-size: 11px; color: #64748b;">Resets Realized Profit, Trade PnL, and Gas counters back to $0.00.</div>
+            </div>
+          </label>
+
+          <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 12px; color: #e2e8f0;">
+            <input type="checkbox" id="chkClearHistory" style="margin-top: 3px; accent-color: #ef4444; width: 16px; height: 16px;" />
+            <div>
+              <div style="font-weight: 600; color: #818cf8;">🗑️ Clear Order &amp; Trade History Database</div>
+              <div style="font-size: 11px; color: #64748b;">Wipes past order activity feed and trades records from database.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer" style="padding: 12px 20px;">
+        <div id="resetModalStatus" style="font-size: 11px; color: #f87171;"></div>
+        <div class="modal-footer-btns">
+          <button class="btn btn-secondary" id="cancelResetModalBtn">Cancel</button>
+          <button class="btn btn-danger" id="confirmResetModalBtn">⚠️ Reset Selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ Trade Fills & Lots Manager Modal ═══════════════════ -->
+  <div class="modal-overlay" id="tradeManagerModal" style="display: none;">
+    <div class="modal-card tm-modal-card">
+      <div class="modal-header tm-modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">📋</span>
+          <div>
+            <h2>จัดการรายการซื้อขาย &amp; ล็อต (Trade Fills &amp; Lots Manager)</h2>
+            <p class="modal-sub">แก้ไขราคา, ปริมาณ หรือลบรายการ Buy / Sell Filled และจัดการ Holding Lots ในฐานข้อมูลได้โดยตรง</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" id="closeTradeManagerBtn" title="Close modal">&times;</button>
+      </div>
+
+      <div class="modal-body tm-modal-body">
+        <!-- Navigation Tabs -->
+        <div class="tm-tabs">
+          <button class="tm-tab-btn active" id="tmTabFillsBtn" data-target="tmTabFills">
+            ⚡ รายการซื้อขาย (Trade Fills) <span class="tm-pill-badge" id="tmBadgeFillsCount">0</span>
+          </button>
+          <button class="tm-tab-btn" id="tmTabLotsBtn" data-target="tmTabLots">
+            📦 ล็อตคงค้างในระบบ (Holding Lots) <span class="tm-pill-badge" id="tmBadgeLotsCount">0</span>
+          </button>
+          <button class="tm-tab-btn" id="tmTabRoundsBtn" data-target="tmTabRounds">
+            📊 สรุปรอบการเทรด (Trade Rounds) <span class="tm-pill-badge" id="tmBadgeRoundsCount">0</span>
+          </button>
+        </div>
+
+        <!-- ── TAB 1: Trade Fills Management ─────────────────────────────── -->
+        <div class="tm-tab-pane active" id="tmTabFills">
+          <!-- Toolbar Row -->
+          <div class="tm-toolbar">
+            <div class="tm-search-wrap">
+              <input type="text" id="tmSearchInput" class="tm-search-input" placeholder="🔍 ค้นหา ID, TxHash, Note..." />
+            </div>
+            <div class="tm-filter-wrap">
+              <select id="tmFilterAction" class="tm-select">
+                <option value="ALL">ทุกประเภท (All Actions)</option>
+                <option value="BUY_FILL">🟢 Buy Fill (ซื้อสำเร็จ)</option>
+                <option value="SELL_FILL">🔴 Sell Fill (ขายสำเร็จ)</option>
+                <option value="TAKE_PROFIT">🎯 Take Profit (กำไร)</option>
+                <option value="CUT">✂️ Cut Loss (ตัดขาดทุน)</option>
+                <option value="CANCEL_BUY">⚪ Cancel Buy (ยกเลิกซื้อ)</option>
+                <option value="CANCEL_SELL">⚪ Cancel Sell (ยกเลิกขาย)</option>
+                <option value="CANCELLED">⚪ ทุกการยกเลิก (All Cancelled)</option>
+              </select>
+            </div>
+            <div class="tm-summary-pills">
+              <div class="tm-pill">Total: <b id="tmSummaryTotal">0</b></div>
+              <div class="tm-pill text-green">Buys: <b id="tmSummaryBuys">0</b></div>
+              <div class="tm-pill text-orange">Sells: <b id="tmSummarySells">0</b></div>
+              <div class="tm-pill" style="color: #94a3b8;">Cancelled: <b id="tmSummaryCancelled">0</b></div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="tmBtnOpenAddTrade">
+              <span>➕ เพิ่ม Trade Fill</span>
+            </button>
+          </div>
+
+          <!-- Table Container -->
+          <div class="tm-table-wrap">
+            <table class="tm-table" id="tmTradesTable">
+              <thead>
+                <tr>
+                  <th style="width: 140px;">เวลา (Time)</th>
+                  <th style="width: 120px;">ประเภท (Action)</th>
+                  <th style="width: 110px; text-align: right;">ราคา (Price)</th>
+                  <th style="width: 110px; text-align: right;">จำนวน (SOMI)</th>
+                  <th style="width: 110px; text-align: right;">มูลค่า ($ USDso)</th>
+                  <th style="width: 100px; text-align: right;">PnL</th>
+                  <th style="width: 100px; text-align: center;">สถานะ (Status)</th>
+                  <th style="width: 150px; text-align: center;">จัดการ (Actions)</th>
+                </tr>
+              </thead>
+              <tbody id="tmTradesTbody">
+                <tr>
+                  <td colspan="8" class="tm-empty-row">กำลังโหลดรายการ Trade Fills...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ── TAB 2: Holding Lots Management ────────────────────────────── -->
+        <div class="tm-tab-pane" id="tmTabLots" style="display: none;">
+          <div class="tm-toolbar">
+            <div class="tm-summary-pills">
+              <div class="tm-pill">Total Lots: <b id="tmSummaryLotsCount">0</b></div>
+              <div class="tm-pill text-cyan">Holding Qty: <b id="tmSummaryLotsQty">0.00 SOMI</b></div>
+              <div class="tm-pill text-purple">Avg Entry: <b id="tmSummaryLotsAvgPrice">$0.0000</b></div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="tmBtnOpenAddLot">
+              <span>➕ เพิ่ม Holding Lot</span>
+            </button>
+          </div>
+
+          <div class="tm-lots-grid" id="tmLotsGrid">
+            <div class="tm-empty-row">ไม่มี Lot คงค้างในระบบ</div>
+          </div>
+        </div>
+
+        <!-- ── TAB 3: Trade Rounds Summary (Buy Accumulation & Sell Distribution Cycles) ── -->
+        <div class="tm-tab-pane" id="tmTabRounds" style="display: none; flex-direction: column; gap: 14px;">
+          <!-- KPI Summary Bar for Rounds -->
+          <div class="rounds-kpi-bar">
+            <div class="round-kpi-card">
+              <span class="round-kpi-label">รอบทั้งหมด (Total Rounds)</span>
+              <div class="round-kpi-val" id="roundsKpiTotal">0 <span class="round-kpi-sub" id="roundsKpiClosed">(0 จบแล้ว)</span></div>
+            </div>
+            <div class="round-kpi-card">
+              <span class="round-kpi-label">อัตราการชนะ (Win Rate)</span>
+              <div class="round-kpi-val text-green" id="roundsKpiWinRate">0.0% <span class="round-kpi-sub" id="roundsKpiWinLoss">(0 ชนะ / 0 แพ้)</span></div>
+            </div>
+            <div class="round-kpi-card">
+              <span class="round-kpi-label">ยอดซื้อสะสมรวม (Total Bought)</span>
+              <div class="round-kpi-val text-cyan" id="roundsKpiBought">$0.00 <span class="round-kpi-sub" id="roundsKpiBoughtQty">(0.00 SOMI)</span></div>
+            </div>
+            <div class="round-kpi-card">
+              <span class="round-kpi-label">ยอดขายสะสมรวม (Total Sold)</span>
+              <div class="round-kpi-val text-orange" id="roundsKpiSold">$0.00 <span class="round-kpi-sub" id="roundsKpiSoldQty">(0.00 SOMI)</span></div>
+            </div>
+            <div class="round-kpi-card">
+              <span class="round-kpi-label">กำไรสุทธิรวม (Total Realized PnL)</span>
+              <div class="round-kpi-val" id="roundsKpiPnl">$0.00 <span class="round-kpi-sub" id="roundsKpiGas">(Gas: $0.00)</span></div>
+            </div>
+          </div>
+
+          <!-- Toolbar Row -->
+          <div class="tm-toolbar rounds-toolbar">
+            <div class="tm-search-wrap">
+              <input type="text" id="tmRoundsSearchInput" class="tm-search-input" placeholder="🔍 ค้นหารอบที่, วันที่, หรือสถานะ..." />
+            </div>
+            <div class="tm-filter-wrap">
+              <select id="tmRoundsFilterStatus" class="tm-select">
+                <option value="ALL">ทุกสถานะรอบ (All Statuses)</option>
+                <option value="WIN">🟢 รอบที่กำไร (Profitable)</option>
+                <option value="LOSS">🔴 รอบที่ขาดทุน (Loss)</option>
+                <option value="HOLDING">📦 กำลังถือครอง (Holding / Open)</option>
+                <option value="CLOSED">✅ ปิดรอบสมบูรณ์ (Closed)</option>
+                <option value="SELL_ONLY">⚪ ขายก่อนหน้า (Sell Only)</option>
+              </select>
+            </div>
+            <div class="tm-filter-wrap">
+              <select id="tmRoundsSortOrder" class="tm-select">
+                <option value="NEWEST">ล่าสุดไปเก่าสุด (Newest First)</option>
+                <option value="OLDEST">เก่าสุดไปล่าสุด (Oldest First)</option>
+                <option value="PNL_DESC">กำไรสูงสุด (Highest PnL)</option>
+                <option value="PNL_ASC">ขาดทุนสูงสุด (Lowest PnL)</option>
+              </select>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="tmRoundsBtnExportCsv" title="Export to CSV">
+              <span>📥 Export CSV</span>
+            </button>
+          </div>
+
+          <!-- Rounds Table Container -->
+          <div class="tm-table-wrap rounds-table-wrap">
+            <table class="tm-table rounds-table" id="tmRoundsTable">
+              <thead>
+                <tr>
+                  <th style="width: 75px; text-align: center;">รอบที่</th>
+                  <th style="width: 160px;">ช่วงเวลา (Period)</th>
+                  <th style="width: 100px; text-align: center;">สถานะ</th>
+                  <th style="width: 175px; text-align: right;">🟢 เข้าซื้อ (Bought)</th>
+                  <th style="width: 175px; text-align: right;">🔴 ขายออก (Sold)</th>
+                  <th style="width: 95px; text-align: right;">📦 คงเหลือ</th>
+                  <th style="width: 125px; text-align: right;">กำไร / ขาดทุน</th>
+                  <th style="width: 80px; text-align: right;">⛽ Gas</th>
+                  <th style="width: 85px; text-align: center;">ไม้เทรด</th>
+                </tr>
+              </thead>
+              <tbody id="tmRoundsTbody">
+                <tr>
+                  <td colspan="9" class="tm-empty-row">🔄 กำลังคำนวณและโหลดสรุปรอบการซื้อขาย...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer tm-modal-footer">
+        <div class="tm-footer-info">
+          💡 การแก้ไขหรือลบ Buy/Sell Filled จะอัปเดตลงในฐานข้อมูล <code>grid-bot.db.json</code> ทันที และรีเฟรชจุดบนกราฟแบบเรียลไทม์
+        </div>
+        <button class="btn btn-secondary" id="tmBtnRefresh">🔄 รีเฟรชข้อมูล</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ Edit Trade Fill Modal ═══════════════════ -->
+  <div class="modal-overlay tm-submodal-overlay" id="editTradeModal" style="display: none; z-index: 10050;">
+    <div class="modal-card tm-submodal-card">
+      <div class="modal-header">
+        <div class="modal-title" style="color: #38bdf8;">✏️ แก้ไขรายการ Trade Fill</div>
+        <button class="modal-close-btn" id="closeEditTradeModalBtn">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <form id="editTradeForm" class="tm-form">
+          <input type="hidden" id="etf_id" />
+          
+          <div class="form-group">
+            <label>Order / Record ID</label>
+            <input type="text" id="etf_display_id" class="form-control" readonly disabled />
+          </div>
+
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="etf_action">Action (ประเภท)</label>
+              <select id="etf_action" class="form-select">
+                <option value="BUY_FILL">🟢 BUY_FILL (ซื้อสำเร็จ)</option>
+                <option value="SELL_FILL">🔴 SELL_FILL (ขายสำเร็จ)</option>
+                <option value="TAKE_PROFIT">🎯 TAKE_PROFIT (เทคกำไร)</option>
+                <option value="CUT">✂️ CUT (ตัดขาดทุน)</option>
+                <option value="CANCEL_BUY">⚪ CANCEL_BUY (ยกเลิกซื้อ)</option>
+                <option value="CANCEL_SELL">⚪ CANCEL_SELL (ยกเลิกขาย)</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="flex: 1;">
+              <label for="etf_status">Status (สถานะ)</label>
+              <select id="etf_status" class="form-select">
+                <option value="FILLED">FILLED (สำเร็จ - แสดงบนกราฟ)</option>
+                <option value="CANCELLED">CANCELLED (ยกเลิก - ไม่แสดงบนกราฟ)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="etf_price">ราคา (Price USDso)</label>
+              <input type="number" id="etf_price" step="0.00001" min="0.00001" class="form-control" required />
+            </div>
+
+            <div class="form-group" style="flex: 1;">
+              <label for="etf_qty">จำนวน (Quantity SOMI)</label>
+              <input type="number" id="etf_qty" step="0.0001" min="0.0001" class="form-control" required />
+            </div>
+          </div>
+
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="etf_pnl">PnL กำไร/ขาดทุน (USDso - สำหรับ Sell)</label>
+              <input type="number" id="etf_pnl" step="0.0001" class="form-control" placeholder="0.0000" />
+            </div>
+
+            <div class="form-group" style="flex: 1;">
+              <label for="etf_time">เวลา (Timestamp / ISO)</label>
+              <input type="text" id="etf_time_display" class="form-control" readonly disabled />
+              <input type="hidden" id="etf_time" />
+            </div>
+          </div>
+
+          <div class="form-group" id="etf_syncLotGroup" style="background: rgba(56, 189, 248, 0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.2);">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: #bae6fd; font-size: 12px; margin: 0;">
+              <input type="checkbox" id="etf_syncLot" checked style="accent-color: #38bdf8;" />
+              <span>ซิงก์ราคาและจำนวนไปยัง Lot คงค้างใน <code>state.lots</code> ด้วย (ถ้าเป็น Buy Fill)</span>
+            </label>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div id="editTradeStatus" style="font-size: 11px; color: #f87171;"></div>
+        <div class="modal-footer-btns">
+          <button class="btn btn-secondary" id="cancelEditTradeBtn">ยกเลิก</button>
+          <button class="btn btn-primary" id="saveEditTradeBtn">💾 บันทึกการแก้ไข</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ Add Manual Trade Modal ═══════════════════ -->
+  <div class="modal-overlay tm-submodal-overlay" id="addTradeModal" style="display: none; z-index: 10050;">
+    <div class="modal-card tm-submodal-card">
+      <div class="modal-header">
+        <div class="modal-title" style="color: #4ade80;">➕ เพิ่มรายการ Trade Fill ใหม่</div>
+        <button class="modal-close-btn" id="closeAddTradeModalBtn">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <form id="addTradeForm" class="tm-form">
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="atf_action">Action (ประเภท)</label>
+              <select id="atf_action" class="form-select">
+                <option value="BUY_FILL">🟢 BUY_FILL (ซื้อสำเร็จ)</option>
+                <option value="SELL_FILL">🔴 SELL_FILL (ขายสำเร็จ)</option>
+                <option value="TAKE_PROFIT">🎯 TAKE_PROFIT (เทคกำไร)</option>
+                <option value="CUT">✂️ CUT (ตัดขาดทุน)</option>
+                <option value="CANCEL_BUY">⚪ CANCEL_BUY (ยกเลิกซื้อ)</option>
+                <option value="CANCEL_SELL">⚪ CANCEL_SELL (ยกเลิกขาย)</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <label for="atf_status">Status (สถานะ)</label>
+              <select id="atf_status" class="form-select">
+                <option value="FILLED" selected>FILLED (สำเร็จ - พล็อตบนกราฟ)</option>
+                <option value="CANCELLED">CANCELLED (ยกเลิก)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="atf_price">ราคา (Price USDso)</label>
+              <input type="number" id="atf_price" step="0.00001" min="0.00001" class="form-control" placeholder="0.22000" required />
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <label for="atf_qty">จำนวน (Quantity SOMI)</label>
+              <input type="number" id="atf_qty" step="0.0001" min="0.0001" class="form-control" placeholder="45.0000" required />
+            </div>
+          </div>
+
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="atf_pnl">PnL USDso (ถ้ามี)</label>
+              <input type="number" id="atf_pnl" step="0.0001" class="form-control" placeholder="0.0000" />
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <label for="atf_note">หมายเหตุ / Note</label>
+              <input type="text" id="atf_note" class="form-control" placeholder="Manual Entry..." />
+            </div>
+          </div>
+
+          <div class="form-group" style="background: rgba(74, 222, 128, 0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(74, 222, 128, 0.2);">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: #bbf7d0; font-size: 12px; margin: 0;">
+              <input type="checkbox" id="atf_addLot" checked style="accent-color: #22c55e;" />
+              <span>เพิ่มเป็น Holding Lot ใน <code>state.lots</code> ทันที (หากเลือก BUY_FILL)</span>
+            </label>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div id="addTradeStatus" style="font-size: 11px; color: #f87171;"></div>
+        <div class="modal-footer-btns">
+          <button class="btn btn-secondary" id="cancelAddTradeBtn">ยกเลิก</button>
+          <button class="btn btn-primary" id="confirmAddTradeBtn" style="background: linear-gradient(135deg, #10b981, #059669);">➕ เพิ่ม Trade Fill</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ Edit Lot Modal ═══════════════════ -->
+  <div class="modal-overlay tm-submodal-overlay" id="editLotModal" style="display: none; z-index: 10050;">
+    <div class="modal-card tm-submodal-card">
+      <div class="modal-header">
+        <div class="modal-title" style="color: #c084fc;">📦 แก้ไข Holding Lot</div>
+        <button class="modal-close-btn" id="closeEditLotModalBtn">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <form id="editLotForm" class="tm-form">
+          <input type="hidden" id="el_index" />
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="el_price">ราคาต้นทุน (Entry Price USDso)</label>
+              <input type="number" id="el_price" step="0.00001" min="0.00001" class="form-control" required />
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <label for="el_qty">จำนวนคงเหลือ (Quantity SOMI)</label>
+              <input type="number" id="el_qty" step="0.0001" min="0.0001" class="form-control" required />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>เวลาที่เข้าซื้อ (Entry Time)</label>
+            <input type="text" id="el_time_display" class="form-control" readonly disabled />
+            <input type="hidden" id="el_time" />
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div id="editLotStatus" style="font-size: 11px; color: #f87171;"></div>
+        <div class="modal-footer-btns">
+          <button class="btn btn-secondary" id="cancelEditLotBtn">ยกเลิก</button>
+          <button class="btn btn-primary" id="saveEditLotBtn" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">💾 บันทึก Lot</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ Add Lot Modal ═══════════════════ -->
+  <div class="modal-overlay tm-submodal-overlay" id="addLotModal" style="display: none; z-index: 10050;">
+    <div class="modal-card tm-submodal-card">
+      <div class="modal-header">
+        <div class="modal-title" style="color: #c084fc;">➕ เพิ่ม Holding Lot ใหม่</div>
+        <button class="modal-close-btn" id="closeAddLotModalBtn">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 16px 20px;">
+        <form id="addLotForm" class="tm-form">
+          <div class="tm-form-row">
+            <div class="form-group" style="flex: 1;">
+              <label for="al_price">ราคาต้นทุน (Entry Price USDso)</label>
+              <input type="number" id="al_price" step="0.00001" min="0.00001" class="form-control" placeholder="0.22000" required />
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <label for="al_qty">จำนวนคงเหลือ (Quantity SOMI)</label>
+              <input type="number" id="al_qty" step="0.0001" min="0.0001" class="form-control" placeholder="35.0000" required />
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <div id="addLotStatus" style="font-size: 11px; color: #f87171;"></div>
+        <div class="modal-footer-btns">
+          <button class="btn btn-secondary" id="cancelAddLotBtn">ยกเลิก</button>
+          <button class="btn btn-primary" id="confirmAddLotBtn" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">➕ เพิ่ม Lot</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=2.0"></script>
+</body>
+
+</html>
