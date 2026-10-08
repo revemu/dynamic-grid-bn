@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BinanceClient, type BinanceSymbolInfo, roundToStep, roundToTick } from "./binance-client.js";
+import type { BookTickerData, BinanceExecutionReport, BinanceAccountUpdate } from "./binance-feed.js";
 import type { IExchangeClient, ExchangeSymbolInfo } from "./exchange/types.js";
 import { ORDER_TYPE, shiftBps, spreadBps, createStatusLogger } from "./utils.js";
 import type { Config } from "./config.js";
@@ -141,6 +142,11 @@ export class DynamicGrid {
   private get lastObservedUsdsoBalance(): number { return this.lastObservedQuoteBalance; }
   private set lastObservedUsdsoBalance(v: number) { this.lastObservedQuoteBalance = v; }
 
+  /** Real-time WebSocket Book Ticker cache */
+  private wsBookTicker?: BookTickerData;
+  private lastPeriodicSyncTs = 0;
+  private readonly periodicSyncIntervalMs = 30_000; // Background sanity check every 30s instead of 200ms!
+
   /** Throttled status logger */
   private readonly status: (msg: string) => void;
 
@@ -195,6 +201,95 @@ export class DynamicGrid {
     this.tickSize = info.tickSize;
     this.minNotional = info.minNotional;
     this.log(`🔄 [strategy] Updated trading pair to ${this.symbol} (${this.baseAsset}/${this.quoteAsset})`);
+  }
+
+  /**
+   * Handle real-time Book Ticker from WebSocket stream (<symbol>@bookTicker).
+   * Provides 0-weight instantaneous bestBid and bestAsk updates.
+   */
+  public handleWsBookTicker(book: BookTickerData): void {
+    this.wsBookTicker = book;
+  }
+
+  /**
+   * Handle real-time outboundAccountPosition event from Binance User Data Stream.
+   * Updates walletBaseBalance and walletQuoteBalance directly without REST /account polling!
+   */
+  public handleWsAccountUpdate(update: BinanceAccountUpdate): void {
+    let updated = false;
+    for (const b of update.balances) {
+      if (b.asset.toUpperCase() === this.baseAsset.toUpperCase()) {
+        this.walletBaseBalance = b.free;
+        this.lastObservedBaseBalance = b.free;
+        updated = true;
+      } else if (b.asset.toUpperCase() === this.quoteAsset.toUpperCase()) {
+        this.walletQuoteBalance = b.free;
+        this.lastObservedQuoteBalance = b.free;
+        updated = true;
+      }
+    }
+    if (updated) {
+      this.saveState();
+    }
+  }
+
+  /**
+   * Handle real-time executionReport event from Binance User Data Stream.
+   * Catches FILLED, PARTIALLY_FILLED, CANCELED immediately without polling /openOrders!
+   */
+  public handleWsExecutionReport(report: BinanceExecutionReport): void {
+    if (report.symbol.toUpperCase() !== this.symbol.toUpperCase()) return;
+
+    const idStr = String(report.orderId);
+    const isBid = report.side === "BUY";
+    const status = report.orderStatus;
+    const lastFilledQty = report.lastExecutedQty;
+    const lastFilledPrice = report.lastExecutedPrice > 0 ? report.lastExecutedPrice : report.price;
+
+    this.log(
+      `⚡ [WS EXEC] ${report.side} Order #${idStr} -> status: ${status} (lastQty: ${lastFilledQty}, price: $${lastFilledPrice})`,
+    );
+
+    // 1. Partial or Full Fill
+    if (status === "FILLED" || status === "PARTIALLY_FILLED") {
+      const existing = this.openOrders.find((o) => o.onChainOrderId === idStr);
+      const levelDesc = existing?.levelDesc ?? `${report.side} Order #${idStr}`;
+
+      if (isBid) {
+        this.processBuyFill({
+          price: lastFilledPrice,
+          qty: lastFilledQty > 0 ? lastFilledQty : report.cumulativeFilledQty,
+          levelDesc,
+          orderId: idStr,
+          logPrefix: "[WS] BINANCE ",
+          dryRun: false,
+        });
+      } else {
+        this.processSellFill({
+          price: lastFilledPrice,
+          qty: lastFilledQty > 0 ? lastFilledQty : report.cumulativeFilledQty,
+          levelDesc,
+          orderId: idStr,
+          logPrefix: "[WS] BINANCE ",
+          dryRun: false,
+        });
+      }
+
+      if (status === "FILLED") {
+        this.openOrders = this.openOrders.filter((o) => o.onChainOrderId !== idStr);
+        this.saveState();
+      } else if (existing) {
+        existing.qty = Math.max(0, report.origQty - report.cumulativeFilledQty);
+        existing.notionalQuote = existing.qty * existing.price;
+        existing.notionalUsdso = existing.notionalQuote;
+        this.saveState();
+      }
+    } else if (status === "CANCELED" || status === "EXPIRED" || status === "REJECTED") {
+      // 2. Canceled / Rejected
+      this.cancelledOrderIds.set(idStr, Date.now());
+      this.openOrders = this.openOrders.filter((o) => o.onChainOrderId !== idStr);
+      this.saveState();
+    }
   }
 
   private syncDowEngineSettings(): void {
@@ -1167,22 +1262,38 @@ export class DynamicGrid {
   }
 
   async tick(): Promise<void> {
-    await this.refreshWalletBalances();
-    if (!this.cfg.dryRun && (this.tickCount % 2 === 0 || this.openOrders.length > 0)) {
-      await this.syncOnChainOrders();
-      await this.reconcileInventory();
+    const now = Date.now();
+    // 1. Periodic background sync (every 30s) as sanity check only, eliminating aggressive 200ms REST polling!
+    if (now - this.lastPeriodicSyncTs >= this.periodicSyncIntervalMs) {
+      this.lastPeriodicSyncTs = now;
+      await this.refreshWalletBalances();
+      if (!this.cfg.dryRun) {
+        await this.syncOnChainOrders();
+        await this.reconcileInventory();
+      }
     }
 
     let bestBid: number | undefined;
     let bestAsk: number | undefined;
     let mid: number | undefined;
-    try {
-      const top = await this.binance.getTopOfBook(this.symbol);
-      bestBid = top.bestBid;
-      bestAsk = top.bestAsk;
-      mid = top.mid;
-    } catch (err) {
-      this.status(`Binance bookTicker error: ${(err as Error).message}`);
+
+    // 2. Real-time Book Ticker: Prioritize WebSocket stream (0 REST weight)
+    if (this.wsBookTicker && now - this.wsBookTicker.time < 10_000) {
+      bestBid = this.wsBookTicker.bestBid;
+      bestAsk = this.wsBookTicker.bestAsk;
+      mid = this.wsBookTicker.mid;
+    } else {
+      // Fallback: poll REST only if WebSocket is unavailable or stale (>10s)
+      try {
+        const top = await this.binance.getTopOfBook(this.symbol);
+        if (top) {
+          bestBid = top.bestBid;
+          bestAsk = top.bestAsk;
+          mid = top.mid;
+        }
+      } catch (err) {
+        this.status(`Binance bookTicker fallback error: ${(err as Error).message}`);
+      }
     }
 
     const binancePrice = this.atrSource.getLatestPrice?.();
@@ -2352,7 +2463,6 @@ export class DynamicGrid {
       ? ` | TL Supp: $${uptrendLine.currentLinePrice.toFixed(6)} (${uptrendLine.isBroken ? `Broken 🔴 (${uptrendLine.brokenCandleCount} bars)` : uptrendLine.brokenCandleCount > 0 ? `Break 1/2 bars ⏳` : "Active 🟢"})`
       : "";
 
-    const now = Date.now();
     if (now - this.lastHudLogTime >= this.hudLogIntervalMs) {
       this.lastHudLogTime = now;
       this.log(

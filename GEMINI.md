@@ -243,6 +243,18 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - `GRID_CASHFLOW` (Default): Places sell orders at all grid upper ladder levels (50%–100%) regardless of whether the price is above or below portfolio `avgEntry`. Ensures continuous turnover and cash-flow recovery when the channel shifts lower. Closes lots via FIFO.
   - `PORTFOLIO_AVG_PROFIT`: Strict safeguard. Only places sell orders if the price exceeds portfolio `avgEntry * 1.001` (+0.1% fee margin). Prevents any aggregate loss on inventory.
   - `LOT_BASED_PROFIT`: Per-lot profitability matching. Only allocates inventory for sell orders from lots acquired below the sell target price (`lot.buyPrice < targetPrice`). Closes lowest-cost (most profitable) lots first.
+- **Binance WebSocket Streams & Rate-Limit Ban Mitigation (Elimination of IP Ban Error `-1003`)**:
+  - **The Problem**: Polling REST API every 200–500ms in `tick()` (`/api/v3/account` weight 20, `/api/v3/openOrders` weight 6, `/api/v3/ticker/bookTicker` weight 2) exhausted Binance's 1,200 weight/minute limit (~8,000 weight/min used), triggering `Binance Error [-1003]: Way too much request weight used; IP banned`.
+  - **Zero-Weight WebSocket Book Ticker (`<symbol>@bookTicker`)**:
+    - Streams `bestBid`, `bestAsk`, and `mid` in real time directly into memory via `BinanceBookTickerFeed`.
+    - Completely replaces the per-tick REST `/api/v3/ticker/bookTicker` request with 0 REST weight consumed.
+  - **User Data Stream via WebSocket (`executionReport` & `outboundAccountPosition`)**:
+    - Obtains a `listenKey` on boot via `POST /api/v3/userDataStream` and maintains it with a 20-minute keep-alive ping (`PUT /api/v3/userDataStream`).
+    - **`executionReport`**: Real-time push notification of order fills (`FILLED`), partial fills (`PARTIALLY_FILLED`), and cancellations (`CANCELED`). Instantly triggers `processBuyFill` / `processSellFill` without polling `/api/v3/openOrders`.
+    - **`outboundAccountPosition`**: Real-time push notification of balance changes updating `walletBaseBalance` and `walletQuoteBalance` without polling `/api/v3/account`.
+  - **Throttled Sanity Fallback**:
+    - REST `refreshWalletBalances()`, `syncOnChainOrders()`, and `reconcileInventory()` are throttled to run only every 30 seconds (`periodicSyncIntervalMs = 30_000`) as a safety sanity check.
+    - Rate limit backoff: Handles HTTP 429/418 and `-1003` with warning logs.
 - **Hold Timeout Limit Safeguard (`stuckTimeoutMs`, 0 = Disabled by Default)**:
   - **Elimination of Arbitrary 15m Premature Cut Loss**: An old legacy static-grid timer (`stuckTimeoutMs = 15m`) previously unwound positions at market bid after 15 minutes of holding, even when price was consolidating safely within a 15M candle and Dow structure was in an uptrend.
   - Set `stuckTimeoutMs: 0` by default (disabled).

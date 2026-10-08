@@ -7,7 +7,7 @@ import { config } from "./config.js";
 import { createExchangeClient, type IExchangeClient } from "./exchange/index.js";
 import { DynamicGrid } from "./strategy.js";
 import { VolatilityEngine } from "./volatility.js";
-import { BinanceAtrFeed } from "./binance-feed.js";
+import { BinanceAtrFeed, BinanceBookTickerFeed, BinanceUserDataFeed } from "./binance-feed.js";
 import { DowStructureEngine } from "./market-structure.js";
 import { DashboardServer } from "./server.js";
 import type { AtrSource } from "./types.js";
@@ -82,6 +82,9 @@ async function main(): Promise<void> {
   let tradingFeed: BinanceAtrFeed | undefined;
   let atrSource: AtrSource;
 
+  let bookTickerFeed: BinanceBookTickerFeed | undefined;
+  let userDataFeed: BinanceUserDataFeed | undefined;
+
   const initFeeds = async (sym: string) => {
     const symLower = sym.toLowerCase();
     await macroDowEngine.loadHigherTimeframeCandles(
@@ -101,6 +104,8 @@ async function main(): Promise<void> {
 
     macroFeed?.stop();
     tradingFeed?.stop();
+    bookTickerFeed?.stop();
+    userDataFeed?.stop();
 
     macroFeed = new BinanceAtrFeed(
       {
@@ -131,6 +136,26 @@ async function main(): Promise<void> {
         localTrendEngine.addCandle(candle);
       }
     });
+
+    // 0-weight Real-Time Book Ticker WebSocket feed
+    bookTickerFeed = new BinanceBookTickerFeed(
+      symLower,
+      config.binanceWsBase,
+      (msg) => log(`[bookTicker] ${msg}`),
+    );
+
+    // Real-Time User Data Stream WebSocket feed (if on Binance with API credentials)
+    if (exchange.exchangeName === "binance" && exchange.hasCredentials() && exchange.createUserDataStream) {
+      userDataFeed = new BinanceUserDataFeed(
+        {
+          createUserDataStream: () => exchange.createUserDataStream!(),
+          keepAliveUserDataStream: (k) => exchange.keepAliveUserDataStream!(k),
+          closeUserDataStream: (k) => exchange.closeUserDataStream!(k),
+        },
+        config.binanceWsBase,
+        (msg) => log(`[userData] ${msg}`),
+      );
+    }
 
     atrSource = tradingFeed;
   };
@@ -263,6 +288,20 @@ async function main(): Promise<void> {
   dashboard.setInitialOrders(grid.getRecentOrders());
   dashboard.start();
 
+  const wireFeedsToGrid = () => {
+    if (bookTickerFeed) {
+      bookTickerFeed.onBook((b) => grid.handleWsBookTicker(b));
+      bookTickerFeed.start();
+    }
+    if (userDataFeed) {
+      userDataFeed.onExecutionReport((rep) => grid.handleWsExecutionReport(rep));
+      userDataFeed.onAccountUpdate((acc) => grid.handleWsAccountUpdate(acc));
+      userDataFeed.start().catch((err) => log(`⚠️ User data stream start error: ${(err as Error).message}`));
+    }
+  };
+
+  wireFeedsToGrid();
+
   if (macroFeed) {
     macroFeed.onCandle((candle, isClosed) => {
       macroDowEngine.addCandle(candle);
@@ -307,6 +346,8 @@ async function main(): Promise<void> {
   dashboard.stop();
   macroFeed?.stop();
   tradingFeed?.stop();
+  bookTickerFeed?.stop();
+  userDataFeed?.stop();
   process.exit(0);
 }
 

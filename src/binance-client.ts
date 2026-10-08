@@ -483,6 +483,40 @@ export class BinanceClient implements IExchangeClient {
     });
   }
 
+  // ── User Data Stream (WebSocket ListenKey) ────────────────────────────────
+
+  /**
+   * Start a new user data stream and return the listenKey.
+   * Requires API-KEY in header (public request, not signed with secret).
+   */
+  public async createUserDataStream(): Promise<string> {
+    if (!this.apiKey) {
+      throw new Error("Binance API key is required to create a user data stream");
+    }
+    const res = await this.publicRequest<{ listenKey: string }>("POST", "/api/v3/userDataStream");
+    return res.listenKey;
+  }
+
+  /**
+   * Keep-alive a user data stream to prevent timeout (must be called every 30 mins).
+   */
+  public async keepAliveUserDataStream(listenKey: string): Promise<void> {
+    if (!this.apiKey) return;
+    await this.rawRequest<any>("PUT", "/api/v3/userDataStream", { listenKey }, false);
+  }
+
+  /**
+   * Close a user data stream when shutting down.
+   */
+  public async closeUserDataStream(listenKey: string): Promise<void> {
+    if (!this.apiKey) return;
+    try {
+      await this.rawRequest<any>("DELETE", "/api/v3/userDataStream", { listenKey }, false);
+    } catch {
+      // Ignore errors when closing
+    }
+  }
+
   // ── HTTP Request Core ─────────────────────────────────────────────────────
 
   private async publicRequest<T = any>(
@@ -502,7 +536,7 @@ export class BinanceClient implements IExchangeClient {
   }
 
   private async rawRequest<T = any>(
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     params: Record<string, any> = {},
     signed = false,
@@ -567,6 +601,14 @@ export class BinanceClient implements IExchangeClient {
 
         const code = data?.code ?? res.status;
         const msg = data?.msg ?? text;
+
+        if (res.status === 429 || res.status === 418 || code === -1003) {
+          const retryAfter = res.headers.get("Retry-After");
+          this.log(
+            `🚨 [RATE LIMIT] Binance rate-limit / ban encountered (HTTP ${res.status}, code ${code}, Retry-After: ${retryAfter ?? "N/A"}): ${msg}`,
+          );
+        }
+
         throw new Error(`Binance Error [${code}]: ${msg}`);
       }
 
