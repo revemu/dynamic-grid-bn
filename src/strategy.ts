@@ -3431,28 +3431,38 @@ export class DynamicGrid {
             this.saveState();
           }
 
-          // Identify eligible levels (strictly below TL) and find the last one
-          const eligibleIndices = sellLevels
-            .map((lvl, idx) => ({ lvl, idx }))
-            .filter(({ lvl }) => lvl < tlPrice)
-            .map(({ idx }) => idx);
-          const lastEligibleIdx = eligibleIndices[eligibleIndices.length - 1] ?? -1;
-
-          // Place/maintain sell orders at levels below the trendline.
-          // The last eligible level is forced to full-exit (targetFraction = 0) so ALL
-          // inventory is covered — not just the tranche portion for that level.
           const mode = this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
           const avgEntry = this.getAvgEntryPrice();
           let minAllowedSellPrice = Math.max(currentBestBid, refPrice);
           if (mode === "PORTFOLIO_AVG_PROFIT" && avgEntry > 0) {
             minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * 1.001);
           }
-          const sellHoldingTargets = [0.75, 0.50, 0.25, 0.0];
-          const numEligible = eligibleIndices.length;
-          const trancheQty = numEligible > 0 ? held / numEligible : held;
 
-          // Check if any eligible levels below TL are missing an open sell order
-          const hasMissingEligibleSellOrders = eligibleIndices.some((idx) => {
+          // Identify eligible levels (strictly below TL and strictly above minAllowedSellPrice)
+          const eligibleIndices = sellLevels
+            .map((lvl, idx) => ({ lvl, idx }))
+            .filter(({ lvl }) => lvl < tlPrice && lvl > minAllowedSellPrice)
+            .map(({ idx }) => idx);
+
+          const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
+          let targetTrancheCount = eligibleIndices.length;
+
+          // If dividing evenly across all eligible levels drops below exchange minimum notional,
+          // consolidate into 2 tranches (Target 1 & 2 for fast exit), or 1 tranche if 2 is still below minNotional:
+          if (targetTrancheCount > 0 && (held / targetTrancheCount) * minAllowedSellPrice < minOrderNotional) {
+            if (targetTrancheCount >= 2 && (held / 2) * minAllowedSellPrice >= minOrderNotional) {
+              targetTrancheCount = 2;
+            } else {
+              targetTrancheCount = 1;
+            }
+          }
+
+          const activeSellIndices = eligibleIndices.slice(0, targetTrancheCount);
+          const numActive = activeSellIndices.length > 0 ? activeSellIndices.length : 1;
+          const trancheQty = held / numActive;
+
+          // Check if any active levels below TL are missing an open sell order
+          const hasMissingEligibleSellOrders = activeSellIndices.some((idx) => {
             const lvlPrice = sellLevels[idx];
             return !this.openOrders.some(
               (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvlPrice && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
@@ -3483,20 +3493,26 @@ export class DynamicGrid {
               (o) => !o.isBid && (o.levelDesc === sellNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
             );
 
-            // Force the last eligible level below TL to be full-exit (targetFraction = 0)
-            // so ALL remaining inventory is sold here, not just a partial tranche.
-            const isLastEligible = i === lastEligibleIdx;
-            const targetHoldingFraction = isLastEligible ? 0.0 : (sellHoldingTargets[i] ?? 0.0);
+            // If this level is not in activeSellIndices (consolidated into Target 1 & 2 for speed/minNotional):
+            if (!activeSellIndices.includes(i)) {
+              if (currentOpenSellAtLvl) {
+                await this.cancelOrderInternal(currentOpenSellAtLvl, "Consolidating sell tranches into faster levels (Target 1 & 2) to satisfy min notional");
+                this.openOrders = this.openOrders.filter((o) => o !== currentOpenSellAtLvl);
+                this.saveState();
+              }
+              continue;
+            }
+
+            const isLastActive = i === activeSellIndices[activeSellIndices.length - 1];
+            const activeRank = activeSellIndices.indexOf(i);
+            const targetHoldingFraction = isLastActive
+              ? 0.0
+              : (activeSellIndices.length - 1 - activeRank) / activeSellIndices.length;
 
             // ── IOC Sell when market price has reached or exceeded this sell target under TL ──
-            // IMPORTANT: If an active resting limit order ALREADY exists at this level (currentOpenSellAtLvl),
-            // DO NOT cancel it to attempt an IOC taker sell!
-            // Let the resting maker order stay on the book to fill naturally as Maker without gas churn.
-            // IOC is ONLY for when NO resting order was placed (e.g. unplaced tranche or sudden gap up).
             if (!currentOpenSellAtLvl) {
               const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= lvlPrice) || (refPrice >= lvlPrice && currentBestBid >= lvlPrice * 0.998);
               if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
-                // Guard: If no active resting order exists for this level, verify whether it was ALREADY SOLD!
                 const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
                 const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
                 if (isLevelAlreadyFulfilled) {
@@ -3513,8 +3529,8 @@ export class DynamicGrid {
                     const lastIoc = this.orderCooldowns.get(iocCooldownKey) ?? 0;
                     if (Date.now() - lastIoc > 15_000) {
                       let desiredSellQty = trancheQty;
-                      if (isLastEligible && mode !== "LOT_BASED_PROFIT") {
-                        desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numEligible - 1)));
+                      if (isLastActive && mode !== "LOT_BASED_PROFIT") {
+                        desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numActive - 1)));
                       }
                       desiredSellQty = Math.min(this.baseHeld(), desiredSellQty);
 
@@ -3561,9 +3577,9 @@ export class DynamicGrid {
               desiredSellQty = Math.min(desiredSellQty, availableProfitableQty);
             }
 
-            // For the last eligible level: equal tranche + dust cleanup (no huge inventory dumps)
-            if (isLastEligible && mode !== "LOT_BASED_PROFIT") {
-              desiredSellQty = Math.max(trancheQty, this.baseHeld() - (trancheQty * (numEligible - 1)));
+            // For the last active level: equal tranche + dust cleanup (no huge inventory dumps)
+            if (isLastActive && mode !== "LOT_BASED_PROFIT") {
+              desiredSellQty = Math.max(trancheQty, this.baseHeld() - (trancheQty * (numActive - 1)));
             }
 
             if (desiredSellQty < this.minQty) continue;
@@ -3669,11 +3685,28 @@ export class DynamicGrid {
         .map((lvl, idx) => ({ lvl, idx }))
         .filter(({ lvl }) => lvl > minAllowedSellPrice)
         .map(({ idx }) => idx);
-      const numEligibleLevels = eligibleSellIndices.length > 0 ? eligibleSellIndices.length : (sellLevels.length || 4);
-      const trancheQty = held / numEligibleLevels;
 
-      // Check if any eligible levels are missing an open sell order
-      const hasMissingEligibleSellOrders = eligibleSellIndices.some((idx) => {
+      const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
+      let targetTrancheCount = eligibleSellIndices.length;
+
+      // If dividing evenly across all eligible levels drops below exchange minimum notional,
+      // consolidate into 2 tranches (Target 1 & 2 for fast exit), or 1 tranche if 2 is still below minNotional:
+      if (targetTrancheCount > 0 && (held / targetTrancheCount) * minAllowedSellPrice < minOrderNotional) {
+        if (targetTrancheCount >= 2 && (held / 2) * minAllowedSellPrice >= minOrderNotional) {
+          targetTrancheCount = 2;
+        } else {
+          targetTrancheCount = 1;
+        }
+      }
+
+      // Pick active sell levels:
+      // When consolidated, pick the first 2 eligible levels (Target 1 & 2) for maximum exit speed!
+      const activeSellIndices = eligibleSellIndices.slice(0, targetTrancheCount);
+      const numActiveLevels = activeSellIndices.length > 0 ? activeSellIndices.length : (sellLevels.length || 4);
+      const trancheQty = held / numActiveLevels;
+
+      // Check if any active levels are missing an open sell order
+      const hasMissingEligibleSellOrders = activeSellIndices.some((idx) => {
         const lvlPrice = sellLevels[idx];
         return !this.openOrders.some(
           (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvlPrice && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
@@ -3692,7 +3725,7 @@ export class DynamicGrid {
       // If existing resting sells cover the held inventory, NO NEW BUYS have occurred.
       // Inventory is ONLY considered fully covered if:
       // 1. Total open sell quantity matches held inventory, AND
-      // 2. NO eligible sell levels are missing their orders! (If an eligible level has no order, we MUST place it!)
+      // 2. NO active sell levels are missing their orders! (If an active level has no order, we MUST place it!)
       const isInventoryFullyCovered =
         !hasMissingEligibleSellOrders &&
         (totalBaseInOpenSells >= held * 0.98 || Math.abs(totalBaseInOpenSells - held) <= Math.max(0.01, (this.minQty || 1) * 0.5));
@@ -3701,24 +3734,31 @@ export class DynamicGrid {
         const originalLvlPrice = sellLevels[i];
         if (!originalLvlPrice) continue;
 
-        const isFinalExitLevel = i === sellLevels.length - 1;
-        const targetHoldingFraction = isFinalExitLevel ? 0.0 : (sellHoldingTargets[i] ?? 0.0);
-
         // Strictly match by level name to prevent adjacent grid levels from stealing/cancelling each other's orders
         const currentOpenSellAtLvl = this.openOrders.find(
           (o) => !o.isBid && (o.levelDesc === sellNames[i] || (!o.levelDesc && Math.abs(o.price - originalLvlPrice) / originalLvlPrice <= 0.001)),
         );
 
+        // If this level is not in activeSellIndices (consolidated into Target 1 & 2 for speed/minNotional):
+        if (!activeSellIndices.includes(i)) {
+          if (currentOpenSellAtLvl) {
+            await this.cancelOrderInternal(currentOpenSellAtLvl, "Consolidating sell tranches into faster levels (Target 1 & 2) to satisfy min notional");
+            this.openOrders = this.openOrders.filter((o) => o !== currentOpenSellAtLvl);
+            this.saveState();
+          }
+          continue;
+        }
+
+        const isFinalExitLevel = i === activeSellIndices[activeSellIndices.length - 1];
+        const activeRank = activeSellIndices.indexOf(i);
+        const targetHoldingFraction = isFinalExitLevel
+          ? 0.0
+          : (activeSellIndices.length - 1 - activeRank) / activeSellIndices.length;
+
         // ── IOC Sell when market price has reached or exceeded this sell target ──
-        // "ถ้าราคามันเกินระดับที่จะขายไปแล้วสามารถ ขาย ioc ได้ ของ level นั้น"
-        // IMPORTANT: If an active resting limit order ALREADY exists at this level (currentOpenSellAtLvl),
-        // DO NOT cancel it to attempt an IOC taker sell!
-        // Let the resting maker order stay on the book to fill naturally as Maker without gas churn.
-        // IOC is ONLY for when NO resting order was placed (e.g. unplaced tranche or sudden gap up).
         if (!currentOpenSellAtLvl) {
           const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= originalLvlPrice) || (refPrice >= originalLvlPrice && currentBestBid >= originalLvlPrice * 0.998);
           if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
-            // Guard: If no active resting order exists for this level, verify whether it was ALREADY SOLD!
             const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
             const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
             if (isLevelAlreadyFulfilled) {
@@ -3736,9 +3776,8 @@ export class DynamicGrid {
                 if (Date.now() - lastIoc > 15_000) {
                   // Determine tranche quantity to sell
                   let desiredSellQty = trancheQty;
-                  const isFinalEligibleLevel = eligibleSellIndices[eligibleSellIndices.length - 1] === i;
-                  if (isFinalEligibleLevel && mode !== "LOT_BASED_PROFIT") {
-                    desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numEligibleLevels - 1)));
+                  if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
+                    desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numActiveLevels - 1)));
                   }
                   desiredSellQty = Math.min(this.baseHeld(), desiredSellQty);
 
@@ -3770,10 +3809,9 @@ export class DynamicGrid {
         // Calculate equal tranche quantity for this level
         let desiredSellQty = trancheQty;
 
-        // For final eligible level: clean up any sub-cent rounding dust (satoshis/wei) without hoarding missing tranches
-        const isFinalEligibleLevel = eligibleSellIndices[eligibleSellIndices.length - 1] === i;
-        if (isFinalEligibleLevel && mode !== "LOT_BASED_PROFIT") {
-          desiredSellQty = Math.max(trancheQty, this.baseHeld() - (trancheQty * (numEligibleLevels - 1)));
+        // For final active level: clean up any sub-cent rounding dust (satoshis/wei) without hoarding missing tranches
+        if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
+          desiredSellQty = Math.max(trancheQty, this.baseHeld() - (trancheQty * (numActiveLevels - 1)));
         }
 
         // If this level already has an active sell order:

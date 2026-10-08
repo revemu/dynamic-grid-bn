@@ -476,6 +476,14 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     2. `findMultiTouchSR` และ `getStructure`: `isNewCycleFromLow` / `postLowHighs` / `activeCycleHighs` นับเฉพาะยอดที่เกิด **หลัง** macroLow อย่างเคร่งครัด (`h.index > macroLow.index`)
   - ผลลัพธ์ (ตัวอย่างจริง): กรอบบนกลับไปอิง LH 2 จุดสัมผัส `2574.86`, กรอบล่างอิง LL `2512.38`
   - หมายเหตุ: ไส้ยาวที่เกิน `wickThresholdPct` (เมื่อ `useTrueWick=false`) จะถูกตัดเป็นตัวแท่ง จึงอาจไม่ถูกนับเป็น LL — เป็นพฤติกรรมตาม setting
+- **Dynamic Sell Tranche Consolidation (Fast Exit at Target 1 & 2)**:
+  - **สาเหตุของปัญหาเดิม**: เมื่อบอทถือ Inventory ขนาดไม่เต็มพอร์ต (เช่น ถือ ~$19.45) ระบบเคยหาร 4 ระดับคงที่ (`trancheQty = held / numEligibleLevels`) ทำให้ได้ไม้ละ $4.84 - $4.88 ซึ่งต่ำกว่า Binance `minNotional` ($5.00) ส่งผลให้ `MIN NOTIONAL GUARD` สั่งข้าม (Skip) การวางคำสั่งขายทั้ง 4 ระดับ และบอทค้างถือเหรียญโดยไม่มี Order บน Order Book
+  - **การแก้ไข** (`src/strategy.ts`):
+    1. **Dynamic Tranche Consolidation**: ถ้าหารตามจำนวนระดับที่มีแล้วมูลค่าต่อไม้ต่ำกว่า `minOrderNotional` ($5.00) ระบบจะยุบจำนวนไม้ลงมา:
+       - หาก `(held / 2) * price >= $5.00` $\rightarrow$ ยุบเหลือ **2 ไม้** ไม้ละ 50%
+       - หากยังต่ำกว่า $5.00 (เช่น ถือแค่ $7.00) $\rightarrow$ ยุบเหลือ **1 ไม้** 100%
+    2. **Fast Exit Allocation (Sell Target 1 & 2)**: เมื่อยุบเหลือ 2 ไม้ ระบบจะเลือกวางที่ **2 ระดับแรกที่อยู่ใกล้ราคาตลาดที่สุด** (Sell Target 1 60% zone ขาย 50% และ Sell Target 2 70% zone ขาย 50% Full Exit) เพื่อความรวดเร็วในการ Take Profit และคืนทุนเป็น Cash โดยไม่ต้องรอราคาพุ่งไปถึง Target 4 (90%)
+    3. **Stale Level Cleanup**: ออเดอร์ที่เคยค้างอยู่ในระดับที่ไม่ถูกเลือก (Target 3, 4) จะถูกยกเลิกอัตโนมัติ เพื่อรวบ Inventory มารวมไว้ใน 2 ไม้ที่ผ่านเกณฑ์ $5.00 อย่างสมบูรณ์ 100%
 
 ---
 
