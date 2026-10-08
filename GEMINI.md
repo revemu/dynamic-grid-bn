@@ -106,8 +106,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - Available capacity (`currentAvailableCapacity = Math.max(0, maxInv - currentHeldUsdso)`) is dynamically divided equally across all 4 buy levels (`trancheUsdso = currentAvailableCapacity / 4`).
   - Eliminates the flawed rigid $10 limit (`maxInv / 4`) which previously prevented Buy Level 4 from placing orders when partial inventory was held.
   - Guarantees 100% that **all 4 buy levels have active resting orders**, fully utilizing available USDso capacity without empty levels.
+- **Dynamic Sell Tranche Allocation & CEX Rebalancing (Equal Sell Sizes & Zero Dump)**:
+  - **Eligible Level Counting (`numEligibleLevels`)**: คำนวณจำนวนระดับที่อยู่เหนือราคาตลาดและพร้อมวางขายจริง (`lvl > minAllowedSellPrice`) และแบ่งขนาดไม้เฉลี่ยเท่ากันเป๊ะ (`trancheQty = held / numEligibleLevels`) แทนการหาร 4 แบบคงที่ ซึ่งเคยทำให้เกิดเศษค้างเมื่อราคาผ่าน Sell Target 1 ไปแล้ว
+  - **Zero Final Level Dump**: ไม้สุดท้าย (Exit All) จะรับเฉพาะเศษทศนิยมระดับ Satoshis/Wei เล็กๆ เท่านั้น ไม่ดูด Inventory ก้อนใหญ่มากองไว้ที่ Sell Target 4 จนขนาดไม้เบิ้ล 2 เท่าอีกต่อไป
+  - **Auto Rebalancing on CEX / BUY Fills**: เมื่อมี BUY แมตช์ (`needsSellRebalance = true`) หรือบน CEX (Binance) หากตรวจพบว่าขนาดออเดอร์ขายแต่ละไม้เบี่ยงเบนไปจากไม้เฉลี่ยเกิน 10% บอทจะทำการยกเลิกและตั้งออเดอร์ขายใหม่ให้ทุกไม้มีขนาดเท่ากันสม่ำเสมอทันที โดยไม่มีค่า Gas หรือ Fee บน Maker orders
   - **Symmetric Rebalance Rules**:
-    - **When a BUY fills**: Triggers SELL rebalance (`needsSellRebalance = true`) to cover the new SOMI across all eligible sell targets. Remaining resting buy orders stay untouched on the book ("คงออเดอร์ไว้") to avoid cancel gas churn.
+    - **When a BUY fills**: Triggers SELL rebalance (`needsSellRebalance = true`) to cover the new inventory across all eligible sell targets. Remaining resting buy orders stay untouched on the book ("คงออเดอร์ไว้") to avoid cancel churn.
     - **When a SELL fills**: Triggers BUY rebalance (`needsBuyRebalance = true`) to recalculate freed capacity and evenly distribute new buy orders across all 4 levels.
 - **4 Channel Modes (`CHANNEL_MODE`)**:
   - `DOW_ATR_CLAMP` (Default): Dow Theory swing pivots clamped to $2.5\times$ – $5.0\times$ ATR.

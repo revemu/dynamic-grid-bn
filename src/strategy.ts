@@ -3223,7 +3223,8 @@ export class DynamicGrid {
           const numEligible = eligibleIndices.length;
           const trancheQty = numEligible > 0 ? held / numEligible : held;
 
-          // Rebalance Sell side: preserve existing valid resting sells
+          // Rebalance Sell side: trigger rebalance on BUY fills or when order sizes deviate on CEX
+          const doSellRebalance = this.needsSellRebalance;
           this.needsSellRebalance = false;
 
           const totalBaseInOpenSells = this.openOrders
@@ -3342,7 +3343,9 @@ export class DynamicGrid {
               const qtyDiffRatio = Math.abs(currentOpenSellAtLvl.qty - desiredSellQty) / desiredSellQty;
               const priceDiffRatio = Math.abs(currentOpenSellAtLvl.price - effLvlPrice) / effLvlPrice;
               const shiftTol = this.cfg.minChannelShiftPct ? this.cfg.minChannelShiftPct / 100 : 0.008;
-              if (qtyDiffRatio > qtyTol || priceDiffRatio > shiftTol) {
+              const isCexExchange = this.binance.exchangeName !== "dreamdex";
+              const needsQtyResize = (doSellRebalance || (isCexExchange && qtyDiffRatio > 0.10)) && qtyDiffRatio > qtyTol;
+              if (needsQtyResize || priceDiffRatio > shiftTol) {
                 const reason = priceDiffRatio > shiftTol
                   ? `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${effLvlPrice.toFixed(6)})`
                   : "Rebalancing sell quantity to match inventory tranche";
@@ -3397,10 +3400,17 @@ export class DynamicGrid {
         minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * 1.001);
       }
       const sellHoldingTargets = [0.75, 0.50, 0.25, 0.0];
-      const numLevels = sellLevels.length || 4;
-      const trancheQty = held / numLevels; // Exactly 25% per level
 
-      // Rebalance Sell side: preserve existing valid resting sells
+      // Determine eligible sell levels strictly ABOVE minAllowedSellPrice
+      const eligibleSellIndices = sellLevels
+        .map((lvl, idx) => ({ lvl, idx }))
+        .filter(({ lvl }) => lvl > minAllowedSellPrice)
+        .map(({ idx }) => idx);
+      const numEligibleLevels = eligibleSellIndices.length > 0 ? eligibleSellIndices.length : (sellLevels.length || 4);
+      const trancheQty = held / numEligibleLevels;
+
+      // Rebalance Sell side: trigger rebalance on BUY fills or when order sizes deviate on CEX
+      const doSellRebalance = this.needsSellRebalance;
       this.needsSellRebalance = false;
 
       // Check if existing resting sell orders already fully cover the held inventory
@@ -3481,39 +3491,51 @@ export class DynamicGrid {
           lvlPrice = Math.max(lvlPrice, minMakerPrice);
         }
 
+        // Calculate equal tranche quantity for this level
+        let desiredSellQty = trancheQty;
+
+        // For final exit level: clean up any sub-cent rounding dust (satoshis/wei)
+        if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
+          const otherSellOrdersQty = this.openOrders
+            .filter((o) => !o.isBid && o !== currentOpenSellAtLvl)
+            .reduce((sum, o) => sum + o.qty, 0);
+          desiredSellQty = Math.max(0, this.baseHeld() - otherSellOrdersQty);
+        }
+
         // If this level already has an active sell order:
-        // Do NOT churn or rebalance quantity when other sells fill! Preserve resting orders on the book.
         if (currentOpenSellAtLvl) {
           const priceDiffRatio = Math.abs(currentOpenSellAtLvl.price - lvlPrice) / lvlPrice;
-          if (priceDiffRatio > (this.cfg.minChannelShiftPct ? this.cfg.minChannelShiftPct / 100 : 0.008)) {
-            await this.cancelOrderInternal(currentOpenSellAtLvl, `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`);
+          const shiftTol = this.cfg.minChannelShiftPct ? this.cfg.minChannelShiftPct / 100 : 0.008;
+          const isPriceShifted = priceDiffRatio > shiftTol;
+
+          const isCexExchange = this.binance.exchangeName !== "dreamdex";
+          const targetSellQty = desiredSellQty >= (this.minQty || 0.001) ? desiredSellQty : trancheQty;
+          const qtyDiffRatio = Math.abs(currentOpenSellAtLvl.qty - targetSellQty) / Math.max(0.000001, targetSellQty);
+          const qtyTol = this.cfg.orderQtyTolerancePct ? this.cfg.orderQtyTolerancePct / 100 : 0.05;
+          // Rebalance sell quantity if explicitly requested (BUY filled, startup, resume) OR on CEX if deviation is large (>10%)
+          const needsQtyResize = (doSellRebalance || (isCexExchange && qtyDiffRatio > 0.10)) && qtyDiffRatio > qtyTol;
+
+          if (isPriceShifted || needsQtyResize) {
+            const reason = isPriceShifted
+              ? `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
+              : `Rebalancing sell quantity to equal tranche (${currentOpenSellAtLvl.qty.toFixed(4)} -> ${targetSellQty.toFixed(4)} ${this.baseAsset})`;
+            await this.cancelOrderInternal(currentOpenSellAtLvl, reason);
             this.openOrders = this.openOrders.filter((o) => o !== currentOpenSellAtLvl);
             await this.placeRestingOrder(
               false,
               lvlPrice,
-              currentOpenSellAtLvl.qty,
+              targetSellQty,
               targetHoldingFraction,
-              currentOpenSellAtLvl.qty * lvlPrice,
+              targetSellQty * lvlPrice,
               sellNames[i] || `Sell Target ${i + 1}`,
             );
           }
           continue;
         }
 
-        // Only place a new sell order if we have unallocated inventory
-        if (isInventoryFullyCovered) {
+        // Only place a new sell order if we have unallocated inventory (or rebalancing)
+        if (isInventoryFullyCovered && !doSellRebalance) {
           continue;
-        }
-
-        // Calculate exact 25% equal tranche quantity for this level
-        let desiredSellQty = trancheQty;
-
-        // For final exit level when placing fresh ladder: clean up any sub-cent rounding dust
-        if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
-          const otherSellOrdersQty = this.openOrders
-            .filter((o) => !o.isBid)
-            .reduce((sum, o) => sum + o.qty, 0);
-          desiredSellQty = Math.max(0, this.baseHeld() - otherSellOrdersQty);
         }
 
         if (desiredSellQty < (this.minQty || 0.001)) continue;
