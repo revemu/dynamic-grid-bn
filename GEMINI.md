@@ -140,6 +140,16 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     1. ปรับระบบ Reconcile (`reconcileActiveOrders`) ทั้งฝั่ง Buy และ Sell ให้ใช้ **Closest-Price Search (`minDiff`)** โดยจับคู่กับระดับที่ใกล้ที่สุดจริง พร้อมบีบ Tolerance ลงเหลือ $\le 0.15\%$ ป้องกันการแย่งชื่อข้ามระดับโดยสิ้นเชิง
     2. ใน `staleSells` และ `staleBuys`: เพิ่มระบบ Auto-Correction หากพบออเดอร์ที่มีชื่อ `levelDesc` ไม่ตรงกับระดับราคาจริง (เช่น $2576.62 ดันชื่อ Sell Target 1) ระบบจะ Re-link ให้เป็นชื่อระดับที่ถูกต้อง ($2576.62 -> Sell Target 2) โดยอัตโนมัติ
     3. ใน `public/app.js`: ปรับการจับคู่ออเดอร์เข้า Grid Channel Meter ให้ใช้ `usedSteps (Set)` ป้องกันการเขียนทับซ้ำแถวเดิม (1 ออเดอร์ ต่อ 1 แถวอย่างเคร่งครัด) ทำให้แถว Sell Target 1, 2, 3, 4 แสดง Badge ออเดอร์ขายครบทั้ง 4 แถวอย่างถูกต้อง 100%
+- **Persistent Multi-Symbol Locked Channel (`lockedChannels` by `${exchange}:${symbol}`)**:
+  - **สาเหตุของปัญหาเดิม**:
+    1. ในฐานข้อมูล `grid-bot.db.json` เคยเก็บ `state` ก้อนเดียวรวมกัน เมื่อสลับคู่เทรดไปมา (เช่น สลับระหว่าง Binance `ETHFDUSD` กับ DreamDEX `SOMI:USDso`) หรือบอทรีสตาร์ท ข้อมูล `lockedChannel` ของเหรียญเดิมจะสูญหาย
+    2. มีตรรกะ `isFresh` ตรวจจับระยะห่าง `Math.abs(centerPrice - avgEntry) / avgEntry < 0.15` หากกรอบเดิมกว้างมาก หรือตลาดวิ่งห่าง บอทจะล้าง `lockedChannel = undefined` ทิ้งไปเอง
+    3. เมื่อกรอบที่จำไว้หาย บอทจะ Fallback ไปคำนวณจากแท่งเทียนที่โหลดเข้ามาใหม่ (192–300 แท่ง) หากจุดยอด/ฐานเดิมหลุดออกนอกขอบแท่งเทียนไปแล้ว (อยู่นอกกราฟ) บอทจะมองไม่เห็น และไปหยิบยอดคลื่นแคบๆ ปัจจุบันบนจอมาล็อคทับเป็นกรอบใหม่แทน ทำให้กรอบกว้างเดิมหายไป
+  - **การแก้ไข**:
+    1. ใน `BotDatabase` เพิ่ม `lockedChannels: Record<string, LockedChannel>` และ `statesBySymbol` แยกตามคู่เทรด (`${exchange}:${symbol}`) บันทึกกรอบล็อคและสถานะอย่างถาวร
+    2. ใน `strategy.ts`: ลบเงื่อนไข `isFresh < 0.15` ทิ้ง ตราบใดที่มี Inventory หรือออเดอร์ขายค้างอยู่ บอทจะยึดถือกรอบเดิมอย่างเคร่งครัด 100%
+    3. ใน `step()`: Reconstruct `lastDynamicBounds` จาก `lockedChannel` เสมอหากเริ่มทำงานขณะถือ Position ป้องกันการถูกแท่งเทียนแคบๆ ในจอเขียนทับ
+    4. ใน `updateExchangeClient` และ `updateSymbolInfo`: มีการ `saveState(true)` ก่อนสลับเหรียญ และ `loadState()` โหลดสถานะและกรอบล็อคของเหรียญใหม่ขึ้นมาทันที 100%
 - **Strict Closed-Candle Cut-Loss Confirmation (100% Closed Bar Close Price & Zero Wick Triggers)**:
   - **สาเหตุของปัญหาเดิม**: เดิมระบบนับแท่งเทียนที่หลุด Floor ผ่าน `breakdownCandleTimes.add(currentCandle.time)` โดย `currentCandle` คือแท่งปัจจุบันที่กำลังวิ่งอยู่ (ยังไม่ปิดแท่ง) ทำให้เมื่อราคาแลบไส้ (Wick) ลงไปแตะบัฟเฟอร์เพียง 1 วินาทีกลางแท่ง (เช่น นาทีที่ 18:16:04 ของแท่ง 18:15–18:30) บอทก็นับว่าครบ 1 แท่งทันทีและเทขาย Cut Loss ล้างพอร์ตกลางแท่งโดยที่แท่งเทียนยังไม่จบ
   - **ระบบยืนยันแท่งเทียนปิด 100% (`getClosedCandles`)**: ปรับปรุงให้การตรวจ Cut Loss ตรวจสอบเฉพาะแท่งเทียนที่ปิดสมบูรณ์แล้วเท่านั้น (`c.isClosed === true` หรือแท่งก่อนหน้าแท่งปัจจุบัน) โดยราคาปิดแท่ง (`c.close`) ต้องต่ำกว่า Cut-Loss Buffer จริง

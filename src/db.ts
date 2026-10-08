@@ -164,6 +164,8 @@ export interface BotDatabaseSchema {
   createdAt: number;
   updatedAt: number;
   state: StrategyStateRecord;
+  lockedChannels?: Record<string, LockedChannel>;     // Keyed by `${exchange}:${symbol}`
+  statesBySymbol?: Record<string, Partial<StrategyStateRecord>>; // Per-symbol persistent state
   orders: UnifiedOrderRecord[];  // Single Unified Source of Truth
   settings: Record<string, any>;
 }
@@ -259,6 +261,8 @@ export class BotDatabase {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       state: this.getDefaultState(),
+      lockedChannels: {},
+      statesBySymbol: {},
       orders: [],
       settings: {},
     };
@@ -330,6 +334,8 @@ export class BotDatabase {
             createdAt: parsed.createdAt || Date.now(),
             updatedAt: parsed.updatedAt || Date.now(),
             state: { ...this.getDefaultState(), ...parsed.state },
+            lockedChannels: parsed.lockedChannels || {},
+            statesBySymbol: parsed.statesBySymbol || {},
             orders: unifiedOrders.slice(0, this.maxHistoryRecords),
             settings: parsed.settings || {},
           };
@@ -682,21 +688,54 @@ export class BotDatabase {
 
   // ── Strategy State CRUD ───────────────────────────────────────────────────
 
-  public getState(): StrategyStateRecord {
+  public getState(symbolKey?: string): StrategyStateRecord {
+    if (symbolKey && this.data.statesBySymbol && this.data.statesBySymbol[symbolKey]) {
+      return { ...this.data.state, ...this.data.statesBySymbol[symbolKey] };
+    }
     return { ...this.data.state };
   }
 
-  public saveState(state: Partial<StrategyStateRecord>, immediate = false): void {
+  public saveState(state: Partial<StrategyStateRecord>, immediate = false, symbolKey?: string): void {
     this.data.state = {
       ...this.data.state,
       ...state,
       lastUpdated: Date.now(),
     };
+    if (symbolKey) {
+      if (!this.data.statesBySymbol) {
+        this.data.statesBySymbol = {};
+      }
+      this.data.statesBySymbol[symbolKey] = {
+        ...(this.data.statesBySymbol[symbolKey] || {}),
+        ...state,
+        lastUpdated: Date.now(),
+      };
+    }
     if (immediate) {
       this.flushSync();
     } else {
       this.scheduleFlush();
     }
+  }
+
+  public getLockedChannel(symbolKey?: string): LockedChannel | undefined {
+    if (symbolKey && this.data.lockedChannels && this.data.lockedChannels[symbolKey]) {
+      return this.data.lockedChannels[symbolKey];
+    }
+    return this.data.state.lockedChannel;
+  }
+
+  public saveLockedChannel(symbolKey: string, channel: LockedChannel | undefined): void {
+    if (!this.data.lockedChannels) {
+      this.data.lockedChannels = {};
+    }
+    if (channel) {
+      this.data.lockedChannels[symbolKey] = channel;
+    } else {
+      delete this.data.lockedChannels[symbolKey];
+    }
+    this.data.state.lockedChannel = channel;
+    this.scheduleFlush();
   }
 
   // ── Unified Order Recording & Lifecycle Management ────────────────────────

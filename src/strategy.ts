@@ -192,15 +192,23 @@ export class DynamicGrid {
   }
 
   public updateExchangeClient(newClient: IExchangeClient, info?: ExchangeSymbolInfo): void {
+    if (this.cfg.persistState) {
+      this.saveState(true);
+    }
     this.binance = newClient;
     this.cfg.exchange = newClient.exchangeName as "binance" | "dreamdex";
     if (info) {
       this.updateSymbolInfo(info);
+    } else {
+      this.loadState();
     }
     this.log(`🔄 [strategy] Switched exchange client to: ${newClient.exchangeName.toUpperCase()}`);
   }
 
   public updateSymbolInfo(info: ExchangeSymbolInfo): void {
+    if (this.cfg.persistState) {
+      this.saveState(true);
+    }
     this.symbolInfo = info;
     this.symbol = info.symbol;
     this.cfg.symbol = info.symbol;
@@ -210,6 +218,7 @@ export class DynamicGrid {
     this.stepSize = info.stepSize;
     this.tickSize = info.tickSize;
     this.minNotional = info.minNotional;
+    this.loadState();
     this.log(`🔄 [strategy] Updated trading pair to ${this.symbol} (${this.baseAsset}/${this.quoteAsset})`);
   }
 
@@ -808,10 +817,18 @@ export class DynamicGrid {
     }
   }
 
+  public getSymbolKey(): string {
+    const ex = (this.binance?.exchangeName || this.cfg.exchange || "binance").toLowerCase();
+    const sym = (this.symbol || this.cfg.symbol || "unknown").toUpperCase().replace(/[\/\-_:]/g, "");
+    return `${ex}:${sym}`;
+  }
+
   private clampLotsTo(maxAllowedQty: number): void {
     if (maxAllowedQty <= 1e-6) {
       this.lots = [];
       this.lockedChannel = undefined;
+      this.lastDynamicBounds = undefined;
+      this.db.saveLockedChannel(this.getSymbolKey(), undefined);
       return;
     }
     let accumulated = 0;
@@ -852,7 +869,8 @@ export class DynamicGrid {
   public loadState(): void {
     if (!this.cfg.persistState) return;
     try {
-      const data = this.db.getState();
+      const symbolKey = this.getSymbolKey();
+      const data = this.db.getState(symbolKey);
       if (Array.isArray(data.lots)) {
         this.lots = data.lots.filter((l) => Number.isFinite(l.price) && Number.isFinite(l.qty) && l.qty > 1e-6);
       }
@@ -939,35 +957,40 @@ export class DynamicGrid {
       } else if (typeof data.isPaused === "boolean") {
         this.isPaused = data.isPaused;
       }
+      // 🔒 Persistent Multi-Symbol Channel Lock Restoration:
+      // Look up locked channel for this exact exchange:symbol pair from dedicated storage
+      const persistentLockedChannel = this.db.getLockedChannel(symbolKey) || data.lockedChannel;
+
       if (
-        data.lockedChannel &&
-        typeof data.lockedChannel.lowerBound === "number" &&
-        typeof data.lockedChannel.upperBound === "number" &&
-        Array.isArray(data.lockedChannel.buyLevels) &&
-        data.lockedChannel.buyLevels.length >= 4 &&
-        Array.isArray(data.lockedChannel.sellLevels) &&
-        data.lockedChannel.sellLevels.length >= 4
+        persistentLockedChannel &&
+        typeof persistentLockedChannel.lowerBound === "number" &&
+        typeof persistentLockedChannel.upperBound === "number" &&
+        Array.isArray(persistentLockedChannel.buyLevels) &&
+        persistentLockedChannel.buyLevels.length >= 4 &&
+        Array.isArray(persistentLockedChannel.sellLevels) &&
+        persistentLockedChannel.sellLevels.length >= 4
       ) {
         const hasInventory = this.lots.length > 0 && this.baseHeld() >= (this.minQty || 0.001);
         const hasOpenSells = this.openOrders.some((o) => !o.isBid);
-        const avgEntry = this.getAvgEntryPrice();
-        // Verify lockedChannel is fresh and not an ancient stale record from days ago (>15% away from avgEntry)
-        const isFresh = avgEntry <= 0 || Math.abs(data.lockedChannel.centerPrice - avgEntry) / avgEntry < 0.15;
 
-        if ((hasInventory || hasOpenSells) && isFresh) {
-          this.lockedChannel = data.lockedChannel;
+        // As long as the bot holds inventory or resting sell orders, this locked channel represents
+        // the original structural entry and profit-taking bounds! Never wipe it arbitrarily.
+        if (hasInventory || hasOpenSells) {
+          this.lockedChannel = persistentLockedChannel;
           this.lastDynamicBounds = {
-            lowerBound: data.lockedChannel.lowerBound,
-            upperBound: data.lockedChannel.upperBound,
-            centerPrice: data.lockedChannel.centerPrice,
-            buyLevels: [...data.lockedChannel.buyLevels],
-            sellLevels: [...data.lockedChannel.sellLevels],
+            lowerBound: persistentLockedChannel.lowerBound,
+            upperBound: persistentLockedChannel.upperBound,
+            centerPrice: persistentLockedChannel.centerPrice,
+            buyLevels: [...persistentLockedChannel.buyLevels],
+            sellLevels: [...persistentLockedChannel.sellLevels],
           };
           this.log(
-            `🔒 [state] Restored locked channel bounds: [$${this.lastDynamicBounds.lowerBound.toFixed(6)} .. $${this.lastDynamicBounds.upperBound.toFixed(6)}] (Center: $${this.lastDynamicBounds.centerPrice.toFixed(6)}) with ${this.lots.length} lots held`,
+            `🔒 [state] Restored persistent locked channel bounds for ${symbolKey}: [$${this.lastDynamicBounds.lowerBound.toFixed(6)} .. $${this.lastDynamicBounds.upperBound.toFixed(6)}] (Center: $${this.lastDynamicBounds.centerPrice.toFixed(6)}) with ${this.lots.length} lots held`,
           );
         } else {
           this.lockedChannel = undefined;
+          this.lastDynamicBounds = undefined;
+          this.db.saveLockedChannel(symbolKey, undefined);
         }
       }
 
@@ -1024,7 +1047,9 @@ export class DynamicGrid {
         lockedChannel: this.lockedChannel,
         lastUpdated: Date.now(),
       };
-      this.db.saveState(data, immediate);
+      const symbolKey = this.getSymbolKey();
+      this.db.saveState(data, immediate, symbolKey);
+      this.db.saveLockedChannel(symbolKey, this.lockedChannel);
     } catch (err) {
       this.log(`warning: could not save state to database: ${(err as Error).message}`);
     }
@@ -1158,6 +1183,9 @@ export class DynamicGrid {
     this.sellOrdersActive = true;
     this.buyOrdersActive = true;
     this.stuckSince = undefined;
+    this.lockedChannel = undefined;
+    this.lastDynamicBounds = undefined;
+    this.db.saveLockedChannel(this.getSymbolKey(), undefined);
 
     // 4. Reset PnL & Gas if requested
     if (opts?.resetPnl) {
@@ -1202,6 +1230,9 @@ export class DynamicGrid {
     this.sellOrdersActive = true;
     this.buyOrdersActive = true;
     this.stuckSince = undefined;
+    this.lockedChannel = undefined;
+    this.lastDynamicBounds = undefined;
+    this.db.saveLockedChannel(this.getSymbolKey(), undefined);
 
     this.saveState(true);
     this.emitTelemetryTick();
@@ -1468,7 +1499,18 @@ export class DynamicGrid {
     const lockChannelInPosition = this.cfg.lockChannelInPosition !== false;
     const isHoldingPosition = totalHeldBase >= (this.minQty || 0.001) && !isDustPosition;
 
-    if (this.lastDynamicBounds && lockChannelInPosition && isHoldingPosition) {
+    const symbolKey = this.getSymbolKey();
+
+    if ((this.lastDynamicBounds || this.lockedChannel) && lockChannelInPosition && isHoldingPosition) {
+      if (!this.lastDynamicBounds && this.lockedChannel) {
+        this.lastDynamicBounds = {
+          lowerBound: this.lockedChannel.lowerBound,
+          upperBound: this.lockedChannel.upperBound,
+          centerPrice: this.lockedChannel.centerPrice,
+          buyLevels: [...this.lockedChannel.buyLevels],
+          sellLevels: [...this.lockedChannel.sellLevels],
+        };
+      }
       // 🔒 Position Lock (Option B: 100% Strict Freeze):
       // When holding inventory, freeze existing channel levels 100% solid to protect entry basis & targets.
       // Zero sliding down of lowerBound or upperBound!
@@ -1514,11 +1556,13 @@ export class DynamicGrid {
         rawFloorPrice,
         lockedAt: this.lockedChannel?.lockedAt || Date.now(),
       };
+      this.db.saveLockedChannel(symbolKey, this.lockedChannel);
     } else {
       // Position is flat/closed: unlock channel so it can adapt to current price for the next accumulation cycle
       if (!isHoldingPosition && this.lockedChannel) {
-        this.log("🔓 [POSITION UNLOCKED] Position returned to 100% cash — channel unfrozen for fresh accumulation");
+        this.log(`🔓 [POSITION UNLOCKED] Position returned to 100% cash — channel unfrozen for fresh accumulation (${symbolKey})`);
         this.lockedChannel = undefined;
+        this.db.saveLockedChannel(symbolKey, undefined);
       }
 
       const minShiftPct = (this.cfg.minChannelShiftPct ?? 1.0) / 100;
@@ -1579,6 +1623,7 @@ export class DynamicGrid {
           rawFloorPrice,
           lockedAt: Date.now(),
         };
+        this.db.saveLockedChannel(symbolKey, this.lockedChannel);
       }
     }
 
