@@ -246,7 +246,10 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     - หากเป็นโหมด Taker หรือคู่เทรดอื่น (เช่น USDT): บันทึกหัก Fee สุทธิ 0.075% ลงใน Lot ทันที
   - **Dust Purge & Residual Balance Reconcile**:
     - **เมื่อขายไม้สุดท้าย (100% Exit)**: สั่งขายจำนวนสูงสุดที่ทำได้ 4 ตำแหน่ง และหากมีเศษเหรียญต่ำกว่า `minQty` (0.0001 ETH) ตกค้างใน Lots จะทำการเคลียร์ `lots = []` และปลดล็อก Channel ทันที เพื่อไม่ให้สถานะบอทค้าง
-    - **เศษสะสมในกระเป๋า**: เศษเหรียญในกระเป๋าจริงที่ต่ำกว่า 0.0001 ETH จะไม่ถูกส่งไปขายดื้อๆ แต่จะถูกสะสมไว้ในกระเป๋า เมื่อสะสมจนครบ `0.0001 ETH` ระบบ `reconcileInventory` จะตรวจพบและดึงกลับมารวมขายทำกำไรในรอบถัดไปอัตโนมัติ
+- **Pure Dynamic Channel Locking & Position Shield (Zero Hardcoded Bounds)**:
+  - **Dynamic Locked Channel Persistence**: เมื่อบอทเริ่มถือ Position (`isHoldingPosition = true`) ระบบจะตรึงกรอบ Channel (`lockedChannel`) ล่าสุดไว้ 100% และบันทึกลงฐานข้อมูล `grid-bot.db.json` ป้องกันไม่ให้กรอบเลื่อนลงตามราคาที่ย่อตัวลง
+  - **Elimination of Hardcoded Bounds (0.1988 / 0.2154 / 0.2110)**: ลบเลข Hardcoded ตายตัวของเหรียญ SOMI ในอดีตทิ้ง 100% ทำให้ระบบรองรับทุกเหรียญ (BTC, ETH, SOMI ฯลฯ)
+  - **Dynamic Entry Shield**: หาก `upperBound` ของเหรียญใดๆ อยู่ต่ำกว่าต้นทุนเฉลี่ย (`avgEntry * 1.002`) บอทจะยกเพดาน `upperBound` ขึ้นเหนือต้นทุนเฉลี่ยตามสัดส่วนคณิตศาสตร์ (`Math.max(upperBound, avgEntry * 1.01)`) โดยยังคงฐานแนวรับ (`lowerBound`) ของเหรียญนั้นๆ ไว้อย่างถูกต้อง ไม่วนลูปพ่น log restore ซ้ำๆ อีกต่อไป
 - **4-Level Equal Sell Tranches & Anti-Churn Rule**:
   - **4 Equal Tranches (25% each)**: Total held inventory is divided equally across the 4 sell targets (`held / 4`). If Level 1's grid price is below best bid, it is floated to the minimum valid Maker ask (`max(lvlPrice, currentBestAsk, refPrice * 1.0005)`) so Target 1 is NEVER skipped or abandoned. Eliminates dumping a 50% remainder on Target 4.
 - **Immediate-Or-Cancel (IOC) Take-Profit on Exceeded Sell Levels (`ENABLE_IOC_SELL_WHEN_EXCEEDED`)**:

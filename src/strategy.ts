@@ -1403,7 +1403,7 @@ export class DynamicGrid {
     const isDustPosition = totalHeldBase < this.minQty || totalHeldUsdso < 0.05;
     if (this.lots.length > 0 && isDustPosition) {
       this.log(
-        `🧹 Auto-cleared residual dust position (${totalHeldBase.toFixed(4)} SOMI | $${totalHeldUsdso.toFixed(4)})`,
+        `🧹 Auto-cleared residual dust position (${totalHeldBase.toFixed(4)} ${this.baseAsset} | $${totalHeldUsdso.toFixed(4)})`,
       );
       this.lots = [];
     }
@@ -1418,27 +1418,29 @@ export class DynamicGrid {
       // Zero sliding down of lowerBound or upperBound!
       const avgEntry = this.getAvgEntryPrice();
 
-      // If previous adaptation mistakenly pulled ceiling below avgEntry or if corrupted, restore to entry basis
-      if (avgEntry > 0 && (this.lastDynamicBounds.upperBound < avgEntry * 1.002 || this.lastDynamicBounds.upperBound <= 0.2110)) {
-        const restoreTarget = 0.2154;
-        const restoreFloor = 0.1988;
-        this.log(`🔒 [RESTORE 100% LOCKED CHANNEL] Restoring locked channel to original entry bounds [$${restoreFloor.toFixed(6)} .. $${restoreTarget.toFixed(6)}]`);
-        this.lastDynamicBounds.upperBound = restoreTarget;
-        this.lastDynamicBounds.lowerBound = restoreFloor;
-        this.lastDynamicBounds.centerPrice = (restoreFloor + restoreTarget) / 2;
-        const dSpan = restoreTarget - restoreFloor;
-        this.lastDynamicBounds.sellLevels = [
-          restoreFloor + dSpan * 0.60,
-          restoreFloor + dSpan * 0.70,
-          restoreFloor + dSpan * 0.80,
-          restoreFloor + dSpan * 0.90,
-        ];
-        this.lastDynamicBounds.buyLevels = [
-          restoreFloor + dSpan * 0.40,
-          restoreFloor + dSpan * 0.30,
-          restoreFloor + dSpan * 0.20,
-          restoreFloor + dSpan * 0.10,
-        ];
+      // Ensure upperBound stays above average entry price so sell targets remain profitable
+      if (avgEntry > 0 && this.lastDynamicBounds.upperBound < avgEntry * 1.002) {
+        const minProfitTarget = avgEntry * 1.01;
+        const currentFloor = this.lastDynamicBounds.lowerBound;
+        const newCeiling = Math.max(this.lastDynamicBounds.upperBound, minProfitTarget);
+        if (newCeiling > this.lastDynamicBounds.upperBound) {
+          this.log(`🔒 [LOCKED CHANNEL ENTRY SHIELD] Adjusted locked ceiling from $${this.lastDynamicBounds.upperBound.toFixed(6)} to $${newCeiling.toFixed(6)} (Entry: $${avgEntry.toFixed(6)})`);
+          this.lastDynamicBounds.upperBound = newCeiling;
+          this.lastDynamicBounds.centerPrice = (currentFloor + newCeiling) / 2;
+          const dSpan = newCeiling - currentFloor;
+          this.lastDynamicBounds.sellLevels = [
+            currentFloor + dSpan * 0.60,
+            currentFloor + dSpan * 0.70,
+            currentFloor + dSpan * 0.80,
+            currentFloor + dSpan * 0.90,
+          ];
+          this.lastDynamicBounds.buyLevels = [
+            currentFloor + dSpan * 0.40,
+            currentFloor + dSpan * 0.30,
+            currentFloor + dSpan * 0.20,
+            currentFloor + dSpan * 0.10,
+          ];
+        }
       }
 
       lowerBound = this.lastDynamicBounds.lowerBound;
