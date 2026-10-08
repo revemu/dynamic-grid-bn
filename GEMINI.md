@@ -15,12 +15,11 @@ This document is the persistent operational and architectural knowledge base for
 ## 1. Project Architecture (`dynamic-grid-bn`)
 
 > [!NOTE]
-> `dynamic-grid-bn` เป็น **Standalone Trading Bot สำหรับ Binance Spot** (แยกตัวเป็นอิสระ ไม่ได้ขึ้นตรงกับ Monorepo หรือ On-chain Smart Contract ของเครือข่ายอื่นอีกต่อไป)
+> `dynamic-grid-bn` เป็น **Standalone Universal Trading Bot** รองรับทั้ง **Binance Spot (CEX)** และ **DreamDEX on Somnia (DEX)** ผ่าน Pluggable Multi-Exchange Adapter Layer โดยไม่ต้องพึ่งพา Monorepo หรือรันข้ามโฟลเดอร์อีกต่อไป
 
 ```text
 dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-grid-bn)
-├── package.json                     # Dependencies: dotenv, ws, tsx, typescript
-├── .env                             # Environment config (BINANCE_API_KEY, SECRET, SYMBOL, DRY_RUN, PORT)
+├── package.json                     # Dependencies: dotenv, ws, viem, tsx, typescript
 ├── data/
 │   └── grid-bot.db.json             # ACID database for lots, orders, settings, and PnL persistence
 ├── public/                          # TradingView Lightweight Charts Dashboard UI
@@ -31,7 +30,8 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     ├── index.ts                     # Strategy entrypoint (bootstraps feeds, engines, dashboard)
     ├── exchange/                    # Exchange Adapter Layer (Pluggable Multi-Exchange Support)
     │   ├── types.ts                 # IExchangeClient interface & standardized exchange types
-    │   └── index.ts                 # createExchangeClient factory loader
+    │   ├── index.ts                 # createExchangeClient factory loader
+    │   └── dreamdex-client.ts       # DreamDEX On-Chain Adapter (implements IExchangeClient via viem)
     ├── binance-client.ts            # Binance Spot Adapter (implements IExchangeClient)
     ├── binance-feed.ts              # Binance WebSocket kline client for real-time ATR & candle updates
     ├── strategy.ts                  # Core DynamicGrid state machine, lots management, safeguards
@@ -49,14 +49,19 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 ## 2. Multi-Exchange Adapter Architecture & Spot Execution
 
 1. **Exchange Adapter Pattern (`src/exchange/types.ts` & `src/exchange/index.ts`)**:
-   - ประกาศ Standard Interface: `IExchangeClient` เพื่อรองรับการสลับไปกระดานเทรดอื่น (เช่น Bybit, OKX) โดยไม่แตะต้องตรรกะใน Strategy
+   - ประกาศ Standard Interface: `IExchangeClient` เพื่อรองรับการสลับระหว่าง Binance Spot (CEX) และ DreamDEX Spot (DEX) โดยไม่แตะต้องตรรกะใน Strategy
    - เมธอดมาตรฐาน: `getExchangeInfo`, `getAccountBalances`, `getOpenOrders`, `getOrder`, `getTopOfBook`, `placeOrder`, `cancelOrder`, `cancelAllOpenOrders`, `syncTime`
-   - มี Factory function: `createExchangeClient({ exchange, ... })` เลือกกระดานผ่าน config / `.env` (`EXCHANGE=binance`)
+   - Factory function: `createExchangeClient({ exchange, ... })` เลือกกระดานผ่าน DB (`settings.exchange = "binance" | "dreamdex"`)
 2. **Binance Spot Implementation (`src/binance-client.ts`)**:
-   - `BinanceClient implements IExchangeClient` (Default Adapter)
+   - `BinanceClient implements IExchangeClient` (Default CEX Adapter)
    - เชื่อมต่อกับ Binance Spot REST API (`https://api.binance.com`)
-   - รองรับโหมด **`DRY_RUN=true`**: ดึงข้อมูลตลาดสาธารณะ (Order Book, Klines, Ticks) และจำลองการส่งออเดอร์ในหน่วยความจำโดยไม่ต้องใช้ API Key
-   - รองรับโหมด **Live Trading (`DRY_RUN=false`)**: ใช้ API Key และ Secret ในการซิงค์ยอดเงินใน Wallet, เช็ก Open Orders, และส่งออเดอร์จริง
+   - รองรับโหมด `DRY_RUN=true` และ Live Trading (`apiKey`, `apiSecret`)
+3. **DreamDEX On-Chain Implementation (`src/exchange/dreamdex-client.ts`)**:
+   - `DreamDexClient implements IExchangeClient` (DEX Adapter for Somnia Network)
+   - เชื่อมต่อ Somnia RPC ผ่าน `viem` (`publicClient`, `walletClient`) และเซ็นคำสั่งด้วย `privateKey`
+   - เรียก Smart Contract `SpotPool` (`placeOrder`, `cancelOrder`, `getPoolParams`)
+   - ซิงค์ประวัติ Order ย้อนหลังผ่าน Somnia GraphQL Indexer API (`SomniaIndexerClient` / `https://prd.smk.somnia.host/v1/graphql`)
+   - รองรับคู่เทรดหลัก: `SOMI:USDso`, `USDC.e:USDso`, `WBTC:USDso`, `WETH:USDso`
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 3. **Asset Precision & Terminology**:

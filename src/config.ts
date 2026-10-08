@@ -46,10 +46,18 @@ export const defaultStrategyConfig = {
   timezone: process.env.TZ || "Asia/Bangkok",
   dryRun: process.env.DRY_RUN === "true" || false,
 
+  /** Active Exchange Adapter: "binance" (default) or "dreamdex". */
+  exchange: (process.env.EXCHANGE || "binance").toLowerCase(),
+
   // ── Binance API Credentials ─────────────────────────────────────────────
   binanceApiKey: process.env.BINANCE_API_KEY || "",
   binanceApiSecret: process.env.BINANCE_API_SECRET || "",
   binanceBaseUrl: process.env.BINANCE_BASE_URL || "https://api.binance.com",
+
+  // ── DreamDEX On-Chain Credentials & Network ────────────────────────────
+  dreamdexPrivateKey: process.env.DREAMDEX_PRIVATE_KEY || process.env.PRIVATE_KEY || "",
+  dreamdexRpcUrl: process.env.RPC_URL || "https://api.infra.mainnet.somnia.network",
+  dreamdexNetwork: "mainnet" as "mainnet" | "testnet",
 
   // ── Dynamic-grid specific: volatility-driven step sizing ────────────────
   /** "binance" (external WS feed) or "dreamdex" (self-sampled from pool.topOfBook()). */

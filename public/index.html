@@ -601,13 +601,24 @@
           </div>
         </div>
 
-        <!-- Tab: Binance API & Environment Settings (Stored in DB) -->
+        <!-- Tab: Exchange & API Settings (Stored in DB) -->
         <div class="tab-pane" id="tab-api">
           <div class="settings-grid">
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label for="cfg_exchange">
+                Active Trading Exchange (เลือกกระดานเทรด)
+                <span class="help-tip" title="สลับระหว่าง Binance Spot (CEX) และ DreamDEX on Somnia Network (DEX)">ℹ️</span>
+              </label>
+              <select id="cfg_exchange" class="form-select">
+                <option value="binance">🟡 Binance Spot (CEX - API Key & Secret)</option>
+                <option value="dreamdex">🟣 DreamDEX on Somnia (DEX - Web3 Private Key)</option>
+              </select>
+            </div>
+
             <div class="form-group switch-group" style="grid-column: 1 / -1;">
               <div class="switch-label-group">
                 <span class="switch-title">🧪 Dry Run Simulation Mode (ทดลองเทรดจำลอง)</span>
-                <span class="switch-desc">ถ้าเปิด (ON): บอทจะจำลองการซื้อขายโดยไม่ส่งคำสั่งเทรดจริงไปยัง Binance Spot | ถ้าปิด (OFF): ส่งออเดอร์จริงเข้าตลาด Binance</span>
+                <span class="switch-desc">ถ้าเปิด (ON): บอทจะจำลองการซื้อขายโดยไม่ส่งคำสั่งเทรดจริง | ถ้าปิด (OFF): ส่งออเดอร์จริงเข้าตลาด</span>
               </div>
               <label class="toggle-switch">
                 <input type="checkbox" id="cfg_dryRun" />
@@ -615,25 +626,50 @@
               </label>
             </div>
 
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label for="cfg_binanceApiKey">
-                Binance API Key
-                <span class="help-tip" title="API Key จาก Binance Spot (เปิดสิทธิ์ Read และ Enable Spot & Margin Trading)">ℹ️</span>
-              </label>
-              <div class="input-with-unit">
-                <input type="text" id="cfg_binanceApiKey" placeholder="ใส่ Binance API Key ที่นี่..." autocomplete="off" />
-                <span class="unit">KEY</span>
+            <!-- Binance Credentials Group -->
+            <div class="binance-fields-group" style="grid-column: 1 / -1;">
+              <div class="form-group">
+                <label for="cfg_binanceApiKey">
+                  Binance API Key
+                  <span class="help-tip" title="API Key จาก Binance Spot">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="text" id="cfg_binanceApiKey" placeholder="ใส่ Binance API Key ที่นี่..." autocomplete="off" />
+                  <span class="unit">KEY</span>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-top: 12px;">
+                <label for="cfg_binanceApiSecret">
+                  Binance API Secret
+                  <span class="help-tip" title="API Secret จาก Binance Spot">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="password" id="cfg_binanceApiSecret" placeholder="ใส่ Binance API Secret ที่นี่..." autocomplete="off" />
+                  <span class="unit">SECRET</span>
+                </div>
               </div>
             </div>
 
-            <div class="form-group" style="grid-column: 1 / -1;">
-              <label for="cfg_binanceApiSecret">
-                Binance API Secret
-                <span class="help-tip" title="API Secret จาก Binance Spot (จัดเก็บในฐานข้อมูล grid-bot.db.json โดยตรง)">ℹ️</span>
-              </label>
-              <div class="input-with-unit">
-                <input type="password" id="cfg_binanceApiSecret" placeholder="ใส่ Binance API Secret ที่นี่..." autocomplete="off" />
-                <span class="unit">SECRET</span>
+            <!-- DreamDEX Credentials Group -->
+            <div class="dreamdex-fields-group" style="grid-column: 1 / -1;">
+              <div class="form-group">
+                <label for="cfg_dreamdexPrivateKey">
+                  DreamDEX Wallet Private Key (Somnia Chain)
+                  <span class="help-tip" title="Private Key สำหรับเซ็นธุรกรรมเทรดบน DreamDEX SpotPool (เก็บใน grid-bot.db.json อย่างปลอดภัย)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="password" id="cfg_dreamdexPrivateKey" placeholder="0x... หรือ Private Key 64 ตัวอักษร" autocomplete="off" />
+                  <span class="unit">KEY</span>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-top: 12px;">
+                <label for="cfg_dreamdexRpcUrl">
+                  Somnia RPC Endpoint
+                  <span class="help-tip" title="Default: https://api.infra.mainnet.somnia.network">ℹ️</span>
+                </label>
+                <input type="text" id="cfg_dreamdexRpcUrl" placeholder="https://api.infra.mainnet.somnia.network" />
               </div>
             </div>
 

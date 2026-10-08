@@ -42,11 +42,13 @@ function log(msg: string, extra?: unknown): void {
 
 async function main(): Promise<void> {
   const exchange = createExchangeClient({
-    exchange: (config as any).exchange || process.env.EXCHANGE || "binance",
+    exchange: config.exchange || "binance",
     apiKey: config.binanceApiKey,
     apiSecret: config.binanceApiSecret,
     baseUrl: config.binanceBaseUrl,
-    log: (msg) => log(`[${(config as any).exchange || "binance"}] ${msg}`),
+    privateKey: config.dreamdexPrivateKey,
+    rpcUrl: config.dreamdexRpcUrl,
+    log: (msg) => log(`[${config.exchange || "binance"}] ${msg}`),
   });
 
   await exchange.syncTime();

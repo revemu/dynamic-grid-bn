@@ -4,13 +4,15 @@
  */
 
 import { BinanceClient, type BinanceClientOptions } from "../binance-client.js";
+import { DreamDexClient, type DreamDexClientOptions } from "./dreamdex-client.js";
 import type { IExchangeClient } from "./types.js";
 
 export * from "./types.js";
+export * from "./dreamdex-client.js";
 
-export type SupportedExchange = "binance" | "bybit" | "okx";
+export type SupportedExchange = "binance" | "dreamdex" | "bybit" | "okx";
 
-export interface ExchangeFactoryOptions extends BinanceClientOptions {
+export interface ExchangeFactoryOptions extends BinanceClientOptions, DreamDexClientOptions {
   exchange?: string;
 }
 
@@ -24,7 +26,9 @@ export function createExchangeClient(opts: ExchangeFactoryOptions = {}): IExchan
   switch (exchange) {
     case "binance":
       return new BinanceClient(opts);
+    case "dreamdex":
+      return new DreamDexClient(opts);
     default:
-      throw new Error(`Unsupported exchange: "${exchange}". Currently supported: binance`);
+      throw new Error(`Unsupported exchange: "${exchange}". Currently supported: binance, dreamdex`);
   }
 }

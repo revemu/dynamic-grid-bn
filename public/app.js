@@ -2940,6 +2940,7 @@
       };
 
       setVal("cfg_symbol", data.symbol || "BTCUSDT");
+      setVal("cfg_exchange", data.exchange || "binance");
       const elTopSymbolSelect = document.getElementById("topSymbolSelect");
       if (elTopSymbolSelect && data.symbol) {
         elTopSymbolSelect.value = data.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -2948,6 +2949,8 @@
       setVal("cfg_binanceApiSecret", data.binanceApiSecret || "");
       setVal("cfg_binanceBaseUrl", data.binanceBaseUrl || "https://api.binance.com");
       setVal("cfg_binanceWsBase", data.binanceWsBase || "wss://stream.binance.com:9443");
+      setVal("cfg_dreamdexPrivateKey", data.dreamdexPrivateKey || "");
+      setVal("cfg_dreamdexRpcUrl", data.dreamdexRpcUrl || "https://api.infra.mainnet.somnia.network");
       setVal("cfg_dashboardPort", data.dashboardPort || 3333);
       setCheck("cfg_dryRun", data.dryRun !== false);
       setVal("cfg_maxInventoryUsdso", data.maxInventoryUsdso);
@@ -3029,11 +3032,14 @@
 
     const maxInvVal = parseFloat(document.getElementById("cfg_maxInventoryUsdso").value);
     const payload = {
+      exchange: document.getElementById("cfg_exchange") ? document.getElementById("cfg_exchange").value : "binance",
       symbol: document.getElementById("cfg_symbol") ? document.getElementById("cfg_symbol").value.trim().toUpperCase() : undefined,
       binanceApiKey: document.getElementById("cfg_binanceApiKey") ? document.getElementById("cfg_binanceApiKey").value.trim() : undefined,
       binanceApiSecret: document.getElementById("cfg_binanceApiSecret") ? document.getElementById("cfg_binanceApiSecret").value.trim() : undefined,
       binanceBaseUrl: document.getElementById("cfg_binanceBaseUrl") ? document.getElementById("cfg_binanceBaseUrl").value.trim() : undefined,
       binanceWsBase: document.getElementById("cfg_binanceWsBase") ? document.getElementById("cfg_binanceWsBase").value.trim() : undefined,
+      dreamdexPrivateKey: document.getElementById("cfg_dreamdexPrivateKey") ? document.getElementById("cfg_dreamdexPrivateKey").value.trim() : undefined,
+      dreamdexRpcUrl: document.getElementById("cfg_dreamdexRpcUrl") ? document.getElementById("cfg_dreamdexRpcUrl").value.trim() : undefined,
       dashboardPort: document.getElementById("cfg_dashboardPort") ? parseInt(document.getElementById("cfg_dashboardPort").value, 10) : undefined,
       dryRun: document.getElementById("cfg_dryRun") ? document.getElementById("cfg_dryRun").checked : false,
       maxInventoryQuote: maxInvVal,
