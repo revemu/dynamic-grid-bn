@@ -65,7 +65,8 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - รองรับคู่เทรดหลัก: `SOMI:USDso`, `USDC.e:USDso`, `WBTC:USDso`, `WETH:USDso`
    - **Real On-Chain ERC-20 Balances & Allowance**: ดึงยอดเงิน USDso และ Base token (WETH, WBTC, USDC.e) ผ่าน ERC-20 `balanceOf` บน Somnia RPC จริง โดยไม่ฮาร์ดโค้ด `quoteFree: 0` พร้อมระบบ `ensureAllowance` ตรวจสอบและ approve อัตโนมัติก่อนวางออเดอร์
    - **Credentials Masking Protection (`******`)**: ฟรอนต์เอนด์และแบ็กเอนด์แยกแยะระหว่างค่า Masking (`******`) กับ Private Key จริงอย่างเข้มงวด โดยจะไม่ส่งหรือเผลอ parse ข้อความ `******` เป็น private key เข้า `viem` อีกต่อไป ป้องกันปัญหา `invalid private key, expected hex or 32 bytes` ขณะบันทึกการตั้งค่า
-   - **Dynamic Trading Pair Selection in Settings**: ช่องกรอกคู่เทรดใน Settings Modal และ Datalist จะสลับคู่เหรียญของ DreamDEX (`SOMI:USDso`, `USDC.e:USDso`, `WBTC:USDso`, `WETH:USDso`) ให้เลือกทันทีตามกระดานที่เปิดใช้งาน
+   - **True Select Dropdown for Trading Pair in Settings Modal**: เปลี่ยนช่องกรอกคู่เทรดในหน้าต่าง Settings จาก input text เป็น `<select id="cfg_symbol" class="form-select">` เต็มรูปแบบ กดเลือกรายการเหรียญ (`WBTC:USDso`, `WETH:USDso`, `SOMI:USDso`, `USDC.e:USDso`) ได้ทันทีโดยไม่ต้องพิมพ์เอง
+   - **Instant Pair Switching (`symbolChanged`)**: ปรับปรุงตรรกะการตรวจจับการสลับเหรียญใน `index.ts` โดยเทียบ Symbol ที่ normalize แล้วล่วงหน้า ทำให้การกดเปลี่ยนเหรียญทั้งจากแถบด้านบนหรือใน Settings สลับกระดาน ดึง Info คู่เทรดใหม่ และรีเฟรชกราฟแท่งเทียนได้ทันที 100%
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

@@ -3216,18 +3216,21 @@
         }
       }
     }
-    if (elPopularSymbolsList) {
-      elPopularSymbolsList.innerHTML = targetHtml;
+    const elCfgSymbol = document.getElementById("cfg_symbol");
+    if (elCfgSymbol) {
+      elCfgSymbol.innerHTML = targetHtml;
+      if (currentSymbol) {
+        elCfgSymbol.value = currentSymbol.toUpperCase();
+        if (!elCfgSymbol.value) {
+          elCfgSymbol.value = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
+        }
+      }
     }
     const lblSymbol = document.getElementById("lbl_symbol");
     if (lblSymbol) {
       lblSymbol.innerHTML = isDreamdex
         ? `DreamDEX Trading Pair (Symbol) <span class="help-tip" title="Choose or enter DreamDEX pair (e.g. SOMI, SOMI:USDso, WETH:USDso, WBTC:USDso)">ℹ️</span>`
         : `Binance Trading Pair (Symbol) <span class="help-tip" title="Choose or enter Binance Spot pair (e.g. BTCUSDT, ETHUSDT, ETHFDUSD)">ℹ️</span>`;
-    }
-    const cfgSymbol = document.getElementById("cfg_symbol");
-    if (cfgSymbol) {
-      cfgSymbol.placeholder = isDreamdex ? "SOMI:USDSO" : "BTCUSDT";
     }
   }
 

@@ -488,23 +488,12 @@
                 Trading Pair (Symbol)
                 <span class="help-tip" title="Choose or enter trading pair (e.g. BTCUSDT on Binance or SOMI:USDso on DreamDEX)">ℹ️</span>
               </label>
-              <div class="input-with-unit">
-                <input type="text" id="cfg_symbol" placeholder="BTCUSDT" list="popularSymbolsList" style="text-transform: uppercase;" />
-                <datalist id="popularSymbolsList">
-                  <option value="BTCUSDT">BTC / USDT</option>
-                  <option value="ETHUSDT">ETH / USDT</option>
-                  <option value="SOLUSDT">SOL / USDT</option>
-                  <option value="BNBUSDT">BNB / USDT</option>
-                  <option value="DOGEUSDT">DOGE / USDT</option>
-                  <option value="XRPUSDT">XRP / USDT</option>
-                  <option value="ADAUSDT">ADA / USDT</option>
-                  <option value="AVAXUSDT">AVAX / USDT</option>
-                  <option value="SUIUSDT">SUI / USDT</option>
-                  <option value="NEARUSDT">NEAR / USDT</option>
-                  <option value="PEPEUSDT">PEPE / USDT</option>
-                </datalist>
-                <span class="unit">PAIR</span>
-              </div>
+              <select id="cfg_symbol" class="form-select">
+                <option value="BTCUSDT">BTC/USDT</option>
+                <option value="ETHUSDT">ETH/USDT</option>
+                <option value="SOLUSDT">SOL/USDT</option>
+                <option value="BNBUSDT">BNB/USDT</option>
+              </select>
             </div>
 
             <div class="form-group">

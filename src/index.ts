@@ -260,6 +260,10 @@ async function main(): Promise<void> {
       const exchangeChanged = s.exchange && targetExchangeName !== (prevConfig.exchange || "binance").toLowerCase();
       const privateKeyChanged = s.dreamdexPrivateKey && s.dreamdexPrivateKey !== "******";
 
+      const normPrevSymbol = (prevSymbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+      const normNextSymbol = (s.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+      const symbolChanged = Boolean(normNextSymbol && normNextSymbol !== normPrevSymbol);
+
       // 1. Handle Exchange Adapter switch or credentials update dynamically
       if (exchangeChanged || (targetExchangeName === "dreamdex" && privateKeyChanged)) {
         try {
@@ -305,9 +309,9 @@ async function main(): Promise<void> {
         } catch (err) {
           log(`⚠️ Failed to switch exchange adapter to ${targetExchangeName}: ${(err as Error).message}`);
         }
-      } else if (s.symbol && s.symbol.toUpperCase().replace(/[\/\-_:]/g, "") !== prevSymbol) {
+      } else if (symbolChanged) {
         // 2. Handle trading pair change dynamically on same exchange
-        const nextSymbolStr = s.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+        const nextSymbolStr = normNextSymbol;
         try {
           const nextInfo = await exchange.getExchangeInfo(nextSymbolStr);
           symbolInfo = nextInfo;
