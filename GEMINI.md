@@ -106,10 +106,10 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - `50% Center`: Equilibrium midpoint.
   - `50%–100% Sell Zone`: Stepped profit taking ladder.
   - `100% Ceiling`: Resistance boundary; 100% full take-profit exit.
-- **Dynamic 4-Level Buy Tranche Allocation (No Hardcoded $10!)**:
-  - Available capacity (`currentAvailableCapacity = Math.max(0, maxInv - currentHeldUsdso)`) is dynamically divided equally across all 4 buy levels (`trancheUsdso = currentAvailableCapacity / 4`).
-  - Eliminates the flawed rigid $10 limit (`maxInv / 4`) which previously prevented Buy Level 4 from placing orders when partial inventory was held.
-  - Guarantees 100% that **all 4 buy levels have active resting orders**, fully utilizing available USDso capacity without empty levels.
+- **Dynamic Buy Tranche Allocation & Min Notional Floor (No Rigid / 4 Dilution)**:
+  - แทนที่จะหาร 4 แบบคงที่ (`currentAvailableCapacity / 4`) ซึ่งทำให้เกิดปัญหาเมื่อเหลือความจุ เช่น $15.75 แล้วถูกหารจนเหลือเพียง $3.82 จนต่ำกว่า Binance Min Notional ($5.00)
+  - ระบบจะคำนวณจำนวนระดับที่พร้อมวางคำสั่งซื้อจริง (`numEligibleBuyLevels`) โดยไม่นับระดับที่ติด Holding Fraction Guard หรือ Trendline Filters
+  - หากหารเฉลี่ยแล้วขนาดไม้ต่ำกว่า $5.00 (`rawTrancheQuote < minNotional`) ระบบจะรวบรวมงบที่เหลือเข้าด้วยกัน (`min(currentAvailableCapacity, minOrderNotional)`) เพื่อการันตีว่าออเดอร์มีมูลค่า $\ge \$5.00$ เสมอ ไม่โดนข้าม (Skip) โดย `MIN NOTIONAL GUARD` อีกต่อไป
 - **Dynamic Sell Tranche Allocation & CEX Rebalancing (Equal Sell Sizes & Zero Dump)**:
   - **Eligible Level Counting (`numEligibleLevels`)**: คำนวณจำนวนระดับที่อยู่เหนือราคาตลาดและพร้อมวางขายจริง (`lvl > minAllowedSellPrice`) และแบ่งขนาดไม้เฉลี่ยเท่ากันเป๊ะ (`trancheQty = held / numEligibleLevels`) แทนการหาร 4 แบบคงที่ ซึ่งเคยทำให้เกิดเศษค้างเมื่อราคาผ่าน Sell Target 1 ไปแล้ว
   - **Zero Final Level Dump**: ไม้สุดท้าย (Exit All) จะรับเฉพาะเศษทศนิยมระดับ Satoshis/Wei เล็กๆ เท่านั้น ไม่ดูด Inventory ก้อนใหญ่มากองไว้ที่ Sell Target 4 จนขนาดไม้เบิ้ล 2 เท่าอีกต่อไป

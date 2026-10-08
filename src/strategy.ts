@@ -2927,9 +2927,41 @@ export class DynamicGrid {
       // Rebalance Buy side: track available capacity across all buy levels
       const openBuys = this.openOrders.filter((o) => o.isBid);
       const currentAvailableCapacity = Math.max(0, maxInv - currentHeldQuote);
+      const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
+      const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
+
+      // Determine which buy levels are actually eligible for placing/holding orders
+      // (not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
+      const eligibleBuyIndices = effectiveBuyLevels
+        .map((lvl, idx) => ({ lvl, idx }))
+        .filter(({ lvl, idx }) => {
+          if (!lvl) return false;
+          // Holding Fraction Guard
+          const lvlTargetFraction = buyTargets[idx] ?? ((idx + 1) / (effectiveBuyLevels.length || 4));
+          if (currentHoldFraction >= (lvlTargetFraction - 0.05) && idx < effectiveBuyLevels.length - 1) {
+            return false;
+          }
+          // Downtrend Trendline filter
+          if (activeDowntrendLine && !activeDowntrendLine.isBroken && lvl >= activeDowntrendLine.currentLinePrice) {
+            return false;
+          }
+          // Uptrend Support filter
+          if (this.cfg.enableBuyAboveTrendSupport !== false && isTlAboveBuyTarget && idx > 0 && activeUptrendLine && lvl < activeUptrendLine.currentLinePrice * 0.995) {
+            return false;
+          }
+          return true;
+        })
+        .map(({ idx }) => idx);
+
       const numBuyLevels = effectiveBuyLevels.length || 4;
-      // Dynamic equal tranche sizing: remaining available capacity divided equally across all 4 levels (no hardcoded $10!)
-      const trancheQuote = numBuyLevels > 0 ? (currentAvailableCapacity / numBuyLevels) : 0;
+      const numEligibleBuyLevels = eligibleBuyIndices.length > 0 ? eligibleBuyIndices.length : numBuyLevels;
+      // Dynamic equal tranche sizing across remaining eligible levels (no static / 4 dilution!)
+      let rawTrancheQuote = numEligibleBuyLevels > 0 ? (currentAvailableCapacity / numEligibleBuyLevels) : 0;
+      // If dividing evenly drops below minNotional ($5.00), consolidate capacity to satisfy exchange minNotional
+      if (rawTrancheQuote < minOrderNotional && currentAvailableCapacity >= minOrderNotional) {
+        rawTrancheQuote = Math.min(currentAvailableCapacity, minOrderNotional);
+      }
+      const trancheQuote = rawTrancheQuote;
       const trancheUsdso = trancheQuote;
       const doBuyRebalance = this.needsBuyRebalance;
       this.needsBuyRebalance = false;
