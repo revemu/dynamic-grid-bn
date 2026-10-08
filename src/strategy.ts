@@ -2562,11 +2562,11 @@ export class DynamicGrid {
     const buyLevel1Price = buyLevels[0] ?? (lowerBound + span * 0.40);
 
     // Rule: Hysteresis for Buy Orders / IOC Buy Trigger
-    // When enableBuyBelowSellLevel1 is true (default):
-    // 1. Maintain buy orders / IOC trigger ONLY when price is at or below Sell Level 1 (<= 60% / <= sellLevel1Price).
-    // 2. Pause buy orders / IOC trigger when price is above Sell Level 1 (> 60% / > sellLevel1Price).
+    // On Binance (CEX): No gas or fee concerns, orders remain active continuously across the grid.
+    // On DreamDEX (DEX): Apply hysteresis to reduce on-chain gas churn.
+    const isCexExchange = this.binance.exchangeName === "binance";
     const buyActionTerm = this.cfg.orderExecutionMode === "IOC_BRACKET" ? "IOC buy trigger" : "buy orders";
-    if (this.cfg.enableBuyBelowSellLevel1 !== false) {
+    if (!isCexExchange && this.cfg.enableBuyBelowSellLevel1 !== false) {
       if (this.buyOrdersActive && (positionPct > 60.5 || refPrice > sellLevel1Price * 1.001)) {
         this.buyOrdersActive = false;
         this.log(`🛑 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) above Sell Level 1 ($${sellLevel1Price.toFixed(6)}) — pausing ${buyActionTerm} to prevent churn in upper profit zone`);
@@ -2582,11 +2582,8 @@ export class DynamicGrid {
     }
 
     // Rule: Hysteresis for Sell Orders / IOC Sell Trigger
-    // When enableSellAboveBuyLevel1 is true (default):
-    // 1. Maintain sell orders / IOC trigger ONLY when price is at or above Buy Level 1 (>= 40% / >= buyLevel1Price).
-    // 2. Pause sell orders / IOC trigger when price is below Buy Level 1 (< 40% / < buyLevel1Price).
     const sellActionTerm = this.cfg.orderExecutionMode === "IOC_BRACKET" ? "IOC sell trigger" : "resting sell orders";
-    if (this.cfg.enableSellAboveBuyLevel1 !== false) {
+    if (!isCexExchange && this.cfg.enableSellAboveBuyLevel1 !== false) {
       if (this.sellOrdersActive && (positionPct < 39.5 || refPrice < buyLevel1Price * 0.999)) {
         this.sellOrdersActive = false;
         this.log(`🛑 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) below Buy Level 1 ($${buyLevel1Price.toFixed(6)}) — pausing ${sellActionTerm} to prevent churn in lower accumulation zone`);
@@ -2861,6 +2858,7 @@ export class DynamicGrid {
     const currentHeldQuote = this.baseHeld() * refPrice;
     const currentHeldUsdso = currentHeldQuote;
     const maxInv = this.cfg.maxInventoryQuote;
+    const isCexExchange = this.binance.exchangeName === "binance";
 
     const priceTol = (this.cfg.orderPriceTolerancePct ?? 0.8) / 100;
     const qtyTol = (this.cfg.orderQtyTolerancePct ?? 20) / 100;
@@ -3063,6 +3061,21 @@ export class DynamicGrid {
             continue;
           }
 
+          // ── Holding Fraction Guard (No Repeating Buy Fills on already filled levels) ──
+          // In a 4-level accumulation ladder, each level represents a target holding threshold:
+          // Level 1: up to 25% (buyTargets[0] = 0.25)
+          // Level 2: up to 50% (buyTargets[1] = 0.50)
+          // Level 3: up to 75% (buyTargets[2] = 0.75)
+          // Level 4: up to 100% (buyTargets[3] = 1.00)
+          // If current portfolio holding already satisfies or exceeds this level's target fraction,
+          // do NOT re-place a buy order at this level while holding that inventory!
+          // (Only allow subsequent lower levels, or wait until inventory is sold).
+          const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
+          const levelTargetFraction = buyTargets[i] ?? ((i + 1) / numBuyLevels);
+          if (currentHoldFraction >= (levelTargetFraction - 0.05) && i < effectiveBuyLevels.length - 1) {
+            continue;
+          }
+
           const isEligibleForNewOrder = lvlPrice < maxAllowedBuyPrice && canBuy;
           if (isEligibleForNewOrder && trancheQuote > 0) {
             // Place new equal tranche buy order (proportional 4-level average of remaining capacity)
@@ -3092,8 +3105,8 @@ export class DynamicGrid {
     const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), totalTradingCapacity);
     const isDustPosition = held < this.minQty || currentHeldQuote < 0.05;
 
-    // Rule: Legacy Fallback Hysteresis Band (only if enableSellAboveBuyLevel1 is false)
-    if (this.cfg.enableSellAboveBuyLevel1 === false) {
+    // Rule: Legacy Fallback Hysteresis Band (only if enableSellAboveBuyLevel1 is false, and on DEX only)
+    if (!isCexExchange && this.cfg.enableSellAboveBuyLevel1 === false) {
       const isBelowSafetyBuffer = positionPct < 5;
       const isAtOrAboveBuyRecovery = positionPct >= 15;
       const candles = this.dowEngine?.getCandles() ?? [];

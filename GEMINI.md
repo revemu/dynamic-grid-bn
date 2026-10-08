@@ -114,9 +114,14 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - **Eligible Level Counting (`numEligibleLevels`)**: คำนวณจำนวนระดับที่อยู่เหนือราคาตลาดและพร้อมวางขายจริง (`lvl > minAllowedSellPrice`) และแบ่งขนาดไม้เฉลี่ยเท่ากันเป๊ะ (`trancheQty = held / numEligibleLevels`) แทนการหาร 4 แบบคงที่ ซึ่งเคยทำให้เกิดเศษค้างเมื่อราคาผ่าน Sell Target 1 ไปแล้ว
   - **Zero Final Level Dump**: ไม้สุดท้าย (Exit All) จะรับเฉพาะเศษทศนิยมระดับ Satoshis/Wei เล็กๆ เท่านั้น ไม่ดูด Inventory ก้อนใหญ่มากองไว้ที่ Sell Target 4 จนขนาดไม้เบิ้ล 2 เท่าอีกต่อไป
   - **Auto Rebalancing on CEX / BUY Fills**: เมื่อมี BUY แมตช์ (`needsSellRebalance = true`) หรือบน CEX (Binance) หากตรวจพบว่าขนาดออเดอร์ขายแต่ละไม้เบี่ยงเบนไปจากไม้เฉลี่ยเกิน 10% บอทจะทำการยกเลิกและตั้งออเดอร์ขายใหม่ให้ทุกไม้มีขนาดเท่ากันสม่ำเสมอทันที โดยไม่มีค่า Gas หรือ Fee บน Maker orders
-  - **Symmetric Rebalance Rules**:
-    - **When a BUY fills**: Triggers SELL rebalance (`needsSellRebalance = true`) to cover the new inventory across all eligible sell targets. Remaining resting buy orders stay untouched on the book ("คงออเดอร์ไว้") to avoid cancel churn.
-    - **When a SELL fills**: Triggers BUY rebalance (`needsBuyRebalance = true`) to recalculate freed capacity and evenly distribute new buy orders across all 4 levels.
+- **Holding Fraction Guard (Elimination of Repeated Buy Level 1 Fills)**:
+  - In a stepped accumulation grid ladder, each buy level represents a target capacity threshold (Level 1 $\le 25\%$, Level 2 $\le 50\%$, Level 3 $\le 75\%$, Level 4 $\le 100\%$).
+  - When a buy order fills and current portfolio inventory already satisfies or exceeds that level's target fraction (`currentHoldFraction >= levelTargetFraction - 0.05`), the bot **strictly forbids re-placing a new buy order at that same level** while holding that position.
+  - This completely eliminates repeated buy fills at Buy Level 1 (e.g. 3 consecutive fills at \$2562.45), forcing accumulation to take place only at deeper buy levels or waiting until inventory is sold.
+- **Binance CEX Continuous Grid (Bypass Hysteresis Pause & Cancel Churn)**:
+  - When trading on Binance (`this.binance.exchangeName === "binance"`), `buyOrdersActive` and `sellOrdersActive` remain continuously `true`.
+  - Hysteresis level pausing (`enableBuyBelowSellLevel1` and `enableSellAboveBuyLevel1`) is bypassed on CEX because 0% maker fees and zero gas allow resting buy and sell orders to stay simultaneously active on the order book without churn costs.
+  - Eliminates rapid rebalance loops (`needsBuyRebalance = true`) caused by price wiggling around Sell Level 1.
 - **4 Channel Modes (`CHANNEL_MODE`)**:
   - `DOW_ATR_CLAMP` (Default): Dow Theory swing pivots clamped to $2.5\times$ – $5.0\times$ ATR.
   - `FIXED_PCT_CLAMP`: Clamped between `MIN_CHANNEL_WIDTH_PCT` (1.8%) and `MAX_CHANNEL_WIDTH_PCT` (4.0%).
