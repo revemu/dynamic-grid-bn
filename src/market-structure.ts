@@ -899,19 +899,15 @@ export class DowStructureEngine {
     const latestCandle = this.candles[n - 1];
     const latestTime = latestCandle?.time ?? 0;
 
-    // ── 1. Downtrend Resistance Line: Originates from the structural High that made the latest LL ──
+    // ── 1. Downtrend Resistance Line: Requires at least 3 touch points (P1 + at least 2 LHs) ──
     // ตามทฤษฎี Dow Theory:
     // P1: ต้องเริ่มจากจุดยอด (The Major High) ของรอบคลื่นที่ส่งราคาลงมาทำจุดต่ำสุด (LL ล่าสุด)
-    // P2: ต้องเป็น Lower High (LH) ที่ได้รับการยืนยัน (Confirmed Swing High) หลังจาก P1 และอยู่ก่อนหน้าหรือระหว่างลงไปหา LL
-    // กฎเหล็ก: หากยังไม่มีจุด P2 ที่เป็น Confirmed LH จะต้องไม่วาดเส้น Downtrend Line (downtrendLine = undefined)
-    if (confirmedHighs.length >= 2 && confirmedLows.length > 0) {
-      // ค้นหา Lowest Low (LL) ล่าสุดของรอบ
+    // เงื่อนไขเข้มงวด: ต้องมีจุดสัมผัส (Touches) ลากผ่านอย่างน้อย 3 จุดขึ้นไป (P1 + 2 LHs ที่อยู่บนหรือใกล้เส้นมาก <= 0.25%)
+    // เพื่อป้องกันเส้นลากจาก 2 จุดที่มักจะชันเกินไป หากมีไม่ถึง 3 จุด ให้ถือว่ายังไม่มีเส้นกด (downtrendLine = undefined)
+    if (confirmedHighs.length >= 3 && confirmedLows.length > 0) {
       const latestLlCandidate = lastLl ?? confirmedLows.reduce((min, l) => (l.price < min.price ? l : min), confirmedLows[confirmedLows.length - 1]!);
-
-      // หา Highs ที่เกิดก่อน LL ล่าสุด
       const highsBeforeLl = confirmedHighs.filter((h) => h.index < latestLlCandidate.index);
       
-      // P1 คือจุดยอดสูงสุด (Highest High) ก่อนที่จะเกิด LL ล่าสุด
       let p1: SwingPoint | undefined;
       if (highsBeforeLl.length > 0) {
         p1 = highsBeforeLl.reduce((max, h) => (h.price > max.price ? h : max), highsBeforeLl[0]!);
@@ -922,48 +918,51 @@ export class DowStructureEngine {
       }
 
       if (p1) {
-        // P2 ต้องเป็น Confirmed Swing High ที่เกิดหลังจาก P1 และราคาต่ำกว่า P1 (Lower High)
-        // และต้องมี index เกิดขึ้นหลังจาก P1
         const candidateSubHighs = confirmedHighs.filter(
           (h) => h.index > p1!.index && h.price < p1!.price && h.time > p1!.time
         );
 
-        if (candidateSubHighs.length > 0) {
+        // ต้องมี Sub Highs อย่างน้อย 2 จุดขึ้นไป (เพื่อรวมกับ P1 แล้วได้ >= 3 จุด)
+        if (candidateSubHighs.length >= 2) {
           let bestP2: SwingPoint | undefined;
           let bestSlope = -Infinity;
+          let bestTouchCount = 0;
 
-          // ค้นหาจุด P2 ที่ทำหน้าที่เป็น outer tangent resistance line (ไม่ถูกทะลุโดยยอดระหว่างกลาง)
+          // ทดสอบคู่เส้นที่ลากจาก P1 ไปยังแต่ละ candidate P2
           for (const p2 of candidateSubHighs) {
             const timeDiff = p2.time - p1.time;
             const priceDiff = p2.price - p1.price;
             const slope = priceDiff / timeDiff;
+            if (slope >= 0) continue; // ต้องเป็นเส้นกดขาลงเท่านั้น
 
             let violates = false;
+            let touchCount = 1; // นับ P1 เป็นจุดที่ 1
+
             for (const midHigh of candidateSubHighs) {
-              if (midHigh.time > p1.time && midHigh.time < p2.time) {
-                const lineVal = p1.price + slope * (midHigh.time - p1.time);
-                if (midHigh.price > lineVal * 1.0005) {
-                  violates = true;
-                  break;
-                }
+              const lineVal = p1.price + slope * (midHigh.time - p1.time);
+              // หากมียอดใดทะลุเหนือเส้นเกิน 0.05% ถือว่าเส้นผิด (ถูกทะลุ)
+              if (midHigh.price > lineVal * 1.0005) {
+                violates = true;
+                break;
+              }
+              // ถ้ายอดอยู่ใกล้เส้นในระยะ tolerance <= 0.25% ให้นับเป็นจุดสัมผัส
+              if (Math.abs(midHigh.price - lineVal) / lineVal <= 0.0025) {
+                touchCount++;
               }
             }
 
-            if (!violates && slope > bestSlope) {
-              bestSlope = slope;
-              bestP2 = p2;
+            if (!violates && touchCount >= 3) {
+              // เลือกเส้นที่มีจุดสัมผัสมากที่สุด หรือถ้าเท่ากันให้เลือก slope ที่ดีที่สุด (outermost)
+              if (touchCount > bestTouchCount || (touchCount === bestTouchCount && slope > bestSlope)) {
+                bestSlope = slope;
+                bestP2 = p2;
+                bestTouchCount = touchCount;
+              }
             }
           }
 
-          // ถ้าไม่มีตัวที่ไม่ violate เลย ให้เลือกตัวแรกที่อยู่หลัง P1 หรือตัวที่เหมาะสม
-          if (!bestP2 && candidateSubHighs.length > 0) {
-            bestP2 = candidateSubHighs[0];
-            if (bestP2) {
-              bestSlope = (bestP2.price - p1.price) / (bestP2.time - p1.time);
-            }
-          }
-
-          if (bestP2 && Number.isFinite(bestSlope) && bestSlope < 0) {
+          // การันตีว่าต้องมีอย่างน้อย 3 จุดสัมผัสจริงๆ ถึงจะยอมรับเป็น Downtrend Line
+          if (bestP2 && Number.isFinite(bestSlope) && bestSlope < 0 && bestTouchCount >= 3) {
             const currentLinePrice = p1.price + bestSlope * (latestTime - p1.time);
             if (currentLinePrice > 0) {
               const points: TrendLinePoint[] = [];
@@ -1011,57 +1010,60 @@ export class DowStructureEngine {
       }
     }
 
-    // ── 2. Uptrend Support Line: Originates from the structural Lowest Low (LL) ──
+    // ── 2. Uptrend Support Line: Requires at least 3 touch points (V1 + at least 2 HLs) ──
     // ตามทฤษฎี Dow Theory:
     // V1: ต้องเริ่มจากจุดต่ำสุดของรอบทุบ (The Lowest Low / LL) ล่าสุด
-    // V2: ต้องเป็น Higher Low (HL) ที่ได้รับการยืนยัน (Confirmed Swing Low) เกิดขึ้นหลังจาก V1 และยกฐานสูงกว่า V1
-    // กฎเหล็ก: หากยังไม่มีจุด V2 ที่เป็น Confirmed HL จะต้องไม่วาดเส้น Uptrend Support Line เด็ดขาด (uptrendLine = undefined)
-    if (confirmedLows.length >= 2) {
-      // หาจุดต่ำสุดของรอบทุบล่าสุด (Lowest Low / LL)
+    // เงื่อนไขเข้มงวด: ต้องมีจุดสัมผัส (Touches) ลากผ่านอย่างน้อย 3 จุดขึ้นไป (V1 + 2 HLs ที่อยู่บนหรือใกล้เส้นมาก <= 0.25%)
+    // หากมีไม่ถึง 3 จุด ให้ถือว่ายังไม่มีเส้นรับ (uptrendLine = undefined) ป้องกันเส้นชันเกินไป
+    if (confirmedLows.length >= 3) {
       const v1 = lastLl ?? confirmedLows.reduce((min, l) => (l.price < min.price ? l : min), confirmedLows[confirmedLows.length - 1]!);
 
       if (v1) {
-        // V2 ต้องเป็น Confirmed Swing Low ที่เกิดหลังจาก V1 และยกฐานสูงกว่า V1 (Higher Low)
         const candidateSubLows = confirmedLows.filter(
           (l) => l.index > v1.index && l.price > v1.price && l.time > v1.time
         );
 
-        // ต้องมีจุด Confirmed HL (V2) เกิดขึ้นแล้วจริงเท่านั้น ถึงจะเริ่มสร้าง Trendline
-        if (candidateSubLows.length > 0) {
+        // ต้องมี Sub Lows อย่างน้อย 2 จุดขึ้นไป (เพื่อรวมกับ V1 แล้วได้ >= 3 จุด)
+        if (candidateSubLows.length >= 2) {
           let bestV2: SwingPoint | undefined;
           let bestSlope = Infinity;
+          let bestTouchCount = 0;
 
-          // ค้นหาจุด V2 ที่ทำหน้าที่เป็น outer tangent support line (ไม่ถูกทะลุโดยเหวระหว่างกลาง)
+          // ทดสอบคู่เส้นที่ลากจาก V1 ไปยังแต่ละ candidate V2
           for (const v2 of candidateSubLows) {
             const timeDiff = v2.time - v1.time;
             const priceDiff = v2.price - v1.price;
             const slope = priceDiff / timeDiff;
+            if (slope <= 0) continue; // ต้องเป็นเส้นรับขาขึ้นเท่านั้น
 
             let violates = false;
+            let touchCount = 1; // นับ V1 เป็นจุดที่ 1
+
             for (const midLow of candidateSubLows) {
-              if (midLow.time > v1.time && midLow.time < v2.time) {
-                const lineVal = v1.price + slope * (midLow.time - v1.time);
-                if (midLow.price < lineVal * 0.9995) {
-                  violates = true;
-                  break;
-                }
+              const lineVal = v1.price + slope * (midLow.time - v1.time);
+              // หากมีเหวใดหลุดต่ำกว่าเส้นเกิน 0.05% ถือว่าเส้นผิด (ถูกหลุด)
+              if (midLow.price < lineVal * 0.9995) {
+                violates = true;
+                break;
+              }
+              // ถ้าเหวอยู่ใกล้เส้นในระยะ tolerance <= 0.25% ให้นับเป็นจุดสัมผัส
+              if (Math.abs(midLow.price - lineVal) / lineVal <= 0.0025) {
+                touchCount++;
               }
             }
 
-            if (!violates && slope < bestSlope) {
-              bestSlope = slope;
-              bestV2 = v2;
+            if (!violates && touchCount >= 3) {
+              // เลือกเส้นที่มีจุดสัมผัสมากที่สุด หรือถ้าเท่ากันให้เลือก slope ที่ดีที่สุด (outermost)
+              if (touchCount > bestTouchCount || (touchCount === bestTouchCount && slope < bestSlope)) {
+                bestSlope = slope;
+                bestV2 = v2;
+                bestTouchCount = touchCount;
+              }
             }
           }
 
-          if (!bestV2 && candidateSubLows.length > 0) {
-            bestV2 = candidateSubLows[0];
-            if (bestV2) {
-              bestSlope = (bestV2.price - v1.price) / (bestV2.time - v1.time);
-            }
-          }
-
-          if (bestV2 && Number.isFinite(bestSlope) && bestSlope > 0) {
+          // การันตีว่าต้องมีอย่างน้อย 3 จุดสัมผัสจริงๆ ถึงจะยอมรับเป็น Uptrend Line
+          if (bestV2 && Number.isFinite(bestSlope) && bestSlope > 0 && bestTouchCount >= 3) {
             const currentLinePrice = v1.price + bestSlope * (latestTime - v1.time);
             if (currentLinePrice > 0) {
               const points: TrendLinePoint[] = [];
