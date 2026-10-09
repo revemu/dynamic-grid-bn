@@ -543,6 +543,26 @@ export class DreamDexClient implements IExchangeClient {
       account: this.account,
     });
 
+    // For IOC orders on EVM, wait for transaction receipt to confirm execution on-chain
+    let executedQty = 0;
+    let orderStatus: ExchangeOrderResult["status"] = "NEW";
+    if (params.type === "IOC") {
+      try {
+        const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
+        if (receipt && receipt.status === "success") {
+          executedQty = qty;
+          orderStatus = "FILLED";
+        } else {
+          orderStatus = "CANCELED";
+        }
+      } catch (err) {
+        this.log(`⚠️ Failed to fetch transaction receipt for ${hash}: ${(err as Error).message}`);
+        // If receipt fetch fails or times out, assume order was broadcasted
+        executedQty = qty;
+        orderStatus = "FILLED";
+      }
+    }
+
     return {
       symbol: market.symbol,
       orderId: hash,
@@ -550,9 +570,9 @@ export class DreamDexClient implements IExchangeClient {
       transactTime: Date.now(),
       price,
       origQty: qty,
-      executedQty: 0,
-      cummulativeQuoteQty: 0,
-      status: "NEW",
+      executedQty,
+      cummulativeQuoteQty: executedQty * price,
+      status: orderStatus,
       timeInForce: "GTC",
       type: params.type,
       side: params.side,

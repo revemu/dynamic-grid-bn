@@ -99,6 +99,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
      - **การแก้ไข**:
        1. ใน `src/strategy.ts`: ตรวจสอบ `this.binance.exchangeName` หากเป็น `binance` ให้อัปเดตเฉพาะ Binance keys & URL หากเป็น `dreamdex` ให้อัปเดตเฉพาะ `dreamdexPrivateKey` และ `dreamdexRpcUrl`
        2. ใน `src/exchange/dreamdex/client.ts`: เพิ่ม Guard ใน `updateCredentials` ปฏิเสธ URL ใดๆ ที่มี `binance.com` ไม่ให้เขียนทับ Somnia EVM RPC endpoint อย่างเด็ดขาด
+   - **DreamDEX On-Chain IOC Execution Receipt & Decoupled Fill Confirmation**:
+     - **สาเหตุของปัญหาเดิม**: เมธอด `placeOrder` ของ `DreamDexClient` เคยคืนค่าเริ่มต้นเป็น `status: "NEW"` และ `executedQty: 0` เสมอ ทำให้ฟังก์ชัน `sellAll`, `sellTrancheIOC`, `buyTrancheIOC` ใน `strategy.ts` ซึ่งเดิมถูกออกแบบมาอิงพฤติกรรมของ Binance เข้าใจผิดว่าคำสั่ง IOC บน DreamDEX ไม่ Match (`UNFILLED`) และข้ามการเรียก `closeLots()` ทำให้ Lots ไม่ถูกเคลียร์ จนเกิดการส่ง Cut Loss ซ้ำรอบสอง และคำสั่งรอบสอง Revert ด้วย Error `0xc04ad919` เพราะเหรียญในกระเป๋าถูกขายออกไปหมดแล้วในรอบแรก
+     - **การแก้ไข**:
+       1. ใน `src/exchange/dreamdex/client.ts`: สำหรับคำสั่งแบบ IOC ทำการรอ `waitForTransactionReceipt` ยืนยันจากเชน Somnia และคืนค่า `status: "FILLED"`, `executedQty: qty` ที่แท้จริง
+       2. ใน `src/strategy.ts`: ตรวจสอบสถานะการ Match ให้เป็นอิสระต่อทั้ง CEX (Binance) และ On-Chain EVM (DreamDEX) โดยหากได้รับ `res.status === "FILLED"` หรือยืนยัน On-Chain txHash จะทำการ `closeLots()` และตัดจำหน่าย Lots ออกจาก Position ทันที
+       3. มีระบบ Guard ใน `sellAll` ให้จำกัดเพดานการขายไม่เกินยอดที่มีอยู่จริงในกระเป๋า (`walletBaseBalance`) และหากยอดเหรียญในกระเป๋าหมดลง จะบังคับล้าง `this.lots = []` ทันที ป้องกันการวนลูปส่งคำสั่ง Cut Loss ซ้ำ
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

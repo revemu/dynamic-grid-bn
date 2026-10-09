@@ -1833,10 +1833,13 @@ export class DynamicGrid {
         } else {
           const lastClosed = closedCandles[closedCandles.length - 1];
           const lastClosedStr = lastClosed ? `Last Closed Bar: $${lastClosed.close.toFixed(6)} | ` : "";
+          const exitActionDesc = this.openOrders.length > 0 ? "cancelling resting orders & executing clean exit" : "executing clean exit";
           this.log(
-            `🚨 CUT LOSS TRIGGERED (${requiredCutLossCandles} CLOSED CANDLE${requiredCutLossCandles > 1 ? "S" : ""} CONFIRMED): ${lastClosedStr}Binance Price $${refPrice.toFixed(6)} (DEX Bid: $${dexBid.toFixed(6)} | Dislocation: ${bidDiscountPct >= 0 ? `-${bidDiscountPct.toFixed(2)}%` : `+${Math.abs(bidDiscountPct).toFixed(2)}%`}) confirmed ${confirmedCandlesCount} closed bar(s) below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — cancelling all resting orders & executing clean exit`,
+            `🚨 CUT LOSS TRIGGERED (${requiredCutLossCandles} CLOSED CANDLE${requiredCutLossCandles > 1 ? "S" : ""} CONFIRMED): ${lastClosedStr}Binance Price $${refPrice.toFixed(6)} (DEX Bid: $${dexBid.toFixed(6)} | Dislocation: ${bidDiscountPct >= 0 ? `-${bidDiscountPct.toFixed(2)}%` : `+${Math.abs(bidDiscountPct).toFixed(2)}%`}) confirmed ${confirmedCandlesCount} closed bar(s) below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — ${exitActionDesc}`,
           );
-          await this.cancelAllRestingOrders();
+          if (this.openOrders.length > 0) {
+            await this.cancelAllRestingOrders();
+          }
           await this.sellAll(dexBid, "CUT");
           this.stuckSince = undefined;
           this.breakdownCandleTimes.clear();
@@ -4720,15 +4723,19 @@ export class DynamicGrid {
       }
 
       // Check real executed fill quantity from Exchange
-      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) ? res.executedQty : (res.status === "FILLED" ? finalQty : 0);
-      if (filledQty <= 0 || res.status === "EXPIRED" || res.status === "CANCELED") {
+      const isConfirmedSuccess = res.status === "FILLED" || (res.txHash && res.status !== "CANCELED" && res.status !== "EXPIRED");
+      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) && res.executedQty > 0
+        ? res.executedQty
+        : (isConfirmedSuccess ? finalQty : 0);
+
+      if (filledQty <= 0 && !isConfirmedSuccess) {
         this.log(
           `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${finalQty}).`,
         );
         return false;
       }
 
-      const actualQty = Math.min(finalQty, filledQty);
+      const actualQty = Math.min(finalQty, filledQty > 0 ? filledQty : finalQty);
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(actualQty, effectivePrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
@@ -4844,15 +4851,19 @@ export class DynamicGrid {
       }
 
       // Check real executed fill quantity from Exchange
-      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) ? res.executedQty : (res.status === "FILLED" ? finalQty : 0);
-      if (filledQty <= 0 || res.status === "EXPIRED" || res.status === "CANCELED") {
+      const isConfirmedSuccess = res.status === "FILLED" || (res.txHash && res.status !== "CANCELED" && res.status !== "EXPIRED");
+      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) && res.executedQty > 0
+        ? res.executedQty
+        : (isConfirmedSuccess ? finalQty : 0);
+
+      if (filledQty <= 0 && !isConfirmedSuccess) {
         this.log(
           `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${finalQty}).`,
         );
         return false;
       }
 
-      const actualQty = Math.min(finalQty, filledQty);
+      const actualQty = Math.min(finalQty, filledQty > 0 ? filledQty : finalQty);
       this.processBuyFill({
         price: effectivePrice,
         qty: actualQty,
@@ -4948,16 +4959,16 @@ export class DynamicGrid {
       return;
     }
 
-    // Liquidate all trading inventory: sell all physical trading base asset available above gas reserve
-    // In Live mode: Liquidate entire availableBase in one order to prevent residual dust and multiple 30s re-trigger loops!
-    const rawExecuteQty = Math.max(held, availableBase);
+    // Liquidate trading inventory: physical available trading balance above gas safety reserve
+    // Cap at availableBase so on-chain transactions never attempt to spend non-existent tokens
+    const rawExecuteQty = Math.min(held, availableBase > 0 ? availableBase : held);
     const executeQty = roundToStep(rawExecuteQty, this.stepSize || 0.0001, 4);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const orderNotional = executeQty * price;
 
     if (executeQty < this.minQty || orderNotional < minNotional) {
       this.log(
-        `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Order quantity ${executeQty.toFixed(4)} or value $${orderNotional.toFixed(2)} is below Binance minimum.`,
+        `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Order quantity ${executeQty.toFixed(4)} or value $${orderNotional.toFixed(2)} is below exchange minimum.`,
       );
       this.lots = [];
       this.lockedChannel = undefined;
@@ -4979,8 +4990,13 @@ export class DynamicGrid {
       }
 
       // Check real executed fill quantity from Exchange
-      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) ? res.executedQty : (res.status === "FILLED" ? executeQty : 0);
-      if (filledQty <= 0 || res.status === "EXPIRED" || res.status === "CANCELED") {
+      // Supports both Binance Spot response and On-Chain EVM (DreamDEX) receipts
+      const isConfirmedSuccess = res.status === "FILLED" || (res.txHash && res.status !== "CANCELED" && res.status !== "EXPIRED");
+      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) && res.executedQty > 0
+        ? res.executedQty
+        : (isConfirmedSuccess ? executeQty : 0);
+
+      if (filledQty <= 0 && !isConfirmedSuccess) {
         this.log(
           `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${executeQty}). Keeping inventory lots intact.`,
         );
@@ -4989,12 +5005,12 @@ export class DynamicGrid {
         return;
       }
 
-      const actualQty = Math.min(executeQty, filledQty);
+      const actualQty = Math.min(executeQty, filledQty > 0 ? filledQty : executeQty);
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(actualQty, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash})`,
+        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.emit({
         type: "order",
@@ -5022,13 +5038,20 @@ export class DynamicGrid {
         this.trackTxGas(res.txHash, actionLabel);
       }
       await this.refreshWalletBalances();
-      if (this.walletBaseBalance <= (this.minQty || 0.0001)) {
+      if (this.walletBaseBalance - minGasReserveBase <= (this.minQty || 0.0001)) {
         this.lots = [];
         this.lockedChannel = undefined;
       }
       this.saveState();
     } catch (err) {
       this.log(`⚠️ On-chain ${actionLabel} failed: ${(err as Error).message}`);
+      await this.refreshWalletBalances();
+      // If balance is already depleted after an on-chain cut loss attempt, clear lots to avoid infinite loop
+      if (this.walletBaseBalance - minGasReserveBase <= (this.minQty || 0.0001)) {
+        this.lots = [];
+        this.lockedChannel = undefined;
+        this.saveState();
+      }
     }
   }
 
