@@ -899,121 +899,47 @@ export class DowStructureEngine {
     const latestCandle = this.candles[n - 1];
     const latestTime = latestCandle?.time ?? 0;
 
-    // ── 1. Downtrend Resistance Line: Originates from the structural HH (Higher High) ──
-    // Anchors to the structural HH (จุด HH ก่อนหน้า) that initiated the current series of lower highs,
-    // so the trendline reflects true macro/cycle resistance without pressing down too steeply.
-    // Ensures the selected P1 has confirmed lower highs after it; otherwise falls back gracefully.
-    if (confirmedHighs.length >= 2) {
-      const targetValley = activeValley || (confirmedLows.length > 0 ? confirmedLows[confirmedLows.length - 1] : undefined);
+    // ── 1. Downtrend Resistance Line: Originates from the structural High that made the latest LL ──
+    // ตามทฤษฎี Dow Theory:
+    // P1: ต้องเริ่มจากจุดยอด (The Major High) ของรอบคลื่นที่ส่งราคาลงมาทำจุดต่ำสุด (LL ล่าสุด)
+    // P2: ต้องเป็น Lower High (LH) ที่ได้รับการยืนยัน (Confirmed Swing High) หลังจาก P1 และอยู่ก่อนหน้าหรือระหว่างลงไปหา LL
+    // กฎเหล็ก: หากยังไม่มีจุด P2 ที่เป็น Confirmed LH จะต้องไม่วาดเส้น Downtrend Line (downtrendLine = undefined)
+    if (confirmedHighs.length >= 2 && confirmedLows.length > 0) {
+      // ค้นหา Lowest Low (LL) ล่าสุดของรอบ
+      const latestLlCandidate = lastLl ?? confirmedLows.reduce((min, l) => (l.price < min.price ? l : min), confirmedLows[confirmedLows.length - 1]!);
 
-      const getSubHighs = (anchor: SwingPoint) =>
-        confirmedHighs.filter((h) => h.index > anchor.index && h.price < anchor.price && h.time > anchor.time);
-
+      // หา Highs ที่เกิดก่อน LL ล่าสุด
+      const highsBeforeLl = confirmedHighs.filter((h) => h.index < latestLlCandidate.index);
+      
+      // P1 คือจุดยอดสูงสุด (Highest High) ก่อนที่จะเกิด LL ล่าสุด
       let p1: SwingPoint | undefined;
-
-      // 1. Primary anchor: จุดของกรอบบน (activePeak / Ceiling) ของ Channel ปัจจุบัน
-      if (activePeak && getSubHighs(activePeak).length > 0) {
+      if (highsBeforeLl.length > 0) {
+        p1 = highsBeforeLl.reduce((max, h) => (h.price > max.price ? h : max), highsBeforeLl[0]!);
+      } else if (lastHh) {
+        p1 = confirmedHighs.find((h) => h.index === lastHh.index) ?? lastHh;
+      } else if (activePeak) {
         p1 = confirmedHighs.find((h) => h.index === activePeak.index) ?? activePeak;
       }
 
-      // 2. Secondary anchor: Prior structural HH before the downtrend / series of lower highs (HH ก่อนหน้า)
-      // Look for the high immediately preceding the transition into Lower Highs (START_LH)
-      if (!p1 && annotatedSwings && annotatedSwings.length > 0) {
-        let startLhIdx = -1;
-        for (let i = annotatedSwings.length - 1; i >= 0; i--) {
-          const s = annotatedSwings[i];
-          if (s && s.type === "HIGH" && s.isTransitionStart && s.transitionType === "START_LH") {
-            startLhIdx = i;
-            break;
-          }
-        }
-        if (startLhIdx > 0) {
-          for (let i = startLhIdx - 1; i >= 0; i--) {
-            const cand = annotatedSwings[i];
-            if (cand && cand.type === "HIGH" && getSubHighs(cand).length > 0) {
-              p1 = confirmedHighs.find((h) => h.index === cand.index) ?? cand;
-              break;
-            }
-          }
-        }
-      }
-
-      // 3. Fallback: Structural HH points from waveCycle (from newest to oldest) that have subsequent lower highs
-      if (!p1 && annotatedSwings && annotatedSwings.length > 0) {
-        const hhSwings = annotatedSwings.filter((s) => s.type === "HIGH" && s.dowLabel === "HH");
-        for (let i = hhSwings.length - 1; i >= 0; i--) {
-          const cand = hhSwings[i];
-          if (cand && getSubHighs(cand).length > 0) {
-            p1 = confirmedHighs.find((h) => h.index === cand.index) ?? cand;
-            break;
-          }
-        }
-      }
-
-      // 4. Fallback: lastHh passed directly if it has lower highs
-      if (!p1 && lastHh && getSubHighs(lastHh).length > 0) {
-        p1 = confirmedHighs.find((h) => h.index === lastHh.index) ?? lastHh;
-      }
-
-      // 5. Fallback: peak before targetValley (prior rally peak)
-      if (!p1 && targetValley) {
-        const lowsBefore = confirmedLows.filter((l) => l.index < targetValley.index && l.price > targetValley.price);
-        if (lowsBefore.length > 0) {
-          const priorLow = lowsBefore[lowsBefore.length - 1];
-          if (priorLow) {
-            const peaksInWave = confirmedHighs.filter(
-              (h) => h.index > priorLow.index && h.index <= targetValley.index && getSubHighs(h).length > 0,
-            );
-            if (peaksInWave.length > 0) {
-              let max = peaksInWave[0];
-              for (const h of peaksInWave) {
-                if (h && max && h.price > max.price) max = h;
-              }
-              p1 = max;
-            }
-          }
-        }
-
-        if (!p1) {
-          const preValleyHighs = confirmedHighs.filter((h) => h.index < targetValley.index && getSubHighs(h).length > 0);
-          if (preValleyHighs.length > 0) {
-            let max = preValleyHighs[0];
-            for (const h of preValleyHighs) {
-              if (h && max && h.price > max.price) max = h;
-            }
-            p1 = max;
-          }
-        }
-      }
-
-      // 6. Ultimate fallback: highest peak among confirmed highs that has subsequent lower highs
-      if (!p1) {
-        const validCandidates = confirmedHighs.filter((h) => getSubHighs(h).length > 0);
-        if (validCandidates.length > 0) {
-          let max = validCandidates[0];
-          for (const h of validCandidates) {
-            if (h && max && h.price > max.price) max = h;
-          }
-          p1 = max;
-        }
-      }
-
       if (p1) {
-        // Find subsequent lower highs occurring AFTER P1
-        const subHighs = getSubHighs(p1);
-        
-        let bestP2: SwingPoint | undefined;
-        let bestSlope = -Infinity;
+        // P2 ต้องเป็น Confirmed Swing High ที่เกิดหลังจาก P1 และราคาต่ำกว่า P1 (Lower High)
+        // และต้องมี index เกิดขึ้นหลังจาก P1
+        const candidateSubHighs = confirmedHighs.filter(
+          (h) => h.index > p1!.index && h.price < p1!.price && h.time > p1!.time
+        );
 
-        if (subHighs.length > 0) {
-          // Select the lower high that forms the outer tangent resistance line
-          for (const p2 of subHighs) {
+        if (candidateSubHighs.length > 0) {
+          let bestP2: SwingPoint | undefined;
+          let bestSlope = -Infinity;
+
+          // ค้นหาจุด P2 ที่ทำหน้าที่เป็น outer tangent resistance line (ไม่ถูกทะลุโดยยอดระหว่างกลาง)
+          for (const p2 of candidateSubHighs) {
             const timeDiff = p2.time - p1.time;
             const priceDiff = p2.price - p1.price;
             const slope = priceDiff / timeDiff;
 
             let violates = false;
-            for (const midHigh of subHighs) {
+            for (const midHigh of candidateSubHighs) {
               if (midHigh.time > p1.time && midHigh.time < p2.time) {
                 const lineVal = p1.price + slope * (midHigh.time - p1.time);
                 if (midHigh.price > lineVal * 1.0005) {
@@ -1029,280 +955,90 @@ export class DowStructureEngine {
             }
           }
 
-          if (!bestP2) {
-            bestP2 = subHighs[subHighs.length - 1];
+          // ถ้าไม่มีตัวที่ไม่ violate เลย ให้เลือกตัวแรกที่อยู่หลัง P1 หรือตัวที่เหมาะสม
+          if (!bestP2 && candidateSubHighs.length > 0) {
+            bestP2 = candidateSubHighs[0];
             if (bestP2) {
               bestSlope = (bestP2.price - p1.price) / (bestP2.time - p1.time);
             }
           }
-        }
 
-        if (bestP2 && Number.isFinite(bestSlope)) {
-          const currentLinePrice = p1.price + bestSlope * (latestTime - p1.time);
-          if (currentLinePrice > 0) {
-            const points: TrendLinePoint[] = [];
-            for (let cIdx = p1.index; cIdx < n; cIdx++) {
-              const c = this.candles[cIdx];
-              if (!c) continue;
-              const val = p1.price + bestSlope * (c.time - p1.time);
-              points.push({ time: c.time, value: Number(val.toFixed(6)) });
-            }
-
-            // Count consecutive candles breaking above the resistance trendline (Close > TrendLine)
-            let brokenCandleCount = 0;
-            for (let i = n - 1; i >= p1.index; i--) {
-              const c = this.candles[i];
-              if (!c) break;
-              const lineVal = p1.price + bestSlope * (c.time - p1.time);
-              const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
-              if (testPrice > lineVal) {
-                brokenCandleCount++;
-              } else {
-                break;
-              }
-            }
-
-            const breakoutConfirmed = brokenCandleCount >= 2;
-
-            if (breakoutConfirmed) {
-              downtrendBreakoutConfirmed = true;
-              // The trendline from p1 has been broken by >= 2 candles.
-              // Invalidate it and do NOT use it. Search for a new trendline originating
-              // from the new peak that broke through this trendline.
-              let newP1: SwingPoint | undefined;
-
-              // Find the breakout index where price first pierced above the trendline
-              let firstBreakIdx = p1.index;
-              for (let i = p1.index; i < n; i++) {
-                const c = this.candles[i];
+          if (bestP2 && Number.isFinite(bestSlope) && bestSlope < 0) {
+            const currentLinePrice = p1.price + bestSlope * (latestTime - p1.time);
+            if (currentLinePrice > 0) {
+              const points: TrendLinePoint[] = [];
+              for (let cIdx = p1.index; cIdx < n; cIdx++) {
+                const c = this.candles[cIdx];
                 if (!c) continue;
+                const val = p1.price + bestSlope * (c.time - p1.time);
+                points.push({ time: c.time, value: Number(val.toFixed(6)) });
+              }
+
+              // ตรวจสอบการเบรคทะลุเส้นกด (Close > TrendLine)
+              let brokenCandleCount = 0;
+              for (let i = n - 1; i >= p1.index; i--) {
+                const c = this.candles[i];
+                if (!c) break;
                 const lineVal = p1.price + bestSlope * (c.time - p1.time);
-                if (c.close > lineVal || (i === n - 1 && currentPrice > lineVal)) {
-                  firstBreakIdx = i;
+                const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
+                if (testPrice > lineVal) {
+                  brokenCandleCount++;
+                } else {
                   break;
                 }
               }
 
-              // Candidate peaks formed during/after the breakout that have lower highs after them
-              const postBreakHighs = confirmedHighs.filter((h) => h.index >= firstBreakIdx && getSubHighs(h).length > 0);
-              if (postBreakHighs.length > 0) {
-                let maxHigh = postBreakHighs[0];
-                for (const h of postBreakHighs) {
-                  if (h && maxHigh && h.price > maxHigh.price) maxHigh = h;
-                }
-                newP1 = maxHigh;
+              const breakoutConfirmed = brokenCandleCount >= 2;
+              if (breakoutConfirmed) {
+                downtrendBreakoutConfirmed = true;
+              } else {
+                downtrendLine = {
+                  type: "DOWNTREND",
+                  p1,
+                  p2: bestP2,
+                  slope: bestSlope,
+                  currentLinePrice,
+                  isBroken: false,
+                  breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
+                  brokenCandleCount,
+                  breakoutConfirmed: false,
+                  points,
+                };
               }
-
-              if (newP1) {
-                // Build the new trendline originating from the new breakout peak
-                const newSubHighs = getSubHighs(newP1);
-                let newBestP2: SwingPoint | undefined;
-                let newBestSlope = -Infinity;
-
-                for (const p2 of newSubHighs) {
-                  const timeDiff = p2.time - newP1.time;
-                  const priceDiff = p2.price - newP1.price;
-                  const slope = priceDiff / timeDiff;
-
-                  let violates = false;
-                  for (const midHigh of newSubHighs) {
-                    if (midHigh.time > newP1.time && midHigh.time < p2.time) {
-                      const lineVal = newP1.price + slope * (midHigh.time - newP1.time);
-                      if (midHigh.price > lineVal * 1.0005) {
-                        violates = true;
-                        break;
-                      }
-                    }
-                  }
-
-                  if (!violates && slope > newBestSlope) {
-                    newBestSlope = slope;
-                    newBestP2 = p2;
-                  }
-                }
-
-                if (!newBestP2) {
-                  newBestP2 = newSubHighs[newSubHighs.length - 1];
-                  if (newBestP2) {
-                    newBestSlope = (newBestP2.price - newP1.price) / (newBestP2.time - newP1.time);
-                  }
-                }
-
-                if (newBestP2 && Number.isFinite(newBestSlope)) {
-                  const newLinePrice = newP1.price + newBestSlope * (latestTime - newP1.time);
-                  if (newLinePrice > 0) {
-                    let newBrokenCount = 0;
-                    for (let i = n - 1; i >= newP1.index; i--) {
-                      const c = this.candles[i];
-                      if (!c) break;
-                      const lineVal = newP1.price + newBestSlope * (c.time - newP1.time);
-                      const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
-                      if (testPrice > lineVal) {
-                        newBrokenCount++;
-                      } else {
-                        break;
-                      }
-                    }
-
-                    if (newBrokenCount < 2) {
-                      const points: TrendLinePoint[] = [];
-                      for (let cIdx = newP1.index; cIdx < n; cIdx++) {
-                        const c = this.candles[cIdx];
-                        if (!c) continue;
-                        const val = newP1.price + newBestSlope * (c.time - newP1.time);
-                        points.push({ time: c.time, value: Number(val.toFixed(6)) });
-                      }
-                      downtrendLine = {
-                        type: "DOWNTREND",
-                        p1: newP1,
-                        p2: newBestP2,
-                        slope: newBestSlope,
-                        currentLinePrice: newLinePrice,
-                        isBroken: false,
-                        breakoutPct: ((currentPrice - newLinePrice) / newLinePrice) * 100,
-                        brokenCandleCount: newBrokenCount,
-                        breakoutConfirmed: false,
-                        points,
-                      };
-                    }
-                  }
-                }
-              }
-              // If no new trendline has formed yet from the breakout peak, downtrendLine remains undefined
-            } else {
-              // Trendline is intact / active (brokenCandleCount < 2)
-              downtrendLine = {
-                type: "DOWNTREND",
-                p1,
-                p2: bestP2,
-                slope: bestSlope,
-                currentLinePrice,
-                isBroken: false,
-                breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
-                brokenCandleCount,
-                breakoutConfirmed: false,
-                points,
-              };
             }
           }
         }
       }
     }
 
-    // ── 2. Uptrend Support Line: Originates from the structural Low of the Active Channel ──
-    // Anchors primarily to the channel's bottom bound (จุดของกรอบล่าง / activeValley),
-    // so the support trendline aligns directly with the active trading corridor.
-    // Ensures the selected V1 has confirmed higher lows after it; otherwise falls back gracefully.
+    // ── 2. Uptrend Support Line: Originates from the structural Lowest Low (LL) ──
+    // ตามทฤษฎี Dow Theory:
+    // V1: ต้องเริ่มจากจุดต่ำสุดของรอบทุบ (The Lowest Low / LL) ล่าสุด
+    // V2: ต้องเป็น Higher Low (HL) ที่ได้รับการยืนยัน (Confirmed Swing Low) เกิดขึ้นหลังจาก V1 และยกฐานสูงกว่า V1
+    // กฎเหล็ก: หากยังไม่มีจุด V2 ที่เป็น Confirmed HL จะต้องไม่วาดเส้น Uptrend Support Line เด็ดขาด (uptrendLine = undefined)
     if (confirmedLows.length >= 2) {
-      const targetPeak = activePeak || (confirmedHighs.length > 0 ? confirmedHighs[confirmedHighs.length - 1] : undefined);
-
-      const getSubLows = (anchor: SwingPoint) =>
-        confirmedLows.filter((l) => l.index > anchor.index && l.price > anchor.price && l.time > anchor.time);
-
-      let v1: SwingPoint | undefined;
-
-      // 1. Primary anchor: จุดของกรอบล่าง (activeValley / Floor) ของ Channel ปัจจุบัน
-      if (activeValley && getSubLows(activeValley).length > 0) {
-        v1 = confirmedLows.find((l) => l.index === activeValley.index) ?? activeValley;
-      }
-
-      // 2. Secondary anchor: Structural Low immediately preceding the transition into Higher Lows (START_HL)
-      if (!v1 && annotatedSwings && annotatedSwings.length > 0) {
-        let startHlIdx = -1;
-        for (let i = annotatedSwings.length - 1; i >= 0; i--) {
-          const s = annotatedSwings[i];
-          if (s && s.type === "LOW" && s.isTransitionStart && s.transitionType === "START_HL") {
-            startHlIdx = i;
-            break;
-          }
-        }
-        if (startHlIdx > 0) {
-          for (let i = startHlIdx - 1; i >= 0; i--) {
-            const cand = annotatedSwings[i];
-            if (cand && cand.type === "LOW" && getSubLows(cand).length > 0) {
-              v1 = confirmedLows.find((l) => l.index === cand.index) ?? cand;
-              break;
-            }
-          }
-        }
-      }
-
-      // 3. Fallback: Structural LL (Lowest Low) points from waveCycle within the channel
-      if (!v1 && annotatedSwings && annotatedSwings.length > 0) {
-        const llSwings = annotatedSwings.filter((s) => s.type === "LOW" && s.dowLabel === "LL" && getSubLows(s).length > 0);
-        for (let i = llSwings.length - 1; i >= 0; i--) {
-          const cand = llSwings[i];
-          if (cand) {
-            v1 = confirmedLows.find((l) => l.index === cand.index) ?? cand;
-            break;
-          }
-        }
-      }
-
-      // 4. Fallback: lastLl passed directly from waveCycle if it has higher lows
-      if (!v1 && lastLl && getSubLows(lastLl).length > 0) {
-        v1 = confirmedLows.find((l) => l.index === lastLl.index) ?? lastLl;
-      }
-
-      // 5. Fallback: lowest valley before targetPeak (prior dip bottom)
-      if (!v1 && targetPeak) {
-        const highsBefore = confirmedHighs.filter((h) => h.index < targetPeak.index && h.price < targetPeak.price);
-        if (highsBefore.length > 0) {
-          const priorHigh = highsBefore[highsBefore.length - 1];
-          if (priorHigh) {
-            const valleysInWave = confirmedLows.filter(
-              (l) => l.index > priorHigh.index && l.index <= targetPeak.index && getSubLows(l).length > 0,
-            );
-            if (valleysInWave.length > 0) {
-              let min = valleysInWave[0];
-              for (const l of valleysInWave) {
-                if (l && min && l.price < min.price) min = l;
-              }
-              v1 = min;
-            }
-          }
-        }
-
-        if (!v1) {
-          const prePeakLows = confirmedLows.filter((l) => l.index < targetPeak.index && getSubLows(l).length > 0);
-          if (prePeakLows.length > 0) {
-            let min = prePeakLows[0];
-            for (const l of prePeakLows) {
-              if (l && min && l.price < min.price) min = l;
-            }
-            v1 = min;
-          }
-        }
-      }
-
-      // 6. Fallback: Structural HL points from waveCycle (from OLDEST to newest)
-      if (!v1 && annotatedSwings && annotatedSwings.length > 0) {
-        const hlSwings = annotatedSwings.filter((s) => s.type === "LOW" && s.dowLabel === "HL");
-        for (let i = 0; i < hlSwings.length; i++) {
-          const cand = hlSwings[i];
-          if (cand && getSubLows(cand).length > 0) {
-            v1 = confirmedLows.find((l) => l.index === cand.index) ?? cand;
-            break;
-          }
-        }
-      }
+      // หาจุดต่ำสุดของรอบทุบล่าสุด (Lowest Low / LL)
+      const v1 = lastLl ?? confirmedLows.reduce((min, l) => (l.price < min.price ? l : min), confirmedLows[confirmedLows.length - 1]!);
 
       if (v1) {
-        // Find subsequent higher lows occurring AFTER V1
-        const subLows = getSubLows(v1);
+        // V2 ต้องเป็น Confirmed Swing Low ที่เกิดหลังจาก V1 และยกฐานสูงกว่า V1 (Higher Low)
+        const candidateSubLows = confirmedLows.filter(
+          (l) => l.index > v1.index && l.price > v1.price && l.time > v1.time
+        );
 
-        let bestV2: SwingPoint | undefined;
-        let bestSlope = Infinity;
+        // ต้องมีจุด Confirmed HL (V2) เกิดขึ้นแล้วจริงเท่านั้น ถึงจะเริ่มสร้าง Trendline
+        if (candidateSubLows.length > 0) {
+          let bestV2: SwingPoint | undefined;
+          let bestSlope = Infinity;
 
-        if (subLows.length > 0) {
-          // Select the higher low that forms the outer tangent support line
-          for (const v2 of subLows) {
+          // ค้นหาจุด V2 ที่ทำหน้าที่เป็น outer tangent support line (ไม่ถูกทะลุโดยเหวระหว่างกลาง)
+          for (const v2 of candidateSubLows) {
             const timeDiff = v2.time - v1.time;
             const priceDiff = v2.price - v1.price;
             const slope = priceDiff / timeDiff;
 
             let violates = false;
-            for (const midLow of subLows) {
+            for (const midLow of candidateSubLows) {
               if (midLow.time > v1.time && midLow.time < v2.time) {
                 const lineVal = v1.price + slope * (midLow.time - v1.time);
                 if (midLow.price < lineVal * 0.9995) {
@@ -1318,160 +1054,55 @@ export class DowStructureEngine {
             }
           }
 
-          if (!bestV2) {
-            bestV2 = subLows[subLows.length - 1];
+          if (!bestV2 && candidateSubLows.length > 0) {
+            bestV2 = candidateSubLows[0];
             if (bestV2) {
               bestSlope = (bestV2.price - v1.price) / (bestV2.time - v1.time);
             }
           }
-        }
 
-        if (bestV2 && Number.isFinite(bestSlope)) {
-          const currentLinePrice = v1.price + bestSlope * (latestTime - v1.time);
-          if (currentLinePrice > 0) {
-            const points: TrendLinePoint[] = [];
-            for (let cIdx = v1.index; cIdx < n; cIdx++) {
-              const c = this.candles[cIdx];
-              if (!c) continue;
-              const val = v1.price + bestSlope * (c.time - v1.time);
-              points.push({ time: c.time, value: Number(val.toFixed(6)) });
-            }
-
-            // Count consecutive candles breaking below the support trendline (Close < TrendLine)
-            let brokenCandleCount = 0;
-            for (let i = n - 1; i >= v1.index; i--) {
-              const c = this.candles[i];
-              if (!c) break;
-              const lineVal = v1.price + bestSlope * (c.time - v1.time);
-              const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
-              if (testPrice < lineVal) {
-                brokenCandleCount++;
-              } else {
-                break;
-              }
-            }
-
-            const breakoutConfirmed = brokenCandleCount >= 2;
-
-            if (breakoutConfirmed) {
-              uptrendBreakdownConfirmed = true;
-              // The support trendline from v1 has been broken by >= 2 candles.
-              // Invalidate it and do NOT use it. Search for a new trendline originating
-              // from the new valley/low that broke through this trendline.
-              let newV1: SwingPoint | undefined;
-
-              // Find the breakdown index where price first fell below the support line
-              let firstBreakIdx = v1.index;
-              for (let i = v1.index; i < n; i++) {
-                const c = this.candles[i];
+          if (bestV2 && Number.isFinite(bestSlope) && bestSlope > 0) {
+            const currentLinePrice = v1.price + bestSlope * (latestTime - v1.time);
+            if (currentLinePrice > 0) {
+              const points: TrendLinePoint[] = [];
+              for (let cIdx = v1.index; cIdx < n; cIdx++) {
+                const c = this.candles[cIdx];
                 if (!c) continue;
+                const val = v1.price + bestSlope * (c.time - v1.time);
+                points.push({ time: c.time, value: Number(val.toFixed(6)) });
+              }
+
+              // ตรวจสอบการหลุดเส้นรับ (Close < TrendLine)
+              let brokenCandleCount = 0;
+              for (let i = n - 1; i >= v1.index; i--) {
+                const c = this.candles[i];
+                if (!c) break;
                 const lineVal = v1.price + bestSlope * (c.time - v1.time);
-                if (c.close < lineVal || (i === n - 1 && currentPrice < lineVal)) {
-                  firstBreakIdx = i;
+                const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
+                if (testPrice < lineVal) {
+                  brokenCandleCount++;
+                } else {
                   break;
                 }
               }
 
-              // Candidate valleys formed during/after the breakdown that have higher lows after them
-              const postBreakLows = confirmedLows.filter((l) => l.index >= firstBreakIdx && getSubLows(l).length > 0);
-              if (postBreakLows.length > 0) {
-                let minLow = postBreakLows[0];
-                for (const l of postBreakLows) {
-                  if (l && minLow && l.price < minLow.price) minLow = l;
-                }
-                newV1 = minLow;
+              const breakoutConfirmed = brokenCandleCount >= 2;
+              if (breakoutConfirmed) {
+                uptrendBreakdownConfirmed = true;
+              } else {
+                uptrendLine = {
+                  type: "UPTREND",
+                  p1: v1,
+                  p2: bestV2,
+                  slope: bestSlope,
+                  currentLinePrice,
+                  isBroken: false,
+                  breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
+                  brokenCandleCount,
+                  breakoutConfirmed: false,
+                  points,
+                };
               }
-
-              if (newV1) {
-                // Build the new trendline originating from the new breakdown valley
-                const newSubLows = getSubLows(newV1);
-                let newBestV2: SwingPoint | undefined;
-                let newBestSlope = Infinity;
-
-                for (const v2 of newSubLows) {
-                  const timeDiff = v2.time - newV1.time;
-                  const priceDiff = v2.price - newV1.price;
-                  const slope = priceDiff / timeDiff;
-
-                  let violates = false;
-                  for (const midLow of newSubLows) {
-                    if (midLow.time > newV1.time && midLow.time < v2.time) {
-                      const lineVal = newV1.price + slope * (midLow.time - newV1.time);
-                      if (midLow.price < lineVal * 0.9995) {
-                        violates = true;
-                        break;
-                      }
-                    }
-                  }
-
-                  if (!violates && slope < newBestSlope) {
-                    newBestSlope = slope;
-                    newBestV2 = v2;
-                  }
-                }
-
-                if (!newBestV2) {
-                  newBestV2 = newSubLows[newSubLows.length - 1];
-                  if (newBestV2) {
-                    newBestSlope = (newBestV2.price - newV1.price) / (newBestV2.time - newV1.time);
-                  }
-                }
-
-                if (newBestV2 && Number.isFinite(newBestSlope)) {
-                  const newLinePrice = newV1.price + newBestSlope * (latestTime - newV1.time);
-                  if (newLinePrice > 0) {
-                    let newBrokenCount = 0;
-                    for (let i = n - 1; i >= newV1.index; i--) {
-                      const c = this.candles[i];
-                      if (!c) break;
-                      const lineVal = newV1.price + newBestSlope * (c.time - newV1.time);
-                      const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
-                      if (testPrice < lineVal) {
-                        newBrokenCount++;
-                      } else {
-                        break;
-                      }
-                    }
-
-                    if (newBrokenCount < 2) {
-                      const points: TrendLinePoint[] = [];
-                      for (let cIdx = newV1.index; cIdx < n; cIdx++) {
-                        const c = this.candles[cIdx];
-                        if (!c) continue;
-                        const val = newV1.price + newBestSlope * (c.time - newV1.time);
-                        points.push({ time: c.time, value: Number(val.toFixed(6)) });
-                      }
-                      uptrendLine = {
-                        type: "UPTREND",
-                        p1: newV1,
-                        p2: newBestV2,
-                        slope: newBestSlope,
-                        currentLinePrice: newLinePrice,
-                        isBroken: false,
-                        breakoutPct: ((newLinePrice - currentPrice) / newLinePrice) * 100,
-                        brokenCandleCount: newBrokenCount,
-                        breakoutConfirmed: false,
-                        points,
-                      };
-                    }
-                  }
-                }
-              }
-              // If no new trendline has formed yet from the breakdown valley, uptrendLine remains undefined
-            } else {
-              // Trendline is intact / active (brokenCandleCount < 2)
-              uptrendLine = {
-                type: "UPTREND",
-                p1: v1,
-                p2: bestV2,
-                slope: bestSlope,
-                currentLinePrice,
-                isBroken: false,
-                breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
-                brokenCandleCount,
-                breakoutConfirmed: false,
-                points,
-              };
             }
           }
         }

@@ -186,6 +186,19 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     2. **Auto-Clear Memory Lots**: หลังยิงคำสั่ง `sellAll()` สำเร็จ หากยอดคงเหลือในกระเป๋า $\le \text{minQty}$ ให้รีเซ็ต `this.lots = []` และปลดล็อค `lockedChannel = undefined` ทันที
     3. **Reconcile Inventory Guard (`if (this.waitingForHigherLow) return;`)**: ใน `reconcileInventory()` เพิ่ม Guard ห้าม Adopt เหรียญในกระเป๋ามาสร้าง lots ระหว่างที่อยู่ในสถานะรอ Higher Low หรือช่วง Floor Breakdown โดยเด็ดขาด ป้องกันการวนลูปดูดเหรียญมา Cut Loss ซ้ำทุก 30 วินาที
     4. **Strict Higher Low Enforcement**: ตราบใดที่ยังไม่เกิด Confirmed Higher Low (HL) เหนือจุดต่ำสุดของการทุบ (`lowestDumpPrice`) สถานะ `waitingForHigherLow` จะยังคงเป็น `true` และบล็อกคำสั่งซื้อ (`canBuy = false`) อย่างสมบูรณ์ แม้ว่ากรอบ S/R Channel จะเลื่อนลงมารองรับราคาแล้วก็ตาม
+- **Strict Dow Theory Trendline Anchoring & Zero Floating Lines**:
+  - **สาเหตุของปัญหาเดิม**:
+    1. ในการคำนวณ Uptrend Support Line (`calculateTrendlines`) จุดกำเนิด $V_1$ จับที่ก้นเหว $LL$ ล่าสุด ($2422.73) แต่ ณ ขณะนั้นตลาดยังไม่เกิด Confirmed Higher Low ($V_2$) เลยแม้แต่จุดเดียว (เหวยังเป็น Candidate Valley `🌊 0/3` ยังไม่ปิดแท่ง 3 bars) แต่โค้ดมีระบบ Fallback ดึงค่ามโนมาคำนวณ ทำให้เกิดเส้นประรับพุ่งเฉียงขึ้นไปบนฟ้าแบบ **"ไม่ได้เชื่อมจากเหวไปเหว"**
+    2. ในการคำนวณ Downtrend Resistance Line จุด $P_1$ ไปควักยอดเก่าของคลื่นก่อนหน้า ($2588) ข้ามยอด Lower High จริงๆ ของรอบทุบ ทำให้เส้นประม่วงลอยอยู่สูงเกินไปและไม่ได้กดลงมาตามพฤติกรรมราคาจริง
+  - **การแก้ไขตามหลัก Dow Theory**:
+    1. **Downtrend Resistance Line**:
+       - $P_1$: เริ่มจากจุดยอดสูงสุด (The Major High) ของรอบคลื่นที่ส่งราคาลงมาทำจุดต่ำสุด ($LL$ ล่าสุด)
+       - $P_2$: ต้องเป็น Confirmed Lower High ($LH$) ที่ได้รับการยืนยันแท่งเทียนแล้วเท่านั้น เกิดขึ้นหลังจาก $P_1$
+       - **กฎเหล็ก**: หากยังไม่เกิด Confirmed $LH$ จะต้องไม่วาดเส้นกดเด็ดขาด (`downtrendLine = undefined`)
+    2. **Uptrend Support Line**:
+       - $V_1$: เริ่มจากจุดต่ำสุดของรอบทุบ (The Lowest Low / $LL$) ล่าสุด
+       - $V_2$: ต้องเป็น Confirmed Higher Low ($HL$) ที่ยกฐานสูงกว่า $V_1$ และปิดแท่งยืนยันสมบูรณ์แล้วเท่านั้น
+       - **กฎเหล็ก**: หากยังไม่เกิด Confirmed $HL$ (เช่น ยังเป็น `🌊 0/3` หรือราคากำลังวิ่งขาแรก) จะต้องไม่วาดเส้นรับเด็ดขาด (`uptrendLine = undefined`) ป้องกันเส้นลอยกลางอากาศ 100%
 - **Cut-Loss / IOC WS Fill Deduplication (Zero Duplicate Trade Records & Zero Ghost SELL Fills)**:
   - **สาเหตุของปัญหาเดิม**: เมื่อเกิด Cut Loss / Full Exit คำสั่ง `sellAll()` จะส่ง IOC Order ไปยัง Exchange และบันทึกผลการปิดออเดอร์ (`CUT` / `TAKE_PROFIT`) ทันทีที่ REST ส่งผลลัพธ์กลับมา แต่หลังจากนั้นเพียง 2-3 มิลลิวินาที Binance WebSocket User Data Stream จะส่งข้อความ `executionReport (FILLED)` ตามมา เนื่องจากระบบ `handleWsExecutionReport` เดิมไม่มีการติดตาม ID ของคำสั่งฝั่ง IOC/Exit จึงเข้าใจผิดคิดว่าเป็น Maker Sell Order ปกติ และเรียก `processSellFill()` ซ้ำ ส่งผลให้เกิดรายการ `SELL FILL $0.00 PnL` ซ้ำซ้อนกับ `CUT LOSS` ในหน้ารายการ Trade และแสดง Marker `CUT` กับ `S` ซ้ำกันบนแท่งเทียนเดียวกัน
   - **การแก้ไข**:
