@@ -2956,6 +2956,18 @@
   const tabBtns = document.querySelectorAll(".settings-tabs .tab-btn");
   const tabPanes = document.querySelectorAll(".tab-pane");
 
+  function updateExchangeFieldsVisibility(exchange) {
+    const isDreamdex = exchange === "dreamdex";
+    const binanceGroups = document.querySelectorAll(".binance-fields-group");
+    const dreamdexGroups = document.querySelectorAll(".dreamdex-fields-group");
+    binanceGroups.forEach((el) => {
+      el.style.display = isDreamdex ? "none" : "flex";
+    });
+    dreamdexGroups.forEach((el) => {
+      el.style.display = isDreamdex ? "flex" : "none";
+    });
+  }
+
   tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       tabBtns.forEach((b) => b.classList.remove("active"));
@@ -2964,7 +2976,6 @@
       const targetId = btn.getAttribute("data-tab");
       const targetPane = document.getElementById(targetId);
       if (targetPane) targetPane.classList.add("active");
-      if (targetId === "tab-database") loadDatabaseStatus();
     });
   });
 
@@ -2988,6 +2999,7 @@
       setVal("cfg_exchange", data.exchange || "binance");
       const currentExchange = (data.exchange || "binance").toLowerCase();
       renderTopSymbolOptions(currentExchange, data.symbol);
+      updateExchangeFieldsVisibility(currentExchange);
       setVal("cfg_binanceApiKey", data.binanceApiKey || "");
       setVal("cfg_binanceApiSecret", data.binanceApiSecret || "");
       setVal("cfg_binanceBaseUrl", data.binanceBaseUrl || "https://api.binance.com");
@@ -3030,12 +3042,9 @@
       setVal("cfg_stuckTimeoutMinutes", data.stuckTimeoutMs ? Math.round(data.stuckTimeoutMs / 60000) : 0);
       setCheck("cfg_enableBuyBelowSellLevel1", data.enableBuyBelowSellLevel1 !== false);
       setCheck("cfg_enableSellAboveBuyLevel1", data.enableSellAboveBuyLevel1 !== false);
-      setVal("cfg_laggardThresholdPct", data.laggardThresholdPct);
       setVal("cfg_orderPriceTolerancePct", data.orderPriceTolerancePct);
       setVal("cfg_orderQtyTolerancePct", data.orderQtyTolerancePct);
       setVal("cfg_minGasReserveSomi", data.minGasReserveSomi ?? 2.0);
-      setCheck("cfg_enableLaggardSnipe", data.enableLaggardSnipe);
-      setCheck("cfg_enableLaggardGuard", data.enableLaggardGuard);
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -3127,12 +3136,9 @@
       stuckTimeoutMs: (parseFloat(document.getElementById("cfg_stuckTimeoutMinutes").value) || 0) * 60_000,
       enableBuyBelowSellLevel1: document.getElementById("cfg_enableBuyBelowSellLevel1").checked,
       enableSellAboveBuyLevel1: document.getElementById("cfg_enableSellAboveBuyLevel1").checked,
-      laggardThresholdPct: parseFloat(document.getElementById("cfg_laggardThresholdPct").value),
       orderPriceTolerancePct: parseFloat(document.getElementById("cfg_orderPriceTolerancePct").value),
       orderQtyTolerancePct: parseFloat(document.getElementById("cfg_orderQtyTolerancePct").value),
       minGasReserveSomi: document.getElementById("cfg_minGasReserveSomi") ? parseFloat(document.getElementById("cfg_minGasReserveSomi").value) : 0,
-      enableLaggardSnipe: document.getElementById("cfg_enableLaggardSnipe").checked,
-      enableLaggardGuard: document.getElementById("cfg_enableLaggardGuard").checked,
     };
 
     try {
@@ -3170,7 +3176,6 @@
   if (elOpenSettingsBtn) {
     elOpenSettingsBtn.addEventListener("click", () => {
       loadSettings();
-      loadDatabaseStatus();
       if (elSettingsModalOverlay) elSettingsModalOverlay.classList.add("active");
       if (elSettingsSaveStatus) elSettingsSaveStatus.textContent = "";
     });
@@ -3262,6 +3267,7 @@
   if (elCfgExchange) {
     elCfgExchange.addEventListener("change", (e) => {
       const selectedExchange = (e.target.value || "binance").toLowerCase();
+      updateExchangeFieldsVisibility(selectedExchange);
       const cfgSymbol = document.getElementById("cfg_symbol");
       let newDefaultSym = selectedExchange === "dreamdex" ? "SOMI" : "BTCUSDT";
       if (cfgSymbol) {

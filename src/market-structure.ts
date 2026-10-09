@@ -752,14 +752,32 @@ export class DowStructureEngine {
       return { confirmed: false, reason: "No confirmed swing lows in memory" };
     }
 
-    // Check confirmed swing lows formed at or after the breakdown (with 5-minute leeway)
-    const recentConfirmedLows = this.swingLows.filter((s) => s.time >= sinceTime - 300);
+    // 1. Check annotated structural wave swings (if the wave cycle already labeled a confirmed "HL" after the lowest dump)
+    const wave = this.calculateWaveCycles();
+    if (wave && wave.annotatedSwings.length > 0) {
+      const postDumpSwings = wave.annotatedSwings.filter(
+        (s) => s.type === "LOW" && s.price > lowestDumpPrice * 1.0005 && (s.time >= sinceTime - 1800 || s.dowLabel === "HL")
+      );
+      if (postDumpSwings.length > 0) {
+        const lastHl = postDumpSwings[postDumpSwings.length - 1]!;
+        if (!currentPrice || currentPrice >= lastHl.price * 0.999) {
+          return {
+            confirmed: true,
+            higherLow: lastHl,
+            reason: `Structural Wave labeled ${lastHl.dowLabel} at $${lastHl.price.toFixed(6)} > lowest dump $${lowestDumpPrice.toFixed(6)}`,
+          };
+        }
+      }
+    }
+
+    // 2. Check confirmed swing lows formed at or after the breakdown (with 30-minute leeway)
+    const recentConfirmedLows = this.swingLows.filter((s) => s.time >= sinceTime - 1800);
 
     if (recentConfirmedLows.length === 0) {
       const lastLow = this.swingLows[this.swingLows.length - 1];
       const prevLow = this.swingLows.length >= 2 ? this.swingLows[this.swingLows.length - 2] : undefined;
 
-      if (lastLow && lastLow.time >= sinceTime - 900) {
+      if (lastLow) {
         const isHigherThanDump = lastLow.price > lowestDumpPrice * 1.0005;
         const isHigherThanPrev = prevLow ? lastLow.price > prevLow.price : false;
         const isPriceAboveLow = currentPrice ? currentPrice >= lastLow.price : true;

@@ -1440,15 +1440,15 @@ export class DynamicGrid {
     }
 
     const binancePrice = this.atrSource.getLatestPrice?.();
-    const effectiveMid = mid ?? binancePrice;
+    const effectiveMid = (mid !== undefined && mid > 0) ? mid : (binancePrice ?? 0);
 
-    if (effectiveMid === undefined) {
+    if (effectiveMid === undefined || effectiveMid <= 0) {
       this.status("empty book and no Binance price — waiting for price feed");
       return;
     }
 
     // Sample mid-price for synthetic bars if self-sampled
-    if (mid !== undefined) {
+    if (mid !== undefined && mid > 0) {
       this.atrSource.sample?.(mid);
     }
 
@@ -1458,13 +1458,21 @@ export class DynamicGrid {
     let isSpreadDislocated = false;
     let spreadDislocationReason = "";
 
-    const currentSpreadPct = bestBid !== undefined && bestAsk !== undefined ? spreadBps(bestBid, bestAsk) / 100 : 0;
+    const isDex = this.binance.exchangeName === "dreamdex";
+    const currentSpreadPct = bestBid !== undefined && bestAsk !== undefined && bestBid > 0 && bestAsk > 0
+      ? spreadBps(bestBid, bestAsk) / 100
+      : 0;
     const maxSpreadPct = this.cfg.maxSpreadBps / 100;
 
     // Spread & orderbook depth gate: sit out order execution if orderbook is one-sided or spread is dislocated
-    if (bestBid === undefined || bestAsk === undefined || mid === undefined) {
-      isSpreadDislocated = true;
-      spreadDislocationReason = "one-sided or empty book";
+    if (bestBid === undefined || bestAsk === undefined || bestBid <= 0 || bestAsk <= 0 || mid === undefined || mid <= 0) {
+      if (isDex && binancePrice && binancePrice > 0) {
+        // On DreamDEX (on-chain AMM / CLOB), if orderbook is shallow or one-sided, we can safely fallback to CEX reference price
+        isSpreadDislocated = false;
+      } else {
+        isSpreadDislocated = true;
+        spreadDislocationReason = "one-sided or empty book";
+      }
     } else {
       const currentSpreadBps = spreadBps(bestBid, bestAsk);
 
@@ -1723,15 +1731,29 @@ export class DynamicGrid {
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
         this.saveState();
-      } else if (this.breakdownTime && this.breakdownFloorPrice && this.breakdownLowPrice) {
+      } else if (this.breakdownFloorPrice || this.breakdownLowPrice || lowerBound > 0) {
         // 3. Resolve via Confirmed Higher Low (HL)
+        const checkTime = this.breakdownTime ?? (Math.floor(Date.now() / 1000) - 3600);
+        const checkFloor = this.breakdownFloorPrice ?? lowerBound;
+        const checkLow = this.breakdownLowPrice ?? (lowerBound * 0.98);
+
         const hlCheck =
-          this.localTrendEngine?.checkForHigherLow(this.breakdownTime, this.breakdownFloorPrice, this.breakdownLowPrice, refPrice) ??
-          this.dowEngine?.checkForHigherLow(this.breakdownTime, this.breakdownFloorPrice, this.breakdownLowPrice, refPrice);
+          this.localTrendEngine?.checkForHigherLow(checkTime, checkFloor, checkLow, refPrice) ??
+          this.dowEngine?.checkForHigherLow(checkTime, checkFloor, checkLow, refPrice);
 
         if (hlCheck && hlCheck.confirmed && hlCheck.higherLow) {
           this.log(
             `✅ HIGHER LOW (HL) CONFIRMED @ $${hlCheck.higherLow.price.toFixed(6)} (${hlCheck.reason}) — Floor breakdown resolved, establishing new floor & resuming grid accumulation!`,
+          );
+          this.waitingForHigherLow = false;
+          this.breakdownTime = undefined;
+          this.breakdownFloorPrice = undefined;
+          this.breakdownLowPrice = undefined;
+          this.saveState();
+        } else if (isChannelReady && refPrice >= lowerBound * 1.002 && (lastClosedCandle && lastClosedCandle.close >= lowerBound)) {
+          // If price has cleanly re-entered and closed above the current valid channel floor
+          this.log(
+            `🚀 CHANNEL FLOOR RECLAIMED @ $${refPrice.toFixed(6)} >= Floor $${lowerBound.toFixed(6)} — Floor breakdown resolved, resuming normal grid operation!`,
           );
           this.waitingForHigherLow = false;
           this.breakdownTime = undefined;

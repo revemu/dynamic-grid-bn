@@ -114,6 +114,19 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - **Candle Flush Protection (`clearCandles` & `clearExisting: true`)**:
      - เมื่อสลับคู่เหรียญ ระบบจะเรียก `macroDowEngine.clearCandles()` และ `localTrendEngine.clearCandles()` เพื่อล้างแท่งเทียนเก่าของเหรียญเดิมทิ้ง ป้องกันปัญหากราฟเพี้ยนจากการนำแท่งเทียน BTC (ราคา $83,000) มาผสมกับแท่ง SOMI (ราคา $0.20)
    - **Real-Time WebSockets**: สตรีมแท่งเทียน Real-time (Binance Kline WS) และ Order Book Ticker สำหรับคำนวณ ATR, Dow Swings และอัปเดต Dashboard chart
+   - **DreamDEX Real On-Chain Top of Book Indexing (`getTopOfBook`)**:
+     - เพิ่มเมธอด `getTopOfBook` ใน `SomniaIndexerClient` และ `DreamDexClient` โดยคิวรี Open Orders (Bids & Asks) จาก Somnia GraphQL Indexer แบบเรียลไทม์ และคำนวณ Best Bid, Best Ask และ Mid Price
+     - มีระบบ In-memory cache 1.5 วินาที เพื่อป้องกันการยิง GraphQL ถี่เกินไประหว่าง Polling
+     - **Price $0.000000 & Mid Fallback Protection**:
+       - แก้ไขจุดบกพร่อง `effectiveMid = mid ?? binancePrice` ใน `src/strategy.ts` ที่ประเมิน `0 ?? binancePrice` เป็น `0` โดยปรับเป็น `const effectiveMid = (mid !== undefined && mid > 0) ? mid : (binancePrice ?? 0);`
+       - ป้องกันปัญหา Orderbook บน DEX ว่างจนสะดุด Spread Dislocated Gate ด้วยการผ่อนปรนให้ใช้ CEX Reference Price ได้อย่างปลอดภัย
+   - **Broken Floor & Higher Low Recovery (`checkForHigherLow`)**:
+     - ปรับปรุงการตรวจสอบ Higher Low หลังหลุด Floor ใน `market-structure.ts` และ `strategy.ts` ให้ตรวจจับสวิงที่ได้รับการวิเคราะห์คลื่น Dow Wave Cycles ว่าเป็น `HL` และหากราคากลับขึ้นมายืนเหนือ Floor ของ Channel ปัจจุบันได้อย่างมั่นคง จะทำการปลดล็อกสถานะ `waitingForHigherLow` ทันทีและกลับมาเปิดการซื้อขายตามปกติ
+   - **Settings Modal UI Revamp**:
+     - ลบแท็บ `💾 Offline DB Status` และเมทริกซ์ที่ไม่ได้ใช้งานออกจาก Settings Modal
+     - เปลี่ยนชื่อแท็บ `Binance API & Env` เป็น `🔑 Exchange & Network`
+     - จัดกลุ่มแสดงผลเฉพาะของกระดานที่เลือก (`.binance-fields-group` vs `.dreamdex-fields-group`) โดยอัตโนมัติเมื่อผู้ใช้สลับ Dropdown Exchange
+     - ตัดตัวเลือก Laggard Snipe, Laggard Guard, และ Laggard Dislocation Threshold ออกจากแท็บ Execution & Guard เพื่อความกระชับสะอาดตา
 
 ---
 

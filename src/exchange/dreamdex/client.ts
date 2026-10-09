@@ -403,16 +403,38 @@ export class DreamDexClient implements IExchangeClient {
     };
   }
 
+  private topOfBookCache: Map<string, { data: ExchangeTopOfBook; fetchedAt: number }> = new Map();
+
   public async getTopOfBook(symbol: string): Promise<ExchangeTopOfBook | undefined> {
     const market = this.resolveMarket(symbol);
-    return {
-      bestBid: 0,
-      bestAsk: 0,
-      mid: 0,
-      bidQty: 0,
-      askQty: 0,
-      time: Date.now(),
-    };
+    const now = Date.now();
+    const cached = this.topOfBookCache.get(market.pool);
+    // Use 1.5s cache to avoid spamming GraphQL on fast polling
+    if (cached && now - cached.fetchedAt < 1500) {
+      return cached.data;
+    }
+
+    try {
+      const tob = await this.indexer.getTopOfBook(market.pool);
+      if (tob && (tob.bestBid > 0 || tob.bestAsk > 0)) {
+        const result: ExchangeTopOfBook = {
+          bestBid: tob.bestBid,
+          bestAsk: tob.bestAsk,
+          mid: tob.mid,
+          bidQty: tob.bidQty,
+          askQty: tob.askQty,
+          time: now,
+        };
+        this.topOfBookCache.set(market.pool, { data: result, fetchedAt: now });
+        return result;
+      }
+    } catch (err) {
+      this.log(`⚠️ Failed to fetch DreamDEX top of book: ${(err as Error).message}`);
+    }
+
+    // If indexer returned empty or failed, return last known cached or 0
+    if (cached) return cached.data;
+    return undefined;
   }
 
   private async ensureAllowance(token: `0x${string}`, spender: `0x${string}`, amount: bigint): Promise<void> {

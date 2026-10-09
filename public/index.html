@@ -474,10 +474,9 @@
         <!-- Tab Navigation -->
         <div class="settings-tabs">
           <button class="tab-btn active" data-tab="tab-risk">🛡️ Risk &amp; Channel</button>
-          <button class="tab-btn" data-tab="tab-api">🔑 Binance API &amp; Env</button>
+          <button class="tab-btn" data-tab="tab-api">🔑 Exchange &amp; Network</button>
           <button class="tab-btn" data-tab="tab-structure">📊 Market Structure</button>
           <button class="tab-btn" data-tab="tab-execution">⚡ Execution &amp; Guard</button>
-          <button class="tab-btn" data-tab="tab-database">💾 Offline DB Status</button>
         </div>
 
         <!-- Tab 1: Risk & Channel -->
@@ -616,7 +615,7 @@
             </div>
 
             <!-- Binance Credentials Group -->
-            <div class="binance-fields-group" style="grid-column: 1 / -1;">
+            <div class="binance-fields-group" style="grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px;">
               <div class="form-group">
                 <label for="cfg_binanceApiKey">
                   Binance API Key
@@ -628,7 +627,7 @@
                 </div>
               </div>
 
-              <div class="form-group" style="margin-top: 12px;">
+              <div class="form-group">
                 <label for="cfg_binanceApiSecret">
                   Binance API Secret
                   <span class="help-tip" title="API Secret จาก Binance Spot">ℹ️</span>
@@ -638,10 +637,26 @@
                   <span class="unit">SECRET</span>
                 </div>
               </div>
+
+              <div class="form-group">
+                <label for="cfg_binanceBaseUrl">
+                  Binance REST API Base URL
+                  <span class="help-tip" title="Default: https://api.binance.com">ℹ️</span>
+                </label>
+                <input type="text" id="cfg_binanceBaseUrl" placeholder="https://api.binance.com" />
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_binanceWsBase">
+                  Binance WebSocket Base URL
+                  <span class="help-tip" title="Default: wss://stream.binance.com:9443">ℹ️</span>
+                </label>
+                <input type="text" id="cfg_binanceWsBase" placeholder="wss://stream.binance.com:9443" />
+              </div>
             </div>
 
             <!-- DreamDEX Credentials Group -->
-            <div class="dreamdex-fields-group" style="grid-column: 1 / -1;">
+            <div class="dreamdex-fields-group" style="grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px;">
               <div class="form-group">
                 <label for="cfg_dreamdexPrivateKey">
                   DreamDEX Wallet Private Key (Somnia Chain)
@@ -653,7 +668,7 @@
                 </div>
               </div>
 
-              <div class="form-group" style="margin-top: 12px;">
+              <div class="form-group">
                 <label for="cfg_dreamdexRpcUrl">
                   Somnia RPC Endpoint
                   <span class="help-tip" title="Default: https://api.infra.mainnet.somnia.network">ℹ️</span>
@@ -661,7 +676,7 @@
                 <input type="text" id="cfg_dreamdexRpcUrl" placeholder="https://api.infra.mainnet.somnia.network" />
               </div>
 
-              <div class="form-group" style="margin-top: 12px;">
+              <div class="form-group">
                 <label for="cfg_minGasReserveSomi">
                   ⛽ DreamDEX Gas Safety Reserve (SOMI)
                   <span class="help-tip" title="จำนวนเหรียญ SOMI ที่กันไว้สำหรับเป็นค่าแก๊สในการส่งธุรกรรมบน Somnia Network (บอทจะไม่นำส่วนนี้ไปเทรดหรือตั้งขาย)">ℹ️</span>
@@ -673,23 +688,7 @@
               </div>
             </div>
 
-            <div class="form-group">
-              <label for="cfg_binanceBaseUrl">
-                Binance REST API Base URL
-                <span class="help-tip" title="Default: https://api.binance.com">ℹ️</span>
-              </label>
-              <input type="text" id="cfg_binanceBaseUrl" placeholder="https://api.binance.com" />
-            </div>
-
-            <div class="form-group">
-              <label for="cfg_binanceWsBase">
-                Binance WebSocket Base URL
-                <span class="help-tip" title="Default: wss://stream.binance.com:9443">ℹ️</span>
-              </label>
-              <input type="text" id="cfg_binanceWsBase" placeholder="wss://stream.binance.com:9443" />
-            </div>
-
-            <div class="form-group">
+            <div class="form-group" style="grid-column: 1 / -1;">
               <label for="cfg_dashboardPort">
                 Web Dashboard Port
                 <span class="help-tip" title="Port ที่ Web Dashboard ให้บริการ (Default: 3333 หรือตามค่าใน DB)">ℹ️</span>
@@ -1003,17 +1002,6 @@
             </div>
 
             <div class="form-group">
-              <label for="cfg_laggardThresholdPct">
-                Laggard Arbitrage Dislocation Threshold (%)
-                <span class="help-tip" title="Price divergence between DreamDEX and Binance to trigger Snipe/Guard">ℹ️</span>
-              </label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg_laggardThresholdPct" step="0.05" min="0.1" max="3.0" />
-                <span class="unit">%</span>
-              </div>
-            </div>
-
-            <div class="form-group">
               <label for="cfg_orderPriceTolerancePct">
                 Order Price Tolerance (%)
                 <span class="help-tip" title="Keep existing resting orders if price is within this % of desired grid level">ℹ️</span>
@@ -1033,57 +1021,6 @@
                 <input type="number" id="cfg_orderQtyTolerancePct" step="5" min="5" max="50" />
                 <span class="unit">%</span>
               </div>
-            </div>
-
-            <div class="form-group switch-group">
-              <div class="switch-label-group">
-                <span class="switch-title">Opportunistic Snipe</span>
-                <span class="switch-desc">Opportunistically take discounted asks or sell to premium bids against reference price</span>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="cfg_enableLaggardSnipe" />
-                <span class="slider"></span>
-              </label>
-            </div>
-
-            <div class="form-group switch-group">
-              <div class="switch-label-group">
-                <span class="switch-title">Dump Guard</span>
-                <span class="switch-desc">Prevent buying when local order book is lagging above a dumping market</span>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="cfg_enableLaggardGuard" />
-                <span class="slider"></span>
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tab 4: Database Status -->
-        <div class="tab-pane" id="tab-database">
-          <div class="db-status-container">
-            <div class="db-metric-card">
-              <div class="db-metric-title">DATABASE ENGINE</div>
-              <div class="db-metric-val highlight-green">ACID Offline File DB</div>
-              <div class="db-metric-sub">Atomic Write + Backup Rotation</div>
-            </div>
-
-            <div class="db-metric-card">
-              <div class="db-metric-title">TOTAL EXECUTED TRADES</div>
-              <div class="db-metric-val" id="dbTradesCount">0 Trades</div>
-              <div class="db-metric-sub">Persisted in trades table</div>
-            </div>
-
-            <div class="db-metric-card">
-              <div class="db-metric-title">TOTAL GAS &amp; FEES</div>
-              <div class="db-metric-val highlight-purple" id="dbGasCount">0 Tx</div>
-              <div class="db-metric-sub" id="dbGasTotalSomi">0.0000 Fees Spent</div>
-            </div>
-
-            <div class="db-metric-card">
-              <div class="db-metric-title">STORAGE FILE</div>
-              <div class="db-metric-val" style="font-size: 0.85rem; word-break: break-all;">data/grid-bot.db.json</div>
-              <div class="db-metric-sub">Automatic Crash Recovery Active</div>
             </div>
           </div>
         </div>

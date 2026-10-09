@@ -295,4 +295,71 @@ export class SomniaIndexerClient {
     if (!data?.Order) return [];
     return data.Order.map((row) => this.mapOrder(row));
   }
+
+  /**
+   * Query top of book (best bid, best ask, mid price) for a pool from open orders
+   */
+  async getTopOfBook(
+    poolAddress: string
+  ): Promise<{ bestBid: number; bestAsk: number; mid: number; bidQty: number; askQty: number } | null> {
+    const marketId = poolAddress.toLowerCase();
+    const query = `
+      query GetTopOfBook($marketId: String!) {
+        bids: Order(
+          where: { market_id: { _eq: $marketId }, status: { _eq: "Open" }, isBid: { _eq: true } }
+          limit: 100
+        ) {
+          price
+          quantityRemaining
+        }
+        asks: Order(
+          where: { market_id: { _eq: $marketId }, status: { _eq: "Open" }, isBid: { _eq: false } }
+          limit: 100
+        ) {
+          price
+          quantityRemaining
+        }
+      }
+    `;
+
+    const data = await this.fetchGql<{ bids: any[]; asks: any[] }>(query, { marketId });
+    if (!data) return null;
+
+    let bestBid = 0;
+    let bidQty = 0;
+    if (data.bids && data.bids.length > 0) {
+      for (const b of data.bids) {
+        const p = this.parseRawUnits(b.price, this.quoteDecimals);
+        const q = this.parseRawUnits(b.quantityRemaining, this.baseDecimals);
+        if (p > bestBid) {
+          bestBid = p;
+          bidQty = q;
+        }
+      }
+    }
+
+    let bestAsk = 0;
+    let askQty = 0;
+    if (data.asks && data.asks.length > 0) {
+      for (const a of data.asks) {
+        const p = this.parseRawUnits(a.price, this.quoteDecimals);
+        const q = this.parseRawUnits(a.quantityRemaining, this.baseDecimals);
+        if (bestAsk === 0 || p < bestAsk) {
+          bestAsk = p;
+          askQty = q;
+        }
+      }
+    }
+
+    let mid = 0;
+    if (bestBid > 0 && bestAsk > 0) {
+      mid = (bestBid + bestAsk) / 2;
+    } else if (bestBid > 0) {
+      mid = bestBid;
+    } else if (bestAsk > 0) {
+      mid = bestAsk;
+    }
+
+    return { bestBid, bestAsk, mid, bidQty, askQty };
+  }
 }
