@@ -78,9 +78,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - **Credentials Masking Protection (`******`)**: ฟรอนต์เอนด์และแบ็กเอนด์แยกแยะระหว่างค่า Masking (`******`) กับ Private Key จริงอย่างเข้มงวด โดยจะไม่ส่งหรือเผลอ parse ข้อความ `******` เป็น private key เข้า `viem` อีกต่อไป ป้องกันปัญหา `invalid private key, expected hex or 32 bytes` ขณะบันทึกการตั้งค่า
    - **True Select Dropdown for Trading Pair in Settings Modal**: เปลี่ยนช่องกรอกคู่เทรดในหน้าต่าง Settings จาก input text เป็น `<select id="cfg_symbol" class="form-select">` เต็มรูปแบบ กดเลือกรายการเหรียญ (`WBTC:USDso`, `WETH:USDso`, `SOMI:USDso`, `USDC.e:USDso`) ได้ทันทีโดยไม่ต้องพิมพ์เอง
    - **Instant Pair Switching (`symbolChanged`)**: ปรับปรุงตรรกะการตรวจจับการสลับเหรียญใน `index.ts` โดยเทียบ Symbol ที่ normalize แล้วล่วงหน้า ทำให้การกดเปลี่ยนเหรียญทั้งจากแถบด้านบนหรือใน Settings สลับกระดาน ดึง Info คู่เทรดใหม่ และรีเฟรชกราฟแท่งเทียนได้ทันที 100%
-   - **DreamDEX Native Gas Reserve Protection (`minGasReserveSomi`)**:
+   - **DreamDEX Strict Price & Quantity Tick Rounding (Elimination of `0xaf608abb` Reverts)**:
+     - **สาเหตุของปัญหาเดิม**: บน DreamDEX สัญญา `SpotPool` มี require guard บังคับว่าราคาคำสั่งซื้อขายต้องหารลงตัวกับ `tickSize` พอดี (`price % tickSize == 0`) หากราคาที่ส่งไปมีทศนิยมเกินระดับขั้น (เช่น `0.20342` แต่ `tickSize` คือ `0.0001`) สัญญาจะ Revert ด้วย Custom Error `0xaf608abb` (`InvalidPriceTick(uint256 price, uint256 tickSize)`)
+     - **การแก้ไข**: ใน `src/exchange/dreamdex/client.ts` เมธอด `placeOrder` นำเข้าและใช้ `roundToTick(params.price, market.tickSize)` และ `roundToStep(params.qty, market.stepSize)` เสมอก่อนแปลงเป็น BigInt (`priceRaw`, `qtyRaw`) และใน `src/strategy.ts` มีการปัดเศษด้วย `roundToTick(price, this.tickSize)` ก่อนสร้างออเดอร์ ทำให้ส่งคำสั่งได้สำเร็จ 100%
+   - **DreamDEX Native Gas Reserve Protection & Settings Persistence (`minGasReserveSomi`)**:
      - เนื่องจากบน Somnia Network ค่าแก๊สในการส่งคำสั่งทั้งหมด (Place/Cancel Order, Token Approvals) ต้องจ่ายด้วย Native SOMI เสมอ
      - เพิ่มช่องกรอก `⛽ DreamDEX Gas Safety Reserve (SOMI)` ใน Settings Modal (ค่าเริ่มต้น `2.0` SOMI) บันทึกลงใน `settings.db.json`
+     - **การแก้ไข Settings Persistence & Auto-Adopting Lots Fix**:
+       - ใน `strategy.ts` เมธอด `getRuntimeConfig()` เคยตกคีย์ `minGasReserveSomi` ทำให้เมื่อผู้ใช้กดบันทึก ค่านี้จะหลุดหายไปจาก `settings.db.json` และส่งผลให้ `reconcileInventory` มองว่าไม่มี Gas Reserve จึงนำ SOMI ค่าแก๊สในกระเป๋าไปสร้างเป็น Lot ถือครองเพิ่มใน Position
+       - ได้เพิ่ม `minGasReserveSomi` เข้าไปใน `getRuntimeConfig()` และ `updateRuntimeSettings` พร้อมการแปลง Number ป้องกันยอดแก๊สหลุดไปถูกนำไปสร้าง Lot โดยเด็ดขาด
      - ใน `src/strategy.ts`:
        - เมื่อเทรดคู่เหรียญที่ Base Asset เป็น SOMI (เช่น `SOMI:USDSO`): ฟังก์ชัน `getEffectiveGasReserveBase()` จะกันยอด `minGasReserveSomi` ออกจาก Inventory และยอดที่พร้อมเทรด/พร้อมขายโดยเด็ดขาด ป้องกันไม่ให้บอทเทขาย SOMI หมดเกลี้ยงกระเป๋าตอนเกิด Sell All หรือ Cut Loss
        - ใน `reconcileInventory`, `placeSellOrders`, `sellTrancheIOC`, `sellAll`: ป้องกันไม่ให้บอทดึง SOMI ในส่วน Gas Reserve ไปตั้งขาย

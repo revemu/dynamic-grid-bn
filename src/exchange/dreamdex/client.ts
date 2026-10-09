@@ -25,6 +25,7 @@ import type {
   ExchangeAccountBalances,
   PlaceOrderParams,
 } from "../types.js";
+import { roundToStep, roundToTick } from "../binance/client.js";
 import { SomniaIndexerClient } from "./indexer.js";
 
 export const SPOT_POOL_ABI = [
@@ -461,10 +462,18 @@ export class DreamDexClient implements IExchangeClient {
       }
     } catch {}
 
-    const price = params.price || 0;
-    const qty = params.qty;
-    const priceRaw = parseUnits(price.toFixed(6), market.quoteDecimals);
-    const qtyRaw = parseUnits(qty.toFixed(4), market.baseDecimals);
+    // Strictly align price to market.tickSize (prevents InvalidPriceTick 0xaf608abb)
+    // and quantity to market.stepSize
+    const rawPrice = params.price || 0;
+    const price = roundToTick(rawPrice, market.tickSize);
+    const qty = roundToStep(params.qty, market.stepSize);
+
+    // Get exact decimal places for formatting to string before parseUnits
+    const priceDecimals = Math.max(0, -Math.floor(Math.log10(market.tickSize) - 1e-9));
+    const qtyDecimals = Math.max(0, -Math.floor(Math.log10(market.stepSize) - 1e-9));
+
+    const priceRaw = parseUnits(price.toFixed(priceDecimals), market.quoteDecimals);
+    const qtyRaw = parseUnits(qty.toFixed(qtyDecimals), market.baseDecimals);
 
     // Ensure ERC-20 token allowance before placing order
     if (isBid && market.quoteToken) {

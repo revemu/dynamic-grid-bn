@@ -387,6 +387,7 @@ export class DynamicGrid {
       binanceWsBase: this.cfg.binanceWsBase || "wss://stream.binance.com:9443",
       dreamdexPrivateKey: this.cfg.dreamdexPrivateKey ? "******" : "",
       dreamdexRpcUrl: this.cfg.dreamdexRpcUrl || "https://api.infra.mainnet.somnia.network",
+      minGasReserveSomi: this.cfg.minGasReserveSomi ?? 2.0,
       timezone: this.cfg.timezone || "Asia/Bangkok",
       dashboardPort: this.cfg.dashboardPort ?? 3333,
     };
@@ -441,6 +442,9 @@ export class DynamicGrid {
       this.cfg.requireProfitAboveAvgEntry = newSettings.sellProfitMode === "PORTFOLIO_AVG_PROFIT";
     } else if (newSettings.requireProfitAboveAvgEntry !== undefined) {
       this.cfg.sellProfitMode = newSettings.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW";
+    }
+    if (newSettings.minGasReserveSomi !== undefined) {
+      this.cfg.minGasReserveSomi = Math.max(0, Number(newSettings.minGasReserveSomi));
     }
     this.syncDowEngineSettings();
     const configToPersist = {
@@ -3961,6 +3965,8 @@ export class DynamicGrid {
     levelDesc: string,
   ): Promise<void> {
     if (qty < this.minQty) return;
+    // Align price to tickSize and precision
+    price = roundToTick(price, this.tickSize || 0.0001);
     let notionalUsdso = notionalQuote;
     const now = Date.now();
     const sideStr = isBid ? "BUY" : "SELL";
