@@ -600,11 +600,11 @@ export class DynamicGrid {
         } else {
           // New open order on Binance: link or record
           if (remainingQty > 0 && price > 0) {
-            if (this.cfg.orderExecutionMode === "IOC_BRACKET" && isBid) {
+            if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
               this.cancelledOrderIds.set(idStr, Date.now());
               try {
                 await this.binance.cancelOrder(this.symbol, idStr);
-                this.log(`🧹 [IOC_BRACKET] Cancelled unmanaged resting buy order #${idStr} on Binance`);
+                this.log(`🧹 [IOC_BRACKET] Cancelled unmanaged resting ${isBid ? "buy" : "sell"} order #${idStr} on Binance`);
               } catch {}
               continue;
             }
@@ -3429,6 +3429,8 @@ export class DynamicGrid {
       // ── Downtrend Trendline Sell Override ──────────────────────────────────────
       // When an active descending trendline (เส้นกด) is present (not broken), only sell at targets that are
       // BELOW the trendline. If no target is below the trendline, wait for IOC sell at TL price.
+      // NOTE: In IOC_BRACKET mode, we never place resting maker orders at the trendline — we let IOC triggers execute instead.
+      const isIocMode = this.cfg.orderExecutionMode === "IOC_BRACKET";
       if ((this.cfg.enableSellBelowTrendResistance !== false) && activeDowntrendLine && !activeDowntrendLine.isBroken) {
         const tlPrice = activeDowntrendLine.currentLinePrice;
         // All standard sell names that should be cancelled when trendline override is active
@@ -3438,7 +3440,23 @@ export class DynamicGrid {
         const levelsUnderTL = sellLevels.filter((lvl) => lvl < tlPrice);
 
         if (levelsUnderTL.length === 0) {
-          // No standard sell target is below the trendline.
+          if (isIocMode) {
+            // In IOC_BRACKET mode: do NOT place resting orders at the trendline.
+            // Cancel any leftover resting TL sell orders and standard sell orders, then wait for IOC trigger.
+            const leftoverSells = this.openOrders.filter(
+              (o) => !o.isBid && o.levelDesc && allSellNames.includes(o.levelDesc),
+            );
+            if (leftoverSells.length > 0) {
+              for (const o of leftoverSells) {
+                await this.cancelOrderInternal(o, "IOC mode active: cancelling resting sell at trendline — waiting for IOC trigger");
+              }
+              this.openOrders = this.openOrders.filter((o) => !leftoverSells.includes(o));
+              this.saveState();
+            }
+            return;
+          }
+
+          // No standard sell target is below the trendline (MAKER_LIMIT mode).
           // Place or maintain a resting Maker Limit Sell order at the trendline price for 100% exit.
           // When the trendline price shifts, automatically cancel and replace the order at the new TL price.
           const tlSellName = "Sell TL Exit (Trendline)";
