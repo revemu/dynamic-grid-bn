@@ -818,6 +818,12 @@ export class DynamicGrid {
         }
       } else if (maxAllowedTradingBase > memoryHeld + Math.max(this.minQty || 0.0001, 0.0001)) {
         // 2. Adopt Unallocated Trading Inventory: If physical trading capacity exceeds memory lots, adopt difference into lots
+        // SAFETY GUARD: NEVER adopt unallocated inventory when price is below floor / cut-loss zone or waiting for Higher Low!
+        // This prevents re-adopting wallet balance and triggering repetitive 30s cut-loss dump loops.
+        if (this.waitingForHigherLow) {
+          // Skip adopting during breakdown recovery to protect remaining wallet assets
+          return;
+        }
         const rawUnallocated = maxAllowedTradingBase - memoryHeld;
         const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || 0.0001, 4);
         if (unallocatedQty >= this.minQty) {
@@ -4761,7 +4767,8 @@ export class DynamicGrid {
     }
 
     // Liquidate all trading inventory: sell all physical trading base asset available above gas reserve
-    const rawExecuteQty = Math.min(held, availableBase);
+    // In Live mode: Liquidate entire availableBase in one order to prevent residual dust and multiple 30s re-trigger loops!
+    const rawExecuteQty = Math.max(held, availableBase);
     const executeQty = roundToStep(rawExecuteQty, this.stepSize || 0.0001, 4);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const orderNotional = executeQty * price;
@@ -4820,6 +4827,10 @@ export class DynamicGrid {
         this.trackTxGas(res.txHash, actionLabel);
       }
       await this.refreshWalletBalances();
+      if (this.walletBaseBalance <= (this.minQty || 0.0001)) {
+        this.lots = [];
+        this.lockedChannel = undefined;
+      }
       this.saveState();
     } catch (err) {
       this.log(`⚠️ On-chain ${actionLabel} failed: ${(err as Error).message}`);
