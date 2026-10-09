@@ -1033,6 +1033,7 @@
       });
 
       // 1. Try matching by levelDesc
+      const isTlExitOrder = desc.includes("tl exit") || desc.includes("trendline");
       if (desc.includes("buy level 1") || desc.includes("40%")) matchedStep = candidateSteps.find((s) => s.pct === 40);
       else if (desc.includes("buy level 2") || desc.includes("30%")) matchedStep = candidateSteps.find((s) => s.pct === 30);
       else if (desc.includes("buy level 3") || desc.includes("20%")) matchedStep = candidateSteps.find((s) => s.pct === 20);
@@ -1041,6 +1042,19 @@
       else if (desc.includes("sell target 2") || desc.includes("70%")) matchedStep = candidateSteps.find((s) => s.pct === 70);
       else if (desc.includes("sell target 3") || desc.includes("80%")) matchedStep = candidateSteps.find((s) => s.pct === 80);
       else if (desc.includes("sell target 4") || desc.includes("90%")) matchedStep = candidateSteps.find((s) => s.pct === 90);
+      else if (isTlExitOrder) {
+        // Find candidate sell step closest to the trendline exit order price
+        let bestTlStep = null;
+        let minTlDiff = Infinity;
+        candidateSteps.forEach((step) => {
+          const diff = Math.abs(step.price - order.price);
+          if (diff < minTlDiff) {
+            minTlDiff = diff;
+            bestTlStep = step;
+          }
+        });
+        matchedStep = bestTlStep || candidateSteps[0] || null;
+      }
 
       // 2. Find closest step by price among unused candidate steps
       let closestStep = null;
@@ -1056,8 +1070,8 @@
       // Price verification: if price is much closer to another step than matchedStep (or no matchedStep), use closestStep
       if (closestStep) {
         if (!matchedStep) {
-          if (minDiff < span * 0.08) matchedStep = closestStep;
-        } else {
+          if (minDiff < span * 0.08 || isTlExitOrder) matchedStep = closestStep;
+        } else if (!isTlExitOrder) {
           const matchedDiff = Math.abs(matchedStep.price - order.price);
           if (minDiff < matchedDiff * 0.4) {
             matchedStep = closestStep;
@@ -1075,14 +1089,14 @@
         if (actionEl) {
           const notionalVal = order.notionalUsdso || (order.price * (order.qty || 0));
           const notional = notionalVal > 0 ? `$${notionalVal.toFixed(2)}` : "";
-          const sideTag = isBid ? "BUY" : "SELL";
+          const sideTag = isTlExitOrder ? "📉 SELL TL" : (isBid ? "BUY" : "SELL");
           const tagClass = isBid ? "buy-order-tag" : "sell-order-tag";
           let expPill = "";
           if (order.expireTime) {
             const remH = Math.max(0, Math.round((order.expireTime - Date.now()) / 3600000));
             expPill = remH > 0 ? `<span style="opacity:0.8; font-size:7.5px; margin-left:3px; font-weight:600;">⏳${remH}h</span>` : "";
           }
-          actionEl.innerHTML = `<span class="step-order-tag ${tagClass}"><span class="order-pulse-dot"></span> ${sideTag} ${notional}${expPill}</span>`;
+          actionEl.innerHTML = `<span class="step-order-tag ${tagClass}" title="Trendline Exit Limit Order @ $${order.price.toFixed(6)}"><span class="order-pulse-dot"></span> ${sideTag} ${notional}${expPill}</span>`;
         }
       }
     });

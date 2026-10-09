@@ -3447,35 +3447,40 @@ export class DynamicGrid {
             this.saveState();
           }
 
+          // Set resting sell price slightly below trendline by ~0.08% to ensure front-running and reliable maker fill
+          const frontRunRatio = 0.0008; // 0.08% below trendline
+          const rawTargetSellPrice = tlPrice * (1 - frontRunRatio);
+          const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, rawTargetSellPrice), this.tickSize || 0.0001);
+
           const mode = this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
           const avgEntry = this.getAvgEntryPrice();
-          const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || tlPrice >= avgEntry * 1.001;
+          const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * 1.001;
 
           // Only place resting sell if price is comfortably below the trendline (not in immediate IOC execution range)
-          const isNearTL = refPrice >= tlPrice * 0.9995;
+          const isNearTL = refPrice >= effectiveTlSellPrice * 0.9995;
 
           if (isProfitOk && !isNearTL && held >= this.minQty) {
             const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
             const targetSellQty = roundToStep(held, this.stepSize || 0.0001, 4);
-            const orderNotional = targetSellQty * tlPrice;
+            const orderNotional = targetSellQty * effectiveTlSellPrice;
 
             if (targetSellQty >= this.minQty && orderNotional >= minOrderNotional) {
               if (existingTlSell) {
                 // If trendline price has drifted beyond tolerance (e.g. >0.1%), update the order to match the new TL price!
-                const tlPriceDiffRatio = Math.abs(existingTlSell.price - tlPrice) / tlPrice;
+                const tlPriceDiffRatio = Math.abs(existingTlSell.price - effectiveTlSellPrice) / effectiveTlSellPrice;
                 const qtyDiffRatio = Math.abs(existingTlSell.qty - targetSellQty) / targetSellQty;
 
                 if (tlPriceDiffRatio > 0.001 || qtyDiffRatio > 0.05) {
                   await this.cancelOrderInternal(
                     existingTlSell,
-                    `Trendline slope updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${tlPrice.toFixed(6)})`,
+                    `Trendline slope updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`,
                   );
                   this.openOrders = this.openOrders.filter((o) => o !== existingTlSell);
                   this.saveState();
 
                   await this.placeRestingOrder(
                     false,
-                    tlPrice,
+                    effectiveTlSellPrice,
                     targetSellQty,
                     0.0,
                     orderNotional,
@@ -3483,10 +3488,10 @@ export class DynamicGrid {
                   );
                 }
               } else {
-                // Place new resting sell order right at the trendline price
+                // Place new resting sell order right slightly below the trendline price
                 await this.placeRestingOrder(
                   false,
-                  tlPrice,
+                  effectiveTlSellPrice,
                   targetSellQty,
                   0.0,
                   orderNotional,
