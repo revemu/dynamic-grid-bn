@@ -107,6 +107,7 @@ export interface IExchangeClient {
   cancelAllOpenOrders(symbol: string): Promise<any>;
   updateCredentials(apiKey: string, apiSecret: string, baseUrl?: string): void;
   getCredentials?(): { apiKey: string; apiSecret: string };
+  getRecentOrders?(symbol: string, limit?: number): Promise<ExchangeOpenOrder[]>;
   createUserDataStream?(): Promise<string>;
   keepAliveUserDataStream?(listenKey: string): Promise<void>;
   closeUserDataStream?(listenKey: string): Promise<void>;

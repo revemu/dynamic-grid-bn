@@ -616,4 +616,34 @@ export class DreamDexClient implements IExchangeClient {
     }
     return results;
   }
+
+  public getIndexer(): SomniaIndexerClient {
+    return this.indexer;
+  }
+
+  public getWalletAddress(): string | undefined {
+    return this.account?.address;
+  }
+
+  public async getRecentOrders(symbol: string, limit = 50): Promise<ExchangeOpenOrder[]> {
+    if (!this.account) return [];
+    const market = this.resolveMarket(symbol);
+    const indexed = await this.indexer.getRecentOrders(this.account.address, market.pool, limit);
+    return indexed.map((o) => ({
+      symbol: market.symbol,
+      orderId: o.orderId,
+      clientOrderId: o.id,
+      price: o.price,
+      origQty: o.fullQuantity,
+      executedQty: o.filledQuantity,
+      cummulativeQuoteQty: o.filledQuantity * o.price,
+      status: o.status.toUpperCase(),
+      timeInForce: "GTC",
+      type: o.rested ? "LIMIT" : "IOC",
+      side: o.isBid ? "BUY" : "SELL",
+      time: o.placedAtTimestamp ? o.placedAtTimestamp * 1000 : Date.now(),
+      updateTime: Date.now(),
+      isWorking: o.status === "Open",
+    }));
+  }
 }

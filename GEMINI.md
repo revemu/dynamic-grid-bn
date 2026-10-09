@@ -138,6 +138,18 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 
 ---
 
+    - **On-Chain Order History Sync & Inventory Reconciliation (getRecentOrders & syncOnChainOrders)**:
+      - **สาเหตุ & ปัญหาเดิม**: เมื่อเกิด Cut Loss หรือ Buy แบบ IOC บน DreamDEX คำสั่ง Match ทันทีบน On-Chain สัญญา Smart Contract แต่ในอดีตหากบอทบันทึกสถานะไม่ทัน หรือเริ่มทำงานใหม่หลังรีสตาร์ท ประวัติคำสั่งซื้อขายใน Dashboard และฐานข้อมูล db.orders จะขาดหายไป ไม่ตรงกับความเป็นจริงบนบล็อกเชน และการคำนวณ reconcileInventory (เวลามีเหรียญที่ไม่ได้ผูกกับ Lot) จะต้องเดาราคาต้นทุน fallback
+      - **การแก้ไขใน Adapter Layer (IExchangeClient)**:
+        - เพิ่มเมธอดมาตรฐาน getRecentOrders(symbol: string, limit?: number) เข้าไปใน IExchangeClient
+        - ใน DreamDexClient: คิวรีคำสั่งย้อนหลังโดยตรงจาก Somnia GraphQL Indexer (SomniaIndexerClient) พร้อมแปลงสถานะ On-Chain (Filled, Cancelled, Open) และ Transaction Hash ออกมาเป็น Standard Exchange Orders
+        - ใน BinanceClient: คิวรีผ่าน Binance REST API /api/v3/allOrders
+      - **การทำงานใน Strategy (syncOnChainOrders & reconcileInventory)**:
+        - ใน src/strategy.ts: บอทจะซิงค์คำสั่งล่าสุดจาก On-Chain / CEX ทุกครั้งที่เริ่มต้นระบบ และระหว่างการรันตามระยะเวลาที่กำหนด เพื่อเติมเต็มประวัติออเดอร์ใน db.orders และ this.recentOrders
+        - ใน reconcileInventory: หากตรวจพบว่ามีเหรียญตกค้างในกระเป๋าที่ยังไม่ถูกสร้างเป็น Lot บอทจะนำราคาของคำสั่ง BUY_FILL ล่าสุดที่จับคู่ได้จริงจาก Indexer มาตั้งเป็น costPrice ของ Lot นั้นทันที แทนการเดาราคา fallback
+
+---
+
 ## 3. Operational Runbook & Commands
 
 คำสั่งทั้งหมดรันโดยตรงในโฟลเดอร์โปรเจกต์ `dynamic-grid-bn`:

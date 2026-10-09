@@ -649,4 +649,28 @@ export class BinanceClient implements IExchangeClient {
       throw err;
     }
   }
+
+  public async getRecentOrders(symbol: string, limit = 50): Promise<ExchangeOpenOrder[]> {
+    const sym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+    const raw = await this.signedRequest<any[]>("GET", "/api/v3/allOrders", {
+      symbol: sym,
+      limit: Math.min(500, Math.max(1, limit)),
+    });
+    return (raw || []).map((o) => ({
+      symbol: o.symbol,
+      orderId: Number(o.orderId),
+      clientOrderId: o.clientOrderId,
+      price: Number(o.price),
+      origQty: Number(o.origQty),
+      executedQty: Number(o.executedQty),
+      cummulativeQuoteQty: Number(o.cummulativeQuoteQty),
+      status: o.status,
+      timeInForce: o.timeInForce,
+      type: o.type,
+      side: o.side,
+      time: Number(o.time),
+      updateTime: Number(o.updateTime),
+      isWorking: Boolean(o.isWorking),
+    }));
+  }
 }

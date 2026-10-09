@@ -782,6 +782,59 @@ export class DynamicGrid {
 
       this.openOrders = this.openOrders.filter((o) => !staleTracked.includes(o));
 
+      // 6. Pillar 3: On-Chain History Sync & Database Reconciliation (Supports DreamDEX Indexer & Binance)
+      try {
+        if (typeof (this.binance as any).getIndexer === "function" && typeof (this.binance as any).getWalletAddress === "function") {
+          const indexer = (this.binance as any).getIndexer();
+          const owner = (this.binance as any).getWalletAddress();
+          if (indexer && owner) {
+            const synced = await this.db.syncRecentOrdersFromIndexer(indexer, owner, undefined, 50);
+            if (synced > 0) {
+              this.recentOrders = this.db.getOrders(5000);
+            }
+          }
+        } else if (typeof this.binance.getRecentOrders === "function") {
+          const recents = await this.binance.getRecentOrders(this.symbol, 50);
+          if (recents && recents.length > 0) {
+            let modified = false;
+            for (const ro of recents) {
+              const idStr = String(ro.orderId);
+              const existing = this.db.getOrders(5000).find((o) => String(o.orderId) === idStr);
+              if (!existing) {
+                const isFilled = ro.status === "FILLED";
+                const isCancelled = ro.status === "CANCELED" || ro.status === "EXPIRED";
+                const status = isFilled ? "FILLED" : isCancelled ? "CANCELLED" : "OPEN";
+                const action = isFilled
+                  ? (ro.side === "BUY" ? "BUY_FILL" : "SELL_FILL")
+                  : isCancelled
+                  ? (ro.side === "BUY" ? "CANCEL_BUY" : "CANCEL_SELL")
+                  : (ro.side === "BUY" ? "CREATE_BUY" : "CREATE_SELL");
+                const time = ro.time || Date.now();
+                this.db.recordEvent({
+                  orderId: idStr,
+                  side: ro.side,
+                  price: ro.price,
+                  qty: ro.executedQty || ro.origQty,
+                  notionalQuote: (ro.executedQty || ro.origQty) * ro.price,
+                  notionalUsdso: (ro.executedQty || ro.origQty) * ro.price,
+                  levelDesc: `${ro.side} ${ro.type}`,
+                  status,
+                  action,
+                  time,
+                  dryRun: false,
+                });
+                modified = true;
+              }
+            }
+            if (modified) {
+              this.recentOrders = this.db.getOrders(5000);
+            }
+          }
+        }
+      } catch (err) {
+        this.log(`⚠️ [sync] History reconciliation error: ${(err as Error).message}`);
+      }
+
       // Always update last observed balances at end of sync
       this.lastObservedSomiBalance = this.walletSomiBalance;
       this.lastObservedBaseBalance = this.walletBaseBalance;
@@ -847,7 +900,9 @@ export class DynamicGrid {
         const rawUnallocated = maxAllowedTradingBase - memoryHeld;
         const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || 0.0001, 4);
         if (unallocatedQty >= this.minQty) {
-          const adoptPrice = this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : 0.21);
+          const recentOrders = this.db.getOrders(10);
+          const lastBuyFill = recentOrders.find((o) => o.action === "BUY_FILL" && o.price > 0);
+          const adoptPrice = lastBuyFill?.price || this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : 0.21);
           this.log(
             `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} ${this.baseAsset} > memory ${memoryHeld.toFixed(4)} ${this.baseAsset}). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
           );
