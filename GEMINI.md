@@ -157,6 +157,14 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - แทนที่จะหาร 4 แบบคงที่ (`currentAvailableCapacity / 4`) ซึ่งทำให้เกิดปัญหาเมื่อเหลือความจุ เช่น $15.75 แล้วถูกหารจนเหลือเพียง $3.82 จนต่ำกว่า Binance Min Notional ($5.00)
   - ระบบจะคำนวณจำนวนระดับที่พร้อมวางคำสั่งซื้อจริง (`numEligibleBuyLevels`) โดยไม่นับระดับที่ติด Holding Fraction Guard หรือ Trendline Filters
   - หากหารเฉลี่ยแล้วขนาดไม้ต่ำกว่า $5.00 (`rawTrancheQuote < minNotional`) ระบบจะรวบรวมงบที่เหลือเข้าด้วยกัน (`min(currentAvailableCapacity, minOrderNotional)`) เพื่อการันตีว่าออเดอร์มีมูลค่า $\ge \$5.00$ เสมอ ไม่โดนข้าม (Skip) โดย `MIN NOTIONAL GUARD` อีกต่อไป
+- **Trendline Resting Limit Sell Order & Dynamic Slope Tracking (`Sell TL Exit (Trendline)`)**:
+  - เมื่อเส้นกด (Descending Trendline) กดลงมาต่ำจนไม่มี Grid Sell Target ใดๆ (Target 1–4) อยู่ต่ำกว่าเส้นกด (`levelsUnderTL.length === 0`):
+    - แทนที่จะยกเลิกออเดอร์ทั้งหมดแล้วนั่งรอส่งคำสั่ง IOC ตอนราคาชนเส้นกด บอทจะวาง **Maker Limit Sell Order (`Sell TL Exit (Trendline)`)** ดักรอไว้ที่ราคาเส้นกดทันทีสำหรับ inventory ทั้งหมด (100% Exit)
+    - **Dynamic Slope Tracking**: เนื่องจากราคาเส้นกดขยับเปลี่ยนลงตามเวลา (ทุกแท่งเทียนหรือตามองศา Trendline) หากราคาเส้นกดเปลี่ยนไปเกิน tolerance (`> 0.1%`) บอทจะยกเลิกออเดอร์เดิมและส่งคำสั่งขายที่ราคาเส้นกดใหม่โดยอัตโนมัติ เพื่อให้คำสั่งขายเกาะติดเส้นกดอยู่เสมอ
+    - หากราคาวิ่งเข้ามาประชิดหรือชนเส้นกดในระยะ IOC บอทจะยกเลิก Maker Sell และส่งคำสั่ง IOC ทันทีเพื่อความปลอดภัย
+- **Strict Exchange Fill Verification for IOC / Exits (`executedQty` & `status` Guard)**:
+  - แก้ไขปัญหาคำสั่งขายแบบ IOC ที่ส่งไปแล้วแต่ Orderbook ไม่มีสภาพคล่องรองรับ จน Binance ยกเลิกคำสั่งทันที (`EXPIRED / CANCELED` หรือ `executedQty = 0`) แต่ระบบ Strategy ดันเรียก `closeLots()` และแจ้งเตือนบน UI ว่าขายสำเร็จแล้ว
+  - เพิ่มการตรวจสอบ `res.executedQty` และ `res.status` ใน `sellAll()`, `sellTrancheIOC()`, และ `buyTrancheIOC()` อย่างเข้มงวด: หากออเดอร์ไม่ถูกจับคู่จริง (`executedQty <= 0`) บอทจะไม่ตัด Lot ออกจากความจำ และไม่บันทึก Trade Fill หลอกบนหน้าจอแดชบอร์ดอย่างเด็ดขาด
 - **IOC Bracket Sell Cycle State Machine (Elimination of Cascading IOC Dumps at Single Target)**:
   - **สาเหตุของปัญหาเดิม**: ในโหมด `IOC_BRACKET` เมื่อราคาตลาด Bid แตะถึง Sell Target 1 บอทจะคำนวณจำนวนไม้ `numSellTranches` จากยอดคงเหลือ ณ เวลานั้นเสมอ (เช่น ถือ $18 -> 3 ไม้ ไม้ละ $6) เมื่อยิงขาย Step 1/3 สำเร็จ เหลือ $12 บอทนำ $12 มาคำนวณใหม่กลายเป็น 2 ไม้ ไม้ละ $6 และมองว่า Step 1/2 ยังไม่ได้ขาย จึงยิงขายอีกไม้ และวนลูปจนกลายเป็น 1 ไม้ (Exit 100%) เทขายหมดเกลี้ยง 3 ไม้รวดใน 20 วินาที ทั้งที่ราคาตลาดอยู่ที่ Sell Target 1 เดิม ไม่ได้ขึ้นไปแตะ Sell Target 2 หรือ 3 เลย
   - **การแก้ไข**:

@@ -3430,16 +3430,74 @@ export class DynamicGrid {
 
         if (levelsUnderTL.length === 0) {
           // No standard sell target is below the trendline.
-          // Cancel all standard sell orders — the IOC mechanism (block 2a) handles selling
-          // when price reaches or exceeds the TL. We do NOT place a resting order at TL here
-          // to avoid a race condition where both the resting order AND the IOC fire simultaneously
-          // (double-sell). IOC is the ONLY mechanism for selling AT the trendline price.
-          const allSellOrders = this.openOrders.filter((o) => !o.isBid);
-          if (allSellOrders.length > 0) {
-            for (const o of allSellOrders) {
-              await this.cancelOrderInternal(o, "Trendline override: no targets below TL — waiting for IOC at TL price");
+          // Place or maintain a resting Maker Limit Sell order at the trendline price for 100% exit.
+          // When the trendline price shifts, automatically cancel and replace the order at the new TL price.
+          const tlSellName = "Sell TL Exit (Trendline)";
+          const existingTlSell = this.openOrders.find((o) => !o.isBid && o.levelDesc === tlSellName);
+
+          // Cancel any standard grid sell orders that might still be resting
+          const staleStandardSells = this.openOrders.filter(
+            (o) => !o.isBid && o.levelDesc && sellNames.includes(o.levelDesc),
+          );
+          if (staleStandardSells.length > 0) {
+            for (const o of staleStandardSells) {
+              await this.cancelOrderInternal(o, "Trendline override: cancelling standard grid sells — switching to TL sell");
             }
-            this.openOrders = this.openOrders.filter((o) => !allSellOrders.includes(o));
+            this.openOrders = this.openOrders.filter((o) => !staleStandardSells.includes(o));
+            this.saveState();
+          }
+
+          const mode = this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
+          const avgEntry = this.getAvgEntryPrice();
+          const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || tlPrice >= avgEntry * 1.001;
+
+          // Only place resting sell if price is comfortably below the trendline (not in immediate IOC execution range)
+          const isNearTL = refPrice >= tlPrice * 0.9995;
+
+          if (isProfitOk && !isNearTL && held >= this.minQty) {
+            const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
+            const targetSellQty = roundToStep(held, this.stepSize || 0.0001, 4);
+            const orderNotional = targetSellQty * tlPrice;
+
+            if (targetSellQty >= this.minQty && orderNotional >= minOrderNotional) {
+              if (existingTlSell) {
+                // If trendline price has drifted beyond tolerance (e.g. >0.1%), update the order to match the new TL price!
+                const tlPriceDiffRatio = Math.abs(existingTlSell.price - tlPrice) / tlPrice;
+                const qtyDiffRatio = Math.abs(existingTlSell.qty - targetSellQty) / targetSellQty;
+
+                if (tlPriceDiffRatio > 0.001 || qtyDiffRatio > 0.05) {
+                  await this.cancelOrderInternal(
+                    existingTlSell,
+                    `Trendline slope updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${tlPrice.toFixed(6)})`,
+                  );
+                  this.openOrders = this.openOrders.filter((o) => o !== existingTlSell);
+                  this.saveState();
+
+                  await this.placeRestingOrder(
+                    false,
+                    tlPrice,
+                    targetSellQty,
+                    0.0,
+                    orderNotional,
+                    tlSellName,
+                  );
+                }
+              } else {
+                // Place new resting sell order right at the trendline price
+                await this.placeRestingOrder(
+                  false,
+                  tlPrice,
+                  targetSellQty,
+                  0.0,
+                  orderNotional,
+                  tlSellName,
+                );
+              }
+            }
+          } else if (isNearTL && existingTlSell) {
+            // Price reached within immediate touch distance of TL: cancel resting order so block 2a can execute IOC sell cleanly
+            await this.cancelOrderInternal(existingTlSell, "Price touching trendline: cancelling resting sell for immediate IOC exit");
+            this.openOrders = this.openOrders.filter((o) => o !== existingTlSell);
             this.saveState();
           }
         } else {
@@ -4610,27 +4668,37 @@ export class DynamicGrid {
         qty: finalQty,
       });
 
-      const oldTradePnl = this.tradeRealizedPnl;
-      this.closeLots(finalQty, effectivePrice);
-      const roundPnl = this.tradeRealizedPnl - oldTradePnl;
-
       const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
       if (orderIdStr) {
         this.handledExitOrderIds.set(orderIdStr, Date.now());
       }
 
+      // Check real executed fill quantity from Exchange
+      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) ? res.executedQty : (res.status === "FILLED" ? finalQty : 0);
+      if (filledQty <= 0 || res.status === "EXPIRED" || res.status === "CANCELED") {
+        this.log(
+          `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${finalQty}).`,
+        );
+        return false;
+      }
+
+      const actualQty = Math.min(finalQty, filledQty);
+      const oldTradePnl = this.tradeRealizedPnl;
+      this.closeLots(actualQty, effectivePrice);
+      const roundPnl = this.tradeRealizedPnl - oldTradePnl;
+
       this.log(
-        `⚡ ON-CHAIN ${actionLabel}: Sold ${finalQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} (tx: ${res.txHash})`,
+        `⚡ ON-CHAIN ${actionLabel}: Sold ${actualQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} (tx: ${res.txHash})`,
       );
       this.emit({
         type: "order",
         data: {
           action: "SELL_FILL",
           price: effectivePrice,
-          qty: finalQty,
-          notional: finalQty * effectivePrice,
-          notionalQuote: finalQty * effectivePrice,
-          notionalUsdso: finalQty * effectivePrice,
+          qty: actualQty,
+          notional: actualQty * effectivePrice,
+          notionalQuote: actualQty * effectivePrice,
+          notionalUsdso: actualQty * effectivePrice,
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
@@ -4729,9 +4797,19 @@ export class DynamicGrid {
         this.handledExitOrderIds.set(orderIdStr, Date.now());
       }
 
+      // Check real executed fill quantity from Exchange
+      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) ? res.executedQty : (res.status === "FILLED" ? finalQty : 0);
+      if (filledQty <= 0 || res.status === "EXPIRED" || res.status === "CANCELED") {
+        this.log(
+          `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${finalQty}).`,
+        );
+        return false;
+      }
+
+      const actualQty = Math.min(finalQty, filledQty);
       this.processBuyFill({
         price: effectivePrice,
-        qty: finalQty,
+        qty: actualQty,
         levelDesc: actionLabel,
         orderId: orderIdStr,
         txHash: res?.txHash,
@@ -4853,21 +4931,34 @@ export class DynamicGrid {
       if (orderIdStr) {
         this.handledExitOrderIds.set(orderIdStr, Date.now());
       }
+
+      // Check real executed fill quantity from Exchange
+      const filledQty = typeof res.executedQty === "number" && !isNaN(res.executedQty) ? res.executedQty : (res.status === "FILLED" ? executeQty : 0);
+      if (filledQty <= 0 || res.status === "EXPIRED" || res.status === "CANCELED") {
+        this.log(
+          `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${executeQty}). Keeping inventory lots intact.`,
+        );
+        await this.refreshWalletBalances();
+        this.saveState();
+        return;
+      }
+
+      const actualQty = Math.min(executeQty, filledQty);
       const oldTradePnl = this.tradeRealizedPnl;
-      this.closeLots(executeQty, price);
+      this.closeLots(actualQty, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `🚨 ON-CHAIN ${actionLabel}: ${executeQty.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash})`,
+        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash})`,
       );
       this.emit({
         type: "order",
         data: {
           action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
           price,
-          qty: executeQty,
-          notional: executeQty * price,
-          notionalQuote: executeQty * price,
-          notionalUsdso: executeQty * price,
+          qty: actualQty,
+          notional: actualQty * price,
+          notionalQuote: actualQty * price,
+          notionalUsdso: actualQty * price,
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
