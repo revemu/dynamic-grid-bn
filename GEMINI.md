@@ -116,6 +116,8 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - **Real-Time WebSockets**: สตรีมแท่งเทียน Real-time (Binance Kline WS) และ Order Book Ticker สำหรับคำนวณ ATR, Dow Swings และอัปเดต Dashboard chart
    - **DreamDEX Real On-Chain Top of Book Indexing (`getTopOfBook`)**:
      - เพิ่มเมธอด `getTopOfBook` ใน `SomniaIndexerClient` และ `DreamDexClient` โดยคิวรี Open Orders (Bids & Asks) จาก Somnia GraphQL Indexer แบบเรียลไทม์ และคำนวณ Best Bid, Best Ask และ Mid Price
+     - **Strict Expired Orders Filtering (`expireTimestampNs > nowNs`)**: บน Somnia Indexer ออเดอร์ที่หมดอายุไปแล้วในอดีต (เช่น ออเดอร์ $0.085000 จาก 2 เดือนก่อน) ยังคงมีสถานะเป็น `Open` ในฐานข้อมูล จึงต้องกรอง `expireTimestampNs > nowNs` เพื่อกำจัด Phantom Orders เก่าที่หมดอายุแล้วออก 100%
+     - **IOC Bracket Buy Phantom Ask Guard**: ใน `executeIocBracketGrid` เพิ่ม Guard ป้องกันราคา Ask หลุดโลก (`|currentBestAsk - refPrice| / refPrice <= 0.05`) และบังคับให้ราคาตลาดจริง (`refPrice`) ต้องลงมาถึงระดับ Buy Level จริงด้วย ป้องกันไม่ให้บอทกระโดดยิงคำสั่งซื้อตอนที่ตลาดยังอยู่ใน Sell Zone (>50%)
      - มีระบบ In-memory cache 1.5 วินาที เพื่อป้องกันการยิง GraphQL ถี่เกินไประหว่าง Polling
      - **Price $0.000000 & Mid Fallback Protection**:
        - แก้ไขจุดบกพร่อง `effectiveMid = mid ?? binancePrice` ใน `src/strategy.ts` ที่ประเมิน `0 ?? binancePrice` เป็น `0` โดยปรับเป็น `const effectiveMid = (mid !== undefined && mid > 0) ? mid : (binancePrice ?? 0);`

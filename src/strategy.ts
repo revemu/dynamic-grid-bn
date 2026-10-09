@@ -4283,7 +4283,10 @@ export class DynamicGrid {
     const baseTrancheUsdso = baseTrancheQuote;
 
     // ── BUY SIDE (IOC Accumulation with Tranche Aggregation) ──────────────────
-    if (canBuy && this.buyOrdersActive && currentBestAsk > 0) {
+    // Safety Guard: Check that currentBestAsk is sane and not an outlier/phantom order
+    const isAskPriceSane = refPrice > 0 && currentBestAsk > 0 && Math.abs(currentBestAsk - refPrice) / refPrice <= 0.05;
+
+    if (canBuy && this.buyOrdersActive && currentBestAsk > 0 && isAskPriceSane) {
       // Determine which buy band the market price has reached
       // Band 1: currentBestAsk <= buyLevels[0] (40%) -> target tranches = 1
       // Band 2: currentBestAsk <= buyLevels[1] (30%) -> target tranches = 2
@@ -4312,9 +4315,10 @@ export class DynamicGrid {
         matchedBuyPrice = tlPrice;
       } else {
         // 2. Standard Grid Buy Levels or Breakdown Entry ("ถ้าหลุดไปรอซื้อที่ level ตาม position การถือครอง")
+        // Require both currentBestAsk AND refPrice to confirm entry into buy level zone
         for (let i = 0; i < buyLevels.length; i++) {
           const lvlPrice = buyLevels[i];
-          if (lvlPrice !== undefined && currentBestAsk <= lvlPrice) {
+          if (lvlPrice !== undefined && currentBestAsk <= lvlPrice && refPrice <= lvlPrice * 1.001) {
             targetTranches = i + 1;
             matchedLevelIndex = i;
           }

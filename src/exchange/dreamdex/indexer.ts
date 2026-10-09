@@ -231,6 +231,9 @@ export class SomniaIndexerClient {
       where.market_id = { _eq: poolAddress.toLowerCase() };
     }
 
+    const nowNs = Number(BigInt(Date.now()) * 1_000_000n);
+    where.expireTimestampNs = { _gt: nowNs };
+
     const query = `
       query GetOpenOrders($where: Order_bool_exp!) {
         Order(where: $where, order_by: { placedAtTimestamp: desc }, limit: 100) {
@@ -255,7 +258,16 @@ export class SomniaIndexerClient {
 
     const data = await this.fetchGql<{ Order: any[] }>(query, { where });
     if (!data?.Order) return [];
-    return data.Order.map((row) => this.mapOrder(row));
+    return data.Order
+      .filter((row) => {
+        if (!row.expireTimestampNs) return true;
+        try {
+          return BigInt(row.expireTimestampNs) > BigInt(nowNs);
+        } catch {
+          return true;
+        }
+      })
+      .map((row) => this.mapOrder(row));
   }
 
   /**
@@ -298,37 +310,57 @@ export class SomniaIndexerClient {
 
   /**
    * Query top of book (best bid, best ask, mid price) for a pool from open orders
+   * Strictly filters out expired orders to avoid phantom asks/bids
    */
   async getTopOfBook(
     poolAddress: string
   ): Promise<{ bestBid: number; bestAsk: number; mid: number; bidQty: number; askQty: number } | null> {
     const marketId = poolAddress.toLowerCase();
+    const nowNs = Number(BigInt(Date.now()) * 1_000_000n);
     const query = `
-      query GetTopOfBook($marketId: String!) {
+      query GetTopOfBook($marketId: String!, $nowNs: numeric!) {
         bids: Order(
-          where: { market_id: { _eq: $marketId }, status: { _eq: "Open" }, isBid: { _eq: true } }
+          where: {
+            market_id: { _eq: $marketId }
+            status: { _eq: "Open" }
+            isBid: { _eq: true }
+            expireTimestampNs: { _gt: $nowNs }
+          }
           limit: 100
         ) {
           price
           quantityRemaining
+          expireTimestampNs
         }
         asks: Order(
-          where: { market_id: { _eq: $marketId }, status: { _eq: "Open" }, isBid: { _eq: false } }
+          where: {
+            market_id: { _eq: $marketId }
+            status: { _eq: "Open" }
+            isBid: { _eq: false }
+            expireTimestampNs: { _gt: $nowNs }
+          }
           limit: 100
         ) {
           price
           quantityRemaining
+          expireTimestampNs
         }
       }
     `;
 
-    const data = await this.fetchGql<{ bids: any[]; asks: any[] }>(query, { marketId });
+    const data = await this.fetchGql<{ bids: any[]; asks: any[] }>(query, { marketId, nowNs });
     if (!data) return null;
 
+    const currentNs = BigInt(nowNs);
     let bestBid = 0;
     let bidQty = 0;
     if (data.bids && data.bids.length > 0) {
       for (const b of data.bids) {
+        if (b.expireTimestampNs) {
+          try {
+            if (BigInt(b.expireTimestampNs) <= currentNs) continue;
+          } catch {}
+        }
         const p = this.parseRawUnits(b.price, this.quoteDecimals);
         const q = this.parseRawUnits(b.quantityRemaining, this.baseDecimals);
         if (p > bestBid) {
@@ -342,6 +374,11 @@ export class SomniaIndexerClient {
     let askQty = 0;
     if (data.asks && data.asks.length > 0) {
       for (const a of data.asks) {
+        if (a.expireTimestampNs) {
+          try {
+            if (BigInt(a.expireTimestampNs) <= currentNs) continue;
+          } catch {}
+        }
         const p = this.parseRawUnits(a.price, this.quoteDecimals);
         const q = this.parseRawUnits(a.quantityRemaining, this.baseDecimals);
         if (bestAsk === 0 || p < bestAsk) {
