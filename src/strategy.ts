@@ -108,6 +108,13 @@ export class DynamicGrid {
     sellLevels: number[];
   };
   private lockedChannel?: LockedChannel;
+  /** State machine for IOC Bracket Sell distribution cycle */
+  private iocBracketSellCycle?: {
+    baselineHeldQuote: number;
+    baselineHeldQty: number;
+    numSellTranches: number;
+    soldStepNums: Set<number>;
+  };
   private lastTelemetryData?: any;
   private lastHudLogTime = 0;
   private readonly hudLogIntervalMs = 5_000;
@@ -2871,6 +2878,8 @@ export class DynamicGrid {
     const netQty = roundToStep(rawNetQty, this.stepSize || 0.0001, 4);
     this.lots.push({ price, qty: netQty, time: now });
     this.needsSellRebalance = true;
+    // Reset IOC Bracket Sell Cycle whenever a buy order fills to re-partition lots with new baseline
+    this.iocBracketSellCycle = undefined;
 
     const feeLog = spotTradingFeeBase > 0
       ? ` | 🏷️ Spot Fee: ${spotTradingFeeBase.toFixed(6)} ${this.baseAsset}`
@@ -4387,17 +4396,26 @@ export class DynamicGrid {
     const totalHeldQuote = held * currentBestBid;
 
     if (this.sellOrdersActive && held >= this.minQty && totalHeldQuote >= minNotional && currentBestBid > 0) {
-      // 1. Dynamic Sell Tranches Calculation:
-      // Starting from 4 tranches down to 1: ensure each tranche satisfies minNotional ($5.0)
-      // e.g.:
-      // If holding $12: 4 ($3 < 5) -> 3 ($4 < 5) -> 2 ($6 >= 5) -> 2 tranches ($6 each)
-      // If holding $8:  4 -> 3 -> 2 -> 1 ($8 >= 5) -> 1 single tranche (100% exit)
-      // If holding $16: 4 ($4 < 5) -> 3 ($5.33 >= 5) -> 3 tranches ($5.33 each)
-      // If holding $20+: 4 tranches ($5+ each)
-      let numSellTranches = 4;
-      while (numSellTranches > 1 && (totalHeldQuote / numSellTranches) < minNotional) {
-        numSellTranches--;
+      // 1. Maintain or initialize sell distribution cycle
+      // If no active cycle, or position grew significantly (new buy filled), establish new baseline
+      if (
+        !this.iocBracketSellCycle ||
+        held > this.iocBracketSellCycle.baselineHeldQty * 1.05
+      ) {
+        let numSellTranches = 4;
+        while (numSellTranches > 1 && (totalHeldQuote / numSellTranches) < minNotional) {
+          numSellTranches--;
+        }
+        this.iocBracketSellCycle = {
+          baselineHeldQuote: totalHeldQuote,
+          baselineHeldQty: held,
+          numSellTranches,
+          soldStepNums: new Set<number>(),
+        };
       }
+
+      const cycle = this.iocBracketSellCycle;
+      const numSellTranches = cycle.numSellTranches;
 
       // 2. Map number of active sell tranches to target remaining inventory fractions
       // Each tranche corresponds to a step index (0 to numSellTranches - 1)
@@ -4427,12 +4445,16 @@ export class DynamicGrid {
         activeSteps.push({ levelIndex: 3, targetRemainingFraction: 0.00, stepNum: 4 });
       }
 
-      // 3. Determine highest matched sell step reached by market bid
+      // 3. Find candidate sell steps that have been reached by market bid but NOT yet sold in this cycle
       let matchedStep: SellStep | undefined;
       for (const step of activeSteps) {
         const lvlPrice = sellLevels[step.levelIndex];
         if (lvlPrice !== undefined && currentBestBid >= lvlPrice) {
-          matchedStep = step;
+          if (!cycle.soldStepNums.has(step.stepNum)) {
+            matchedStep = step;
+            // Pick the lowest unsold reached step (ladder upwards)
+            break;
+          }
         }
       }
 
@@ -4443,8 +4465,9 @@ export class DynamicGrid {
           const meetsProfitRequirement = !this.cfg.requireProfitAboveAvgEntry || (avgEntry <= 0 || currentBestBid >= avgEntry * 1.001);
 
           if (meetsProfitRequirement) {
-            const targetRemainingQuote = matchedStep.targetRemainingFraction * totalHeldQuote;
-            const excessQuote = totalHeldQuote - targetRemainingQuote;
+            const targetRemainingQty = matchedStep.targetRemainingFraction * cycle.baselineHeldQty;
+            const excessQty = Math.max(0, held - targetRemainingQty);
+            const excessQuote = excessQty * currentBestBid;
 
             // Trigger if excess quote meets minimum notional or final full-exit
             if (excessQuote >= minNotional || (matchedStep.targetRemainingFraction === 0 && totalHeldQuote >= minNotional)) {
@@ -4460,7 +4483,7 @@ export class DynamicGrid {
 
                 let sellQty = matchedStep.targetRemainingFraction === 0
                   ? held
-                  : Math.min(held, excessQuote / currentBestBid);
+                  : Math.min(held, excessQty);
 
                 const sellNotional = sellQty * currentBestBid;
                 if (sellQty >= this.minQty && sellNotional >= minNotional) {
@@ -4471,7 +4494,10 @@ export class DynamicGrid {
                   this.log(
                     `🎯 [IOC BRACKET] Bid $${currentBestBid.toFixed(6)} >= Sell Target ${matchedStep.levelIndex + 1} ($${matchedSellPrice.toFixed(6)}) — executing ${actionLabel} for ${sellQty.toFixed(4)} ${this.baseAsset}`,
                   );
-                  await this.sellTrancheIOC(sellQty, currentBestBid, actionLabel, matchedSellPrice);
+                  const ok = await this.sellTrancheIOC(sellQty, currentBestBid, actionLabel, matchedSellPrice);
+                  if (ok) {
+                    cycle.soldStepNums.add(matchedStep.stepNum);
+                  }
                 }
               }
             }
@@ -4912,6 +4938,7 @@ export class DynamicGrid {
     if (this.baseHeld() < dustThreshold) {
       this.lots = [];
       this.lockedChannel = undefined;
+      this.iocBracketSellCycle = undefined;
     }
   }
 
