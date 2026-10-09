@@ -187,6 +187,7 @@ export interface DreamDexClientOptions {
 
 export class DreamDexClient implements IExchangeClient {
   public readonly exchangeName = "dreamdex";
+  public readonly supportsOrderExpiry = true;
   private privateKey?: `0x${string}`;
   private rpcUrl: string;
   private chainId: number;
@@ -507,7 +508,8 @@ export class DreamDexClient implements IExchangeClient {
 
     // orderType: 0 = Limit (Maker/Resting), 1 = IOC (ImmediateOrCancel)
     const orderType = params.type === "IOC" ? 1 : 0;
-    const expireTimestampNs = BigInt(Date.now() + 24 * 3600 * 1000) * 1_000_000n;
+    const expireHours = (params.expireHours !== undefined && params.expireHours > 0) ? params.expireHours : 24;
+    const expireTimestampNs = BigInt(Math.floor(Date.now() + expireHours * 3600 * 1000)) * 1_000_000n;
 
     let value = 0n;
     if (isBid && market.baseIsNative) {

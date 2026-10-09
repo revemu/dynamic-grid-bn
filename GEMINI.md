@@ -124,11 +124,10 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        - ป้องกันปัญหา Orderbook บน DEX ว่างจนสะดุด Spread Dislocated Gate ด้วยการผ่อนปรนให้ใช้ CEX Reference Price ได้อย่างปลอดภัย
    - **Broken Floor & Higher Low Recovery (`checkForHigherLow`)**:
      - ปรับปรุงการตรวจสอบ Higher Low หลังหลุด Floor ใน `market-structure.ts` และ `strategy.ts` ให้ตรวจจับสวิงที่ได้รับการวิเคราะห์คลื่น Dow Wave Cycles ว่าเป็น `HL` และหากราคากลับขึ้นมายืนเหนือ Floor ของ Channel ปัจจุบันได้อย่างมั่นคง จะทำการปลดล็อกสถานะ `waitingForHigherLow` ทันทีและกลับมาเปิดการซื้อขายตามปกติ
-   - **Settings Modal UI Revamp**:
-     - ลบแท็บ `💾 Offline DB Status` และเมทริกซ์ที่ไม่ได้ใช้งานออกจาก Settings Modal
-     - เปลี่ยนชื่อแท็บ `Binance API & Env` เป็น `🔑 Exchange & Network`
-     - จัดกลุ่มแสดงผลเฉพาะของกระดานที่เลือก (`.binance-fields-group` vs `.dreamdex-fields-group`) โดยอัตโนมัติเมื่อผู้ใช้สลับ Dropdown Exchange
-     - ตัดตัวเลือก Laggard Snipe, Laggard Guard, และ Laggard Dislocation Threshold ออกจากแท็บ Execution & Guard เพื่อความกระชับสะอาดตา
+   - **Exchange-Layer Order Expiry Isolation (`supportsOrderExpiry`)**:
+     - **Binance Spot (CEX)**: คำสั่ง Limit บน Binance ทำงานแบบ **`GTC` (Good-Till-Cancelled)** โดยสมบูรณ์ ไม่มีวันหมดอายุตามเวลา (`supportsOrderExpiry = false`) บอทจะไม่สร้างหรือบันทึกเวลาหมดอายุหลอก ไม่ใส่ข้อความ `[Expires in ...h]` ใน Log และแดชบอร์ดจะแสดงสถานะเป็น `GTC` (ไม่แสดงไอคอนนาฬิกาทราย ⏳)
+     - **DreamDEX Spot (DEX on Somnia)**: สัญญาออนเชน `SpotPool.sol` มีพารามิเตอร์ `expireTimestampNs` จริง (`supportsOrderExpiry = true`) บอทจะนำค่า `orderExpireHours` จากการตั้งค่าส่งเข้าไปในสัญญาออนเชนจริง และหน้า Dashboard จะแสดงเวลานับถอยหลัง ⏳ ตามจริง
+     - **Exchange Isolation ใน UI**: ใน Settings Modal ย้ายช่องตั้งค่า `Limit Order Duration (Hours)` ไปอยู่ภายใต้กลุ่ม DreamDEX (`.dreamdex-fields-group`) โดยอัตโนมัติ เมื่อผู้ใช้เลือก Exchange เป็น Binance ช่องนี้จะถูกซ่อนไว้เพื่อป้องกันความสับสน
 
 ---
 

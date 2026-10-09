@@ -4188,9 +4188,10 @@ export class DynamicGrid {
 
     const id = `order_${isBid ? "buy" : "sell"}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    const expireHours = this.cfg.orderExpireHours ?? 24;
-    const expireMs = expireHours * 60 * 60 * 1000;
-    const expireTime = now + expireMs;
+    const supportsExpiry = Boolean(this.binance.supportsOrderExpiry);
+    const expireHours = supportsExpiry ? (this.cfg.orderExpireHours ?? 24) : undefined;
+    const expireTime = (supportsExpiry && expireHours) ? (now + expireHours * 3600 * 1000) : undefined;
+    const expireLogSuffix = (supportsExpiry && expireHours) ? ` [Expires in ${expireHours}h]` : "";
 
     if (this.cfg.dryRun) {
       try {
@@ -4216,7 +4217,7 @@ export class DynamicGrid {
           expireTime,
         });
         this.log(
-          `[dry-run] 📋 CREATED ${sideStr} LIMIT @ $${price.toFixed(6)} (${qty.toFixed(4)} ${this.baseAsset} | $${notionalQuote.toFixed(2)} ${this.quoteAsset}) • ${levelDesc} [Expires in ${expireHours}h]`,
+          `[dry-run] 📋 CREATED ${sideStr} LIMIT @ $${price.toFixed(6)} (${qty.toFixed(4)} ${this.baseAsset} | $${notionalQuote.toFixed(2)} ${this.quoteAsset}) • ${levelDesc}${expireLogSuffix}`,
         );
         this.emit({
           type: "order",
@@ -4249,6 +4250,7 @@ export class DynamicGrid {
         price,
         qty,
         clientOrderId: id,
+        expireHours,
       });
       const orderIdStr = res.orderId ? res.orderId.toString() : undefined;
       this.openOrders.push({
@@ -4266,8 +4268,9 @@ export class DynamicGrid {
         expireTime,
         txHash: res.txHash,
       });
+      const txDesc = res.txHash ? ` (tx: ${res.txHash})` : "";
       this.log(
-        `🚀 ON-CHAIN CREATED ${sideStr} LIMIT ${orderIdStr ? `#${orderIdStr} ` : ""}@ $${price.toFixed(6)} (${qty.toFixed(4)} ${this.baseAsset} | $${notionalQuote.toFixed(2)} ${this.quoteAsset}) • ${levelDesc} [Expires in ${expireHours}h] (tx: ${res.txHash})`,
+        `🚀 CREATED ${sideStr} LIMIT ${orderIdStr ? `#${orderIdStr} ` : ""}@ $${price.toFixed(6)} (${qty.toFixed(4)} ${this.baseAsset} | $${notionalQuote.toFixed(2)} ${this.quoteAsset}) • ${levelDesc}${expireLogSuffix}${txDesc}`,
       );
       this.emit({
         type: "order",

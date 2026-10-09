@@ -2150,10 +2150,11 @@
       const sideText = isBid ? "BUY" : "SELL";
       const notional = o.notionalUsdso || (o.price * o.qty);
 
-      // Expiration time calculation
-      let expText = "24h";
-      let expClass = "";
+      // Expiration time calculation (Only if exchange supports order expiry, e.g. DreamDEX)
+      let expCell = `<td style="font-family: var(--font-mono); font-size: 11px; opacity: 0.6;">GTC</td>`;
       if (o.expireTime) {
+        let expText = "24h";
+        let expClass = "";
         const remainingMs = Math.max(0, o.expireTime - Date.now());
         const remainingHours = Math.floor(remainingMs / (1000 * 60 * 60));
         const remainingMins = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -2170,6 +2171,7 @@
           expText = "Expired";
           expClass = "highlight-red";
         }
+        expCell = `<td class="${expClass}" style="font-family: var(--font-mono); font-size: 11px;">⏳ ${expText}</td>`;
       }
 
       html += `
@@ -2179,7 +2181,7 @@
           <td style="font-family: var(--font-mono);">$${o.price.toFixed(6)}</td>
           <td>${o.qty.toFixed(2)}</td>
           <td style="font-family: var(--font-mono);">$${notional.toFixed(2)}</td>
-          <td class="${expClass}" style="font-family: var(--font-mono); font-size: 11px;">⏳ ${expText}</td>
+          ${expCell}
         </tr>`;
     });
 
@@ -3119,7 +3121,7 @@
       intervalMs: parseFloat(document.getElementById("cfg_intervalMs").value),
       floorBufferPct: parseFloat(document.getElementById("cfg_floorBufferPct").value),
       cutLossMaxBidDiscountPct: parseFloat(document.getElementById("cfg_cutLossMaxBidDiscountPct").value),
-      orderExpireHours: parseFloat(document.getElementById("cfg_orderExpireHours").value),
+      orderExpireHours: document.getElementById("cfg_orderExpireHours") ? parseFloat(document.getElementById("cfg_orderExpireHours").value) || 24 : 24,
       cutLossAtLowerBound: document.getElementById("cfg_cutLossAtLowerBound").checked,
       takeProfitAtUpperBound: document.getElementById("cfg_takeProfitAtUpperBound").checked,
       timezone: document.getElementById("cfg_timezone").value || "Asia/Bangkok",

@@ -89,10 +89,12 @@ export interface PlaceOrderParams {
   price?: number;
   qty: number;
   clientOrderId?: string;
+  expireHours?: number;
 }
 
 export interface IExchangeClient {
   readonly exchangeName: string;
+  readonly supportsOrderExpiry?: boolean;
   hasCredentials(): boolean;
   syncTime(): Promise<number>;
   getExchangeInfo(symbol: string): Promise<ExchangeSymbolInfo>;

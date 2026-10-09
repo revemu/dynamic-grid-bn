@@ -539,17 +539,6 @@
               </div>
             </div>
 
-            <div class="form-group">
-              <label for="cfg_orderExpireHours">
-                Limit Order Duration (Hours)
-                <span class="help-tip" title="Expiration time for resting limit orders on Binance">ℹ️</span>
-              </label>
-              <div class="input-with-unit">
-                <input type="number" id="cfg_orderExpireHours" step="1" min="1" max="72" />
-                <span class="unit">Hours</span>
-              </div>
-            </div>
-
             <div class="form-group switch-group">
               <div class="switch-label-group">
                 <span class="switch-title">0% Floor Cut Loss (Stop-Loss)</span>
@@ -684,6 +673,17 @@
                 <div class="input-with-unit">
                   <input type="number" id="cfg_minGasReserveSomi" step="0.1" min="0" placeholder="2.0" />
                   <span class="unit">SOMI</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_orderExpireHours">
+                  ⏳ DreamDEX Limit Order Duration (Hours)
+                  <span class="help-tip" title="ระยะเวลาหมดอายุของ Limit Order บน Smart Contract ของ DreamDEX (ค่าแนะนำ: 24 ชม.)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_orderExpireHours" step="1" min="1" max="72" placeholder="24" />
+                  <span class="unit">Hours</span>
                 </div>
               </div>
             </div>

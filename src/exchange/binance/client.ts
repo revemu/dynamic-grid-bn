@@ -107,6 +107,7 @@ export function formatPrecisionString(val: number, precision: number): string {
 
 export class BinanceClient implements IExchangeClient {
   public readonly exchangeName = "binance";
+  public readonly supportsOrderExpiry = false;
   private apiKey: string;
   private apiSecret: string;
   private baseUrl: string;
