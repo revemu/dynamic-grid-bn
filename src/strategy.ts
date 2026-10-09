@@ -1766,10 +1766,17 @@ export class DynamicGrid {
           this.breakdownFloorPrice = undefined;
           this.breakdownLowPrice = undefined;
           this.saveState();
-        } else if (isChannelReady && refPrice >= lowerBound * 1.002 && (lastClosedCandle && lastClosedCandle.close >= lowerBound)) {
-          // If price has cleanly re-entered and closed above the current valid channel floor
+        } else if (
+          isChannelReady &&
+          this.breakdownFloorPrice !== undefined &&
+          lowerBound >= this.breakdownFloorPrice * 0.998 &&
+          refPrice >= this.breakdownFloorPrice * 1.002 &&
+          (lastClosedCandle && lastClosedCandle.close >= this.breakdownFloorPrice)
+        ) {
+          // If price has cleanly re-entered and closed above the ORIGINAL broken floor
+          // Note: If channel shifted DOWNWARDS after cut loss, it does NOT qualify as a reclaim! It MUST wait for Higher Low (HL)!
           this.log(
-            `🚀 CHANNEL FLOOR RECLAIMED @ $${refPrice.toFixed(6)} >= Floor $${lowerBound.toFixed(6)} — Floor breakdown resolved, resuming normal grid operation!`,
+            `🚀 CHANNEL FLOOR RECLAIMED @ $${refPrice.toFixed(6)} >= Original Breakdown Floor $${this.breakdownFloorPrice.toFixed(6)} — Floor breakdown resolved, resuming normal grid operation!`,
           );
           this.waitingForHigherLow = false;
           this.breakdownTime = undefined;
