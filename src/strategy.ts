@@ -663,6 +663,15 @@ export class DynamicGrid {
                   if (bestSellIdx >= 0 && minSellDiff <= 0.0015) {
                     matchedLevelDesc = sellNames[bestSellIdx] || `Sell Target ${bestSellIdx + 1}`;
                     matchedTargetFraction = sellTargets[bestSellIdx] ?? 0.0;
+                  } else if (
+                    this.dowEngine?.getStructure()?.downtrendLine &&
+                    !this.dowEngine.getStructure().downtrendLine.isBroken
+                  ) {
+                    const tlPrice = this.dowEngine.getStructure().downtrendLine.currentLinePrice;
+                    if (tlPrice > 0 && Math.abs(tlPrice - price) / tlPrice <= 0.005) {
+                      matchedLevelDesc = "Sell TL Exit (Trendline)";
+                      matchedTargetFraction = 0.0;
+                    }
                   }
                 }
               }
@@ -3433,11 +3442,22 @@ export class DynamicGrid {
           // Place or maintain a resting Maker Limit Sell order at the trendline price for 100% exit.
           // When the trendline price shifts, automatically cancel and replace the order at the new TL price.
           const tlSellName = "Sell TL Exit (Trendline)";
-          const existingTlSell = this.openOrders.find((o) => !o.isBid && o.levelDesc === tlSellName);
+          // Match existing TL sell by exact levelDesc OR by proximity to trendline price OR generic Binance order when no grid targets exist
+          let existingTlSell = this.openOrders.find((o) => !o.isBid && (
+            o.levelDesc === tlSellName ||
+            (o.levelDesc && o.levelDesc.startsWith("SELL Order #") && o.price >= refPrice * 0.999) ||
+            Math.abs(o.price - tlPrice) / tlPrice <= 0.005
+          ));
+
+          if (existingTlSell && existingTlSell.levelDesc !== tlSellName) {
+            existingTlSell.levelDesc = tlSellName;
+            existingTlSell.targetFraction = 0.0;
+            this.log(`🔗 [TL SELL] Re-linked resting SELL order #${existingTlSell.onChainOrderId || existingTlSell.id} @ $${existingTlSell.price.toFixed(6)} to ${tlSellName}`);
+          }
 
           // Cancel any standard grid sell orders that might still be resting
           const staleStandardSells = this.openOrders.filter(
-            (o) => !o.isBid && o.levelDesc && sellNames.includes(o.levelDesc),
+            (o) => !o.isBid && o !== existingTlSell && o.levelDesc && sellNames.includes(o.levelDesc),
           );
           if (staleStandardSells.length > 0) {
             for (const o of staleStandardSells) {

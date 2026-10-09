@@ -162,6 +162,8 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     - แทนที่จะยกเลิกออเดอร์ทั้งหมดแล้วนั่งรอส่งคำสั่ง IOC ตอนราคาชนเส้นกด บอทจะวาง **Maker Limit Sell Order (`Sell TL Exit (Trendline)`)** ดักรอไว้ที่ราคาเส้นกดทันทีสำหรับ inventory ทั้งหมด (100% Exit)
     - **Front-Run Buffer (0.08% below TL)**: กำหนดราคาขายไว้ต่ำกว่าเส้นกดเล็กน้อยประมาณ `0.08%` (`tlPrice * (1 - 0.0008)`) เพื่อให้แมทช์ออกได้ง่ายและรวดเร็ว ก่อนที่ราคาจะชนเนื้อเส้นกดจริง
     - **Dynamic Slope Tracking**: เนื่องจากราคาเส้นกดขยับเปลี่ยนลงตามเวลา (ทุกแท่งเทียนหรือตามองศา Trendline) หากราคาเส้นกดเปลี่ยนไปเกิน tolerance (`> 0.1%`) บอทจะยกเลิกออเดอร์เดิมและส่งคำสั่งขายที่ราคาเส้นกดใหม่โดยอัตโนมัติ เพื่อให้คำสั่งขายเกาะติดเส้นกดอยู่เสมอ
+    - **Robust Existing TL Order Re-linking & Duplicate Prevention**:
+      - ใน `syncWalletAndReconcileOrders` และ `syncRestingOrders`: ปรับปรุงการค้นหาและผูกออเดอร์เดิมบน Binance ที่ตั้งค้างไว้ แม้จะถูกตั้งชื่อชั่วคราวว่า `SELL Order #...` ระบบจะ Re-link ให้เป็น `Sell TL Exit (Trendline)` ทันที เพื่อป้องกันไม่ให้บอทเข้าใจผิดว่ายังไม่มีออเดอร์ขายแล้วพยายามส่งคำสั่งซ้ำจนติด `[BALANCE GUARD]`
     - **Grid Channel Meter UI Integration**: บน Dashboard ในแถบ Grid Channel Meter ด้านขวา เมื่อมีออเดอร์ตั้งขายที่ Trendline ระบบจะแสดงป้าย `📉 SELL TL` พร้อมแสดงราคาที่ตั้งขายจริงบนขั้นบันไดอย่างชัดเจน
     - หากราคาวิ่งเข้ามาประชิดหรือชนเส้นกดในระยะ IOC บอทจะยกเลิก Maker Sell และส่งคำสั่ง IOC ทันทีเพื่อความปลอดภัย
 - **Strict Exchange Fill Verification for IOC / Exits (`executedQty` & `status` Guard)**:
