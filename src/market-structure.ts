@@ -701,11 +701,10 @@ export class DowStructureEngine {
           const isRecentCanonicalLow = recentCanonicalLows.some((l) => Math.abs(l.price - s.price) / s.price <= tol);
           const ancientLowPenalty = (activeWaveLow && s.price < activeWaveLow * (1 - tol * 2) && !isRecentCanonicalLow) ? 500 : 0;
 
-          // 7. Proximity to current price: penalize far-away ceilings/floors so immediate boundaries are favored
-          const distPct = Math.abs(r.price - currentPrice) / currentPrice + Math.abs(currentPrice - s.price) / currentPrice;
-          const distPenalty = distPct * 2000;
-
-          score = 10000 + enclosesBonus + touchBonus + nearestMultiBonus + spanTargetBonus + waveHighBonus + waveLowBonus - ancientLowPenalty - distPenalty;
+          // 7. Structural Swing Stability:
+          // Do NOT apply live price distance penalties (distPenalty) that oscillate every tick.
+          // Channel boundaries must remain strictly anchored to confirmed peaks and valleys!
+          score = 10000 + enclosesBonus + touchBonus + nearestMultiBonus + spanTargetBonus + waveHighBonus + waveLowBonus - ancientLowPenalty;
         } else if (widthPct < effectiveTradeableMinSpan) {
           // Too narrow: score higher for pairs that are closer to tradeable span
           score = widthPct * 100;
