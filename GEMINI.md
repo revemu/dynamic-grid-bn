@@ -138,7 +138,13 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 
 ---
 
-            - **Structural Min-Channel Width & Anchor Priority Protection (MULTI_TOUCH_SR)**:
+                - **Swing-Anchored Boundaries & Adaptive Edge Grid Levels for Narrow Channels**:
+      - **สาเหตุ & ปัญหาเดิม**: เมื่อราคาทำแนวต้านใกล้ชิดราคาปัจจุบัน (เช่น ) และช่วงสวิงแคบกว่า minSpanPct โค้ดเดิมเคยนำสูตร upperBound - minSpanFromPct มาสร้างเป็นเส้น Floor สมมุติลอยๆ (.09) โดยไม่มีจุดอ้างอิงสวิงเหวหรือฐานรับจริงบนกราฟเลย และการซอยไม้ตรงกลางในกรอบแคบเสี่ยงต่อการเทรดติดขัด
+      - **การแก้ไขใน Market Structure (src/market-structure.ts)**:
+        1. **100% Swing-Anchored Bounds (No Floating Math Floors)**: ตัดสูตรการลบ % ลอยๆ ทิ้งทั้งหมด และบังคับให้ Floor ล็อคเข้ากับจุดเหวจริง (lowestWaveValley หรือ Swing Low ต่ำกว่าราคาที่ใกล้เคียงที่สุด) เสมอ ทำให้กรอบราคาบนชาร์ตมีจุดอ้างอิงของสวิงจริง 100%
+        2. **Narrow Pair Selection Resilience**: ใน findMultiTouchSR หากคู่สวิงแคบกว่า minSpanPct ระบบจะไม่ตัดทิ้งหรือคืน undefined แต่จะให้คะแนนและเลือกคู่สวิงที่ดีที่สุด (เช่น ยอด  กับเหว ) และยอมรับความกว้างจริงตามธรรมชาติของตลาด
+        3. **Adaptive Edge Grid Levels (< 1.2% Narrow Channel)**: เมื่อกรอบราคาแคบกว่า 1.2% ระบบจะปรับระดับกริดให้ขยับไปเน้นเข้าซื้อที่ขอบล่าง (Floor + 0.2%) และขายที่ขอบบน (Ceiling - 0.2%) โดยอัตโนมัติ เพื่อรักษาความคุ้มค่าของการทำกำไรและไม่ขัดแย้งกับการกระจายสัดส่วน 40/30/20/10 ในกรอบปกติ
+    - **Structural Min-Channel Width & Anchor Priority Protection (MULTI_TOUCH_SR)**:
       - **สาเหตุ & ปัญหาเดิม**: ในโหมด MULTI_TOUCH_SR ฟังก์ชัน findMultiTouchSR เคยมีการฮาร์ดโค้ด effectiveTradeableMinSpan = Math.min(minSpanPct, 1.8) ทำให้ลดเกรด minSpanPct ของผู้ใช้ลงเหลือ 1.8% และไม่มีการตรวจสอบ minSpanFromPct หลังได้กรอบ ส่งผลให้เมื่อสวิงในคลื่นปัจจุบันแคบและราคาทำ Lower High เล็กๆ () ระบบได้บีบ Ceiling ลงมาติดราคาปัจจุบัน และถอยหลังย้อนอดีตไปกด Floor ลงไปหาเหวเก่าที่จบคลื่นไปแล้ว () เพื่อให้ได้ความกว้างครบแทนที่จะมองหายอดต้านด้านบน
       - **การแก้ไขใน Market Structure (src/market-structure.ts)**:
         1. **Strict User Min-Span (effectiveTradeableMinSpan)**: เคารพ minSpanPct ของผู้ใช้อย่างเคร่งครัด (เช่น 3.0%) โดยไม่ตัดลดทอนลงมาเป็น 1.8%

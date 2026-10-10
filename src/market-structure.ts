@@ -674,8 +674,13 @@ export class DowStructureEngine {
           // Strictly anchor to confirmed peaks & valleys. Zero tick price penalties/bonuses!
           score = 10000 + touchBonus + anchorBonus + spanTargetBonus + waveHighBonus + waveLowBonus + currentBaseBonus - ancientLowPenalty;
         } else if (widthPct < effectiveTradeableMinSpan) {
-          // Too narrow: score higher for pairs that are closer to tradeable span
-          score = widthPct * 100;
+          // Narrow structural pair: Score by touches, active wave alignment, and proximity to tradeable span
+          const touchBonus = (r.touchCount >= 2 ? 1500 : 0) + (s.touchCount >= 2 ? 1500 : 0);
+          const isTargetRes = Boolean(targetAnchorRes && Math.abs(r.price - targetAnchorRes.price) / r.price <= tol);
+          const isTargetSup = Boolean(targetAnchorSup && Math.abs(s.price - targetAnchorSup.price) / s.price <= tol);
+          const anchorBonus = (isTargetRes ? 2000 : 0) + (isTargetSup ? 2000 : 0);
+          const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 1000 : 0;
+          score = 5000 + (widthPct * 50) + touchBonus + anchorBonus + currentBaseBonus;
         } else {
           // Too wide (> maxSpanPct): VIOLATES MAX CHANNEL WIDTH!
           const excessWidth = widthPct - maxSpanPct;
@@ -1684,14 +1689,12 @@ export class DowStructureEngine {
       } else if (!srResult.support && srResult.resistance) {
         upperBound = srResult.resistance.price;
         foundCeiling = true;
-        // If no multi-touch support below price, check recent confirmed swing low first (Higher Low / local base), fallback to active wave valley
-        const recentLowsBelowPrice = this.swingLows.filter((l) => l.price < price * 0.999);
-        const recentConfirmedLow = recentLowsBelowPrice.length > 0 ? recentLowsBelowPrice[recentLowsBelowPrice.length - 1]?.price : undefined;
-        const lowestWaveValley = recentConfirmedLow ?? activeValley?.price;
-        bottomBound = (lowestWaveValley !== undefined && lowestWaveValley < upperBound)
-          ? lowestWaveValley
-          : Math.min(price * (1 - minPct / 2), upperBound - minSpan);
-        foundFloor = lowestWaveValley !== undefined;
+        // If no multi-touch support below price, check recent confirmed swing low first (Higher Low / local base), fallback to active wave valley or nearest valid swing low
+        const recentLowsBelowPrice = this.swingLows.filter((l) => l.price < Math.min(price * 0.999, upperBound * 0.999)).sort((a, b) => b.price - a.price);
+        const recentConfirmedLow = recentLowsBelowPrice.length > 0 ? recentLowsBelowPrice[0]?.price : undefined;
+        const lowestWaveValley = (activeValley && activeValley.price < upperBound) ? activeValley.price : recentConfirmedLow;
+        bottomBound = lowestWaveValley ?? (recentConfirmedLow ?? Math.min(price * (1 - minPct / 2), upperBound - minSpan));
+        foundFloor = lowestWaveValley !== undefined || recentConfirmedLow !== undefined;
       } else {
         // Neither side has multi-touch: use recent confirmed swings
         const recentLowsBelowPrice = this.swingLows.filter((l) => l.price < price * 0.999);
@@ -1750,37 +1753,6 @@ export class DowStructureEngine {
               clampStatus = "CLAMPED_MAX";
             }
           }
-        } else if (upperBound - bottomBound < minSpanFromPct) {
-          // 🔒 Enforce MIN CHANNEL WIDTH (minSpanFromPct):
-          // If the selected structural bounds are too narrow (< minSpanFromPct):
-          // In consolidation/trough near floor: expand ceiling up to confirmed higher structural swings (e.g. Major High)
-          // In rally near ceiling: expand floor down to confirmed structural lows
-          const isNearFloor = Math.abs(price - bottomBound) < Math.abs(upperBound - price);
-          if (isNearFloor) {
-            const validHighs = (activeCycleHighs.length > 0 ? activeCycleHighs : canonicalHighs)
-              .filter((h) => h.price > price && h.price - bottomBound >= minSpanFromPct && h.price - bottomBound <= maxSpanFromPct)
-              .sort((a, b) => a.price - b.price); // pick lowest valid high >= minSpanFromPct
-
-            if (validHighs.length > 0) {
-              upperBound = validHighs[0]!.price;
-              clampStatus = "NATURAL_SWING";
-            } else {
-              upperBound = bottomBound + minSpanFromPct;
-              clampStatus = "CLAMPED_MIN";
-            }
-          } else {
-            const validLows = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
-              .filter((l) => l.price < price && upperBound - l.price >= minSpanFromPct && upperBound - l.price <= maxSpanFromPct)
-              .sort((a, b) => b.price - a.price); // pick highest valid low >= minSpanFromPct
-
-            if (validLows.length > 0) {
-              bottomBound = validLows[0]!.price;
-              clampStatus = "NATURAL_SWING";
-            } else {
-              bottomBound = upperBound - minSpanFromPct;
-              clampStatus = "CLAMPED_MIN";
-            }
-          }
         } else {
           clampStatus = "NATURAL_SWING";
           anchorSide = "NONE";
@@ -1791,9 +1763,6 @@ export class DowStructureEngine {
         if (upperBound - bottomBound > maxSpanFromPct) {
           bottomBound = upperBound - maxSpanFromPct;
           clampStatus = "CLAMPED_MAX";
-        } else if (upperBound - bottomBound < minSpanFromPct) {
-          bottomBound = upperBound - minSpanFromPct;
-          clampStatus = "CLAMPED_MIN";
         } else {
           clampStatus = "NATURAL_SWING";
         }
@@ -1804,9 +1773,6 @@ export class DowStructureEngine {
         if (upperBound - bottomBound > maxSpanFromPct) {
           upperBound = bottomBound + maxSpanFromPct;
           clampStatus = "CLAMPED_MAX";
-        } else if (upperBound - bottomBound < minSpanFromPct) {
-          upperBound = bottomBound + minSpanFromPct;
-          clampStatus = "CLAMPED_MIN";
         } else {
           clampStatus = "NATURAL_SWING";
         }
@@ -1822,33 +1788,15 @@ export class DowStructureEngine {
               bottomBound = upperBound - maxSpanFromPct;
             }
             clampStatus = "CLAMPED_MAX";
-          } else if (upperBound - bottomBound < minSpanFromPct) {
-            const isNearFloor = Math.abs(price - bottomBound) < Math.abs(upperBound - price);
-            if (isNearFloor) {
-              upperBound = bottomBound + minSpanFromPct;
-            } else {
-              bottomBound = upperBound - minSpanFromPct;
-            }
-            clampStatus = "CLAMPED_MIN";
           } else {
             clampStatus = "NATURAL_SWING";
             anchorSide = "NONE";
           }
         } else if (foundFloor && !foundCeiling) {
-          if (upperBound - bottomBound < minSpanFromPct) {
-            upperBound = bottomBound + minSpanFromPct;
-            clampStatus = "CLAMPED_MIN";
-          } else {
-            clampStatus = "NATURAL_SWING";
-          }
+          clampStatus = "NATURAL_SWING";
           anchorSide = "LOWER_FLOOR";
         } else if (!foundFloor && foundCeiling) {
-          if (upperBound - bottomBound < minSpanFromPct) {
-            bottomBound = upperBound - minSpanFromPct;
-            clampStatus = "CLAMPED_MIN";
-          } else {
-            clampStatus = "NATURAL_SWING";
-          }
+          clampStatus = "NATURAL_SWING";
           anchorSide = "UPPER_CEILING";
         }
       }
@@ -2107,21 +2055,39 @@ export class DowStructureEngine {
       zoneType = "BUY_ZONE";
     }
 
+    // Check channel width: In narrow channels (e.g. < 1.2%), adapt grid levels towards edges (Floor + 0.2% / Ceil - 0.2%)
+    // to preserve tradeable edge swings and avoid clustering dust orders in the middle.
+    const isNarrowChannel = bottomBound > 0 && ((finalSpan / bottomBound) * 100) < 1.20;
+
     // Grid Levels in 10% to 50% (Buy Zone): 40%, 30%, 20%, 10% (0%-5% is safe buffer above floor)
-    const buyLevels = [
-      bottomBound + finalSpan * 0.40,
-      bottomBound + finalSpan * 0.30,
-      bottomBound + finalSpan * 0.20,
-      bottomBound + finalSpan * 0.10,
-    ];
+    const buyLevels = isNarrowChannel
+      ? [
+          Math.min(bottomBound + finalSpan * 0.40, bottomBound * 1.006),
+          Math.min(bottomBound + finalSpan * 0.30, bottomBound * 1.004),
+          Math.max(bottomBound + finalSpan * 0.20, bottomBound * 1.003),
+          Math.max(bottomBound + finalSpan * 0.10, bottomBound * 1.002), // Bottom edge: Floor + 0.2%
+        ]
+      : [
+          bottomBound + finalSpan * 0.40,
+          bottomBound + finalSpan * 0.30,
+          bottomBound + finalSpan * 0.20,
+          bottomBound + finalSpan * 0.10,
+        ];
 
     // Grid Levels in 50% to 100% (Sell Zone): 60%, 70%, 80%, 90% (Hold 0% near 100% Upper Bound)
-    const sellLevels = [
-      bottomBound + finalSpan * 0.60,
-      bottomBound + finalSpan * 0.70,
-      bottomBound + finalSpan * 0.80,
-      bottomBound + finalSpan * 0.90,
-    ];
+    const sellLevels = isNarrowChannel
+      ? [
+          Math.min(bottomBound + finalSpan * 0.60, upperBound * 0.994),
+          Math.min(bottomBound + finalSpan * 0.70, upperBound * 0.996),
+          Math.max(bottomBound + finalSpan * 0.80, upperBound * 0.997),
+          Math.max(bottomBound + finalSpan * 0.90, upperBound * 0.998), // Top edge: Ceiling - 0.2%
+        ]
+      : [
+          bottomBound + finalSpan * 0.60,
+          bottomBound + finalSpan * 0.70,
+          bottomBound + finalSpan * 0.80,
+          bottomBound + finalSpan * 0.90,
+        ];
 
     const zoneWidthPct = bottomBound > 0 ? (finalSpan / bottomBound) * 100 : 0;
 
