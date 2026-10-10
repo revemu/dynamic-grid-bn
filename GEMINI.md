@@ -115,6 +115,14 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
      - **การแก้ไข**:
        1. ใน `src/market-structure.ts` (`calculateTrendlines`): เมื่อราคาปิดยืนเหนือเส้นกดครบ 2 แท่ง (`brokenCandleCount >= 2`) ให้ทำการยกเลิกเส้นกดนี้ทันที (`downtrendLine = undefined`) และตั้งค่า `downtrendBreakoutConfirmed = true` เพื่อให้เส้นกดที่ถูกทำลายแล้วหายไปจากระบบ
        2. ใน `src/strategy.ts` (Block 2a): เพิ่ม Guard บังคับว่า Trendline IOC Sell จะทำงานเฉพาะเมื่อเส้นกดยังสมบูรณ์และยังไม่เบรค (`!downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed`) เท่านั้น เมื่อเบรคแล้วจะส่งมอบการซื้อขายให้เป็นหน้าที่ของ Grid Ladder ปกติ (Buy Level 1..4 และ Sell Target 1..4) วนรอบได้อย่างราบรื่น
+   - **100% Full Take Profit Exit Slippage Buffer & Redundant Step 4/4 Elimination**:
+     - **สาเหตุของปัญหาเดิม**:
+       1. ใน `sellAll()` คำสั่ง IOC Sell สำหรับ Take Profit 100% ถูกส่งด้วยราคา Best Bid ตรงๆ เป๊ะๆ หากสภาพคล่อง Orderbook ฝั่ง Bid บน DEX ณ วินาทีนั้นมีไม่พอรองรับจำนวนเหรียญทั้งหมด สัญญาจะ Revert ทันทีด้วย Custom Error `0xc04ad919` (Unmatched IOC Order) ทำให้คำสั่งไม่ Match และเหรียญยังค้างอยู่
+       2. ในบล็อก 100% Take Profit Exit หลังเรียก `await this.sellAll()` ขาดคำสั่ง `return;` ทำให้โค้ดไหลต่อลงไปยัง `executeIocBracketGrid` ซึ่งพอเห็นว่าราคายังอยู่เหนือ Sell Target 4 จึงยิงคำสั่ง `IOC Sell Step 4/4` ซ้ำซ้อนอีกไม้ ผู้ใช้จึงเห็นบอทแบ่งขายย่อยและเสียค่าแก๊สซ้ำ
+     - **การแก้ไข**:
+       1. ใน `sellAll()`: ปรับปรุงการคำนวณ `limitPrice` สำหรับโหมด IOC ให้ยอมรับ Slippage Buffer เล็กน้อย (0.3% - 0.5% หรือไม่เกิน `cutLossMaxBidDiscountPct`) เพื่อให้คำสั่ง IOC กวาด Orderbook และ Match เต็มจำนวน 100% ในไม้เดียว โดยมี Guard คุมเข้มว่า `limitPrice` ต้องไม่ต่ำกว่าทุนเฉลี่ยเด็ดขาด (`Math.max(avgEntry * 1.0005, discountedPrice)`) รับประกันขายมีกำไรแน่นอน
+       2. ใน `src/strategy.ts`: ใส่ `return;` หลังจบ 100% Take Profit Exit และ Cut Loss ทันที เพื่อยุติการทำงานของ tick นั้น ไม่ให้หลุดไหลลงไปหา `executeIocBracketGrid`
+       3. ใน `executeIocBracketGrid`: เพิ่ม Guard ตรวจสอบว่าหากราคาแตะหรืออยู่เหนือเพดานกรอบบน (`refPrice >= upperBound || currentBestBid >= upperBound`) ให้งดการแบ่งขายตามขั้นบันได (Step 1..4) ทันที เพื่อส่งมอบให้ 100% Full Exit ทำหน้าที่ปิดรอบไม้เดียวจบ
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

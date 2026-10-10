@@ -1988,6 +1988,7 @@ export class DynamicGrid {
           this.stuckSince = undefined;
           this.breakdownCandleTimes.clear();
           this.saveState();
+          return;
         }
       } else if (!this.isPaused && isInitialBreakdown) {
         // Price fell below floor while holding 0 lots: cancel any open resting buy orders to prevent buying a falling knife
@@ -2032,6 +2033,7 @@ export class DynamicGrid {
       const symbolKey = this.getSymbolKey();
       this.db.saveLockedChannel(symbolKey, undefined);
       this.saveState();
+      return;
     }
 
     // ── Target Holding % Rebalancing Model based on Ladder Zone ───────────────
@@ -4726,6 +4728,13 @@ export class DynamicGrid {
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const totalHeldQuote = held * currentBestBid;
 
+    // Ceiling / Upper Bound Guard: If price reached or exceeded Upper Bound, do NOT execute stepped ladder tranches.
+    // Stepped tranches (Step 1..4) are for intra-channel distribution only. Upper bound exit is handled by 100% Full Take Profit.
+    const isCeilingZone = refPrice >= upperBound || (currentBestBid > 0 && currentBestBid >= upperBound);
+    if (isCeilingZone && this.cfg.takeProfitAtUpperBound) {
+      return;
+    }
+
     if (this.sellOrdersActive && held >= this.minQty && totalHeldQuote >= minNotional && currentBestBid > 0) {
       // 1. Maintain or initialize sell distribution cycle
       // If no active cycle, or position grew significantly (new buy filled), establish new baseline
@@ -5207,11 +5216,35 @@ export class DynamicGrid {
     }
 
     try {
+      // Determine effective limit price with slippage protection for IOC execution
+      // On DreamDEX CLOB / IOC bracket, strict limit price with 0 slippage causes Revert 0xc04ad919 if book depth shifts.
+      let limitPrice = price;
+      if (this.binance.exchangeName === "dreamdex" || this.cfg.orderExecutionMode === "IOC_BRACKET") {
+        const avgEntry = this.getAvgEntryPrice();
+        const slippagePct = (this.cfg.cutLossMaxBidDiscountPct ?? 1.5) / 100;
+        if (action === "SELL") {
+          // Take Profit Full Exit: Allow matching slightly below top bid (e.g. 0.3% - 0.5% buffer)
+          // while strictly guaranteeing net profit above avgEntry!
+          const bufferPct = Math.min(0.005, slippagePct);
+          const discountedPrice = price * (1 - bufferPct);
+          if (avgEntry > 0) {
+            const minProfitable = avgEntry * 1.0005;
+            limitPrice = Math.max(minProfitable, discountedPrice);
+          } else {
+            limitPrice = discountedPrice;
+          }
+        } else {
+          // Cut Loss: Allow matching down to max bid discount to guarantee immediate execution
+          limitPrice = price * (1 - slippagePct);
+        }
+        limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
+      }
+
       const res = await this.binance.placeOrder({
         symbol: this.symbol,
         side: "SELL",
         type: "IOC",
-        price,
+        price: limitPrice,
         qty: executeQty,
       });
       const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
@@ -5236,21 +5269,22 @@ export class DynamicGrid {
       }
 
       const actualQty = Math.min(executeQty, filledQty > 0 ? filledQty : executeQty);
+      const actualPrice = limitPrice;
       const oldTradePnl = this.tradeRealizedPnl;
-      this.closeLots(actualQty, price);
+      this.closeLots(actualQty, actualPrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
+        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${actualPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.emit({
         type: "order",
         data: {
           action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
-          price,
+          price: actualPrice,
           qty: actualQty,
-          notional: actualQty * price,
-          notionalQuote: actualQty * price,
-          notionalUsdso: actualQty * price,
+          notional: actualQty * actualPrice,
+          notionalQuote: actualQty * actualPrice,
+          notionalUsdso: actualQty * actualPrice,
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
