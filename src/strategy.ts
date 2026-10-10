@@ -2821,16 +2821,13 @@ export class DynamicGrid {
       return;
     }
 
-    // ── 2a. Trendline IOC Exit: If price is ABOVE the active downtrend trendline, sell immediately ──
-    // ราคาปัจจุบันสูงกว่าเส้นกดแล้ว → ขาย IOC ทันทีที่ราคา trendline แทนการรอ resting order
-    // NOTE: Do NOT gate on isBroken — isBroken is only for buy-side breakout detection.
-    //       For sell-side, the TL always governs placement regardless of temporary breakouts.
-    if ((this.cfg.enableSellBelowTrendResistance !== false) && downtrendLine) {
+    // ── 2a. Trendline IOC Exit: If price tests or touches the active unbroken downtrend trendline, sell immediately ──
+    // ราคาปัจจุบันทดสอบหรือชนเส้นกดที่ยังไม่เบรค → ขาย IOC ทันทีที่ราคา trendline แทนการรอ resting order
+    // หากเส้นกดถูกเบรคแล้ว (isBroken หรือ breakoutConfirmed) จะปล่อยให้ระบบเทรดตาม Grid Ladder ตามปกติ
+    if ((this.cfg.enableSellBelowTrendResistance !== false) && downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed) {
       const tlPrice = downtrendLine.currentLinePrice;
-      const tlState = downtrendLine.isBroken
-        ? `BROKEN (${downtrendLine.brokenCandleCount} bars above)`
-        : downtrendLine.brokenCandleCount > 0
-        ? `Break 1/2 bars`
+      const tlState = downtrendLine.brokenCandleCount > 0
+        ? `Break 1/2 bars ⏳`
         : "Active 🔴";
       // Debug log every ~30s (avoid spamming every tick)
       const debugCooldownKey = "tl_debug_log";

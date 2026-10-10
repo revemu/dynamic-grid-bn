@@ -110,6 +110,11 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        1. ใน `src/strategy.ts` (Block 2a): ตรวจสอบ `bestBid` บนกระดาน DEX ก่อนส่ง Trendline IOC Sell เสมอ หาก `bestBid` ต่างจากราคาเส้นกดไม่เกินเกณฑ์ความคลาดเคลื่อน (`cutLossMaxBidDiscountPct` เช่น ไม่เกิน 1.5%) และราคานั้นยังคงมีกำไรเหนือทุนเฉลี่ย (`bestBid >= avgEntry * 1.0005`) ระบบจะปรับราคาขายไปที่ `bestBid` โดยตรง เพื่อให้คำสั่ง IOC จับคู่และ Fill ทันที 100% ป้องกันการเกิด Revert
        2. ใน `src/strategy.ts`: หาก Best Bid บนกระดานต่ำกว่าทุนเฉลี่ย หรือห่างจากราคาเส้นกดมากเกินไป บอทจะเข้าสู่สถานะ Standby รอสภาพคล่อง ไม่ยิงขายขาดทุนและไม่ยิง Revert ให้เสียค่าแก๊ส
        3. ใน `src/exchange/dreamdex/client.ts`: ครอบ `try-catch` รอบ `writeContract` ดักจับ Error signature `0xc04ad919` โดยหากเป็นคำสั่ง IOC ที่ไม่ Match จะคืนค่า `status: "CANCELED"` และ `executedQty: 0` พร้อมแสดงข้อความเตือนชัดเจน ไม่ให้โยน Uncaught Revert Error รบกวนระบบ
+   - **Trendline Breakout Invalidation & Continuous Grid Cycling**:
+     - **สาเหตุ & ปัญหาเดิม**: เมื่อราคาเบรคทะลุเส้นกด (Downtrend Line) ขึ้นมาจนทำยอดใหม่เหนือเส้น (Confirmed Breakout >= 2 closed candles) ตัวแปร `downtrendLine` ยังคงถูกคำนวณและวาดค้างอยู่บนกราฟ ส่งผลให้ Buy Filter สั่งบล็อกการเข้าซื้อใน Buy Zone (`targetTranches = 0`) และ Block 2a พยายามส่งคำสั่ง IOC Sell 100% Exit ทุกครั้งที่ราคาขยับเหนือเส้นกด ทำให้บอทไม่ยอมเข้าซื้อและไม่วางขายตามขั้นบันได Grid
+     - **การแก้ไข**:
+       1. ใน `src/market-structure.ts` (`calculateTrendlines`): เมื่อราคาปิดยืนเหนือเส้นกดครบ 2 แท่ง (`brokenCandleCount >= 2`) ให้ทำการยกเลิกเส้นกดนี้ทันที (`downtrendLine = undefined`) และตั้งค่า `downtrendBreakoutConfirmed = true` เพื่อให้เส้นกดที่ถูกทำลายแล้วหายไปจากระบบ
+       2. ใน `src/strategy.ts` (Block 2a): เพิ่ม Guard บังคับว่า Trendline IOC Sell จะทำงานเฉพาะเมื่อเส้นกดยังสมบูรณ์และยังไม่เบรค (`!downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed`) เท่านั้น เมื่อเบรคแล้วจะส่งมอบการซื้อขายให้เป็นหน้าที่ของ Grid Ladder ปกติ (Buy Level 1..4 และ Sell Target 1..4) วนรอบได้อย่างราบรื่น
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

@@ -978,6 +978,8 @@ export class DowStructureEngine {
               const breakoutConfirmed = brokenCandleCount >= 2;
               if (breakoutConfirmed) {
                 downtrendBreakoutConfirmed = true;
+                // Once breakout is confirmed by >= 2 candles, the downtrend line is invalidated and removed
+                downtrendLine = undefined;
               } else {
                 downtrendLine = {
                   type: "DOWNTREND",
@@ -985,7 +987,7 @@ export class DowStructureEngine {
                   p2: bestP2,
                   slope: bestSlope,
                   currentLinePrice,
-                  isBroken: false,
+                  isBroken: brokenCandleCount > 0,
                   breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
                   brokenCandleCount,
                   breakoutConfirmed: false,
