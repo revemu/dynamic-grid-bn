@@ -3274,9 +3274,18 @@ export class DynamicGrid {
           }
         }
 
-        // If open buys exceed the number of active buy levels, trim excess from highest price
-        if (openBuys.length > numBuyLevels) {
+        // If open buys exceed the number of active buy levels, only trim orders that are unmapped or excess
+        const activeLevelNamesSet = new Set(effectiveLevelNames.slice(0, numBuyLevels));
+        const unmappedBuys = openBuys.filter((o) => !o.levelDesc || !activeLevelNamesSet.has(o.levelDesc));
+        if (unmappedBuys.length > 0) {
+          for (const o of unmappedBuys) {
+            await this.cancelOrderInternal(o, "Excess buy orders beyond grid levels — removing unmapped");
+          }
+          this.openOrders = this.openOrders.filter((o) => !unmappedBuys.includes(o));
+          this.saveState();
+        } else if (openBuys.length > numBuyLevels) {
           const excessCount = openBuys.length - numBuyLevels;
+          // Sort descending by price to trim from highest
           const excessBuys = [...openBuys].sort((a, b) => b.price - a.price).slice(0, excessCount);
           for (const o of excessBuys) {
             await this.cancelOrderInternal(o, "Excess buy orders beyond grid levels — removing");

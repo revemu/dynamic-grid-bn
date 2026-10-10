@@ -195,6 +195,7 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     - **Buy Level**: ยุบเหลือระดับเดียวที่ขอบล่าง **Floor + 0.2%** (`bottomBound * 1.002`) สำหรับสะสมไม้เดียวเต็มโควต้าเมื่อราคาลงมาทดสอบก้นกรอบจริง
     - **Sell Level**: ยุบเหลือระดับเดียวที่ขอบบน **Ceiling - 0.2%** (`upperBound * 0.998`) สำหรับขายทำกำไรเต็มโควต้า 100% (Full Exit) เมื่อราคาเด้งทดสอบยอดกรอบ
     - ใน `executeIocBracketGrid`: ฝั่งขายจะกำหนด `numSellTranches = 1` เพื่อขายกวาดหมดพอร์ตที่ขอบบนทันที และบน UI กราฟ `app.js` จะแสดงเส้นกรอบที่ตรงกับระดับจริง ไม่กระจายเส้นหลอก
+    - ใน `syncRestingOrders`: ปรับปรุงระบบตรวจจับและ Trim คำสั่งซื้อส่วนเกิน (`unmappedBuys`) ไม่ให้เกิดลูป Cancel ออเดอร์ที่ตั้งตรงกับระดับแคบที่ใช้งานอยู่ (`activeLevelNamesSet`) โดยจะเลือกยกเลิกเฉพาะออเดอร์ที่อยู่นอกระดับ active หรือส่วนเกินจริงเท่านั้น ป้องกันการตั้งแล้วสั่งยกเลิกวนซ้ำไปเรื่อยๆ
 - **Dynamic Buy Tranche Allocation & Min Notional Floor (No Rigid / 4 Dilution)**:
   - แทนที่จะหาร 4 แบบคงที่ (`currentAvailableCapacity / 4`) ซึ่งทำให้เกิดปัญหาเมื่อเหลือความจุ เช่น $15.75 แล้วถูกหารจนเหลือเพียง $3.82 จนต่ำกว่า Binance Min Notional ($5.00)
   - ระบบจะคำนวณจำนวนระดับที่พร้อมวางคำสั่งซื้อจริง (`numEligibleBuyLevels`) โดยไม่นับระดับที่ติด Holding Fraction Guard หรือ Trendline Filters
