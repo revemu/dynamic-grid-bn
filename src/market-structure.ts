@@ -625,8 +625,8 @@ export class DowStructureEngine {
       ? supCandidates.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol)
       : undefined;
 
-    // Baseline tradeable span floor: allow genuine multi-touch levels to form if tradeable (>= 1.8%)
-    const effectiveTradeableMinSpan = Math.min(minSpanPct, 1.8);
+    // Baseline tradeable span floor: Strictly honor user's configured minSpanPct (e.g. 3.0%)
+    const effectiveTradeableMinSpan = minSpanPct;
 
     let bestPair: {
       res: { price: number; touchCount: number; points: SwingPoint[] };
@@ -663,13 +663,16 @@ export class DowStructureEngine {
           const waveHighBonus = isAtWaveHigh ? (isConfirmedLowerHigh && r.touchCount >= 2 ? 1500 : 500) : 0;
           const waveLowBonus = isAtWaveLow ? 500 : 0;
 
-          // 5. Penalty for ancient lows that sit far below the active Higher Low
+          // 5. Heavy penalty for ancient lows that sit far below the active Higher Low / recent base valley
           const isRecentCanonicalLow = recentCanonicalLows.some((l) => Math.abs(l.price - s.price) / s.price <= tol);
-          const ancientLowPenalty = (activeWaveLow && s.price < activeWaveLow * (1 - tol * 2) && !isRecentCanonicalLow) ? 500 : 0;
+          const ancientLowPenalty = (activeWaveLow && s.price < activeWaveLow * (1 - tol * 2) && !isRecentCanonicalLow) ? 6000 : 0;
 
-          // 6. Absolute Structural Swing Stability:
+          // 6. Prefer pairs where support matches the current active wave base/valley
+          const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 2000 : 0;
+
+          // 7. Absolute Structural Swing Stability:
           // Strictly anchor to confirmed peaks & valleys. Zero tick price penalties/bonuses!
-          score = 10000 + touchBonus + anchorBonus + spanTargetBonus + waveHighBonus + waveLowBonus - ancientLowPenalty;
+          score = 10000 + touchBonus + anchorBonus + spanTargetBonus + waveHighBonus + waveLowBonus + currentBaseBonus - ancientLowPenalty;
         } else if (widthPct < effectiveTradeableMinSpan) {
           // Too narrow: score higher for pairs that are closer to tradeable span
           score = widthPct * 100;
@@ -1747,6 +1750,37 @@ export class DowStructureEngine {
               clampStatus = "CLAMPED_MAX";
             }
           }
+        } else if (upperBound - bottomBound < minSpanFromPct) {
+          // 🔒 Enforce MIN CHANNEL WIDTH (minSpanFromPct):
+          // If the selected structural bounds are too narrow (< minSpanFromPct):
+          // In consolidation/trough near floor: expand ceiling up to confirmed higher structural swings (e.g. Major High)
+          // In rally near ceiling: expand floor down to confirmed structural lows
+          const isNearFloor = Math.abs(price - bottomBound) < Math.abs(upperBound - price);
+          if (isNearFloor) {
+            const validHighs = (activeCycleHighs.length > 0 ? activeCycleHighs : canonicalHighs)
+              .filter((h) => h.price > price && h.price - bottomBound >= minSpanFromPct && h.price - bottomBound <= maxSpanFromPct)
+              .sort((a, b) => a.price - b.price); // pick lowest valid high >= minSpanFromPct
+
+            if (validHighs.length > 0) {
+              upperBound = validHighs[0]!.price;
+              clampStatus = "NATURAL_SWING";
+            } else {
+              upperBound = bottomBound + minSpanFromPct;
+              clampStatus = "CLAMPED_MIN";
+            }
+          } else {
+            const validLows = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
+              .filter((l) => l.price < price && upperBound - l.price >= minSpanFromPct && upperBound - l.price <= maxSpanFromPct)
+              .sort((a, b) => b.price - a.price); // pick highest valid low >= minSpanFromPct
+
+            if (validLows.length > 0) {
+              bottomBound = validLows[0]!.price;
+              clampStatus = "NATURAL_SWING";
+            } else {
+              bottomBound = upperBound - minSpanFromPct;
+              clampStatus = "CLAMPED_MIN";
+            }
+          }
         } else {
           clampStatus = "NATURAL_SWING";
           anchorSide = "NONE";
@@ -1757,6 +1791,9 @@ export class DowStructureEngine {
         if (upperBound - bottomBound > maxSpanFromPct) {
           bottomBound = upperBound - maxSpanFromPct;
           clampStatus = "CLAMPED_MAX";
+        } else if (upperBound - bottomBound < minSpanFromPct) {
+          bottomBound = upperBound - minSpanFromPct;
+          clampStatus = "CLAMPED_MIN";
         } else {
           clampStatus = "NATURAL_SWING";
         }
@@ -1767,6 +1804,9 @@ export class DowStructureEngine {
         if (upperBound - bottomBound > maxSpanFromPct) {
           upperBound = bottomBound + maxSpanFromPct;
           clampStatus = "CLAMPED_MAX";
+        } else if (upperBound - bottomBound < minSpanFromPct) {
+          upperBound = bottomBound + minSpanFromPct;
+          clampStatus = "CLAMPED_MIN";
         } else {
           clampStatus = "NATURAL_SWING";
         }
@@ -1782,15 +1822,33 @@ export class DowStructureEngine {
               bottomBound = upperBound - maxSpanFromPct;
             }
             clampStatus = "CLAMPED_MAX";
+          } else if (upperBound - bottomBound < minSpanFromPct) {
+            const isNearFloor = Math.abs(price - bottomBound) < Math.abs(upperBound - price);
+            if (isNearFloor) {
+              upperBound = bottomBound + minSpanFromPct;
+            } else {
+              bottomBound = upperBound - minSpanFromPct;
+            }
+            clampStatus = "CLAMPED_MIN";
           } else {
             clampStatus = "NATURAL_SWING";
             anchorSide = "NONE";
           }
         } else if (foundFloor && !foundCeiling) {
-          clampStatus = "NATURAL_SWING";
+          if (upperBound - bottomBound < minSpanFromPct) {
+            upperBound = bottomBound + minSpanFromPct;
+            clampStatus = "CLAMPED_MIN";
+          } else {
+            clampStatus = "NATURAL_SWING";
+          }
           anchorSide = "LOWER_FLOOR";
         } else if (!foundFloor && foundCeiling) {
-          clampStatus = "NATURAL_SWING";
+          if (upperBound - bottomBound < minSpanFromPct) {
+            bottomBound = upperBound - minSpanFromPct;
+            clampStatus = "CLAMPED_MIN";
+          } else {
+            clampStatus = "NATURAL_SWING";
+          }
           anchorSide = "UPPER_CEILING";
         }
       }

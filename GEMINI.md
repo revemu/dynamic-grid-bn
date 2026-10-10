@@ -138,7 +138,13 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 
 ---
 
-        - **On-Chain Order Transaction-Hash Deduplication & Metadata Merging (cleanupDuplicateTxRecords)**:
+            - **Structural Min-Channel Width & Anchor Priority Protection (MULTI_TOUCH_SR)**:
+      - **สาเหตุ & ปัญหาเดิม**: ในโหมด MULTI_TOUCH_SR ฟังก์ชัน findMultiTouchSR เคยมีการฮาร์ดโค้ด effectiveTradeableMinSpan = Math.min(minSpanPct, 1.8) ทำให้ลดเกรด minSpanPct ของผู้ใช้ลงเหลือ 1.8% และไม่มีการตรวจสอบ minSpanFromPct หลังได้กรอบ ส่งผลให้เมื่อสวิงในคลื่นปัจจุบันแคบและราคาทำ Lower High เล็กๆ () ระบบได้บีบ Ceiling ลงมาติดราคาปัจจุบัน และถอยหลังย้อนอดีตไปกด Floor ลงไปหาเหวเก่าที่จบคลื่นไปแล้ว () เพื่อให้ได้ความกว้างครบแทนที่จะมองหายอดต้านด้านบน
+      - **การแก้ไขใน Market Structure (src/market-structure.ts)**:
+        1. **Strict User Min-Span (effectiveTradeableMinSpan)**: เคารพ minSpanPct ของผู้ใช้อย่างเคร่งครัด (เช่น 3.0%) โดยไม่ตัดลดทอนลงมาเป็น 1.8%
+        2. **Ancient Low Penalty & Base Valley Anchor**: เพิ่มแต้มคะแนนพิเศษ (currentBaseBonus) สำหรับคู่สวิงที่ยึดฐานรับ (Valley/Support) ของคลื่นปัจจุบัน และเพิ่มโทษหนัก (ancientLowPenalty: -6000) ป้องกันไม่ให้ระบบดึงเหวเก่าในอดีตที่ราคาหลุดรอบไปแล้วมาใช้
+        3. **Structural Min Channel Width Expansion**: ในกระบวนการ Clamping หากกรอบแคบกว่า minSpanFromPct ระบบจะขยายกรอบไปยังสวิงที่เป็นไปได้จริงของโครงสร้าง Dow Theory (หากราคาอยู่ใกล้ฐานล่าง จะมองหายอดบนในรอบคลื่นเพื่อทำ Ceiling แทนการกด Floor ลงเหวลึก)
+    - **On-Chain Order Transaction-Hash Deduplication & Metadata Merging (cleanupDuplicateTxRecords)**:
       - **สาเหตุ & ปัญหาเดิม**: คำสั่งประเภท IOC ที่ยิงสำเร็จบน DreamDEX เชน Somnia จะบันทึกเฉพาะ txHash ในรอบแรก (ยังไม่มี on-chain orderId จนกว่า Indexer จะประมวลผล) เมื่อบอทเรียกซิงค์ประวัติจาก Indexer (syncRecentOrdersFromIndexer) ตรรกะเดิมเทียบเฉพาะ orderId ทำให้บอทมองไม่เห็นเรคคอร์ดเดิมที่มีอยู่แล้ว และบันทึกคำสั่งเพิ่มซ้ำซ้อน (Duplicate Entry เช่น มีทั้ง IOC Buy Level 2 และ BUY Market (IOC) ภายใต้ txHash เดียวกัน)
       - **การแก้ไขใน Database Layer (src/db.ts)**:
         1. **Enhanced Matching ใน syncRecentOrdersFromIndexer**: ตรวจจับและจับคู่ออเดอร์เดิมผ่าน orderId หรือ txHash (placedTxHash, fillTxHash, createTxHash) หากพบรายการเดิมจะทำการอัปเดตและผูก orderId จากสัญญา Smart Contract เข้ากับเรคคอร์ดเดิมทันที ไม่สร้างแถวซ้ำ
