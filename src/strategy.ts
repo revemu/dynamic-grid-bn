@@ -1674,6 +1674,39 @@ export class DynamicGrid {
                 currentFloor + dSpan * 0.10,
               ];
         }
+      } else if (
+        dow?.resistanceCluster &&
+        dow.resistanceCluster.price < this.lastDynamicBounds.upperBound &&
+        (avgEntry <= 0 || dow.resistanceCluster.price >= avgEntry * 1.01)
+      ) {
+        // 🎯 If a genuine structural Multi-Touch Resistance exists below the old frozen ceiling
+        // AND it provides healthy profit (>1.0% above avgEntry), adapt the ceiling down to the real resistance!
+        // This ensures the bot can actually hit sell targets and take profit rather than waiting for an unreachable high ceiling.
+        const realResPrice = dow.resistanceCluster.price;
+        const currentFloor = this.lastDynamicBounds.lowerBound;
+        if (realResPrice > currentFloor * 1.015) {
+          this.log(`🎯 [REAL CEILING SYNC] Synchronized locked ceiling ($${this.lastDynamicBounds.upperBound.toFixed(6)} -> Real S/R Ceil $${realResPrice.toFixed(6)}) with confirmed profit (Avg Entry: $${avgEntry.toFixed(6)})`);
+          this.lastDynamicBounds.upperBound = realResPrice;
+          this.lastDynamicBounds.centerPrice = (currentFloor + realResPrice) / 2;
+          const dSpan = realResPrice - currentFloor;
+          const isNarrowChannel = currentFloor > 0 && ((dSpan / currentFloor) * 100) < 1.20;
+          this.lastDynamicBounds.sellLevels = isNarrowChannel
+            ? [realResPrice * 0.998]
+            : [
+                currentFloor + dSpan * 0.60,
+                currentFloor + dSpan * 0.70,
+                currentFloor + dSpan * 0.80,
+                currentFloor + dSpan * 0.90,
+              ];
+          this.lastDynamicBounds.buyLevels = isNarrowChannel
+            ? [currentFloor * 1.002]
+            : [
+                currentFloor + dSpan * 0.40,
+                currentFloor + dSpan * 0.30,
+                currentFloor + dSpan * 0.20,
+                currentFloor + dSpan * 0.10,
+              ];
+        }
       }
 
       lowerBound = this.lastDynamicBounds.lowerBound;
@@ -1975,7 +2008,8 @@ export class DynamicGrid {
     const requireAvgProfit = (this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW")) === "PORTFOLIO_AVG_PROFIT";
     const isProfitableExit = !requireAvgProfit || avgEntryPrice <= 0 || (effectiveMid >= avgEntryPrice * 1.0005) || (bestBid !== undefined && bestBid >= avgEntryPrice * 1.0005);
     const highestSellTarget = sellLevels.length > 0 ? sellLevels[sellLevels.length - 1]! : upperBound;
-    const realCeilingReached = isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound) || refPrice >= highestSellTarget || (bestBid !== undefined && bestBid >= highestSellTarget);
+    const realSrCeil = dow?.resistanceCluster?.price;
+    const realCeilingReached = isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound) || refPrice >= highestSellTarget || (bestBid !== undefined && bestBid >= highestSellTarget) || (realSrCeil !== undefined && (refPrice >= realSrCeil || (bestBid !== undefined && bestBid >= realSrCeil)));
 
     if (
       !this.isPaused &&
