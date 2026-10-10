@@ -202,6 +202,7 @@ export class BotDatabase {
     this.backfillMissingSellPnl();
     this.cleanupHijackedMakerFills();
     this.cleanupDuplicateExitFills();
+    this.cleanupDuplicateTxRecords();
   }
 
   private loadSeparateSettings(): void {
@@ -568,6 +569,50 @@ export class BotDatabase {
   }
 
   /**
+   * Deduplicates records that share the exact same on-chain transaction hash.
+   * Merges metadata (keeping bot levelDesc and linking on-chain orderId).
+   */
+  public cleanupDuplicateTxRecords(): void {
+    if (!this.data || !Array.isArray(this.data.orders) || this.data.orders.length === 0) return;
+
+    const seenTx = new Map<string, UnifiedOrderRecord>();
+    const toRemove = new Set<UnifiedOrderRecord>();
+
+    for (const o of this.data.orders) {
+      const tx = (o.txHash || o.fillTxHash || o.createTxHash || "").trim().toLowerCase();
+      if (!tx || !tx.startsWith("0x") || tx.length < 10) continue;
+
+      const existing = seenTx.get(tx);
+      if (existing) {
+        // We have a duplicate record with the same txHash!
+        // Merge them: keep the richer record
+        if (!existing.orderId || existing.orderId.startsWith("ord_")) {
+          if (o.orderId && !o.orderId.startsWith("ord_")) existing.orderId = o.orderId;
+        }
+        if (!existing.levelDesc || existing.levelDesc.includes("Market (IOC)")) {
+          if (o.levelDesc && !o.levelDesc.includes("Market (IOC)")) existing.levelDesc = o.levelDesc;
+        }
+        if (existing.status !== "FILLED" && o.status === "FILLED") {
+          existing.status = "FILLED";
+          existing.action = o.action;
+          existing.fillPrice = o.fillPrice || o.price;
+          existing.fillTime = o.fillTime || o.time;
+        }
+        toRemove.add(o);
+      } else {
+        seenTx.set(tx, o);
+      }
+    }
+
+    if (toRemove.size > 0) {
+      const beforeLen = this.data.orders.length;
+      this.data.orders = this.data.orders.filter((o) => !toRemove.has(o));
+      this.log(`🧹 [cleanup] Deduplicated ${beforeLen - this.data.orders.length} record(s) sharing identical on-chain txHash`);
+      this.flushSync();
+    }
+  }
+
+  /**
    * Authoritatively reconcile open orders in the database against the Somnia Markets GraphQL Indexer.
    * Any orders in db.orders marked as OPEN that are not active on DreamDEX are updated to their
    * genuine status (CANCELLED, FILLED, or EXPIRED).
@@ -656,7 +701,16 @@ export class BotDatabase {
 
       for (const ro of recent) {
         if (!ro.orderId) continue;
-        const existing = this.data.orders.find((o) => o.orderId === ro.orderId);
+        const roTx = (ro.placedTxHash || "").trim().toLowerCase();
+        const existing = this.data.orders.find(
+          (o) =>
+            o.orderId === ro.orderId ||
+            (roTx && (
+              (o.txHash && o.txHash.toLowerCase() === roTx) ||
+              (o.fillTxHash && o.fillTxHash.toLowerCase() === roTx) ||
+              (o.createTxHash && o.createTxHash.toLowerCase() === roTx)
+            )),
+        );
         const side: "BUY" | "SELL" = ro.isBid ? "BUY" : "SELL";
         const isFilled = ro.status === "Filled";
         const isCancelled = ro.status === "Cancelled" || ro.status === "Expired";
@@ -669,6 +723,12 @@ export class BotDatabase {
         const time = ro.placedAtTimestamp ? ro.placedAtTimestamp * 1000 : Date.now();
 
         if (existing) {
+          let updatedThis = false;
+          // Link on-chain orderId if existing was recorded before contract orderId was known
+          if (!existing.orderId || existing.orderId.startsWith("ord_") || existing.orderId.startsWith("0x")) {
+            existing.orderId = ro.orderId;
+            updatedThis = true;
+          }
           if (existing.status !== status || (isFilled && !existing.fillTime)) {
             existing.status = status;
             existing.action = action;
@@ -680,6 +740,9 @@ export class BotDatabase {
               existing.reason = `Reconciled with GraphQL: ${ro.status}`;
             }
             if (ro.placedTxHash) existing.txHash = ro.placedTxHash;
+            updatedThis = true;
+          }
+          if (updatedThis) {
             modified = true;
             syncedCount++;
           }
@@ -837,17 +900,26 @@ export class BotDatabase {
       );
 
       // Check if this orderId or txHash is ALREADY recorded as FILLED (e.g. CUT, TAKE_PROFIT, or prior FILL)
-      const existingFilled = orderId && !orderId.startsWith("ord_")
-        ? this.data.orders.find(
-            (o) =>
-              (o.orderId === orderId || (eventData.txHash && o.txHash === eventData.txHash)) &&
-              o.status === "FILLED",
-          )
-        : undefined;
+      const evTx = (eventData.txHash || "").trim().toLowerCase();
+      const existingFilled = this.data.orders.find(
+        (o) =>
+          o.status === "FILLED" && (
+            (orderId && !orderId.startsWith("ord_") && o.orderId === orderId) ||
+            (evTx && (
+              (o.txHash && o.txHash.toLowerCase() === evTx) ||
+              (o.fillTxHash && o.fillTxHash.toLowerCase() === evTx) ||
+              (o.createTxHash && o.createTxHash.toLowerCase() === evTx)
+            ))
+          ),
+      );
 
       if (existingFilled) {
-        // If the existing record is CUT or TAKE_PROFIT or already FILLED, do NOT create a duplicate SELL_FILL row!
+        // Link on-chain orderId if known
+        if (orderId && !orderId.startsWith("ord_") && (!existingFilled.orderId || existingFilled.orderId.startsWith("ord_"))) {
+          existingFilled.orderId = orderId;
+        }
         if (eventData.txHash && !existingFilled.txHash) existingFilled.txHash = eventData.txHash;
+        if (eventData.txHash && !existingFilled.fillTxHash) existingFilled.fillTxHash = eventData.txHash;
         return existingFilled;
       }
 

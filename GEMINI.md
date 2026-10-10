@@ -138,6 +138,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 
 ---
 
+        - **On-Chain Order Transaction-Hash Deduplication & Metadata Merging (cleanupDuplicateTxRecords)**:
+      - **สาเหตุ & ปัญหาเดิม**: คำสั่งประเภท IOC ที่ยิงสำเร็จบน DreamDEX เชน Somnia จะบันทึกเฉพาะ txHash ในรอบแรก (ยังไม่มี on-chain orderId จนกว่า Indexer จะประมวลผล) เมื่อบอทเรียกซิงค์ประวัติจาก Indexer (syncRecentOrdersFromIndexer) ตรรกะเดิมเทียบเฉพาะ orderId ทำให้บอทมองไม่เห็นเรคคอร์ดเดิมที่มีอยู่แล้ว และบันทึกคำสั่งเพิ่มซ้ำซ้อน (Duplicate Entry เช่น มีทั้ง IOC Buy Level 2 และ BUY Market (IOC) ภายใต้ txHash เดียวกัน)
+      - **การแก้ไขใน Database Layer (src/db.ts)**:
+        1. **Enhanced Matching ใน syncRecentOrdersFromIndexer**: ตรวจจับและจับคู่ออเดอร์เดิมผ่าน orderId หรือ txHash (placedTxHash, fillTxHash, createTxHash) หากพบรายการเดิมจะทำการอัปเดตและผูก orderId จากสัญญา Smart Contract เข้ากับเรคคอร์ดเดิมทันที ไม่สร้างแถวซ้ำ
+        2. **Multi-Source Deduplication ใน recordEvent**: ป้องกันการเพิ่มเรคคอร์ดสถานะ FILLED ซ้ำหากมี txHash ตรงกันในระบบ
+        3. **Auto-Cleanup & Metadata Merging (cleanupDuplicateTxRecords)**: กวาดล้างและยุบรวมรายการออเดอร์ในอดีตที่แชร์ txHash เดียวกัน โดยคงชื่อ Grid Level ดั้งเดิมของบอท (เช่น IOC Buy Level 2) พร้อมผูก orderId จาก on-chain เข้าด้วยกันอย่างสมบูรณ์แบบ
     - **On-Chain Order History Sync & Inventory Reconciliation (getRecentOrders & syncOnChainOrders)**:
       - **สาเหตุ & ปัญหาเดิม**: เมื่อเกิด Cut Loss หรือ Buy แบบ IOC บน DreamDEX คำสั่ง Match ทันทีบน On-Chain สัญญา Smart Contract แต่ในอดีตหากบอทบันทึกสถานะไม่ทัน หรือเริ่มทำงานใหม่หลังรีสตาร์ท ประวัติคำสั่งซื้อขายใน Dashboard และฐานข้อมูล db.orders จะขาดหายไป ไม่ตรงกับความเป็นจริงบนบล็อกเชน และการคำนวณ reconcileInventory (เวลามีเหรียญที่ไม่ได้ผูกกับ Lot) จะต้องเดาราคาต้นทุน fallback
       - **การแก้ไขใน Adapter Layer (IExchangeClient)**:
