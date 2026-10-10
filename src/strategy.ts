@@ -1596,7 +1596,7 @@ export class DynamicGrid {
     let cutLossBound = dow?.cutLossBound ?? (lowerBound - (currentFloorBufferPct / 100) * lowerBound);
     let rawFloorPrice = dow?.activeValley?.price ?? lowerBound;
 
-    let buyLevels: number[] = gridZone?.buyLevels && gridZone.buyLevels.length >= 4
+    let buyLevels: number[] = gridZone?.buyLevels && gridZone.buyLevels.length > 0
       ? gridZone.buyLevels
       : [lowerBound + rawSpan * 0.40, lowerBound + rawSpan * 0.30, lowerBound + rawSpan * 0.20, lowerBound + rawSpan * 0.10];
 
@@ -4571,7 +4571,7 @@ export class DynamicGrid {
         !this.iocBracketSellCycle ||
         held > this.iocBracketSellCycle.baselineHeldQty * 1.05
       ) {
-        let numSellTranches = 4;
+        let numSellTranches = Math.min(4, Math.max(1, sellLevels.length));
         while (numSellTranches > 1 && (totalHeldQuote / numSellTranches) < minNotional) {
           numSellTranches--;
         }

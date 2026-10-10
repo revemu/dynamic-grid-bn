@@ -2060,13 +2060,9 @@ export class DowStructureEngine {
     const isNarrowChannel = bottomBound > 0 && ((finalSpan / bottomBound) * 100) < 1.20;
 
     // Grid Levels in 10% to 50% (Buy Zone): 40%, 30%, 20%, 10% (0%-5% is safe buffer above floor)
+    // In narrow channels (< 1.2%), collapse to a single edge-bracket level: Buy at Floor + 0.2%
     const buyLevels = isNarrowChannel
-      ? [
-          Math.min(bottomBound + finalSpan * 0.40, bottomBound * 1.006),
-          Math.min(bottomBound + finalSpan * 0.30, bottomBound * 1.004),
-          Math.max(bottomBound + finalSpan * 0.20, bottomBound * 1.003),
-          Math.max(bottomBound + finalSpan * 0.10, bottomBound * 1.002), // Bottom edge: Floor + 0.2%
-        ]
+      ? [bottomBound * 1.002]
       : [
           bottomBound + finalSpan * 0.40,
           bottomBound + finalSpan * 0.30,
@@ -2075,13 +2071,9 @@ export class DowStructureEngine {
         ];
 
     // Grid Levels in 50% to 100% (Sell Zone): 60%, 70%, 80%, 90% (Hold 0% near 100% Upper Bound)
+    // In narrow channels (< 1.2%), collapse to a single edge-bracket level: Sell at Ceiling - 0.2%
     const sellLevels = isNarrowChannel
-      ? [
-          Math.min(bottomBound + finalSpan * 0.60, upperBound * 0.994),
-          Math.min(bottomBound + finalSpan * 0.70, upperBound * 0.996),
-          Math.max(bottomBound + finalSpan * 0.80, upperBound * 0.997),
-          Math.max(bottomBound + finalSpan * 0.90, upperBound * 0.998), // Top edge: Ceiling - 0.2%
-        ]
+      ? [upperBound * 0.998]
       : [
           bottomBound + finalSpan * 0.60,
           bottomBound + finalSpan * 0.70,

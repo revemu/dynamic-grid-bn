@@ -1689,7 +1689,7 @@
       }
 
       // 4. Intermediate Grid Levels in Buy and Sell Zones (Clean line only, no overlapping canvas labels)
-      let buyLevels = Array.isArray(data.buyLevels) && data.buyLevels.length >= 4
+      let buyLevels = Array.isArray(data.buyLevels) && data.buyLevels.length > 0
         ? data.buyLevels
         : (data.bottomBound && data.upperBound
             ? [
@@ -1700,7 +1700,7 @@
               ]
             : (data.buyLevels || []));
 
-      let sellLevels = Array.isArray(data.sellLevels) && data.sellLevels.length >= 4
+      let sellLevels = Array.isArray(data.sellLevels) && data.sellLevels.length > 0
         ? data.sellLevels
         : (data.bottomBound && data.upperBound
             ? [

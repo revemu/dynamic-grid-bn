@@ -189,6 +189,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - `50% Center`: Equilibrium midpoint.
   - `50%–100% Sell Zone`: Stepped profit taking ladder.
   - `100% Ceiling`: Resistance boundary; 100% full take-profit exit.
+- **Narrow Channel Single Edge-Bracket Mode (`isNarrowChannel = width < 1.20%`)**:
+  - **สาเหตุ & แนวคิด**: ในสภาวะตลาดที่มีกรอบแคบมาก (`channel width < 1.2%`) หากยังซอยไม้แบ่งออกเป็น 4 ระดับ (L1-L4) จะทำให้ระยะห่างระหว่างระดับเหลือเพียง 0.1%–0.2% ซึ่งอัดแน่นเกินไป เสี่ยงต่อการซื้อกระจุกตัวกลางกรอบและติดดอยง่าย
+  - **การทำงาน**:
+    - **Buy Level**: ยุบเหลือระดับเดียวที่ขอบล่าง **Floor + 0.2%** (`bottomBound * 1.002`) สำหรับสะสมไม้เดียวเต็มโควต้าเมื่อราคาลงมาทดสอบก้นกรอบจริง
+    - **Sell Level**: ยุบเหลือระดับเดียวที่ขอบบน **Ceiling - 0.2%** (`upperBound * 0.998`) สำหรับขายทำกำไรเต็มโควต้า 100% (Full Exit) เมื่อราคาเด้งทดสอบยอดกรอบ
+    - ใน `executeIocBracketGrid`: ฝั่งขายจะกำหนด `numSellTranches = 1` เพื่อขายกวาดหมดพอร์ตที่ขอบบนทันที และบน UI กราฟ `app.js` จะแสดงเส้นกรอบที่ตรงกับระดับจริง ไม่กระจายเส้นหลอก
 - **Dynamic Buy Tranche Allocation & Min Notional Floor (No Rigid / 4 Dilution)**:
   - แทนที่จะหาร 4 แบบคงที่ (`currentAvailableCapacity / 4`) ซึ่งทำให้เกิดปัญหาเมื่อเหลือความจุ เช่น $15.75 แล้วถูกหารจนเหลือเพียง $3.82 จนต่ำกว่า Binance Min Notional ($5.00)
   - ระบบจะคำนวณจำนวนระดับที่พร้อมวางคำสั่งซื้อจริง (`numEligibleBuyLevels`) โดยไม่นับระดับที่ติด Holding Fraction Guard หรือ Trendline Filters
