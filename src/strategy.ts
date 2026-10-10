@@ -2121,6 +2121,7 @@ export class DynamicGrid {
       (this.cfg.enableSellBelowTrendResistance !== false) &&
       downtrendLine &&
       !downtrendLine.isBroken &&
+      !dow?.downtrendBreakoutConfirmed &&
       downtrendLine.currentLinePrice > refPrice
     ) {
       const tlPrice = downtrendLine.currentLinePrice;

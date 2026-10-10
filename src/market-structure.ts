@@ -962,23 +962,36 @@ export class DowStructureEngine {
               }
 
               // ตรวจสอบการเบรคทะลุเส้นกด (Close > TrendLine)
-              let brokenCandleCount = 0;
-              for (let i = n - 1; i >= p1.index; i--) {
+              // นับแท่งเทียนทั้งหมดตั้งแต่ p1 เป็นต้นมาว่ามีแท่งที่ทะลุเส้นหรือไม่
+              // หากมีแท่งเทียนปิดเหนือเส้นสะสม >= 2 แท่ง หรือมีแท่งที่เบรคชัดเจน ให้ถือว่าเส้นกดถูกทำลายถาวร (Breakout Invalidation)
+              let totalBrokenCandles = 0;
+              let consecutiveBrokenCandles = 0;
+              let maxConsecutiveBroken = 0;
+
+              for (let i = p1.index; i < n; i++) {
                 const c = this.candles[i];
-                if (!c) break;
+                if (!c) continue;
                 const lineVal = p1.price + bestSlope * (c.time - p1.time);
                 const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
                 if (testPrice > lineVal) {
-                  brokenCandleCount++;
+                  totalBrokenCandles++;
+                  consecutiveBrokenCandles++;
+                  if (consecutiveBrokenCandles > maxConsecutiveBroken) {
+                    maxConsecutiveBroken = consecutiveBrokenCandles;
+                  }
                 } else {
-                  break;
+                  consecutiveBrokenCandles = 0;
                 }
               }
 
-              const breakoutConfirmed = brokenCandleCount >= 2;
+              // หากแท่งล่าสุดยังอยู่เหนือเส้น หรือเคยมีเบรคยืนยัน (>= 2 แท่งต่อเนื่อง หรือสะสม >= 2 แท่งหลังจากจุด p2)
+              const latestCandleTestPrice = Math.max(currentPrice, this.candles[n - 1]?.close ?? currentPrice);
+              const isCurrentlyAbove = latestCandleTestPrice > currentLinePrice;
+              const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
+
               if (breakoutConfirmed) {
                 downtrendBreakoutConfirmed = true;
-                // Once breakout is confirmed by >= 2 candles, the downtrend line is invalidated and removed
+                // Once breakout is confirmed, the downtrend line is invalidated and removed permanently
                 downtrendLine = undefined;
               } else {
                 downtrendLine = {
@@ -987,9 +1000,9 @@ export class DowStructureEngine {
                   p2: bestP2,
                   slope: bestSlope,
                   currentLinePrice,
-                  isBroken: brokenCandleCount > 0,
+                  isBroken: isCurrentlyAbove || totalBrokenCandles > 0,
                   breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
-                  brokenCandleCount,
+                  brokenCandleCount: totalBrokenCandles,
                   breakoutConfirmed: false,
                   points,
                 };
@@ -1065,22 +1078,34 @@ export class DowStructureEngine {
               }
 
               // ตรวจสอบการหลุดเส้นรับ (Close < TrendLine)
-              let brokenCandleCount = 0;
-              for (let i = n - 1; i >= v1.index; i--) {
+              let totalBrokenCandles = 0;
+              let consecutiveBrokenCandles = 0;
+              let maxConsecutiveBroken = 0;
+
+              for (let i = v1.index; i < n; i++) {
                 const c = this.candles[i];
-                if (!c) break;
+                if (!c) continue;
                 const lineVal = v1.price + bestSlope * (c.time - v1.time);
                 const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
                 if (testPrice < lineVal) {
-                  brokenCandleCount++;
+                  totalBrokenCandles++;
+                  consecutiveBrokenCandles++;
+                  if (consecutiveBrokenCandles > maxConsecutiveBroken) {
+                    maxConsecutiveBroken = consecutiveBrokenCandles;
+                  }
                 } else {
-                  break;
+                  consecutiveBrokenCandles = 0;
                 }
               }
 
-              const breakoutConfirmed = brokenCandleCount >= 2;
+              const latestCandleTestPrice = Math.min(currentPrice, this.candles[n - 1]?.close ?? currentPrice);
+              const isCurrentlyBelow = latestCandleTestPrice < currentLinePrice;
+              const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
+
               if (breakoutConfirmed) {
                 uptrendBreakdownConfirmed = true;
+                // Once breakdown is confirmed, the uptrend line is invalidated and removed permanently
+                uptrendLine = undefined;
               } else {
                 uptrendLine = {
                   type: "UPTREND",
@@ -1088,9 +1113,9 @@ export class DowStructureEngine {
                   p2: bestV2,
                   slope: bestSlope,
                   currentLinePrice,
-                  isBroken: false,
+                  isBroken: isCurrentlyBelow || totalBrokenCandles > 0,
                   breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
-                  brokenCandleCount,
+                  brokenCandleCount: totalBrokenCandles,
                   breakoutConfirmed: false,
                   points,
                 };
