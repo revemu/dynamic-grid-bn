@@ -627,8 +627,13 @@ export class DynamicGrid {
               const currentBounds = this.lockedChannel || this.lastDynamicBounds;
               if (currentBounds) {
                 if (isBid && currentBounds.buyLevels) {
-                  const buyNames = ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
-                  const buyTargets = [0.25, 0.50, 0.75, 1.0];
+                  const isSingleBuy = currentBounds.buyLevels.length === 1;
+                  const buyNames = isSingleBuy
+                    ? ["Buy Edge Floor (+0.2%)"]
+                    : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
+                  const buyTargets = isSingleBuy
+                    ? [1.0]
+                    : [0.25, 0.50, 0.75, 1.0];
                   let bestBuyIdx = -1;
                   let minBuyDiff = Infinity;
                   for (let i = 0; i < currentBounds.buyLevels.length; i++) {
@@ -646,8 +651,13 @@ export class DynamicGrid {
                     matchedTargetFraction = buyTargets[bestBuyIdx] || 1.0;
                   }
                 } else if (!isBid && currentBounds.sellLevels) {
-                  const sellNames = ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
-                  const sellTargets = [0.75, 0.50, 0.25, 0.0];
+                  const isSingleSell = currentBounds.sellLevels.length === 1;
+                  const sellNames = isSingleSell
+                    ? ["Sell Edge Ceil (-0.2%)"]
+                    : ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
+                  const sellTargets = isSingleSell
+                    ? [0.0]
+                    : [0.75, 0.50, 0.25, 0.0];
                   let bestSellIdx = -1;
                   let minSellDiff = Infinity;
                   for (let i = 0; i < currentBounds.sellLevels.length; i++) {
@@ -3142,7 +3152,10 @@ export class DynamicGrid {
         await this.cancelAllRestingOrders("BUY", pauseReason);
       }
     } else {
-      const levelNames = ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
+      const isSingleBuyLevel = buyLevels.length === 1;
+      const levelNames = isSingleBuyLevel
+        ? ["Buy Edge Floor (+0.2%)"]
+        : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
 
       // Check if Uptrend Support Line is active and sits above standard buy targets ("ถ้าเลย buy target")
       const isTlAboveBuyTarget = Boolean(
@@ -3162,7 +3175,9 @@ export class DynamicGrid {
         effectiveLevelNames[0] = `Buy TL Support ($${activeUptrendLine.currentLinePrice.toFixed(4)})`;
       }
 
-      const buyTargets = [0.25, 0.50, 0.75, 1.0];
+      const buyTargets = isSingleBuyLevel
+        ? [1.0]
+        : [0.25, 0.50, 0.75, 1.0];
 
       // Clean up stale resting buy orders or correct mislabeled levelDesc to closest buyLevel
       const remainingStaleBuys: OpenOrder[] = [];
@@ -3206,8 +3221,6 @@ export class DynamicGrid {
 
       // Maintain resting Buy Limit orders at Eligible Buy Levels with automatic rebalancing
       const maxAllowedBuyPrice = Math.min(currentBestBid, refPrice);
-
-      const sellNames = ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
 
       // Rebalance Buy side: track available capacity across all buy levels
       const openBuys = this.openOrders.filter((o) => o.isBid);
@@ -3498,7 +3511,10 @@ export class DynamicGrid {
         await this.cancelAllRestingOrders("SELL", "Price below Buy Level 1 (< 40%) — cancelling sell orders to avoid churn while accumulating");
       }
     } else {
-      const sellNames = ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
+      const isSingleSellLevel = sellLevels.length === 1;
+      const sellNames = isSingleSellLevel
+        ? ["Sell Edge Ceil (-0.2%)"]
+        : ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
 
       // ── Downtrend Trendline Sell Override ──────────────────────────────────────
       // When an active descending trendline (เส้นกด) is present (not broken), only sell at targets that are
@@ -3846,7 +3862,9 @@ export class DynamicGrid {
       }
 
       // ── Standard Sell Order Logic (no active trendline) ────────────────────────
-      const sellHoldingTargets = [0.75, 0.50, 0.25, 0.0];
+      const sellHoldingTargets = isSingleSellLevel
+        ? [0.0]
+        : [0.75, 0.50, 0.25, 0.0];
 
       // Clean up stale resting sell orders or correct mislabeled levelDesc to closest sellLevel
       const remainingStaleSells: OpenOrder[] = [];
