@@ -2848,13 +2848,43 @@ export class DynamicGrid {
           const iocCooldownKey = `tl_ioc_sell`;
           const lastIocTime = this.orderCooldowns.get(iocCooldownKey) ?? 0;
           const iocCooldownMs = 30_000; // 30-second cooldown to prevent rapid re-triggers
-          if (Date.now() - lastIocTime > iocCooldownMs) {
+
+          // Check Best Bid liquidity on DEX/CEX before executing IOC
+          const effectiveBestBid = bestBid !== undefined && bestBid > 0 ? bestBid : undefined;
+          const avgEntry = this.getAvgEntryPrice();
+          const maxAllowedDiscountPct = this.cfg.cutLossMaxBidDiscountPct ?? 1.5; // Default 1.5% max gap between TL & bestBid
+          const bidDiffPct = (effectiveBestBid && tlPrice > 0) ? ((tlPrice - effectiveBestBid) / tlPrice) * 100 : 0;
+          const isBidCloseEnough = effectiveBestBid !== undefined && (effectiveBestBid >= tlPrice || bidDiffPct <= maxAllowedDiscountPct);
+          const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
+
+          if (effectiveBestBid && !isBidCloseEnough) {
+            // Bid is too depressed compared to TL price -> hold off to avoid heavy slippage
+            if (Date.now() - (this.orderCooldowns.get("tl_ioc_bid_warn") ?? 0) > 30_000) {
+              this.orderCooldowns.set("tl_ioc_bid_warn", Date.now());
+              this.log(
+                `⏳ [TL IOC STANDBY] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} but DEX Best Bid $${effectiveBestBid.toFixed(6)} is discounted ${bidDiffPct.toFixed(2)}% > max ${maxAllowedDiscountPct.toFixed(1)}% — waiting for bid liquidity`,
+              );
+            }
+          } else if (effectiveBestBid && !isProfitableAtBid) {
+            // Best bid would result in a loss below avg entry -> hold off
+            if (Date.now() - (this.orderCooldowns.get("tl_ioc_loss_warn") ?? 0) > 30_000) {
+              this.orderCooldowns.set("tl_ioc_loss_warn", Date.now());
+              this.log(
+                `⏳ [TL IOC STANDBY] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} but Best Bid $${effectiveBestBid.toFixed(6)} is below Avg Entry $${avgEntry.toFixed(6)} — holding for profit`,
+              );
+            }
+          } else if (Date.now() - lastIocTime > iocCooldownMs) {
             this.orderCooldowns.set(iocCooldownKey, Date.now());
+            // If bestBid is available and profitable, sell at bestBid directly so IOC matches immediately on-chain!
+            const sellExecPrice = (effectiveBestBid && effectiveBestBid > 0 && isProfitableAtBid)
+              ? effectiveBestBid
+              : tlPrice;
+
             this.log(
-              `📉 [TL IOC] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} (${tlState}) — executing IOC sell at TL price for all ${this.baseHeld().toFixed(4)} ${this.baseAsset}`,
+              `📉 [TL IOC] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} (${tlState}) — executing IOC sell at ${sellExecPrice === effectiveBestBid ? `Best Bid $${sellExecPrice.toFixed(6)}` : `TL Price $${sellExecPrice.toFixed(6)}`} for all ${this.baseHeld().toFixed(4)} ${this.baseAsset} (Avg Entry: $${avgEntry.toFixed(6)})`,
             );
             await this.cancelAllRestingOrders(undefined, "Trendline IOC sell: cancelling resting orders before IOC execution");
-            await this.sellAll(tlPrice, "SELL");
+            await this.sellAll(sellExecPrice, "SELL");
           }
         }
       }

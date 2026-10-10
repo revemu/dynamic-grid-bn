@@ -104,7 +104,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
      - **การแก้ไข**:
        1. ใน `src/exchange/dreamdex/client.ts`: สำหรับคำสั่งแบบ IOC ทำการรอ `waitForTransactionReceipt` ยืนยันจากเชน Somnia และคืนค่า `status: "FILLED"`, `executedQty: qty` ที่แท้จริง
        2. ใน `src/strategy.ts`: ตรวจสอบสถานะการ Match ให้เป็นอิสระต่อทั้ง CEX (Binance) และ On-Chain EVM (DreamDEX) โดยหากได้รับ `res.status === "FILLED"` หรือยืนยัน On-Chain txHash จะทำการ `closeLots()` และตัดจำหน่าย Lots ออกจาก Position ทันที
-       3. มีระบบ Guard ใน `sellAll` ให้จำกัดเพดานการขายไม่เกินยอดที่มีอยู่จริงในกระเป๋า (`walletBaseBalance`) และหากยอดเหรียญในกระเป๋าหมดลง จะบังคับล้าง `this.lots = []` ทันที ป้องกันการวนลูปส่งคำสั่ง Cut Loss ซ้ำ
+   - **Trendline IOC Sell Best Bid Matching & Unmatched Error `0xc04ad919` Handling**:
+     - **สาเหตุของปัญหา**: เมื่อราคา Binance ทะลุเส้นกด Trendline บอทเคยส่ง IOC Sell ด้วยราคา `tlPrice` (คำนวณจาก CEX) ไปยัง DreamDEX SpotPool Smart Contract แต่ใน Orderbook ฝั่ง Bid บน DEX ราคาซื้อจริงอาจอยู่ต่ำกว่าเล็กน้อย (เช่น TL อยู่ที่ $0.2038 แต่ Best Bid บน DEX มีสภาพคล่องที่ $0.2032) ส่งผลให้สัญญา `placeOrder` แบบ IOC ไม่พบคำสั่งคู่ตรงข้ามและสั่ง Revert ทันทีด้วย Custom Error `0xc04ad919` (Unmatched IOC Order)
+     - **การแก้ไข**:
+       1. ใน `src/strategy.ts` (Block 2a): ตรวจสอบ `bestBid` บนกระดาน DEX ก่อนส่ง Trendline IOC Sell เสมอ หาก `bestBid` ต่างจากราคาเส้นกดไม่เกินเกณฑ์ความคลาดเคลื่อน (`cutLossMaxBidDiscountPct` เช่น ไม่เกิน 1.5%) และราคานั้นยังคงมีกำไรเหนือทุนเฉลี่ย (`bestBid >= avgEntry * 1.0005`) ระบบจะปรับราคาขายไปที่ `bestBid` โดยตรง เพื่อให้คำสั่ง IOC จับคู่และ Fill ทันที 100% ป้องกันการเกิด Revert
+       2. ใน `src/strategy.ts`: หาก Best Bid บนกระดานต่ำกว่าทุนเฉลี่ย หรือห่างจากราคาเส้นกดมากเกินไป บอทจะเข้าสู่สถานะ Standby รอสภาพคล่อง ไม่ยิงขายขาดทุนและไม่ยิง Revert ให้เสียค่าแก๊ส
+       3. ใน `src/exchange/dreamdex/client.ts`: ครอบ `try-catch` รอบ `writeContract` ดักจับ Error signature `0xc04ad919` โดยหากเป็นคำสั่ง IOC ที่ไม่ Match จะคืนค่า `status: "CANCELED"` และ `executedQty: 0` พร้อมแสดงข้อความเตือนชัดเจน ไม่ให้โยน Uncaught Revert Error รบกวนระบบ
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
 4. **Asset Precision & Terminology**:

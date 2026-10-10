@@ -518,30 +518,54 @@ export class DreamDexClient implements IExchangeClient {
       value = qtyRaw;
     }
 
-    const hash = await this.walletClient.writeContract({
-      address: market.pool,
-      abi: SPOT_POOL_ABI,
-      functionName: "placeOrder",
-      args: [
-        isBid,
-        0n, // userData
-        priceRaw,
-        qtyRaw,
-        expireTimestampNs,
-        orderType,
-        0, // selfMatchingOption
-        zeroAddress,
-        0n, // builderFee
-      ],
-      value,
-      chain: {
-        id: this.chainId,
-        name: "Somnia",
-        nativeCurrency: { name: "Somnia", symbol: "SOMI", decimals: 18 },
-        rpcUrls: { default: { http: [this.rpcUrl] } },
-      },
-      account: this.account,
-    });
+    let hash: `0x${string}`;
+    try {
+      hash = await this.walletClient.writeContract({
+        address: market.pool,
+        abi: SPOT_POOL_ABI,
+        functionName: "placeOrder",
+        args: [
+          isBid,
+          0n, // userData
+          priceRaw,
+          qtyRaw,
+          expireTimestampNs,
+          orderType,
+          0, // selfMatchingOption
+          zeroAddress,
+          0n, // builderFee
+        ],
+        value,
+        chain: {
+          id: this.chainId,
+          name: "Somnia",
+          nativeCurrency: { name: "Somnia", symbol: "SOMI", decimals: 18 },
+          rpcUrls: { default: { http: [this.rpcUrl] } },
+        },
+        account: this.account,
+      });
+    } catch (err: any) {
+      const errMsg = String(err?.message || err);
+      // 0xc04ad919 is the SpotPool custom error for unmatched / unfilled IOC order (no liquidity on opposite book)
+      if (params.type === "IOC" && (errMsg.includes("0xc04ad919") || errMsg.includes("reverted with the following signature:\n0xc04ad919"))) {
+        this.log(`⚠️ [DREAMDEX IOC UNMATCHED] ${params.side} IOC @ $${price.toFixed(6)} (${qty} ${market.baseAsset}) found no matching liquidity in orderbook (Revert 0xc04ad919).`);
+        return {
+          symbol: market.symbol,
+          orderId: "UNMATCHED_IOC",
+          clientOrderId: params.clientOrderId || "UNMATCHED_IOC",
+          transactTime: Date.now(),
+          price,
+          origQty: qty,
+          executedQty: 0,
+          cummulativeQuoteQty: 0,
+          status: "CANCELED",
+          timeInForce: "GTC",
+          type: params.type,
+          side: params.side,
+        };
+      }
+      throw err;
+    }
 
     // For IOC orders on EVM, wait for transaction receipt to confirm execution on-chain
     let executedQty = 0;
