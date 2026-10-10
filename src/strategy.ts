@@ -1656,18 +1656,23 @@ export class DynamicGrid {
           this.lastDynamicBounds.upperBound = newCeiling;
           this.lastDynamicBounds.centerPrice = (currentFloor + newCeiling) / 2;
           const dSpan = newCeiling - currentFloor;
-          this.lastDynamicBounds.sellLevels = [
-            currentFloor + dSpan * 0.60,
-            currentFloor + dSpan * 0.70,
-            currentFloor + dSpan * 0.80,
-            currentFloor + dSpan * 0.90,
-          ];
-          this.lastDynamicBounds.buyLevels = [
-            currentFloor + dSpan * 0.40,
-            currentFloor + dSpan * 0.30,
-            currentFloor + dSpan * 0.20,
-            currentFloor + dSpan * 0.10,
-          ];
+          const isNarrowChannel = currentFloor > 0 && ((dSpan / currentFloor) * 100) < 1.20;
+          this.lastDynamicBounds.sellLevels = isNarrowChannel
+            ? [newCeiling * 0.998]
+            : [
+                currentFloor + dSpan * 0.60,
+                currentFloor + dSpan * 0.70,
+                currentFloor + dSpan * 0.80,
+                currentFloor + dSpan * 0.90,
+              ];
+          this.lastDynamicBounds.buyLevels = isNarrowChannel
+            ? [currentFloor * 1.002]
+            : [
+                currentFloor + dSpan * 0.40,
+                currentFloor + dSpan * 0.30,
+                currentFloor + dSpan * 0.20,
+                currentFloor + dSpan * 0.10,
+              ];
         }
       }
 
@@ -1726,14 +1731,48 @@ export class DynamicGrid {
           upperBound = this.lastDynamicBounds.upperBound;
           centerPrice = this.lastDynamicBounds.centerPrice;
           const dSpan = upperBound - lowerBound;
-          if (!Array.isArray(this.lastDynamicBounds.buyLevels) || this.lastDynamicBounds.buyLevels.length < 4) {
+          const isNarrowChannel = lowerBound > 0 && ((dSpan / lowerBound) * 100) < 1.20;
+
+          if (!Array.isArray(this.lastDynamicBounds.buyLevels) || this.lastDynamicBounds.buyLevels.length === 0) {
+            this.lastDynamicBounds.buyLevels = isNarrowChannel
+              ? [lowerBound * 1.002]
+              : [
+                  lowerBound + dSpan * 0.40,
+                  lowerBound + dSpan * 0.30,
+                  lowerBound + dSpan * 0.20,
+                  lowerBound + dSpan * 0.10,
+                ];
+          }
+          if (!Array.isArray(this.lastDynamicBounds.sellLevels) || this.lastDynamicBounds.sellLevels.length === 0) {
+            this.lastDynamicBounds.sellLevels = isNarrowChannel
+              ? [upperBound * 0.998]
+              : [
+                  lowerBound + dSpan * 0.60,
+                  lowerBound + dSpan * 0.70,
+                  lowerBound + dSpan * 0.80,
+                  lowerBound + dSpan * 0.90,
+                ];
+          }
+
+          // If channel mode changed between narrow (<1.2%) and normal, adapt buyLevels/sellLevels accordingly
+          if (isNarrowChannel && this.lastDynamicBounds.buyLevels.length > 1) {
+            this.lastDynamicBounds.buyLevels = [lowerBound * 1.002];
+            this.lastDynamicBounds.sellLevels = [upperBound * 0.998];
+          } else if (!isNarrowChannel && this.lastDynamicBounds.buyLevels.length === 1) {
             this.lastDynamicBounds.buyLevels = [
               lowerBound + dSpan * 0.40,
               lowerBound + dSpan * 0.30,
               lowerBound + dSpan * 0.20,
               lowerBound + dSpan * 0.10,
             ];
+            this.lastDynamicBounds.sellLevels = [
+              lowerBound + dSpan * 0.60,
+              lowerBound + dSpan * 0.70,
+              lowerBound + dSpan * 0.80,
+              lowerBound + dSpan * 0.90,
+            ];
           }
+
           buyLevels = this.lastDynamicBounds.buyLevels;
           sellLevels = this.lastDynamicBounds.sellLevels;
         } else {
@@ -3400,7 +3439,7 @@ export class DynamicGrid {
             if (priceDiffRatio > priceTolerance || needsResize) {
               const reason = priceDiffRatio > priceTolerance
                 ? `Channel shifted: aligning buy price ($${currentOpenBuyAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
-                : `Rebalancing buy quantity to equal 4-level tranche ($${currentOrderNotional.toFixed(2)} -> $${trancheQuote.toFixed(2)})`;
+                : `Rebalancing buy quantity to match grid tranche ($${currentOrderNotional.toFixed(2)} -> $${trancheQuote.toFixed(2)})`;
               await this.cancelOrderInternal(currentOpenBuyAtLvl, reason);
               this.openOrders = this.openOrders.filter((o) => o !== currentOpenBuyAtLvl);
 

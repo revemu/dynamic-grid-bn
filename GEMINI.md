@@ -235,6 +235,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - In a stepped accumulation grid ladder, each buy level represents a target capacity threshold (Level 1 $\le 25\%$, Level 2 $\le 50\%$, Level 3 $\le 75\%$, Level 4 $\le 100\%$).
   - When a buy order fills and current portfolio inventory already satisfies or exceeds that level's target fraction (`currentHoldFraction >= levelTargetFraction - 0.05`), the bot **strictly forbids re-placing a new buy order at that same level** while holding that position.
   - This completely eliminates repeated buy fills at Buy Level 1 (e.g. 3 consecutive fills at \$2562.45), forcing accumulation to take place only at deeper buy levels or waiting until inventory is sold.
+- **Narrow Channel Adaptation & Bounds Hysteresis Fix (< 1.20%)**:
+  - **สาเหตุของปัญหาเดิม**: ใน `market-structure.ts` เมื่อกรอบราคาแคบกว่า `< 1.20%` ระบบจะบีบกรอบเป็น Edge Bracket (ซื้อ 1 ระดับที่ `Floor + 0.2%` และขาย 1 ระดับที่ `Ceiling - 0.2%`) แต่ใน `src/strategy.ts` ตรงส่วน Channel Hysteresis มีเงื่อนไข Fallback บังคับว่า `if (!Array.isArray(this.lastDynamicBounds.buyLevels) || this.lastDynamicBounds.buyLevels.length < 4)` ทำให้เมื่อราคายังเคลื่อนไหวอยู่ในกรอบเดิม ระบบ Hysteresis จะเขียนทับ `buyLevels` ของ Narrow Channel กลับไปเป็น 4 ระดับอัตโนมัติ ส่งผลให้บอทตั้งออเดอร์ซื้อ 4 ไม้ และแสดงผล 4 ระดับ ทั้งๆ ที่กรอบแคบเพียง 1.18%
+  - **การแก้ไข**:
+    1. ใน `src/strategy.ts` เมธอด `step()`: ปรับตรรกะ Hysteresis ให้ตรวจสอบ `isNarrowChannel = ((dSpan / lowerBound) * 100) < 1.20` หากเป็นกรอบแคบจะคงค่า 1 ระดับ (`lowerBound * 1.002` และ `upperBound * 0.998`) โดยไม่บังคับ `length < 4`
+    2. มีระบบ Transition ตรวจจับการสลับระหว่างกรอบปกติและกรอบแคบอัตโนมัติ หากกรอบย่อตัวลงมาแคบกว่า 1.20% ระบบจะปรับ `lastDynamicBounds` ให้เหลือ 1 ระดับ และหากกรอบขยายตัวกว้างขึ้นเกิน 1.20% จะคืนค่าเป็น 4 ระดับแบบขั้นบันไดทันที
+    3. ปรับ `LOCKED CHANNEL ENTRY SHIELD` ให้รองรับ Narrow Channel เช่นเดียวกัน ป้องกันการสร้าง 4 ระดับเกินจริงขณะล็อคกรอบ
 - **Binance CEX Continuous Grid (Bypass Hysteresis Pause & Cancel Churn)**:
   - When trading on Binance (`this.binance.exchangeName === "binance"`), `buyOrdersActive` and `sellOrdersActive` remain continuously `true`.
   - Hysteresis level pausing (`enableBuyBelowSellLevel1` and `enableSellAboveBuyLevel1`) is bypassed on CEX because 0% maker fees and zero gas allow resting buy and sell orders to stay simultaneously active on the order book without churn costs.
