@@ -1969,24 +1969,34 @@ export class DynamicGrid {
     }
 
     // ── 100% UPPER BOUND: 100% FULL TAKE PROFIT EXIT ─────────────────────────
-    // Take profit when the Binance reference price reaches or crosses the 100% Ceiling!
+    // Take profit when the Binance reference price or Best Bid reaches or crosses the 100% Ceiling or highest sell level!
     // SAFETY: Take Profit must NEVER sell at a loss! It must be strictly profitable above avgEntry.
     const avgEntryPrice = this.getAvgEntryPrice();
     const requireAvgProfit = (this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW")) === "PORTFOLIO_AVG_PROFIT";
-    const isProfitableExit = !requireAvgProfit || avgEntryPrice <= 0 || refPrice >= avgEntryPrice * 1.001;
+    const isProfitableExit = !requireAvgProfit || avgEntryPrice <= 0 || (effectiveMid >= avgEntryPrice * 1.0005) || (bestBid !== undefined && bestBid >= avgEntryPrice * 1.0005);
+    const highestSellTarget = sellLevels.length > 0 ? sellLevels[sellLevels.length - 1]! : upperBound;
+    const realCeilingReached = isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound) || refPrice >= highestSellTarget || (bestBid !== undefined && bestBid >= highestSellTarget);
+
     if (
       !this.isPaused &&
       this.cfg.takeProfitAtUpperBound &&
       this.lots.length > 0 &&
       isProfitableExit &&
-      (isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound))
+      realCeilingReached
     ) {
+      const exitPrice = (bestBid !== undefined && bestBid > 0 && (!requireAvgProfit || bestBid >= avgEntryPrice * 1.0005))
+        ? bestBid
+        : (bestBid ?? effectiveMid);
+
       this.log(
-        `🎯 100% TAKE PROFIT: Binance Price $${refPrice.toFixed(6)} reached 100% Upper Bound ($${upperBound.toFixed(6)}) with profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling resting orders & full exit`,
+        `🎯 100% TAKE PROFIT: Price $${refPrice.toFixed(6)} (Bid: $${(bestBid ?? 0).toFixed(6)}) reached Upper Bound / Target ($${upperBound.toFixed(6)}) with net profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
       );
       await this.cancelAllRestingOrders();
-      await this.sellAll(bestBid ?? effectiveMid, "SELL");
+      await this.sellAll(exitPrice, "SELL");
       this.stuckSince = undefined;
+      this.lockedChannel = undefined;
+      const symbolKey = this.getSymbolKey();
+      this.db.saveLockedChannel(symbolKey, undefined);
       this.saveState();
     }
 
@@ -4886,9 +4896,15 @@ export class DynamicGrid {
     if (finalQty < this.minQty) return false;
 
     try {
-      // In CLOB IOC sell: limit price is targetPrice so it matches any bid >= targetPrice down to the target level
-      // Setting limitPrice = targetPrice ensures on-chain CLOB will NEVER fill below the target price
-      const limitPrice = targetPrice;
+      // In CLOB IOC sell: targetPrice acts as trigger price.
+      // If execPrice (e.g. currentBestBid on book) is valid, profitable, and near targetPrice,
+      // place limitPrice at execPrice (or slightly more aggressive) so it matches immediately against the resting bid!
+      // This prevents Revert 0xc04ad919 when bid on book shifted slightly or CLOB requires matching against the bid price.
+      const avgEntry = this.getAvgEntryPrice();
+      const isProfitableAtExec = avgEntry <= 0 || execPrice >= avgEntry * 1.0005;
+      const limitPrice = (execPrice > 0 && isProfitableAtExec && Math.abs(execPrice - targetPrice) / targetPrice <= 0.02)
+        ? Math.min(execPrice, targetPrice)
+        : targetPrice;
       const res = await this.binance.placeOrder({
         symbol: this.symbol,
         side: "SELL",
