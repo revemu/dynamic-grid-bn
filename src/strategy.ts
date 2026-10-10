@@ -3287,7 +3287,7 @@ export class DynamicGrid {
           }
         }
 
-        // If open buys exceed the number of active buy levels, only trim orders that are unmapped or excess
+        // If open buys exceed the number of active buy levels, only trim orders that are unmapped or excess duplicates
         const activeLevelNamesSet = new Set(effectiveLevelNames.slice(0, numBuyLevels));
         const unmappedBuys = openBuys.filter((o) => !o.levelDesc || !activeLevelNamesSet.has(o.levelDesc));
         if (unmappedBuys.length > 0) {
@@ -3296,15 +3296,39 @@ export class DynamicGrid {
           }
           this.openOrders = this.openOrders.filter((o) => !unmappedBuys.includes(o));
           this.saveState();
-        } else if (openBuys.length > numBuyLevels) {
-          const excessCount = openBuys.length - numBuyLevels;
-          // Sort descending by price to trim from highest
-          const excessBuys = [...openBuys].sort((a, b) => b.price - a.price).slice(0, excessCount);
-          for (const o of excessBuys) {
-            await this.cancelOrderInternal(o, "Excess buy orders beyond grid levels — removing");
+        } else {
+          // Detect duplicates per level: if multiple orders share the same levelDesc, keep the one closest to lvlPrice and trim the rest
+          const duplicatesToTrim: OpenOrder[] = [];
+          for (let i = 0; i < effectiveBuyLevels.length; i++) {
+            const lvlName = effectiveLevelNames[i];
+            const lvlPrice = effectiveBuyLevels[i];
+            if (!lvlName || !lvlPrice) continue;
+            const ordersAtLevel = openBuys.filter((o) => o.levelDesc === lvlName);
+            if (ordersAtLevel.length > 1) {
+              // Sort by price diff to lvlPrice ascending (keep closest, trim the others)
+              ordersAtLevel.sort((a, b) => Math.abs(a.price - lvlPrice) - Math.abs(b.price - lvlPrice));
+              const extras = ordersAtLevel.slice(1);
+              duplicatesToTrim.push(...extras);
+            }
           }
-          this.openOrders = this.openOrders.filter((o) => !excessBuys.includes(o));
-          this.saveState();
+
+          if (duplicatesToTrim.length > 0) {
+            for (const o of duplicatesToTrim) {
+              await this.cancelOrderInternal(o, `Duplicate buy order at ${o.levelDesc} — keeping closest to grid price`);
+            }
+            this.openOrders = this.openOrders.filter((o) => !duplicatesToTrim.includes(o));
+            this.saveState();
+          } else if (openBuys.length > numBuyLevels) {
+            // As a safe fallback if no duplicate levelDesc is found, trim only orders that do not match ANY active level price
+            const excessBuys = openBuys.filter((o) => !effectiveBuyLevels.some((lvl) => Math.abs(o.price - lvl) / lvl <= 0.0015));
+            for (const o of excessBuys) {
+              await this.cancelOrderInternal(o, "Excess buy orders beyond grid levels — removing non-matching");
+            }
+            if (excessBuys.length > 0) {
+              this.openOrders = this.openOrders.filter((o) => !excessBuys.includes(o));
+              this.saveState();
+            }
+          }
         }
 
         for (let i = 0; i < effectiveBuyLevels.length; i++) {

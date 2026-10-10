@@ -199,7 +199,7 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - ตรวจจับขนาด `buyLevels.length` และ `sellLevels.length` แบบไดนามิก
       - ถ้าแคบ (`length === 1`): กำหนดชื่อระดับเป็น `Buy Edge Floor (+0.2%)` และ `Sell Edge Ceil (-0.2%)` พร้อมเป้า `buyTargets = [1.0]` และ `sellHoldingTargets = [0.0]`
       - ถ้าปกติ (`length >= 4`): กำหนด 4 ระดับ `Buy Level 1..4 (40%..10%)` และ `Sell Target 1..4 (60%..90%)` ตามลำดับ
-      - ป้องกันลูป Cancel-Replace ที่เกิดจากความไม่สอดคล้องระหว่างชื่อระดับกับการตรวจจับ unmapped/excess orders ได้ 100%
+      - **Duplicate-per-Level Trimming (Elimination of Cancel-Create Loops)**: ตรวจจับออเดอร์ส่วนเกินโดยเช็คว่ามีออเดอร์ซ้ำในระดับเดียวกันหรือไม่ (เช่น มี 2 ออเดอร์ที่ถูก Re-link ไปเป็น Buy Level 2) ระบบจะเก็บออเดอร์ที่ราคาใกล้เคียงกับราคา Grid ของระดับนั้นที่สุดไว้เพียง 1 รายการ และยกเลิกเฉพาะตัวที่เกิน โดยไม่ไปตัดออเดอร์ของระดับอื่น (เช่น Buy Level 1) ทิ้งแบบสุ่มสี่สุ่มห้าอีกต่อไป ป้องกันลูป Cancel-Replace ได้ 100%
 - **Dynamic Buy Tranche Allocation & Min Notional Floor (No Rigid / 4 Dilution)**:
   - แทนที่จะหาร 4 แบบคงที่ (`currentAvailableCapacity / 4`) ซึ่งทำให้เกิดปัญหาเมื่อเหลือความจุ เช่น $15.75 แล้วถูกหารจนเหลือเพียง $3.82 จนต่ำกว่า Binance Min Notional ($5.00)
   - ระบบจะคำนวณจำนวนระดับที่พร้อมวางคำสั่งซื้อจริง (`numEligibleBuyLevels`) โดยไม่นับระดับที่ติด Holding Fraction Guard หรือ Trendline Filters
