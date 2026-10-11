@@ -123,24 +123,26 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        1. ใน `sellAll()`: ปรับปรุงการคำนวณ `limitPrice` สำหรับโหมด IOC ให้ยอมรับ Slippage Buffer เล็กน้อย (0.3% - 0.5% หรือไม่เกิน `cutLossMaxBidDiscountPct`) เพื่อให้คำสั่ง IOC กวาด Orderbook และ Match เต็มจำนวน 100% ในไม้เดียว โดยมี Guard คุมเข้มว่า `limitPrice` ต้องไม่ต่ำกว่าทุนเฉลี่ยเด็ดขาด (`Math.max(avgEntry * 1.0005, discountedPrice)`) รับประกันขายมีกำไรแน่นอน
        2. ใน `src/strategy.ts`: ใส่ `return;` หลังจบ 100% Take Profit Exit และ Cut Loss ทันที เพื่อยุติการทำงานของ tick นั้น ไม่ให้หลุดไหลลงไปหา `executeIocBracketGrid`
        3. ใน `executeIocBracketGrid`: เพิ่ม Guard ตรวจสอบว่าหากราคาแตะหรืออยู่เหนือเพดานกรอบบน (`refPrice >= upperBound || currentBestBid >= upperBound`) ให้งดการแบ่งขายตามขั้นบันได (Step 1..4) ทันที เพื่อส่งมอบให้ 100% Full Exit ทำหน้าที่ปิดรอบไม้เดียวจบ
-   - **Narrow Channel Threshold & Edge Buffer Tuning ผ่าน Dashboard**:
-     - **สาเหตุ & ปัญหาเดิม**:
-       - ในโค้ดเดิมมีโหมด Narrow Channel (`isNarrowChannel`) ซึ่งตรวจจับเมื่อความกว้างกรอบแคบกว่า `< 1.20%` และจะยุบ Grid Level จาก 4 ระดับ (10%, 20%, 30%, 40%) ให้เหลือระดับเดียวคือ `Buy Edge Floor`
-       - ปัญหาคือในโค้ดเดิมฮาร์ดโค้ดสูตรไว้ตายตัวว่า `Buy Edge Floor = Floor * 1.002` (+0.20% เหนือ Floor) และ `Sell Edge Ceil = Ceiling * 0.998` (-0.20% ใต้ Ceiling)
-       - เมื่อเกิดสถานการณ์ที่กรอบแคบมาก เช่น กว้างเพียง 0.60% (ระยะห่าง $14 เช่น ETH $2510.58 ถึง $2524.59) การบวก Buffer คงที่ +0.20% (+5.02 ดอลลาร์ กลายเป็น $2515.60) จะกินพื้นที่ไปถึง 33.3% ของกรอบ ทำให้ราคาตั้งซื้อลอยสูงขึ้นไปเกือบชนเส้นกึ่งกลาง Center ($2517.585) แทนที่จะอยู่ชิดขอบล่างของ Floor และไม่มีช่องให้ปรับจูนผ่านหน้าต่าง Settings บน Dashboard เลย
+   - **Strict Structural Channel & Standby (ยกเลิก Narrow Grid • อิงเฉพาะยอด/เหวแท้จริง • ไม่สร้างจุดลอย)**:
+     - **สาเหตุ & หลักการ**:
+       - ยกเลิกโหมด Narrow Grid (`isNarrowChannel`) ทั้งหมด เนื่องจากขัดกับตรรกะกริด 4 ระดับมาตรฐาน และไม่ต้องการให้มีการสร้างจุดลอยหรือขอบจำลองขึ้นมาเอง
+       - **หลักการตายตัวของผู้ใช้**: "การขยายกรอบ ให้อิงจากเหวหรือยอดเท่านั้น ไม่ใช่จุดลอยๆ ถ้าหาไม่ได้ ให้หยุด trade ไป"
+       - ขอบล่าง (Floor) ต้องอิงจาก Swing Low (เหว) ที่ยืนยันแล้ว และ ขอบบน (Ceiling) ต้องอิงจาก Swing High (ยอด) ที่ยืนยันแล้วเท่านั้น ห้ามใช้สูตรสมมติหรือจุดลอยในอากาศเด็ดขาด
      - **การแก้ไข**:
-       1. เพิ่มพารามิเตอร์ใหม่ใน `src/config.ts`:
-          - `enableNarrowChannelCollapse` (boolean, default: `true`): สวิตช์เปิด/ปิด โหมดยุบกริดเมื่อกรอบแคบ (หากปิดจะซอยบันได 4 ระดับเสมอ)
-          - `narrowChannelThresholdPct` (number, default: `1.2%`): เกณฑ์ความกว้างกรอบที่ถือว่าเป็นกรอบแคบ
-          - `narrowChannelBuyBufferPct` (number, default: `0.05%`): ระยะ Buffer เปอร์เซ็นต์ตั้งซื้อเหนือ Floor (ลดจากเดิม 0.20% เหลือ 0.05% เพื่อให้ตั้งซื้อชิดขอบล่างจริง)
-          - `narrowChannelSellBufferPct` (number, default: `0.05%`): ระยะ Buffer เปอร์เซ็นต์ตั้งขายใต้ Ceiling (ลดจากเดิม 0.20% เหลือ 0.05%)
-       2. ปรับปรุงใน `src/market-structure.ts` และ `src/strategy.ts`:
-          - เลิกฮาร์ดโค้ด 1.20%, 1.002, 0.998 และใช้ค่าคอนฟิกที่ตั้งจากฐานข้อมูลแบบไดนามิกทั้งหมด
-          - ปรับ Dynamic Order Label ให้สะท้อนค่าที่ตั้ง เช่น `Buy Edge Floor (+0.05%)` และ `Sell Edge Ceil (-0.05%)`
-       3. เพิ่มช่องตั้งค่าในหน้าต่าง Settings Modal บน Web Dashboard (`public/index.html` & `public/app.js`):
-          - สวิตช์เปิด/ปิด: `Narrow Channel Edge Mode (ยุบกริดเมื่อกรอบแคบ)`
-          - ช่องกรอก: `Narrow Channel Threshold (%)`, `Buy Edge Floor Buffer (%)`, `Sell Edge Ceil Buffer (%)`
-          - เชื่อมต่อการบันทึกลงฐานข้อมูล Database (`settings.db.json`) และอัปเดตแบบ Live ทันที
+       1. **ลบ Narrow Grid โดยสมบูรณ์**:
+          - นำฟิลด์ `enableNarrowChannelCollapse`, `narrowChannelThresholdPct`, `narrowChannelBuyBufferPct`, `narrowChannelSellBufferPct` ออกจาก `ChannelOptions`, `src/config.ts`, `src/strategy.ts`, `public/index.html` และ `public/app.js`
+          - บอทใช้กริด 4 ระดับมาตรฐานเสมอ (Buy L1 40%, L2 30%, L3 20%, L4 10%; Sell T1 60%, T2 70%, T3 80%, T4 90%)
+       2. **Strict Structural Bounds Search (`findStructuralBoundsSatisfyingMinWidth`)**:
+          - ใน `src/market-structure.ts`: เพิ่มเมธอดค้นหาคู่ยอด/เหวย้อนหลังในประวัติ Swing Points ที่มีระยะห่างกว้างไม่น้อยกว่า `minChannelWidthPct` (และไม่เกิน `maxChannelWidthPct`)
+          - นำ synthetic fallbacks (เช่น `price * (1 ± minPct / 2)`) ออกทั้งหมด
+          - หากในประวัติไม่มีคู่ยอด/เหวใดที่มีระยะกว้างเพียงพอต่อ `minChannelWidthPct` ระบบจะส่งสัญญาณ `hasValidStructuralChannel = false`
+       3. **Channel Structure Standby Guard**:
+          - ใน `src/strategy.ts`: เมื่อ `hasValidStructuralChannel === false` บอทจะเข้าสู่สถานะ `channelStructureStandby = true`
+          - ยกเลิกคำสั่งซื้อที่ค้างอยู่ทั้งหมดทันที และตั้ง `canBuy = false` เพื่อหยุดการเข้าซื้อชั่วคราว
+          - แสดงสถานะในแดชบอร์ด: `CHANNEL_STRUCTURE_STANDBY` ("⚠️ Channel Structure Standby: No structural peak/valley pair meets minChannelWidthPct — Waiting for confirmed swing highs & lows")
+          - เมื่อโครงสร้างตลาดเกิด Swing High/Low ใหม่ที่กว้างเพียงพอ ระบบจะ Clear Standby และกลับมาทำงานต่อโดยอัตโนมัติ
+       4. **Clean UI**:
+          - ลบสวิตช์และช่องตั้งค่า Narrow Channel ออกจากหน้าต่าง Settings Modal ใน Web Dashboard ทั้งหมด
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
     - **Emergency Sell All Button (ขายเหรียญทั้งหมดทันทีจากแดชบอร์ด)**:

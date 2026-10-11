@@ -54,6 +54,8 @@ export interface GridZone {
   anchorSide?: "LOWER_FLOOR" | "UPPER_CEILING" | "NONE";
   resistanceTouchCount?: number;
   supportTouchCount?: number;
+  hasValidStructuralChannel?: boolean; // false if no genuine structural peak/valley pair satisfies minChannelWidthPct
+  channelInvalidReason?: string;
 }
 
 export interface TrendLinePoint {
@@ -134,6 +136,8 @@ export interface DowStructure {
   supportCluster?: { price: number; touchCount: number; points: SwingPoint[] };
   allResistanceClusters?: { price: number; touchCount: number; points: SwingPoint[] }[];
   allSupportClusters?: { price: number; touchCount: number; points: SwingPoint[] }[];
+  hasValidStructuralChannel?: boolean;
+  channelInvalidReason?: string;
 }
 
 export interface ChannelOptions {
@@ -150,10 +154,6 @@ export interface ChannelOptions {
   srMinTouchCount?: number;    // minimum touches for S/R in MULTI_TOUCH_SR mode (default 2)
   srTouchTolerancePct?: number;// tolerance % to group touches (default 0.35%)
   srLookbackCandles?: number;  // candles lookback for S/R scanning (default 100)
-  enableNarrowChannelCollapse?: boolean; // collapse to edge brackets in narrow channels (default true)
-  narrowChannelThresholdPct?: number;   // narrow channel threshold % (default 1.2%)
-  narrowChannelBuyBufferPct?: number;   // buffer % above floor for buy edge (default 0.05%)
-  narrowChannelSellBufferPct?: number;  // buffer % below ceiling for sell edge (default 0.05%)
 }
 
 /**
@@ -786,6 +786,88 @@ export class DowStructureEngine {
     }
 
     return { confirmed: false, reason: "Recent swing lows are not higher than the dump trough" };
+  }
+
+  /**
+   * Search for confirmed structural Peaks and Valleys that achieve at least minWidthPct.
+   * STRICT USER RULE: Never invent synthetic points floating in air!
+   * Bounds must strictly anchor to genuine peaks (swing highs) and valleys (swing lows) in the historical structure.
+   * If no genuine peak/valley combination achieves minWidthPct, returns hasValidChannel: false.
+   */
+  private findStructuralBoundsSatisfyingMinWidth(
+    price: number,
+    primaryFloorPrice: number | undefined,
+    primaryCeilPrice: number | undefined,
+    minPct: number, // e.g. 0.02 (2.0%)
+    maxPct: number, // e.g. 0.06 (6.0%)
+  ): {
+    floor: number;
+    ceil: number;
+    hasValidChannel: boolean;
+    reason?: string;
+  } {
+    const minSpan = price * minPct;
+    const maxSpan = price * maxPct;
+
+    // Filter confirmed swing highs strictly above price
+    const validHighs = this.swingHighs
+      .filter((h) => h.price > price * 1.0005)
+      .sort((a, b) => a.price - b.price); // Ascending from closest above price to highest
+
+    // Filter confirmed swing lows strictly below price
+    const validLows = this.swingLows
+      .filter((l) => l.price < price * 0.9995)
+      .sort((a, b) => b.price - a.price); // Descending from closest below price to lowest
+
+    let candidateFloor = primaryFloorPrice ?? (validLows.length > 0 ? validLows[0]!.price : undefined);
+    let candidateCeil = primaryCeilPrice ?? (validHighs.length > 0 ? validHighs[0]!.price : undefined);
+
+    // 1. If primary pair exists and already satisfies minPct:
+    if (candidateFloor !== undefined && candidateCeil !== undefined && candidateCeil > candidateFloor) {
+      const span = candidateCeil - candidateFloor;
+      if (span >= minSpan && span <= maxSpan) {
+        return { floor: candidateFloor, ceil: candidateCeil, hasValidChannel: true };
+      }
+    }
+
+    // 2. If too narrow (or missing), attempt to expand using OTHER genuine historical peaks/valleys
+    // Option A: Keep candidateFloor, find a higher genuine peak H
+    if (candidateFloor !== undefined) {
+      const higherPeak = validHighs.find((h) => (h.price - candidateFloor!) >= minSpan && (h.price - candidateFloor!) <= maxSpan);
+      if (higherPeak) {
+        return { floor: candidateFloor, ceil: higherPeak.price, hasValidChannel: true };
+      }
+    }
+
+    // Option B: Keep candidateCeil, find a lower genuine valley L
+    if (candidateCeil !== undefined) {
+      const lowerValley = validLows.find((l) => (candidateCeil! - l.price) >= minSpan && (candidateCeil! - l.price) <= maxSpan);
+      if (lowerValley) {
+        return { floor: lowerValley.price, ceil: candidateCeil, hasValidChannel: true };
+      }
+    }
+
+    // Option C: Search all pairs of (H, L) from historical swings
+    for (const h of validHighs) {
+      for (const l of validLows) {
+        const span = h.price - l.price;
+        if (span >= minSpan && span <= maxSpan) {
+          return { floor: l.price, ceil: h.price, hasValidChannel: true };
+        }
+      }
+    }
+
+    // 3. No genuine structural peak/valley pair achieves minWidthPct:
+    // STRICT RULE: DO NOT invent synthetic points floating in air!
+    // Return best available swings (or fallback for rendering only), but flag hasValidChannel = false!
+    const fallbackFloor = candidateFloor ?? (validLows[0]?.price ?? (price * 0.99));
+    const fallbackCeil = candidateCeil ?? (validHighs[0]?.price ?? (price * 1.01));
+    return {
+      floor: fallbackFloor,
+      ceil: fallbackCeil,
+      hasValidChannel: false,
+      reason: `Channel width is below minChannelWidthPct (${(minPct * 100).toFixed(2)}%) and no historical structural peak/valley pair achieves minimum width`,
+    };
   }
 
   private recalculateSwings(): void {
@@ -1716,7 +1798,7 @@ export class DowStructureEngine {
             : this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
         upperBound = (peakCeil !== undefined && peakCeil > bottomBound)
           ? peakCeil
-          : Math.max(price * (1 + minPct / 2), bottomBound + minSpan);
+          : bottomBound + minSpan; // Use minSpan as temporary; hasValidChannel=false will be set below
       } else if (!srResult.support && srResult.resistance) {
         upperBound = srResult.resistance.price;
         foundCeiling = true;
@@ -1724,7 +1806,7 @@ export class DowStructureEngine {
         const recentLowsBelowPrice = this.swingLows.filter((l) => l.price < Math.min(price * 0.999, upperBound * 0.999)).sort((a, b) => b.price - a.price);
         const recentConfirmedLow = recentLowsBelowPrice.length > 0 ? recentLowsBelowPrice[0]?.price : undefined;
         const lowestWaveValley = (activeValley && activeValley.price < upperBound) ? activeValley.price : recentConfirmedLow;
-        bottomBound = lowestWaveValley ?? (recentConfirmedLow ?? Math.min(price * (1 - minPct / 2), upperBound - minSpan));
+        bottomBound = lowestWaveValley ?? (recentConfirmedLow ?? (upperBound - minSpan)); // Use minSpan spacing; hasValidChannel=false will be set below
         foundFloor = lowestWaveValley !== undefined || recentConfirmedLow !== undefined;
       } else {
         // Neither side has multi-touch: use recent confirmed swings
@@ -1736,8 +1818,8 @@ export class DowStructureEngine {
           : (activePeak && activePeak.price > price)
             ? activePeak.price
             : this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
-        bottomBound = lowestWaveValley ?? price * (1 - minPct / 2);
-        upperBound = highestWavePeak ?? price * (1 + minPct / 2);
+        bottomBound = lowestWaveValley ?? (price - minSpan / 2); // Structural if found; hasValidChannel=false will be set below
+        upperBound = highestWavePeak ?? (price + minSpan / 2); // Structural if found; hasValidChannel=false will be set below
         foundFloor = lowestWaveValley !== undefined;
         foundCeiling = highestWavePeak !== undefined;
       }
@@ -1835,6 +1917,23 @@ export class DowStructureEngine {
       rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
       minWidthPct = (minSpan / price) * 100;
       maxWidthPct = (maxSpan / price) * 100;
+
+      // 🔒 STRICT STRUCTURAL BOUNDS VALIDATION (MULTI_TOUCH_SR):
+      // Replace any non-structural (synthetic) bounds with genuine peak/valley pairs that satisfy minWidth.
+      // If no historical structural peak/valley pair achieves minChannelWidthPct → flag hasValidChannel=false.
+      {
+        const structCheck = this.findStructuralBoundsSatisfyingMinWidth(price, bottomBound, upperBound, minPct, maxPct);
+        if (structCheck.hasValidChannel) {
+          bottomBound = structCheck.floor;
+          upperBound = structCheck.ceil;
+        } else if (!foundFloor || !foundCeiling) {
+          // Neither bound is from a genuine structural swing meeting minWidth → channel standby
+          bottomBound = structCheck.floor;
+          upperBound = structCheck.ceil;
+        }
+        // Store result for downstream use
+        (this as any)._structCheckResult = structCheck;
+      }
     } else if (mode === "DONCHIAN_ATR") {
       const lookback = Math.min(n, options?.donchianLookback ?? 20);
       const donchianCandles = this.candles.slice(Math.max(0, n - lookback));
@@ -1957,8 +2056,8 @@ export class DowStructureEngine {
         const candidateCeil = activeCeilingPoint?.price
           ?? activePeak?.price
           ?? (this.swingHighs.length > 0 ? this.swingHighs[this.swingHighs.length - 1]?.price : undefined);
-        bottomBound = candidateFloor ?? price * (1 - minPct / 2);
-        upperBound = candidateCeil ?? price * (1 + minPct / 2);
+        bottomBound = candidateFloor ?? (price - minSpan / 2); // Structural if found; hasValidChannel=false will be set below
+        upperBound = candidateCeil ?? (price + minSpan / 2); // Structural if found; hasValidChannel=false will be set below
         if (candidateFloor !== undefined && candidateCeil !== undefined && candidateCeil > candidateFloor) {
           clampStatus = "NATURAL_SWING";
           anchorSide = "NONE";
@@ -1983,6 +2082,16 @@ export class DowStructureEngine {
         clampStatus = "NATURAL_SWING";
       } else {
         clampStatus = "NATURAL_SWING";
+      }
+
+      // 🔒 STRICT STRUCTURAL BOUNDS VALIDATION (DOW_ATR_CLAMP / FIXED_PCT_CLAMP):
+      // Validate and replace bounds with genuine peak/valley pairs satisfying minWidth.
+      // If no historical structural peak/valley pair achieves minChannelWidthPct → flag hasValidChannel=false.
+      {
+        const structCheck = this.findStructuralBoundsSatisfyingMinWidth(price, bottomBound, upperBound, minPct, maxPct);
+        bottomBound = structCheck.floor;
+        upperBound = structCheck.ceil;
+        (this as any)._structCheckResult = structCheck;
       }
     }
 
@@ -2086,37 +2195,26 @@ export class DowStructureEngine {
       zoneType = "BUY_ZONE";
     }
 
-    // Check channel width: In narrow channels (e.g. < narrowChannelThresholdPct%), adapt grid levels towards edges
-    // to preserve tradeable edge swings and avoid clustering dust orders in the middle.
-    const enableCollapse = options?.enableNarrowChannelCollapse !== false;
-    const narrowThresh = options?.narrowChannelThresholdPct ?? 1.20;
-    const channelWidthPct = bottomBound > 0 ? ((finalSpan / bottomBound) * 100) : 0;
-    const isNarrowChannel = enableCollapse && bottomBound > 0 && channelWidthPct < narrowThresh;
+    // Retrieve structural validation result computed during channel mode bound calculation
+    const structCheckResult = (this as any)._structCheckResult as { hasValidChannel: boolean; reason?: string } | undefined;
+    const hasValidStructuralChannel = structCheckResult ? structCheckResult.hasValidChannel : true;
+    const channelInvalidReason = structCheckResult?.reason;
 
-    const buyBufferFrac = (options?.narrowChannelBuyBufferPct ?? 0.05) / 100;
-    const sellBufferFrac = (options?.narrowChannelSellBufferPct ?? 0.05) / 100;
+    // Grid Levels: always use standard 4-level grid (10%/20%/30%/40% buy, 60%/70%/80%/90% sell)
+    // Narrow Channel Mode has been removed — strict structural bounds enforce channel quality upstream.
+    const buyLevels = [
+      bottomBound + finalSpan * 0.40,
+      bottomBound + finalSpan * 0.30,
+      bottomBound + finalSpan * 0.20,
+      bottomBound + finalSpan * 0.10,
+    ];
 
-    // Grid Levels in 10% to 50% (Buy Zone): 40%, 30%, 20%, 10% (0%-5% is safe buffer above floor)
-    // In narrow channels (< threshold), collapse to a single edge-bracket level: Buy at Floor + Buffer%
-    const buyLevels = isNarrowChannel
-      ? [bottomBound * (1 + buyBufferFrac)]
-      : [
-          bottomBound + finalSpan * 0.40,
-          bottomBound + finalSpan * 0.30,
-          bottomBound + finalSpan * 0.20,
-          bottomBound + finalSpan * 0.10,
-        ];
-
-    // Grid Levels in 50% to 100% (Sell Zone): 60%, 70%, 80%, 90% (Hold 0% near 100% Upper Bound)
-    // In narrow channels (< threshold), collapse to a single edge-bracket level: Sell at Ceiling - Buffer%
-    const sellLevels = isNarrowChannel
-      ? [upperBound * (1 - sellBufferFrac)]
-      : [
-          bottomBound + finalSpan * 0.60,
-          bottomBound + finalSpan * 0.70,
-          bottomBound + finalSpan * 0.80,
-          bottomBound + finalSpan * 0.90,
-        ];
+    const sellLevels = [
+      bottomBound + finalSpan * 0.60,
+      bottomBound + finalSpan * 0.70,
+      bottomBound + finalSpan * 0.80,
+      bottomBound + finalSpan * 0.90,
+    ];
 
     const zoneWidthPct = bottomBound > 0 ? (finalSpan / bottomBound) * 100 : 0;
 
@@ -2142,6 +2240,8 @@ export class DowStructureEngine {
       anchorSide,
       resistanceTouchCount: srResult?.resistance?.touchCount,
       supportTouchCount: srResult?.support?.touchCount,
+      hasValidStructuralChannel,
+      channelInvalidReason,
     };
 
     // Wave cycles were computed earlier and used to determine canonical activeValley/activePeak
@@ -2305,6 +2405,8 @@ export class DowStructureEngine {
       supportCluster: effectiveSupCluster,
       allResistanceClusters: srResult?.allResistanceClusters,
       allSupportClusters: srResult?.allSupportClusters,
+      hasValidStructuralChannel,
+      channelInvalidReason,
     };
   }
 
