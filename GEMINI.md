@@ -185,6 +185,17 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
             - หักค่าชดเชยออกจากขนาด Lot ที่จะนำไปตั้งขาย (`netQty = qty - compBase`) เพื่อให้คงเหลือ SOMI ในกระเป๋าสำหรับเป็นค่าแก๊สหมุนเวียน ไม่ถูกนำไปตั้งขายจนหมด
             - ตัดทอน `accumulatedGasBase` ลงตามจำนวนที่ชดเชย และบันทึก `totalGasDeductedBase`
             - แสดง Log ละเอียด: `⛽ Gas Compensated: X.XXXX SOMI (-$X.XXXX) returned to wallet gas reserve`
+     - **Strict Structural S/R Multi-Touch & Fresh LL (Lower Low) Channel Floor Priority**:
+       - **ปัญหาเดิม**:
+         - ใน `findMultiTouchSR` (`market-structure.ts`): อัลกอริทึม Clustering ใช้ `lineTouchTol = 0.002` (0.20%) และการจับกลุ่มใช้ `tol = 0.35% - 1.0%` ทำให้สวิงเหวที่ลอยอยู่เหนือเส้นรับจริง (เช่น เหวที่ $2512 ขณะที่เส้นแนวรับอยู่ที่ $2509.56) ถูกดึงเข้ามาในกลุ่มเดียวกัน และได้รับป้าย `🎯 3x` ทั้งที่ไม่ได้สัมผัสเส้นจริง
+         - การให้คะแนนคู่แนวรับ-ต้าน (Scoring): คลัสเตอร์เดิมที่มี Multi-touch (เช่น $2509.56) ได้รับคะแนนสะสมสูงมาก (`touchBonus +3000`, `currentBaseBonus +2000`, `anchorBonus +4000`) จนชนะจุดเหวต่ำสุดใหม่ **LL (Lower Low, เช่น $2503.28)** ของรอบคลื่นปัจจุบัน ส่งผลให้ `liveCalculatedBottomBound` (เส้นประ Real S/R Floor) ไม่ยอมขยับลงมาที่จุด LL แท้จริง
+       - **การแก้ไขในระบบ**:
+         1. **Strict Touch Verification (`src/market-structure.ts`)**:
+            - ปรับ `lineTouchTol` ใน `clusterPoints` ให้เข้มขึ้นเหลือ `Math.min(tol, 0.001)` (0.10%) คัดกรองให้เฉพาะสวิงที่แตะถึงเส้นระดับราคาของแนวรับ/ต้านจริงเท่านั้นถึงจะนับเป็น `touchCount` ได้ จุดเหวที่ลอยอยู่จะไม่ถูกนับ
+         2. **LL Structural Priority Bonus (`src/market-structure.ts`)**:
+            - เพิ่ม `structuralLlBonus (+3000)` ให้กับผู้สมัครแนวรับที่เป็นจุดต่ำสุดจริงของรอบคลื่นปัจจุบัน (`recentCanonicalLows`) เพื่อให้จุดเหว LL ใหม่ของรอบไม่ถูกคลัสเตอร์เก่าในอดีตกดทับ ทำให้ `liveCalculatedBottomBound` (Real S/R Floor) ขยับลงมาสะท้อนจุดต่ำสุดแท้จริง
+         3. **Strict Touch Badge Rendering (`public/app.js`)**:
+            - ปรับปรุงตัวกรอง `supTouchPoints` และ `resTouchPoints` ให้แสดงป้าย `🎯 Nx` เฉพาะจุดที่ราคาแตะเส้น `bottomBound` / `upperBound` / `liveCalculatedBottomBound` / `liveCalculatedUpperBound` ภายในระยะ `<= 0.10%` เท่านั้น กำจัดบั๊กป้ายลอยอยู่กลางอากาศได้อย่างสมบูรณ์
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

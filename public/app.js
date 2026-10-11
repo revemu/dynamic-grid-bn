@@ -1882,8 +1882,9 @@
       const resTouchPoints = (activeResCluster && Array.isArray(activeResCluster.points))
         ? activeResCluster.points.filter((p) => {
             if (!p || typeof p.price !== "number") return false;
-            const matchesUpper = data.upperBound && Math.abs(p.price - data.upperBound) / data.upperBound <= 0.0025;
-            const matchesLive = data.liveCalculatedUpperBound && Math.abs(p.price - data.liveCalculatedUpperBound) / data.liveCalculatedUpperBound <= 0.0025;
+            // Only mark genuine touches: point must be within 0.10% of the actual bound line
+            const matchesUpper = data.upperBound && Math.abs(p.price - data.upperBound) / data.upperBound <= 0.001;
+            const matchesLive = data.liveCalculatedUpperBound && Math.abs(p.price - data.liveCalculatedUpperBound) / data.liveCalculatedUpperBound <= 0.001;
             return matchesUpper || matchesLive;
           })
         : [];
@@ -1891,8 +1892,9 @@
       const supTouchPoints = (activeSupCluster && Array.isArray(activeSupCluster.points))
         ? activeSupCluster.points.filter((p) => {
             if (!p || typeof p.price !== "number") return false;
-            const matchesBottom = data.bottomBound && Math.abs(p.price - data.bottomBound) / data.bottomBound <= 0.0025;
-            const matchesLive = data.liveCalculatedBottomBound && Math.abs(p.price - data.liveCalculatedBottomBound) / data.liveCalculatedBottomBound <= 0.0025;
+            // Only mark genuine touches: point must be within 0.10% of the actual bound line
+            const matchesBottom = data.bottomBound && Math.abs(p.price - data.bottomBound) / data.bottomBound <= 0.001;
+            const matchesLive = data.liveCalculatedBottomBound && Math.abs(p.price - data.liveCalculatedBottomBound) / data.liveCalculatedBottomBound <= 0.001;
             return matchesBottom || matchesLive;
           })
         : [];

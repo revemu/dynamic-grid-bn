@@ -473,9 +473,11 @@ export class DowStructureEngine {
             : Math.min(...distinct.map((p) => p.price));
 
           // Strict Touch Verification:
-          // Only points that genuinely touch cPrice within tight tolerance (<= 0.20%) count as touches of this line!
+          // Only points that genuinely touch cPrice within tight tolerance (<= 0.10%) count as touches of this line!
           // Outlier spikes that overshot/undershot the line are excluded from touching this level.
-          const lineTouchTol = Math.min(tol, 0.002);
+          // Use 0.001 (0.10%) — tighter than the grouping tolerance (tol) — so floating swings above/below the
+          // cluster line cannot masquerade as genuine S/R touches.
+          const lineTouchTol = Math.min(tol, 0.001);
           const touchingPts = distinct.filter(
             (p) => Math.abs(p.price - cPrice) / cPrice <= lineTouchTol,
           );
@@ -674,9 +676,22 @@ export class DowStructureEngine {
           // 6. Prefer pairs where support matches the current active wave base/valley
           const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 2000 : 0;
 
-          // 7. Absolute Structural Swing Stability:
+          // 7. LL (Lower Low) Structural Priority Bonus:
+          // When the current wave cycle's confirmed swing minimum (LL) is a fresh new low below all prior lows,
+          // it is the TRUE structural floor and must take priority over older multi-touch clusters sitting above it.
+          // Without this, a 3x cluster at $2509.56 (old level) can outscore a fresh LL at $2503.28 (true floor)
+          // purely because of its accumulated touch count history.
+          const cycleLowMin = recentCanonicalLows.length > 0
+            ? Math.min(...recentCanonicalLows.map((l) => l.price))
+            : undefined;
+          const isStructuralCycleLow = cycleLowMin !== undefined && Math.abs(s.price - cycleLowMin) / cycleLowMin <= tol;
+          // Only award the bonus when this candidate IS the cycle minimum AND it hasn't accumulated multi-touch yet
+          // (i.e., it's a fresh LL that doesn't need old-history touch count to prove structural importance)
+          const structuralLlBonus = isStructuralCycleLow && s.touchCount < 2 ? 3000 : 0;
+
+          // 8. Absolute Structural Swing Stability:
           // Strictly anchor to confirmed peaks & valleys. Zero tick price penalties/bonuses!
-          score = 10000 + touchBonus + anchorBonus + spanTargetBonus + waveHighBonus + waveLowBonus + currentBaseBonus - ancientLowPenalty;
+          score = 10000 + touchBonus + anchorBonus + spanTargetBonus + waveHighBonus + waveLowBonus + currentBaseBonus + structuralLlBonus - ancientLowPenalty;
         } else if (widthPct < effectiveTradeableMinSpan) {
           // Narrow structural pair: Score by touches, active wave alignment, and proximity to tradeable span
           const touchBonus = (r.touchCount >= 2 ? 1500 : 0) + (s.touchCount >= 2 ? 1500 : 0);
