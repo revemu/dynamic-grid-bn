@@ -168,7 +168,7 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
             - `loadSettings()`: ดึงค่าจาก Database มาตั้งสถานะ Checkbox ทั้ง 8 ตัว
             - `saveSettings()`: อ่านค่า Checkbox ส่งบันทึกผ่าน API `/api/db/settings`
             - updateZoneLevelBars(): ซิงค์สถานะ Disabled กับ Grid Ladder Meter แบบ Real-time
-             - `gridZoneLevelLines`: ซิงค์สีเส้นระดับบนชาร์ต TradingView โดยหาก Level ถูกปิด (Disabled) จะแสดงเป็นเส้นประสีเทาจาง `rgba(148, 163, 184, 0.30)` พร้อมป้าย `(Off)`
+             - `gridZoneLevelLines`: ซิงค์สีเส้นระดับบนชาร์ต TradingView โดยหาก Level ถูกปิด (Disabled) จะแสดงเป็นเส้นประสีเทาจางล้วน `rgba(148, 163, 184, 0.25)` โดยซ่อนป้ายราคาและข้อความ (`axisLabelVisible: false, title: ""`) ให้เห็นเฉพาะเส้นแนวนอนสีเทา
      - **DreamDEX On-Chain Gas Tracking & Buy Fill Gas Compensation (ระบบชดเชยค่าแก๊สอัตโนมัติป้องกันยอด SOMI ร่อยหรอ)**:
        - **ปัญหาเดิม**:
          - ใน `src/strategy.ts` เมธอด `trackTxGas` เดิมเป็น empty stub (`return;`) และตัวแปรสะสมแก๊ส `accumulatedGasBase` เคยอัปเดตเฉพาะในโหมด `dryRun` เท่านั้น ทำให้ใน Live Trading ค่าแก๊สที่จ่ายจริงไม่ถูกบันทึก
