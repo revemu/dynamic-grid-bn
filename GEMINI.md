@@ -196,6 +196,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
             - เพิ่ม `structuralLlBonus (+3000)` ให้กับผู้สมัครแนวรับที่เป็นจุดต่ำสุดจริงของรอบคลื่นปัจจุบัน (`recentCanonicalLows`) เพื่อให้จุดเหว LL ใหม่ของรอบไม่ถูกคลัสเตอร์เก่าในอดีตกดทับ ทำให้ `liveCalculatedBottomBound` (Real S/R Floor) ขยับลงมาสะท้อนจุดต่ำสุดแท้จริง
          3. **Strict Touch Badge Rendering (`public/app.js`)**:
             - ปรับปรุงตัวกรอง `supTouchPoints` และ `resTouchPoints` ให้แสดงป้าย `🎯 Nx` เฉพาะจุดที่ราคาแตะเส้น `bottomBound` / `upperBound` / `liveCalculatedBottomBound` / `liveCalculatedUpperBound` ภายในระยะ `<= 0.10%` เท่านั้น กำจัดบั๊กป้ายลอยอยู่กลางอากาศได้อย่างสมบูรณ์
+     - **Active Wave Anchoring & Zero Floating/Synthesized S/R Bounds**:
+       - **ปัญหาเดิม**:
+         - `supCandidates` ใน `findMultiTouchSR` เคยดึง `this.swingLows` ทั้งหมดในประวัติศาสตร์ย้อนหลัง ทำให้เหวเก่าโบราณจากหลายวันก่อน (เช่น $2488.40) หลุดเข้ามาเป็น Support Candidate และถูกจับคู่เป็น Floor
+         - เมื่อ Floor หลุดไปที่ $2488.40 บล็อก Clamping ใน `calculateChannelBounds` พยายามรักษาความกว้างกรอบ จึงคำนวณ `upperBound = bottomBound + maxSpanFromPct` ทำให้ Ceiling ลอยขึ้นไปที่ $2538.68 ซึ่งเป็นจุดที่เกิดจากการบวกเลขลอยๆ ไม่มีแท่งเทียนหรือยอดสวิงจริง
+       - **การแก้ไขในระบบ**:
+         1. **Strict Active Wave Swings Only (`src/market-structure.ts`)**:
+            - ใน `findMultiTouchSR`: `supCandidates` ถูกจำกัดให้ดึงเฉพาะ `valleyPoints` (สวิงเหวที่เป็น canonical lows ในรอบคลื่นปัจจุบัน) ป้องกันเหวโบราณนอกรอบคลื่นไม่ให้หลุดเข้ามาเป็น Floor อีกต่อไป
+         2. **Zero Synthesized Clamping / Strict Swing Snapping (`src/market-structure.ts`)**:
+            - ใน `calculateChannelBounds`: ยกเลิกการคำนวณบวกเปอร์เซ็นต์ลอยๆ (`bottomBound + maxSpanFromPct`) หากกรอบกว้างเกินหรือต้องการปรับลดเพดาน/พื้น ระบบจะ Snap ล็อคเกาะกับยอดสวิง Peak จริง (`activePeak` / `recentCanonicalHighs` เช่น HH $2528.96 หรือ LH $2516.02) และเหวจริง (`activeValley` / `recentCanonicalLows` เช่น LL $2503.28) เท่านั้น 100%
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

@@ -590,6 +590,7 @@ export class DowStructureEngine {
     resCandidates.sort((a, b) => a.price - b.price);
 
     // 2. Confirmed Support Candidates (sorted descending by price)
+    // Strictly restricted to valleyPoints (active cycle canonical lows) to prevent ancient historical lows (e.g. $2488) from hijacking the channel floor!
     const supCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
     for (const c of validSupClusters.filter((c) => c.price >= minSupPrice)) {
       supCandidates.push(c);
@@ -602,7 +603,7 @@ export class DowStructureEngine {
         supCandidates.push(c);
       }
     }
-    for (const l of this.swingLows.filter((s) => s.price >= minSupPrice)) {
+    for (const l of valleyPoints.filter((s) => s.price >= minSupPrice)) {
       if (supCandidates.some((s) => s.points.some((pt) => pt.index === l.index || pt.time === l.time))) {
         continue;
       }
@@ -612,11 +613,11 @@ export class DowStructureEngine {
     }
     // Always ensure activeWaveLow / activeValley is represented in supCandidates
     if (activeWaveLow && !supCandidates.some((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow < 0.001)) {
-      const matchLow = this.swingLows.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow < 0.001);
+      const matchLow = valleyPoints.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow < 0.001) ?? this.swingLows.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow < 0.001);
       supCandidates.push(matchLow ? { price: matchLow.price, touchCount: 1, points: [matchLow] } : { price: activeWaveLow, touchCount: 1, points: [] });
     }
-    if (supCandidates.length === 0 && this.swingLows.length > 0) {
-      const lastL = this.swingLows[this.swingLows.length - 1]!;
+    if (supCandidates.length === 0 && valleyPoints.length > 0) {
+      const lastL = valleyPoints[valleyPoints.length - 1]!;
       supCandidates.push({ price: lastL.price, touchCount: 1, points: [lastL] });
     }
     // Strictly sort support candidates descending by price
@@ -1728,7 +1729,8 @@ export class DowStructureEngine {
           ? activeCeilingPoint.price
           : (activePeak && activePeak.price > price)
             ? activePeak.price
-            : this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
+            : (recentCanonicalHighs.length > 0 ? Math.max(...recentCanonicalHighs.map((h) => h.price)) : undefined) ??
+              this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
         upperBound = (peakCeil !== undefined && peakCeil > bottomBound)
           ? peakCeil
           : Math.max(price * (1 + minPct / 2), bottomBound + minSpan);
@@ -1736,7 +1738,7 @@ export class DowStructureEngine {
         upperBound = srResult.resistance.price;
         foundCeiling = true;
         // If no multi-touch support below price, check recent confirmed swing low first (Higher Low / local base), fallback to active wave valley or nearest valid swing low
-        const recentLowsBelowPrice = this.swingLows.filter((l) => l.price < Math.min(price * 0.999, upperBound * 0.999)).sort((a, b) => b.price - a.price);
+        const recentLowsBelowPrice = (canonicalLows.length > 0 ? canonicalLows : this.swingLows).filter((l) => l.price < Math.min(price * 0.999, upperBound * 0.999)).sort((a, b) => b.price - a.price);
         const recentConfirmedLow = recentLowsBelowPrice.length > 0 ? recentLowsBelowPrice[0]?.price : undefined;
         const lowestWaveValley = (activeValley && activeValley.price < upperBound) ? activeValley.price : recentConfirmedLow;
         bottomBound = lowestWaveValley ?? (recentConfirmedLow ?? Math.min(price * (1 - minPct / 2), upperBound - minSpan));
@@ -1782,8 +1784,10 @@ export class DowStructureEngine {
               upperBound = validHighs[0]!.price;
               clampStatus = "NATURAL_SWING";
             } else {
-              upperBound = bottomBound + maxSpanFromPct;
-              clampStatus = "CLAMPED_MAX";
+              // Strictly snap to the highest confirmed swing peak of the active wave
+              const nearestPeak = activePeak?.price ?? (recentCanonicalHighs.length > 0 ? Math.max(...recentCanonicalHighs.map((h) => h.price)) : undefined);
+              upperBound = (nearestPeak !== undefined && nearestPeak > bottomBound) ? nearestPeak : (bottomBound + maxSpanFromPct);
+              clampStatus = nearestPeak !== undefined ? "NATURAL_SWING" : "CLAMPED_MAX";
             }
           } else {
             // In Uptrend: Lift floor up to the lowest confirmed Higher Low within maxSpanFromPct!
@@ -1795,8 +1799,10 @@ export class DowStructureEngine {
               bottomBound = validLows[0]!.price;
               clampStatus = "NATURAL_SWING";
             } else {
-              bottomBound = upperBound - maxSpanFromPct;
-              clampStatus = "CLAMPED_MAX";
+              // Strictly snap to active wave valley
+              const nearestValley = activeValley?.price ?? (recentCanonicalLows.length > 0 ? Math.min(...recentCanonicalLows.map((l) => l.price)) : undefined);
+              bottomBound = (nearestValley !== undefined && nearestValley < upperBound) ? nearestValley : (upperBound - maxSpanFromPct);
+              clampStatus = nearestValley !== undefined ? "NATURAL_SWING" : "CLAMPED_MAX";
             }
           }
         } else {
