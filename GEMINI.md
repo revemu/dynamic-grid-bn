@@ -236,6 +236,16 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                 - ใน `sellAllUser()`: เพิ่มการเรียก `await this.cancelAllOrdersUser();` และ `await this.refreshWalletBalances();` ตั้งแต่เริ่มต้น เพื่อยกเลิกออเดอร์ตั้งขายที่ค้างอยู่บนกระดานทั้งหมดและปลดล็อคยอดเหรียญ Base กลับเข้า Free Balance ก่อนทำการคำนวณยอดที่จะขาย
                 - เพิ่ม Fallback ให้ดึง `held = availableBase` หากยอดใน Position Memory ต่ำกว่า `minQty` แต่ใน Wallet มีเหรียญจริงพร้อมเทรด ทำให้การกด Sell All สำเร็จ 100% เสมอ
 
+            8. **Complete Elimination of Multi-Touch S/R Clustering & True Pure Dow Wave Bounds (`src/market-structure.ts`)**:
+               - **สาเหตุ & ปัญหาเดิม**:
+                 - ระบบเคยมีตรรกะค้นหาจุดสัมผัสซ้ำหลายครั้ง (`findMultiTouchSR`) ซึ่งหากมีสวิงย่อยชนระดับราคาซ้ำกัน 2 ครั้ง (เช่น เหวย่อย $2504.83 สัมผัส 2x) ระบบจะเลือกคู่นั้นมาเป็น Floor/Ceiling ทันที แม้จะกว้างเพียง **0.38%** ทำให้กรอบแคบเกินไปและละเลยยอดหลัก HH ($2524.59) หรือเหวหลัก LL ($2501.75) ของคลื่น
+               - **การแก้ไขในระบบ**:
+                 - ยกเลิกการใช้ Multi-touch Clusters ในการกำหนดกรอบราคา 100%
+                 - ปรับ `MULTI_TOUCH_SR` ให้กำหนดกรอบจากโครงสร้าง **Pure Dow Theory Active Wave Swings** เสมอ:
+                   - **Upper Bound (กรอบบน)**: ยึดจุดยอดสูงสุดของรอบคลื่นปัจจุบัน (`activePeak` เช่น New HH หรือ LH ล่าสุด)
+                   - **Bottom Bound (กรอบล่าง)**: ยึดจุดเหวต่ำสุดของรอบคลื่นปัจจุบัน (`activeValley` เช่น LL ต่ำสุดของรอบคลื่น)
+                 - เปิดใช้งาน Dow Theory Overrides (HH protection, LH adaptation, LL floor drop) ในทุกโหมด ทำให้กรอบสะท้อนคลื่นสวิงจริงตามธรรมชาติเสมอ ไม่ถูกบีบด้วยคลัสเตอร์ย่อยอีกต่อไป
+
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

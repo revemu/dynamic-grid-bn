@@ -1718,145 +1718,52 @@ export class DowStructureEngine {
 
     // ── 4. Calculate Final Bounds by Selected Channel Mode ────────────────────
     if (mode === "MULTI_TOUCH_SR") {
-      let foundFloor = false;
-      let foundCeiling = false;
+      // 🔒 Pure Dow Theory Active Wave Swing Bounds (ยกเลิกการหาจุดสัมผัสหลายจุด Multi-touch)
+      // กรอบบน = ยอดสูงสุดของรอบคลื่นปัจจุบัน (activePeak เช่น HH หรือ LH)
+      // กรอบล่าง = เหวต่ำสุดของรอบคลื่นปัจจุบัน (activeValley เช่น LL)
+      const lowestWaveValley = activeValley?.price
+        ?? (activeCycleLows.length > 0 ? Math.min(...activeCycleLows.map((l) => l.price)) : undefined)
+        ?? (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1]?.price : undefined)
+        ?? (this.swingLows.length > 0 ? this.swingLows[this.swingLows.length - 1]?.price : undefined);
 
-      if (srResult.support && srResult.resistance) {
-        bottomBound = srResult.support.price;
-        upperBound = srResult.resistance.price;
-        foundFloor = true;
-        foundCeiling = true;
-      } else if (srResult.support && !srResult.resistance) {
-        bottomBound = srResult.support.price;
-        foundFloor = true;
-        const peakCeil = (activeCeilingPoint && activeCeilingPoint.price > bottomBound)
-          ? activeCeilingPoint.price
-          : (activePeak && activePeak.price > bottomBound)
-            ? activePeak.price
-            : (activeCycleHighs.length > 0 ? Math.max(...activeCycleHighs.map((h) => h.price)) : undefined) ??
-              this.swingHighs.filter((s) => s.price > bottomBound * 1.001).pop()?.price;
-        upperBound = (peakCeil !== undefined && peakCeil > bottomBound)
-          ? peakCeil
-          : bottomBound + minSpan;
-      } else if (!srResult.support && srResult.resistance) {
-        upperBound = srResult.resistance.price;
-        foundCeiling = true;
-        // If no multi-touch support below price, check recent confirmed swing low first (Higher Low / local base), fallback to active wave valley or nearest valid swing low
-        const recentLowsBelowCeil = (activeCycleLows.length > 0 ? activeCycleLows : (canonicalLows.length > 0 ? canonicalLows : this.swingLows))
-          .filter((l) => l.price < upperBound * 0.999)
-          .sort((a, b) => b.price - a.price);
-        const recentConfirmedLow = recentLowsBelowCeil.length > 0 ? recentLowsBelowCeil[0]?.price : undefined;
-        const lowestWaveValley = (activeValley && activeValley.price < upperBound) ? activeValley.price : recentConfirmedLow;
-        bottomBound = lowestWaveValley ?? (recentConfirmedLow ?? upperBound - minSpan);
-        foundFloor = lowestWaveValley !== undefined || recentConfirmedLow !== undefined;
-      } else {
-        // Neither side has multi-touch: strictly anchor to confirmed active wave swings
-        const recentLowsBelowCeil = (activeCycleLows.length > 0 ? activeCycleLows : this.swingLows)
-          .filter((l) => l.price < price * 0.999);
-        const recentConfirmedLow = recentLowsBelowCeil.length > 0 ? recentLowsBelowCeil[recentLowsBelowCeil.length - 1]?.price : undefined;
-        const lowestWaveValley = activeValley?.price ?? recentConfirmedLow;
-        const highestWavePeak = activeCeilingPoint?.price
-          ?? activePeak?.price
-          ?? (activeCycleHighs.length > 0 ? Math.max(...activeCycleHighs.map((h) => h.price)) : undefined)
-          ?? this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
-        bottomBound = lowestWaveValley ?? price * (1 - minPct / 2);
-        upperBound = highestWavePeak ?? price * (1 + minPct / 2);
-        foundFloor = lowestWaveValley !== undefined;
-        foundCeiling = highestWavePeak !== undefined;
-      }
+      const highestWavePeak = activeCeilingPoint?.price
+        ?? activePeak?.price
+        ?? (activeCycleHighs.length > 0 ? Math.max(...activeCycleHighs.map((h) => h.price)) : undefined)
+        ?? (canonicalHighs.length > 0 ? canonicalHighs[canonicalHighs.length - 1]?.price : undefined)
+        ?? (this.swingHighs.length > 0 ? this.swingHighs[this.swingHighs.length - 1]?.price : undefined);
+
+      bottomBound = lowestWaveValley ?? price * (1 - minPct / 2);
+      upperBound = highestWavePeak ?? price * (1 + minPct / 2);
 
       isSwingConfirmed = true;
+      clampStatus = "NATURAL_SWING";
+      anchorSide = "NONE";
 
-      // Handle channel clamping:
-      const minSpanFromPct = price * minPct;
+      // Enforce max channel width if natural wave swing is unusually wide
       const maxSpanFromPct = price * maxPct;
-
-      if (srResult.support && srResult.resistance) {
-        // 🔒 BOTH bounds are confirmed structural touch levels fitting [minPct, maxPct]!
-        // Lock 100% onto the structural touch levels without artificial dilation.
-        bottomBound = srResult.support.price;
-        upperBound = srResult.resistance.price;
-
-        // 🔒 Enforce MAX CHANNEL WIDTH (maxSpanFromPct):
-        // If the multi-touch span exceeds maxSpanFromPct (e.g. 8.24% > 6.0%):
-        if (upperBound - bottomBound > maxSpanFromPct) {
-          const isDowntrendWave = waveCycle.currentLeg?.direction === "DOWN" || Boolean(waveCycle.lastLh) || (lastCanonicalHigh && lastCanonicalHigh.dowLabel === "LH") || price < (bottomBound + upperBound) / 2;
-          if (isDowntrendWave) {
-            const validHighs = (activeCycleHighs.length > 0 ? activeCycleHighs : canonicalHighs)
-              .filter((h) => h.price > price && h.price - bottomBound >= minSpanFromPct && h.price - bottomBound <= maxSpanFromPct)
-              .sort((a, b) => b.price - a.price);
-
-            if (validHighs.length > 0) {
-              upperBound = validHighs[0]!.price;
-              clampStatus = "NATURAL_SWING";
-            } else {
-              // Strictly snap to the highest confirmed swing peak of the active wave
-              const nearestPeak = activePeak?.price ?? (activeCycleHighs.length > 0 ? Math.max(...activeCycleHighs.map((h) => h.price)) : undefined);
-              upperBound = (nearestPeak !== undefined && nearestPeak > bottomBound) ? nearestPeak : (bottomBound + maxSpanFromPct);
-              clampStatus = nearestPeak !== undefined ? "NATURAL_SWING" : "CLAMPED_MAX";
-            }
+      const minSpanFromPct = price * minPct;
+      if (upperBound - bottomBound > maxSpanFromPct) {
+        const isDowntrendWave = waveCycle.currentLeg?.direction === "DOWN" || Boolean(waveCycle.lastLh) || (lastCanonicalHigh && lastCanonicalHigh.dowLabel === "LH") || price < (bottomBound + upperBound) / 2;
+        if (isDowntrendWave) {
+          const validHighs = (activeCycleHighs.length > 0 ? activeCycleHighs : canonicalHighs)
+            .filter((h) => h.price > price && h.price - bottomBound >= minSpanFromPct && h.price - bottomBound <= maxSpanFromPct)
+            .sort((a, b) => b.price - a.price);
+          if (validHighs.length > 0) {
+            upperBound = validHighs[0]!.price;
           } else {
-            // In Uptrend: Lift floor up to the lowest confirmed Higher Low within maxSpanFromPct!
-            const validLows = canonicalLows
-              .filter((l) => l.price < price && upperBound - l.price >= minSpanFromPct && upperBound - l.price <= maxSpanFromPct)
-              .sort((a, b) => a.price - b.price);
-
-            if (validLows.length > 0) {
-              bottomBound = validLows[0]!.price;
-              clampStatus = "NATURAL_SWING";
-            } else {
-              // Strictly snap to active wave valley
-              const nearestValley = activeValley?.price ?? (activeCycleLows.length > 0 ? Math.min(...activeCycleLows.map((l) => l.price)) : undefined);
-              bottomBound = (nearestValley !== undefined && nearestValley < upperBound) ? nearestValley : (upperBound - maxSpanFromPct);
-              clampStatus = nearestValley !== undefined ? "NATURAL_SWING" : "CLAMPED_MAX";
-            }
+            upperBound = bottomBound + maxSpanFromPct;
           }
         } else {
-          clampStatus = "NATURAL_SWING";
-          anchorSide = "NONE";
-        }
-      } else if (srResult.resistance && !srResult.support) {
-        // 🔒 Resistance is confirmed! Ceiling strictly locked to resistance peaks.
-        upperBound = srResult.resistance.price;
-        if (upperBound - bottomBound > maxSpanFromPct) {
-          bottomBound = upperBound - maxSpanFromPct;
-          clampStatus = "CLAMPED_MAX";
-        } else {
-          clampStatus = "NATURAL_SWING";
-        }
-        anchorSide = "UPPER_CEILING";
-      } else if (!srResult.resistance && srResult.support) {
-        // 🔒 Support is confirmed! Floor strictly locked to support valleys.
-        bottomBound = srResult.support.price;
-        if (upperBound - bottomBound > maxSpanFromPct) {
-          upperBound = bottomBound + maxSpanFromPct;
-          clampStatus = "CLAMPED_MAX";
-        } else {
-          clampStatus = "NATURAL_SWING";
-        }
-        anchorSide = "LOWER_FLOOR";
-      } else {
-        // Neither side has multi-touch: keep bounds locked to genuine structural swings without dilation
-        if (foundFloor && foundCeiling) {
-          if (upperBound - bottomBound > maxSpanFromPct) {
-            const isDowntrendWave = waveCycle.currentLeg?.direction === "DOWN" || Boolean(waveCycle.lastLh) || (lastCanonicalHigh && lastCanonicalHigh.dowLabel === "LH") || price < (bottomBound + upperBound) / 2;
-            if (isDowntrendWave) {
-              upperBound = bottomBound + maxSpanFromPct;
-            } else {
-              bottomBound = upperBound - maxSpanFromPct;
-            }
-            clampStatus = "CLAMPED_MAX";
+          const validLows = canonicalLows
+            .filter((l) => l.price < price && upperBound - l.price >= minSpanFromPct && upperBound - l.price <= maxSpanFromPct)
+            .sort((a, b) => a.price - b.price);
+          if (validLows.length > 0) {
+            bottomBound = validLows[0]!.price;
           } else {
-            clampStatus = "NATURAL_SWING";
-            anchorSide = "NONE";
+            bottomBound = upperBound - maxSpanFromPct;
           }
-        } else if (foundFloor && !foundCeiling) {
-          clampStatus = "NATURAL_SWING";
-          anchorSide = "LOWER_FLOOR";
-        } else if (!foundFloor && foundCeiling) {
-          clampStatus = "NATURAL_SWING";
-          anchorSide = "UPPER_CEILING";
         }
+        clampStatus = "CLAMPED_MAX";
       }
 
       rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
@@ -2013,9 +1920,8 @@ export class DowStructureEngine {
       }
     }
 
-    // 🔒 Dow Theory overrides for DOW_ATR_CLAMP / FIXED_PCT_CLAMP modes only.
-    // In MULTI_TOUCH_SR mode, boundaries are strictly and cleanly determined by structural clusters above.
-    if (mode !== "MULTI_TOUCH_SR") {
+    // 🔒 Dow Theory overrides: Ensure Ceiling snaps to HH and steps down on confirmed LH
+    if (true) {
       const macroPeak = canonicalHighs.length > 0
         ? canonicalHighs.reduce((max, h) => (!max || h.price > max.price ? h : max), canonicalHighs[0]!)
         : undefined;
