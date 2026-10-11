@@ -1742,28 +1742,33 @@
           }
         }
 
+        const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true];
+        const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true];
+
         let lineIdx = 0;
-        // Buy Levels (40%, 30%, 20%, 10%) - Dotted sky blue / cyan lines
-        buyLevels.forEach((lvl) => {
+        // Buy Levels (40%, 30%, 20%, 10%) - Dotted sky blue / cyan lines, or muted gray if disabled
+        buyLevels.forEach((lvl, bIdx) => {
           if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
+            const isEnabled = enabledBuys[bIdx] !== false;
             gridZoneLevelLines[lineIdx].applyOptions({
               price: lvl,
-              color: "rgba(56, 189, 248, 0.70)",
+              color: isEnabled ? "rgba(56, 189, 248, 0.70)" : "rgba(148, 163, 184, 0.30)",
               axisLabelVisible: true,
-              title: "",
+              title: isEnabled ? "" : " (Off)",
             });
             lineIdx++;
           }
         });
 
-        // Sell Levels (60%, 70%, 80%, 90%) - Dotted orange lines
-        sellLevels.forEach((lvl) => {
+        // Sell Levels (60%, 70%, 80%, 90%) - Dotted orange lines, or muted gray if disabled
+        sellLevels.forEach((lvl, sIdx) => {
           if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
+            const isEnabled = enabledSells[sIdx] !== false;
             gridZoneLevelLines[lineIdx].applyOptions({
               price: lvl,
-              color: "rgba(249, 115, 22, 0.50)",
+              color: isEnabled ? "rgba(249, 115, 22, 0.50)" : "rgba(148, 163, 184, 0.30)",
               axisLabelVisible: true,
-              title: "",
+              title: isEnabled ? "" : " (Off)",
             });
             lineIdx++;
           }
