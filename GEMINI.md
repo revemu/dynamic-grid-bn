@@ -761,6 +761,25 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     3. **Active Cycle Extremes Preservation (No `slice(-4)` Major Peak/Valley Truncation)**:
        - **ปัญหาเดิม**: การใช้ `slice(-4)` ทำให้เมื่อมีคลื่นย่อยเกิดขึ้นเกิน 4 ครั้ง ยอดหลัก **HH บนสุด** จะหลุดหายไปจากตัวเลือก และระบบไปคว้ายอด Lower High เตี้ยๆ ในคลื่นย่อย ($2518.06) และเหวย่อย ($2504.83) ทำให้กรอบหดแคบเหลือเพียง 0.53%
        - **การแก้ไข**: ขอบเขตของรอบคลื่นปัจจุบัน (`activeCycleHighs` และ `activeCycleLows`) จะถูกนิยามครอบคลุมตั้งแต่ `macroPeak` เป็นต้นมาอย่างสมบูรณ์ ทำให้ `activePeak` และ `cycleHighMax` ล็อคยอดสูงสุดของรอบคลื่น (**Major HH $2524.59 / $2528.96**) และ `activeValley` และ `cycleLowMin` ล็อคเหวต่ำสุดของรอบคลื่น (**Major LL $2501.75**) เสมอ ไม่ถูกยอดเตี้ยของสวิงย่อยบีบกรอบอีกต่อไป
+- **DOW_SWINGS Mode: Progressive Nearest-Swing Expansion & Absolute Min-Width Guarantee**:
+  - **ความต้องการ & หลักการของผู้ใช้**:
+    - "ไม่ต้องยึด major swing ขนาดนั้น ให้ยึดจากราคาปัจจุบัน และ เหว ยอดที่อยู่ใกล้ๆ ให้ได้ความกว้างอย่างต่ำที่ min chan ไม่ได้ก็ขยับไปเรื่อยๆ"
+    - "เอา multitouch ออกไปเลย"
+  - **ปัญหาเดิม**:
+    1. ตัวเลือกหน้า UI (`index.html`) และ default config ยังคงเป็น `MULTI_TOUCH_SR` พร้อมช่องกรอก *S/R Min Touches*
+    2. ในลูปขยายสวิง เมื่อประวัติสวิงใกล้ราคาหมดลิสต์ในอาร์เรย์ (`hIdx + 1` และ `lIdx + 1` สุดทาง) ลูปจะหยุด และไม่มีกลไกเติมส่วนต่าง (Shortfall Buffer) ทำให้กรอบติดอยู่ที่ระยะ $9.41 (0.38%) โดยเพิกเฉยต่อ `minChannelWidthPct` (2.0% - 3.0%)
+  - **การแก้ไข**:
+    1. **Elimination of Multi-Touch S/R**:
+       - เปลี่ยนค่าเริ่มต้น `channelMode` ใน `src/config.ts` เป็น `"DOW_SWINGS"`
+       - อัปเดต `public/index.html` ให้ `DOW_SWINGS` เป็นตัวเลือกหลักใน Dropdown และซ่อนช่องกรอก S/R Min Touches / Tolerance
+       - ใน `src/market-structure.ts`: ไม่เรียก `findMultiTouchSR` ในโหมด `DOW_SWINGS`
+    2. **Progressive Nearest-Swing Expansion**:
+       - รวม Swing Highs เหนือราคาปัจจุบัน (`this.swingHighs` + `canonicalHighs`) เรียงจากน้อยไปมาก (ใกล้ราคาขึ้นไป)
+       - รวม Swing Lows ใต้ราคาปัจจุบัน (`this.swingLows` + `canonicalLows`) เรียงจากมากไปน้อย (ใกล้ราคาลงไป)
+       - เริ่มต้นจากคู่สวิงที่ใกล้ราคาปัจจุบันที่สุด แล้วค่อยๆ สเต็ปขยายออกไปหายอด/เหวถัดไปทีละขั้นจนกว่า `upperBound - bottomBound >= minSpanFromPct`
+    3. **Absolute Minimum Channel Width Guarantee (`minSpan`)**:
+       - หากตรวจสวิงจนสุดประวัติแล้วระยะห่างยังไม่ถึง `minSpanFromPct` (เช่น กราฟไซด์เวย์นิ่งสนิท) หรือหลังการปรับปรุงสวิงใดๆ ความกว้างยังต่ำกว่า `minSpan`:
+       - ระบบจะคำนวณ `shortfall = minSpan - (upperBound - bottomBound)` และขยายกรอบบนขึ้น `+ shortfall / 2` และกรอบล่างลง `- shortfall / 2` แบบสมดุลทันที การันตีว่าความกว้างจะไม่มีทางแคบกว่า `minChannelWidthPct` (เช่น 2.0% หรือ 3.0%) 100%
 
 ---
 

@@ -160,15 +160,15 @@ export const defaultStrategyConfig = {
   // ── Support & Resistance Channel Calculation Mode ────────────────────────
   /**
    * Channel boundary calculation mode:
-   * 1. "DOW_ATR_CLAMP": Dow Theory Swings with dynamic ATR min/max width clamping & true wick support.
-   * 2. "FIXED_PCT_CLAMP": Dow Theory Swings clamped to fixed min/max percentage width.
-   * 3. "DONCHIAN_ATR": Adaptive Donchian Channel (Highest High & Lowest Low of lookback bars) + ATR buffer.
-   * 4. "MULTI_TOUCH_SR" (Default): Horizontal Support & Resistance levels where price was rejected >= 2 times.
+   * 1. "DOW_SWINGS" (Default): Pure Dow Swings with progressive nearest-swing expansion outward from current price.
+   * 2. "DOW_ATR_CLAMP": Dow Theory Swings with dynamic ATR min/max width clamping & true wick support.
+   * 3. "FIXED_PCT_CLAMP": Dow Theory Swings clamped to fixed min/max percentage width.
+   * 4. "DONCHIAN_ATR": Adaptive Donchian Channel (Highest High & Lowest Low of lookback bars) + ATR buffer.
    */
-  channelMode: "MULTI_TOUCH_SR" as "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "MULTI_TOUCH_SR",
-  /** Min channel width for FIXED_PCT_CLAMP & MULTI_TOUCH_SR (in %, default 2.5%). */
+  channelMode: "DOW_SWINGS" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "MULTI_TOUCH_SR",
+  /** Min channel width for DOW_SWINGS, FIXED_PCT_CLAMP & MULTI_TOUCH_SR (in %, default 2.5%). */
   minChannelWidthPct: 2.5,
-  /** Max channel width for FIXED_PCT_CLAMP & MULTI_TOUCH_SR (in %, default 6.0%). */
+  /** Max channel width for DOW_SWINGS, FIXED_PCT_CLAMP & MULTI_TOUCH_SR (in %, default 6.0%). */
   maxChannelWidthPct: 6.0,
   /** When true, freezes/locks channel bounds while holding inventory position to avoid shifting sell targets. */
   lockChannelInPosition: true,

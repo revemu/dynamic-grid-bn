@@ -761,14 +761,14 @@
                 <span class="help-tip" title="Mode used to determine upper/lower boundaries of the channel">ℹ️</span>
               </label>
               <select id="cfg_channelMode" class="form-select">
+                <option value="DOW_SWINGS" selected>DOW_SWINGS (Nearest Dow Swings Progressive Expansion)</option>
                 <option value="DOW_ATR_CLAMP">DOW_ATR_CLAMP (Dow Swings + Dynamic ATR Clamping)</option>
                 <option value="FIXED_PCT_CLAMP">FIXED_PCT_CLAMP (Fixed Min/Max Channel % Width)</option>
                 <option value="DONCHIAN_ATR">DONCHIAN_ATR (Donchian Highest/Lowest + ATR)</option>
-                <option value="MULTI_TOUCH_SR">MULTI_TOUCH_SR (Horizontal S/R Clusters &ge; 2 Touches)</option>
               </select>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" style="display: none;">
               <label for="cfg_srMinTouchCount">
                 S/R Min Touches (จำนวนครั้งที่ชนขั้นต่ำ)
                 <span class="help-tip" title="จำนวนครั้งขั้นต่ำที่ราคาต้องขึ้นไปชนหรือลงมาทดสอบที่ระดับเดิม เพื่อถือเป็นแนวรับ-แนวต้าน (ค่าแนะนำ: 2 ครั้ง)">ℹ️</span>
@@ -779,7 +779,7 @@
               </div>
             </div>
 
-            <div class="form-group">
+            <div class="form-group" style="display: none;">
               <label for="cfg_srTouchTolerancePct">
                 S/R Touch Tolerance (%)
                 <span class="help-tip" title="เปอร์เซ็นต์ความคลาดเคลื่อนในการจัดกลุ่มจุดยอด/ก้น ให้ถือว่าเป็นแนวรับ-แนวต้านเดียวกัน (ค่าแนะนำ: 0.35%)">ℹ️</span>

@@ -1464,7 +1464,7 @@ export class DowStructureEngine {
     const price = currentPrice ?? fallbackPrice;
     const n = this.candles.length;
     const k = Math.max(2, this.pivotWindow || 3);
-    const mode = options?.mode ?? "DOW_ATR_CLAMP";
+    const mode = options?.mode ?? "DOW_SWINGS";
     const useTrueWick = options?.useTrueWick ?? this.useTrueWick ?? true;
     const wickThreshFraction = options?.wickThresholdPct !== undefined
       ? (options.wickThresholdPct > 1.0 ? options.wickThresholdPct / 100 : options.wickThresholdPct)
@@ -1689,7 +1689,7 @@ export class DowStructureEngine {
     let maxWidthPct: number | undefined;
     let srResult: ReturnType<typeof this.findMultiTouchSR> | undefined;
 
-    // Always run Multi-Touch S/R analysis from the calculated swings
+    // S/R parameters
     const srLookback = options?.srLookbackCandles ?? 300;
     const srMinTouches = options?.srMinTouchCount ?? 2;
     const srTol = options?.srTouchTolerancePct ?? 1.0;
@@ -1698,57 +1698,95 @@ export class DowStructureEngine {
     const minSpan = price * minPct;
     const maxSpan = price * maxPct;
 
-    srResult = this.findMultiTouchSR(
-      price,
-      srLookback,
-      srMinTouches,
-      srTol,
-      options?.minChannelWidthPct ?? 1.8,
-      options?.maxChannelWidthPct ?? 6.0,
-      activeCeilingPoint?.price,
-      activeValley?.price,
-      isLatestHighLh,
-    );
+    // Only run Multi-Touch S/R if explicitly requested in legacy MULTI_TOUCH_SR mode
+    if (mode === "MULTI_TOUCH_SR") {
+      srResult = this.findMultiTouchSR(
+        price,
+        srLookback,
+        srMinTouches,
+        srTol,
+        options?.minChannelWidthPct ?? 1.8,
+        options?.maxChannelWidthPct ?? 6.0,
+        activeCeilingPoint?.price,
+        activeValley?.price,
+        isLatestHighLh,
+      );
+    }
 
     // ── 4. Calculate Final Bounds by Selected Channel Mode ────────────────────
     if (mode === "MULTI_TOUCH_SR" || mode === "DOW_SWINGS") {
-      // 🔒 Pure Dow Theory Active Wave Swing Bounds (ยกเลิกการหาจุดสัมผัสหลายจุด Multi-touch 100%)
-      // กรอบบน = ยอดสูงสุดของรอบคลื่นปัจจุบัน (activePeak เช่น Major HH $2524.59)
-      // กรอบล่าง = เหวต่ำสุดของรอบคลื่นปัจจุบัน (activeValley เช่น Major LL $2501.75)
-      const lowestWaveValley = activeValley?.price
-        ?? (activeCycleLows.length > 0 ? Math.min(...activeCycleLows.map((l) => l.price)) : undefined)
-        ?? (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1]?.price : undefined)
-        ?? (this.swingLows.length > 0 ? this.swingLows[this.swingLows.length - 1]?.price : undefined);
+      // 🔒 Pure Dow Theory Active Wave Swing Bounds
+      // "ยึดจากราคาปัจจุบัน และ เหว ยอดที่อยู่ใกล้ๆ ให้ได้ความกว้างอย่างต่ำที่ min chan ไม่ได้ก็ขยับไปเรื่อยๆ"
+      const minSpanFromPct = price * minPct;
+      const maxSpanFromPct = price * maxPct;
 
-      const highestWavePeak = activeCeilingPoint?.price
-        ?? activePeak?.price
-        ?? (activeCycleHighs.length > 0 ? Math.max(...activeCycleHighs.map((h) => h.price)) : undefined)
-        ?? (canonicalHighs.length > 0 ? canonicalHighs[canonicalHighs.length - 1]?.price : undefined)
-        ?? (this.swingHighs.length > 0 ? this.swingHighs[this.swingHighs.length - 1]?.price : undefined);
+      // 1. รวบรวมสวิงยอด (Highs) เหนือราคาปัจจุบัน และ เหว (Lows) ใต้ราคาปัจจุบัน
+      // รวมทั้ง this.swingHighs และ canonicalHighs เพื่อให้ได้จุดสวิงครบทุกจุด
+      const highMap = new Map<number, SwingPoint>();
+      for (const h of [...canonicalHighs, ...this.swingHighs]) {
+        if (h.price > price) highMap.set(h.price, h);
+      }
+      const allHighSwings = Array.from(highMap.values()).sort((a, b) => a.price - b.price); // เรียงจากต่ำไปสูง (ใกล้ราคาขึ้นไป)
 
-      bottomBound = lowestWaveValley ?? price * (1 - minPct / 2);
-      upperBound = highestWavePeak ?? price * (1 + minPct / 2);
+      const lowMap = new Map<number, SwingPoint>();
+      for (const l of [...canonicalLows, ...this.swingLows]) {
+        if (l.price < price) lowMap.set(l.price, l);
+      }
+      const allLowSwings = Array.from(lowMap.values()).sort((a, b) => b.price - a.price); // เรียงจากสูงไปต่ำ (ใกล้ราคาลงไป)
+
+      // เริ่มต้นจากสวิงที่ใกล้ราคาปัจจุบันที่สุด
+      let hIdx = 0;
+      let lIdx = 0;
+      let curCeil = allHighSwings[0]?.price ?? (activePeak && activePeak.price > price ? activePeak.price : price * (1 + minPct / 2));
+      let curFloor = allLowSwings[0]?.price ?? (activeValley && activeValley.price < price ? activeValley.price : price * (1 - minPct / 2));
+
+      // 2. ขยับขยายยอด/เหวออกไปเรื่อยๆ ทีละสเต็ป จนกว่าจะได้ความกว้างอย่างต่ำ >= minSpanFromPct
+      while (curCeil - curFloor < minSpanFromPct && (hIdx + 1 < allHighSwings.length || lIdx + 1 < allLowSwings.length)) {
+        const nextHigh = hIdx + 1 < allHighSwings.length ? allHighSwings[hIdx + 1]!.price : undefined;
+        const nextLow = lIdx + 1 < allLowSwings.length ? allLowSwings[lIdx + 1]!.price : undefined;
+
+        const highDelta = nextHigh !== undefined ? nextHigh - curCeil : Infinity;
+        const lowDelta = nextLow !== undefined ? curFloor - nextLow : Infinity;
+
+        // ขยับฝั่งที่ขยายแล้วเพิ่มความกว้างได้สมดุลหรือใกล้เคียงที่สุด
+        if (highDelta <= lowDelta && nextHigh !== undefined) {
+          hIdx++;
+          curCeil = nextHigh;
+        } else if (nextLow !== undefined) {
+          lIdx++;
+          curFloor = nextLow;
+        } else if (nextHigh !== undefined) {
+          hIdx++;
+          curCeil = nextHigh;
+        } else {
+          break;
+        }
+      }
+
+      // ถ้ายังไม่ถึง minSpan ให้ใช้ activePeak / activeValley หรือ macroPeak / macroLow
+      if (curCeil - curFloor < minSpanFromPct) {
+        if (activePeak && activePeak.price > curCeil) curCeil = activePeak.price;
+        if (activeValley && activeValley.price < curFloor) curFloor = activeValley.price;
+      }
+      if (curCeil - curFloor < minSpanFromPct) {
+        if (macroPeak && macroPeak.price > curCeil) curCeil = macroPeak.price;
+        if (macroLow && macroLow.price < curFloor) curFloor = macroLow.price;
+      }
+
+      // 🔒 HARD GUARANTEE: ถ้าขยายสวิงจนสุดประวัติแล้วความกว้างยังไม่ถึง minSpanFromPct
+      // ให้ขยายบาลานซ์ทั้งสองฝั่งออกจากจุดกึ่งกลาง การันตีว่าความกว้างจะไม่ต่ำกว่า minChannelWidthPct 100%!
+      if (curCeil - curFloor < minSpanFromPct) {
+        const shortfall = minSpanFromPct - (curCeil - curFloor);
+        curCeil += shortfall / 2;
+        curFloor = Math.max(0, curFloor - shortfall / 2);
+      }
+
+      upperBound = curCeil;
+      bottomBound = curFloor;
 
       isSwingConfirmed = true;
       clampStatus = "NATURAL_SWING";
       anchorSide = "NONE";
-
-      const maxSpanFromPct = price * maxPct;
-      const minSpanFromPct = price * minPct;
-
-      // 🔒 Enforce minChannelWidthPct: If bounds are narrower than minChannelWidthPct (e.g. < 2.0% or 3.0%),
-      // expand to genuine major wave swings (HH / LL) rather than collapsing into micro swings
-      if (upperBound - bottomBound < minSpanFromPct) {
-        if (macroPeak && macroPeak.price > upperBound) {
-          upperBound = macroPeak.price;
-        }
-        if (macroLow && macroLow.price < bottomBound) {
-          bottomBound = macroLow.price;
-        }
-        if (upperBound - bottomBound < minSpanFromPct) {
-          clampStatus = "CLAMPED_MIN";
-        }
-      }
 
       // Enforce max channel width if natural wave swing is unusually wide
       if (upperBound - bottomBound > maxSpanFromPct) {
@@ -1994,6 +2032,16 @@ export class DowStructureEngine {
         if (activePeak && activePeak.price > price) upperBound = activePeak.price;
         if (activeValley && activeValley.price < price) bottomBound = activeValley.price;
       }
+    }
+
+    // 🔒 Absolute Minimum Channel Width Guarantee:
+    // If the final channel width is narrower than minSpan (minChannelWidthPct), expand bounds symmetrically!
+    // This guarantees that micro-channels (e.g. 0.38%) are NEVER produced when minChannelWidthPct is set (e.g. 2%-3%).
+    if (upperBound - bottomBound < minSpan) {
+      const shortfall = minSpan - (upperBound - bottomBound);
+      upperBound += shortfall / 2;
+      bottomBound = Math.max(0, bottomBound - shortfall / 2);
+      clampStatus = "CLAMPED_MIN";
     }
 
     const lastHigh = this.swingHighs[this.swingHighs.length - 1];
