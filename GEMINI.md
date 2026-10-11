@@ -133,9 +133,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
           - นำฟิลด์ `enableNarrowChannelCollapse`, `narrowChannelThresholdPct`, `narrowChannelBuyBufferPct`, `narrowChannelSellBufferPct` ออกจาก `ChannelOptions`, `src/config.ts`, `src/strategy.ts`, `public/index.html` และ `public/app.js`
           - บอทใช้กริด 4 ระดับมาตรฐานเสมอ (Buy L1 40%, L2 30%, L3 20%, L4 10%; Sell T1 60%, T2 70%, T3 80%, T4 90%)
        2. **Strict Structural Bounds Search (`findStructuralBoundsSatisfyingMinWidth`)**:
-          - ใน `src/market-structure.ts`: เพิ่มเมธอดค้นหาคู่ยอด/เหวย้อนหลังในประวัติ Swing Points ที่มีระยะห่างกว้างไม่น้อยกว่า `minChannelWidthPct` (และไม่เกิน `maxChannelWidthPct`)
+          - ใน `src/market-structure.ts`: ตรวจสอบคู่ยอด/เหวของรอบคลื่นปัจจุบัน (Recent Active Wave Swings) โดยตรง และไม่วิ่งไปควานหายอดเก่าในอดีตที่ห่างไกลมาถ่างกรอบ
           - นำ synthetic fallbacks (เช่น `price * (1 ± minPct / 2)`) ออกทั้งหมด
-          - หากในประวัติไม่มีคู่ยอด/เหวใดที่มีระยะกว้างเพียงพอต่อ `minChannelWidthPct` ระบบจะส่งสัญญาณ `hasValidStructuralChannel = false`
+          - หากยอด/เหวของรอบคลื่นปัจจุบันมีระยะห่างแคบกว่า `minChannelWidthPct` ระบบจะคงตำแหน่งยอด/เหวจริงไว้ (ไม่ดีดไปยอดไกล) และส่งสัญญาณ `hasValidStructuralChannel = false` สั่ง Standby ทันที
        3. **Channel Structure Standby Guard**:
           - ใน `src/strategy.ts`: เมื่อ `hasValidStructuralChannel === false` บอทจะเข้าสู่สถานะ `channelStructureStandby = true`
           - ยกเลิกคำสั่งซื้อที่ค้างอยู่ทั้งหมดทันที และตั้ง `canBuy = false` เพื่อหยุดการเข้าซื้อชั่วคราว

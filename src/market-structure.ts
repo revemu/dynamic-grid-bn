@@ -648,43 +648,31 @@ export class DowStructureEngine {
         const isTradeableWidth = widthPct >= effectiveTradeableMinSpan && widthPct <= maxSpanPct;
         const meetsUserMinSpan = widthPct >= minSpanPct;
 
+        // Priority 1: Structural affinity to active wave swings (current wave peak & valley)
+        const isTargetRes = Boolean(targetAnchorRes && Math.abs(r.price - targetAnchorRes.price) / r.price <= tol);
+        const isTargetSup = Boolean(targetAnchorSup && Math.abs(s.price - targetAnchorSup.price) / s.price <= tol);
+        const anchorBonus = (isTargetRes ? 10000 : 0) + (isTargetSup ? 10000 : 0);
+
+        // Priority 2: Multi-touch cluster bonus
+        const touchBonus = (r.touchCount >= 2 ? 3000 : 0) + (s.touchCount >= 2 ? 3000 : 0);
+
+        // Priority 3: Current base bonus
+        const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 2000 : 0;
+
         let score: number;
         if (isTradeableWidth) {
-          // 1. Multi-touch cluster bonus (touchCount >= 2): Top priority for structural multi-touch levels!
-          const touchBonus = (r.touchCount >= 2 ? 3000 : 0) + (s.touchCount >= 2 ? 3000 : 0);
-
-          // 2. Structural Anchor Bonus: Strongest affinity for the confirmed Active Wave High & Low
-          const isTargetRes = Boolean(targetAnchorRes && Math.abs(r.price - targetAnchorRes.price) / r.price <= tol);
-          const isTargetSup = Boolean(targetAnchorSup && Math.abs(s.price - targetAnchorSup.price) / s.price <= tol);
-          const anchorBonus = (isTargetRes ? 4000 : 0) + (isTargetSup ? 4000 : 0);
-
-          // 3. Bonus for meeting full user minSpanPct target
           const spanTargetBonus = meetsUserMinSpan ? 500 : 0;
-
-          // 4. Priority for confirmed Lower High (LH) or Higher Low (HL) in wave structure
           const isAtWaveHigh = Boolean(activeWaveHigh && Math.abs(r.price - activeWaveHigh) / activeWaveHigh <= tol);
           const isAtWaveLow = Boolean(activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol);
           const waveHighBonus = isAtWaveHigh ? (isConfirmedLowerHigh && r.touchCount >= 2 ? 1500 : 500) : 0;
           const waveLowBonus = isAtWaveLow ? 500 : 0;
 
-          // 5. Heavy penalty for ancient lows that sit far below the active Higher Low / recent base valley
           const isRecentCanonicalLow = recentCanonicalLows.some((l) => Math.abs(l.price - s.price) / s.price <= tol);
           const ancientLowPenalty = (activeWaveLow && s.price < activeWaveLow * (1 - tol * 2) && !isRecentCanonicalLow) ? 6000 : 0;
 
-          // 6. Prefer pairs where support matches the current active wave base/valley
-          const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 2000 : 0;
-
-          // 7. Absolute Structural Swing Stability:
-          // Strictly anchor to confirmed peaks & valleys. Zero tick price penalties/bonuses!
-          score = 10000 + touchBonus + anchorBonus + spanTargetBonus + waveHighBonus + waveLowBonus + currentBaseBonus - ancientLowPenalty;
+          score = 10000 + anchorBonus + touchBonus + spanTargetBonus + waveHighBonus + waveLowBonus + currentBaseBonus - ancientLowPenalty;
         } else if (widthPct < effectiveTradeableMinSpan) {
-          // Narrow structural pair: Score by touches, active wave alignment, and proximity to tradeable span
-          const touchBonus = (r.touchCount >= 2 ? 1500 : 0) + (s.touchCount >= 2 ? 1500 : 0);
-          const isTargetRes = Boolean(targetAnchorRes && Math.abs(r.price - targetAnchorRes.price) / r.price <= tol);
-          const isTargetSup = Boolean(targetAnchorSup && Math.abs(s.price - targetAnchorSup.price) / s.price <= tol);
-          const anchorBonus = (isTargetRes ? 2000 : 0) + (isTargetSup ? 2000 : 0);
-          const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 1000 : 0;
-          score = 5000 + (widthPct * 50) + touchBonus + anchorBonus + currentBaseBonus;
+          score = 8000 + anchorBonus + touchBonus + currentBaseBonus + (widthPct * 20);
         } else {
           // Too wide (> maxSpanPct): VIOLATES MAX CHANNEL WIDTH!
           const excessWidth = widthPct - maxSpanPct;
@@ -830,43 +818,19 @@ export class DowStructureEngine {
       }
     }
 
-    // 2. If too narrow (or missing), attempt to expand using OTHER genuine historical peaks/valleys
-    // Option A: Keep candidateFloor, find a higher genuine peak H
-    if (candidateFloor !== undefined) {
-      const higherPeak = validHighs.find((h) => (h.price - candidateFloor!) >= minSpan && (h.price - candidateFloor!) <= maxSpan);
-      if (higherPeak) {
-        return { floor: candidateFloor, ceil: higherPeak.price, hasValidChannel: true };
-      }
-    }
+    // 2. Strict Rule: Never hunt for ancient distant peaks/valleys to artificially stretch the channel!
+    // The channel bounds MUST strictly anchor to the genuine peak & valley of the current wave/recent market.
+    // If the active peak and valley are narrower than minChannelWidthPct:
+    // Keep the genuine local peak & valley, but flag hasValidChannel = false to STANDBY (stop trading)!
+    const fallbackFloor = candidateFloor ?? (validLows[0]?.price ?? price);
+    const fallbackCeil = candidateCeil ?? (validHighs[0]?.price ?? price);
+    const currentSpanPct = fallbackFloor > 0 ? ((fallbackCeil - fallbackFloor) / fallbackFloor) * 100 : 0;
 
-    // Option B: Keep candidateCeil, find a lower genuine valley L
-    if (candidateCeil !== undefined) {
-      const lowerValley = validLows.find((l) => (candidateCeil! - l.price) >= minSpan && (candidateCeil! - l.price) <= maxSpan);
-      if (lowerValley) {
-        return { floor: lowerValley.price, ceil: candidateCeil, hasValidChannel: true };
-      }
-    }
-
-    // Option C: Search all pairs of (H, L) from historical swings
-    for (const h of validHighs) {
-      for (const l of validLows) {
-        const span = h.price - l.price;
-        if (span >= minSpan && span <= maxSpan) {
-          return { floor: l.price, ceil: h.price, hasValidChannel: true };
-        }
-      }
-    }
-
-    // 3. No genuine structural peak/valley pair achieves minWidthPct:
-    // STRICT RULE: DO NOT invent synthetic points floating in air!
-    // Return best available swings (or fallback for rendering only), but flag hasValidChannel = false!
-    const fallbackFloor = candidateFloor ?? (validLows[0]?.price ?? (price * 0.99));
-    const fallbackCeil = candidateCeil ?? (validHighs[0]?.price ?? (price * 1.01));
     return {
       floor: fallbackFloor,
       ceil: fallbackCeil,
       hasValidChannel: false,
-      reason: `Channel width is below minChannelWidthPct (${(minPct * 100).toFixed(2)}%) and no historical structural peak/valley pair achieves minimum width`,
+      reason: `Channel width (${currentSpanPct.toFixed(2)}%) between recent peak ($${fallbackCeil.toFixed(2)}) and valley ($${fallbackFloor.toFixed(2)}) is below minChannelWidthPct (${(minPct * 100).toFixed(2)}%) — Standby`,
     };
   }
 
@@ -1746,9 +1710,7 @@ export class DowStructureEngine {
       }
       recentMajorHigh = maxHigh;
     }
-    const activeCeilingPoint = (recentMajorHigh && (!activePeak || recentMajorHigh.price > activePeak.price))
-      ? recentMajorHigh
-      : activePeak;
+    const activeCeilingPoint = activePeak ?? recentMajorHigh;
 
     let clampStatus: GridZone["clampStatus"] = "NATURAL_SWING";
     let anchorSide: GridZone["anchorSide"] = "NONE";

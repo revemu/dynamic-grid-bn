@@ -1744,20 +1744,19 @@ export class DynamicGrid {
           ];
         }
       } else if (
-        dow?.resistanceCluster &&
-        dow.resistanceCluster.price < this.lastDynamicBounds.upperBound &&
-        (avgEntry <= 0 || dow.resistanceCluster.price >= avgEntry * 1.01)
+        dow &&
+        dow.upperBound < this.lastDynamicBounds.upperBound &&
+        (avgEntry <= 0 || dow.upperBound >= avgEntry * 1.002)
       ) {
-        // 🎯 If a genuine structural Multi-Touch Resistance exists below the old frozen ceiling
-        // AND it provides healthy profit (>1.0% above avgEntry), adapt the ceiling down to the real resistance!
-        // This ensures the bot can actually hit sell targets and take profit rather than waiting for an unreachable high ceiling.
-        const realResPrice = dow.resistanceCluster.price;
+        // 🎯 If current structural ceiling (dow.upperBound) is below the old frozen ceiling
+        // AND it covers entry basis, adapt the ceiling down to the real active market ceiling!
+        const realCeilPrice = dow.upperBound;
         const currentFloor = this.lastDynamicBounds.lowerBound;
-        if (realResPrice > currentFloor * 1.015) {
-          this.log(`🎯 [REAL CEILING SYNC] Synchronized locked ceiling ($${this.lastDynamicBounds.upperBound.toFixed(6)} -> Real S/R Ceil $${realResPrice.toFixed(6)}) with confirmed profit (Avg Entry: $${avgEntry.toFixed(6)})`);
-          this.lastDynamicBounds.upperBound = realResPrice;
-          this.lastDynamicBounds.centerPrice = (currentFloor + realResPrice) / 2;
-          const dSpan = realResPrice - currentFloor;
+        if (realCeilPrice > currentFloor * 1.005) {
+          this.log(`🎯 [REAL CEILING SYNC] Synchronized locked ceiling ($${this.lastDynamicBounds.upperBound.toFixed(6)} -> Real Ceil $${realCeilPrice.toFixed(6)}) with entry basis (Avg Entry: $${avgEntry.toFixed(6)})`);
+          this.lastDynamicBounds.upperBound = realCeilPrice;
+          this.lastDynamicBounds.centerPrice = (currentFloor + realCeilPrice) / 2;
+          const dSpan = realCeilPrice - currentFloor;
           this.lastDynamicBounds.sellLevels = [
             currentFloor + dSpan * 0.60,
             currentFloor + dSpan * 0.70,
