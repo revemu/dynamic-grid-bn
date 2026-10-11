@@ -239,12 +239,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
             8. **Complete Elimination of Multi-Touch S/R Clustering & True Pure Dow Wave Bounds (`src/market-structure.ts`)**:
                - **สาเหตุ & ปัญหาเดิม**:
                  - ระบบเคยมีตรรกะค้นหาจุดสัมผัสซ้ำหลายครั้ง (`findMultiTouchSR`) ซึ่งหากมีสวิงย่อยชนระดับราคาซ้ำกัน 2 ครั้ง (เช่น เหวย่อย $2504.83 สัมผัส 2x) ระบบจะเลือกคู่นั้นมาเป็น Floor/Ceiling ทันที แม้จะกว้างเพียง **0.38%** ทำให้กรอบแคบเกินไปและละเลยยอดหลัก HH ($2524.59) หรือเหวหลัก LL ($2501.75) ของคลื่น
+                 - นอกจากนี้ `activeWaveBaseIndex` เคยเริ่มที่ `lastLl` ย่อย ($2504.83) ทำให้ตัดสวิงใหญ่ $2501.75 และ $2524.59 ออกจาก Pool
                - **การแก้ไขในระบบ**:
-                 - ยกเลิกการใช้ Multi-touch Clusters ในการกำหนดกรอบราคา 100%
-                 - ปรับ `MULTI_TOUCH_SR` ให้กำหนดกรอบจากโครงสร้าง **Pure Dow Theory Active Wave Swings** เสมอ:
-                   - **Upper Bound (กรอบบน)**: ยึดจุดยอดสูงสุดของรอบคลื่นปัจจุบัน (`activePeak` เช่น New HH หรือ LH ล่าสุด)
-                   - **Bottom Bound (กรอบล่าง)**: ยึดจุดเหวต่ำสุดของรอบคลื่นปัจจุบัน (`activeValley` เช่น LL ต่ำสุดของรอบคลื่น)
-                 - เปิดใช้งาน Dow Theory Overrides (HH protection, LH adaptation, LL floor drop) ในทุกโหมด ทำให้กรอบสะท้อนคลื่นสวิงจริงตามธรรมชาติเสมอ ไม่ถูกบีบด้วยคลัสเตอร์ย่อยอีกต่อไป
+                 - เพิ่มโหมด **`DOW_SWINGS`** (Pure Dow Theory Waves) และยกเลิกการใช้ Multi-touch Clusters ในการกำหนดกรอบราคา 100%
+                 - ปรับ `activeWaveBaseIndex` ให้ยึดจาก `macroLow` (จุดต่ำสุดจริงของรอบคลื่น $2501.75) เสมอ ทำให้สวิงหลักทั้งหมดอยู่ในรอบคลื่น
+                 - กำหนดกรอบจากโครงสร้าง **Pure Dow Theory Active Wave Swings**:
+                   - **Upper Bound (กรอบบน)**: ยึดจุดยอดสูงสุดของรอบคลื่นปัจจุบัน (`activePeak` เช่น Major HH $2524.59)
+                   - **Bottom Bound (กรอบล่าง)**: ยึดจุดเหวต่ำสุดของรอบคลื่นปัจจุบัน (`activeValley` เช่น Major LL $2501.75)
+                 - บังคับเกณฑ์ **`minChannelWidthPct` (เช่น 2.0% - 3.0%)** อย่างเข้มงวด: หากกรอบแคบกว่าเกณฑ์ ระบบจะขยายไปหายอดคลื่นใหญ่ `macroPeak` ($2524.59) และเหวใหญ่ `macroLow` ($2501.75) ทันที ห้ามบีบกรอบแคบ 0.38% เด็ดขาด
+                 - ปิดการแสดงผลป้ายสัมผัสหลายจุด (`🎯 Nx`) บนหน้าแดชบอร์ดในโหมด Pure Dow Swings
 
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)

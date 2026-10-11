@@ -1319,7 +1319,9 @@
         ? `Clamped Max (${(data.maxWidthPct || 0).toFixed(1)}%)`
         : `Natural Swing (${widthPct.toFixed(1)}%)`;
 
-    if (data.channelMode === "MULTI_TOUCH_SR" || data.resistanceCluster || data.supportCluster) {
+    if (data.channelMode === "DOW_SWINGS" || data.channelMode === "MULTI_TOUCH_SR") {
+      clampStr = `Pure Dow Swings`;
+    } else if (data.resistanceCluster || data.supportCluster) {
       const resT = data.resistanceCluster?.touchCount ? `${data.resistanceCluster.touchCount}x` : (data.resistanceTouchCount ? `${data.resistanceTouchCount}x` : "-");
       const supT = data.supportCluster?.touchCount ? `${data.supportCluster.touchCount}x` : (data.supportTouchCount ? `${data.supportTouchCount}x` : "-");
       clampStr = `S/R Multi-Touch [Res: ${resT}, Sup: ${supT}]`;
@@ -1881,9 +1883,9 @@
     if (data.swingHighs || data.swingLows || (data.waveCycle && data.waveCycle.annotatedSwings)) {
       const markerMap = new Map();
 
-      // Multi-Touch S/R Touch Points Lookup (Active confirmed structural bounds)
-      // Strictly filter to points genuinely touching the active channel bounds or live S/R bounds (within 0.25% tolerance)
-      const activeResCluster = data.resistanceCluster || (data.isChannelLocked ? data.liveResistanceCluster : undefined);
+      // Multi-Touch S/R Touch Points Lookup (Disabled in DOW_SWINGS / MULTI_TOUCH_SR pure Dow modes)
+      const isPureDowMode = data.channelMode === "DOW_SWINGS" || data.channelMode === "MULTI_TOUCH_SR";
+      const activeResCluster = !isPureDowMode ? (data.resistanceCluster || (data.isChannelLocked ? data.liveResistanceCluster : undefined)) : undefined;
       const resTouchPoints = (activeResCluster && Array.isArray(activeResCluster.points))
         ? activeResCluster.points.filter((p) => {
             if (!p || typeof p.price !== "number") return false;
@@ -1893,7 +1895,7 @@
             return matchesUpper || matchesLive;
           })
         : [];
-      const activeSupCluster = data.supportCluster || (data.isChannelLocked ? data.liveSupportCluster : undefined);
+      const activeSupCluster = !isPureDowMode ? (data.supportCluster || (data.isChannelLocked ? data.liveSupportCluster : undefined)) : undefined;
       const supTouchPoints = (activeSupCluster && Array.isArray(activeSupCluster.points))
         ? activeSupCluster.points.filter((p) => {
             if (!p || typeof p.price !== "number") return false;

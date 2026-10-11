@@ -137,7 +137,7 @@ export interface DowStructure {
 }
 
 export interface ChannelOptions {
-  mode?: "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "MULTI_TOUCH_SR";
+  mode?: "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "MULTI_TOUCH_SR" | "DOW_SWINGS";
   minChannelWidthPct?: number; // for FIXED_PCT_CLAMP & MULTI_TOUCH_SR (e.g. 1.8%)
   maxChannelWidthPct?: number; // for FIXED_PCT_CLAMP & MULTI_TOUCH_SR (e.g. 4.0%)
   atrMinMultiplier?: number;   // for DOW_ATR_CLAMP (default 2.5x ATR)
@@ -1595,12 +1595,12 @@ export class DowStructureEngine {
       canonicalHighs.some((h) => h.index > macroLow.index)
     );
 
-    // Active cycle swings: Anchor to the active wave cycle
-    // If the market dumped to a confirmed Lower Low (waveCycle.lastLl) at or after macroPeak,
-    // the active wave begins at lastLl! Otherwise, use macroLow if in new cycle, or macroPeak.
-    const activeWaveBaseIndex = (waveCycle.lastLl && (!macroPeak || waveCycle.lastLl.index >= macroPeak.index))
-      ? waveCycle.lastLl.index
-      : ((isNewCycleFromLow && macroLow) ? macroLow.index : (macroPeak && price < macroPeak.price * 0.999 ? macroPeak.index : 0));
+    // Active cycle swings: Anchor to the active major wave cycle
+    // We anchor to macroLow (the true lowest dump/valley of the cycle, e.g. $2501.75) if in a recovery/new cycle,
+    // or to the earliest base of the active wave so that the true structural LL is never truncated by minor intermediate swings.
+    const activeWaveBaseIndex = (isNewCycleFromLow && macroLow)
+      ? macroLow.index
+      : (macroLow ? macroLow.index : (waveCycle.lastLl ? waveCycle.lastLl.index : 0));
 
     const activeCycleHighs = canonicalHighs.filter((h) => h.index >= activeWaveBaseIndex);
     const activeCycleLows = canonicalLows.filter((l) => l.index >= activeWaveBaseIndex);
@@ -1608,15 +1608,15 @@ export class DowStructureEngine {
     let baseValley: SwingPoint | undefined;
     if (activeCycleLows.length > 0) {
       // 🔒 Pure Dow Structural Floor: Anchor to the confirmed lowest valley of the active cycle!
-      // This guarantees that Major LL (e.g. $0.2026 / $2501.75) is respected as the structural base,
-      // preventing minor Higher Lows (HL) from prematurely lifting the channel floor.
+      // This guarantees that Major LL (e.g. $2501.75) is respected as the structural base,
+      // preventing minor intermediate lows (HL) from prematurely lifting the channel floor.
       let minLow = activeCycleLows[0]!;
       for (const l of activeCycleLows) {
         if (l.price < minLow.price) minLow = l;
       }
       baseValley = minLow;
     } else if (canonicalLows.length > 0) {
-      baseValley = canonicalLows[canonicalLows.length - 1];
+      baseValley = canonicalLows.reduce((min, l) => (l.price < min.price ? l : min), canonicalLows[0]!);
     } else if (confirmedLows.length > 0) {
       baseValley = confirmedLows[confirmedLows.length - 1];
     }
@@ -1630,9 +1630,6 @@ export class DowStructureEngine {
     const highsInActiveWave = canonicalHighs.filter((s) => s.index >= waveStartIndex);
 
     // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้" / "ถ้าทำ HH ปรับขึ้นตามยอดใหม่"):
-    // Check if the latest confirmed canonical swing high is a Lower High (LH) that price is actively respecting (price <= lh.price * 1.005).
-    // If so, the active wave ceiling should step down to this Lower High!
-    // If the latest confirmed swing high is a Higher High (HH), the active wave ceiling should adjust up to this new peak!
     const lastCanonicalHigh = activeCycleHighs.length > 0 ? activeCycleHighs[activeCycleHighs.length - 1] : undefined;
     const minSpanRequired = (options?.minChannelWidthPct ?? 1.8) / 100;
     const isLatestHighLh = Boolean(
@@ -1652,7 +1649,6 @@ export class DowStructureEngine {
     if (isLatestHighLh && lastCanonicalHigh) {
       activePeak = lastCanonicalHigh;
     } else if (isLatestHighHh && lastCanonicalHigh) {
-      // 🔒 Dow Theory Rule: Adjust ceiling to latest confirmed Higher High (HH) of active wave
       activePeak = lastCanonicalHigh;
     } else if (highsPool.length > 0) {
       let maxHigh = highsPool[0]!;
@@ -1667,22 +1663,20 @@ export class DowStructureEngine {
       }
       activePeak = maxHigh;
     } else if (canonicalHighs.length > 0) {
-      activePeak = canonicalHighs[canonicalHighs.length - 1];
+      activePeak = canonicalHighs.reduce((max, h) => (h.price > max.price ? h : max), canonicalHighs[0]!);
     } else if (confirmedHighs.length > 0) {
       activePeak = confirmedHighs[confirmedHighs.length - 1];
     }
 
     let recentMajorHigh: SwingPoint | undefined;
-    if (isLatestHighLh && lastCanonicalHigh) {
-      recentMajorHigh = lastCanonicalHigh;
-    } else if (isLatestHighHh && lastCanonicalHigh) {
-      recentMajorHigh = lastCanonicalHigh;
-    } else if (highsPool.length > 0) {
+    if (highsPool.length > 0) {
       let maxHigh = highsPool[0]!;
       for (const h of highsPool) {
         if (h.price > maxHigh.price) maxHigh = h;
       }
       recentMajorHigh = maxHigh;
+    } else if (activePeak) {
+      recentMajorHigh = activePeak;
     }
     const activeCeilingPoint = (recentMajorHigh && (!activePeak || recentMajorHigh.price > activePeak.price))
       ? recentMajorHigh
@@ -1717,10 +1711,10 @@ export class DowStructureEngine {
     );
 
     // ── 4. Calculate Final Bounds by Selected Channel Mode ────────────────────
-    if (mode === "MULTI_TOUCH_SR") {
-      // 🔒 Pure Dow Theory Active Wave Swing Bounds (ยกเลิกการหาจุดสัมผัสหลายจุด Multi-touch)
-      // กรอบบน = ยอดสูงสุดของรอบคลื่นปัจจุบัน (activePeak เช่น HH หรือ LH)
-      // กรอบล่าง = เหวต่ำสุดของรอบคลื่นปัจจุบัน (activeValley เช่น LL)
+    if (mode === "MULTI_TOUCH_SR" || mode === "DOW_SWINGS") {
+      // 🔒 Pure Dow Theory Active Wave Swing Bounds (ยกเลิกการหาจุดสัมผัสหลายจุด Multi-touch 100%)
+      // กรอบบน = ยอดสูงสุดของรอบคลื่นปัจจุบัน (activePeak เช่น Major HH $2524.59)
+      // กรอบล่าง = เหวต่ำสุดของรอบคลื่นปัจจุบัน (activeValley เช่น Major LL $2501.75)
       const lowestWaveValley = activeValley?.price
         ?? (activeCycleLows.length > 0 ? Math.min(...activeCycleLows.map((l) => l.price)) : undefined)
         ?? (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1]?.price : undefined)
@@ -1739,9 +1733,24 @@ export class DowStructureEngine {
       clampStatus = "NATURAL_SWING";
       anchorSide = "NONE";
 
-      // Enforce max channel width if natural wave swing is unusually wide
       const maxSpanFromPct = price * maxPct;
       const minSpanFromPct = price * minPct;
+
+      // 🔒 Enforce minChannelWidthPct: If bounds are narrower than minChannelWidthPct (e.g. < 2.0% or 3.0%),
+      // expand to genuine major wave swings (HH / LL) rather than collapsing into micro swings
+      if (upperBound - bottomBound < minSpanFromPct) {
+        if (macroPeak && macroPeak.price > upperBound) {
+          upperBound = macroPeak.price;
+        }
+        if (macroLow && macroLow.price < bottomBound) {
+          bottomBound = macroLow.price;
+        }
+        if (upperBound - bottomBound < minSpanFromPct) {
+          clampStatus = "CLAMPED_MIN";
+        }
+      }
+
+      // Enforce max channel width if natural wave swing is unusually wide
       if (upperBound - bottomBound > maxSpanFromPct) {
         const isDowntrendWave = waveCycle.currentLeg?.direction === "DOWN" || Boolean(waveCycle.lastLh) || (lastCanonicalHigh && lastCanonicalHigh.dowLabel === "LH") || price < (bottomBound + upperBound) / 2;
         if (isDowntrendWave) {
