@@ -46,14 +46,12 @@ export interface GridZone {
   isBelowFloor: boolean;    // Price < cutLossBound (Trigger cut loss)
   isAboveCeiling: boolean;  // Price >= 100% (Trigger 100% take profit)
   zoneWidthPct: number;     // Width of channel in percentage
-  channelMode?: string;     // Mode: "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "MULTI_TOUCH_SR"
+  channelMode?: string;     // Mode: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR"
   clampStatus?: "NATURAL_SWING" | "CLAMPED_MIN" | "CLAMPED_MAX";
   rawWidthPct?: number;     // Unclamped swing width in %
   minWidthPct?: number;     // Minimum width % limit
   maxWidthPct?: number;     // Maximum width % limit
   anchorSide?: "LOWER_FLOOR" | "UPPER_CEILING" | "NONE";
-  resistanceTouchCount?: number;
-  supportTouchCount?: number;
 }
 
 export interface TrendLinePoint {
@@ -130,16 +128,12 @@ export interface DowStructure {
   swingHighs: SwingPoint[];
   swingLows: SwingPoint[];
   waveCycle?: WaveCycleData;
-  resistanceCluster?: { price: number; touchCount: number; points: SwingPoint[] };
-  supportCluster?: { price: number; touchCount: number; points: SwingPoint[] };
-  allResistanceClusters?: { price: number; touchCount: number; points: SwingPoint[] }[];
-  allSupportClusters?: { price: number; touchCount: number; points: SwingPoint[] }[];
 }
 
 export interface ChannelOptions {
-  mode?: "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "MULTI_TOUCH_SR" | "DOW_SWINGS";
-  minChannelWidthPct?: number; // for FIXED_PCT_CLAMP & MULTI_TOUCH_SR (e.g. 1.8%)
-  maxChannelWidthPct?: number; // for FIXED_PCT_CLAMP & MULTI_TOUCH_SR (e.g. 4.0%)
+  mode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR";
+  minChannelWidthPct?: number; // for DOW_SWINGS & FIXED_PCT_CLAMP (e.g. 1.8%)
+  maxChannelWidthPct?: number; // for DOW_SWINGS & FIXED_PCT_CLAMP (e.g. 4.0%)
   atrMinMultiplier?: number;   // for DOW_ATR_CLAMP (default 2.5x ATR)
   atrMaxMultiplier?: number;   // for DOW_ATR_CLAMP (default 5.0x ATR)
   donchianLookback?: number;   // for DONCHIAN_ATR (default 20 bars)
@@ -147,9 +141,7 @@ export interface ChannelOptions {
   atrPct?: number;             // external ATR % if available
   useTrueWick?: boolean;       // use true candle wick instead of body clipping (default true)
   wickThresholdPct?: number;   // rejection wick % threshold before clipping to candle body (default 20.0%)
-  srMinTouchCount?: number;    // minimum touches for S/R in MULTI_TOUCH_SR mode (default 2)
-  srTouchTolerancePct?: number;// tolerance % to group touches (default 0.35%)
-  srLookbackCandles?: number;  // candles lookback for S/R scanning (default 100)
+  srLookbackCandles?: number;  // candles lookback for swing scanning (default 100)
   enableNarrowChannelCollapse?: boolean; // collapse to edge brackets in narrow channels (default true)
   narrowChannelThresholdPct?: number;   // narrow channel threshold % (default 1.2%)
   narrowChannelBuyBufferPct?: number;   // buffer % above floor for buy edge (default 0.05%)
@@ -304,441 +296,6 @@ export class DowStructureEngine {
 
   getSwingHighs(): SwingPoint[] {
     return this.swingHighs;
-  }
-
-  /**
-   * Find Horizontal Support & Resistance levels where price tested and was rejected >= minTouchCount times.
-   *
-   * @param currentPrice Current market price
-   * @param lookbackBars Number of recent candles to inspect (default 100)
-   * @param minTouchCount Minimum number of rejections/touches required (default 2)
-   * @param tolerancePct Tolerance % to group nearby swing points into the same level (default 0.35%)
-   * @param minSpanPct Minimum channel width % between Support and Resistance
-   */
-  public findMultiTouchSR(
-    currentPrice: number,
-    lookbackBars = 100,
-    minTouchCount = 2,
-    tolerancePct = 1.0,
-    minSpanPct = 1.8,
-    maxSpanPct = 6.0,
-    activeWaveHigh?: number,
-    activeWaveLow?: number,
-    isConfirmedLowerHigh = false,
-  ): {
-    resistance?: { price: number; touchCount: number; points: SwingPoint[] };
-    support?: { price: number; touchCount: number; points: SwingPoint[] };
-    allResistanceClusters: { price: number; touchCount: number; points: SwingPoint[] }[];
-    allSupportClusters: { price: number; touchCount: number; points: SwingPoint[] }[];
-  } {
-    const n = this.candles.length;
-    const minIdx = Math.max(0, n - lookbackBars);
-    const tol = Math.max(0.001, (tolerancePct ?? 1.0) / 100);
-
-    // 1. Gather ONLY genuine structural alternating swings (from canonical wave swings)
-    // to strictly prevent minor intra-leg pullback candles from being falsely treated as peaks/valleys:
-    const waveCycle = this.calculateWaveCycles();
-    const canonicalHighs = waveCycle.annotatedSwings.filter((s) => s.type === "HIGH");
-    const canonicalLows = waveCycle.annotatedSwings.filter((s) => s.type === "LOW");
-    const macroPeak = canonicalHighs.length > 0
-      ? canonicalHighs.reduce((max, h) => (!max || h.price > max.price ? h : max), canonicalHighs[0]!)
-      : undefined;
-    const macroLow = canonicalLows.length > 0
-      ? canonicalLows.reduce((min, l) => (!min || l.price < min.price ? l : min), canonicalLows[0]!)
-      : undefined;
-
-    // Detect if market bottomed at macroLow and is in an active recovery / new wave cycle:
-    // (trough occurred after macroPeak, and swings formed at or after macroLow)
-    const isNewCycleFromLow = Boolean(
-      macroLow &&
-      macroPeak &&
-      macroLow.index > macroPeak.index &&
-      canonicalHighs.some((h) => h.index > macroLow.index)
-    );
-
-    // Active cycle swings: Anchor to the active wave cycle
-    // If the market dumped to a confirmed Lower Low (waveCycle.lastLl) at or after macroPeak,
-    // the active wave begins at lastLl. Otherwise, use macroLow if in new cycle, or macroPeak.
-    const activeWaveBaseIndex = (waveCycle.lastLl && (!macroPeak || waveCycle.lastLl.index >= macroPeak.index))
-      ? waveCycle.lastLl.index
-      : ((isNewCycleFromLow && macroLow) ? macroLow.index : (macroPeak && currentPrice < macroPeak.price * 0.999 ? macroPeak.index : 0));
-
-    const activeCycleHighs = canonicalHighs.filter((h) => h.index >= activeWaveBaseIndex);
-    const activeCycleLows = canonicalLows.filter((l) => l.index >= activeWaveBaseIndex);
-
-    // 🔒 Structural Bounds Constraints for Active Cycle:
-    // 1. Structural Floor (cycleLowMin): Any support candidate below the confirmed lowest valley of the active cycle
-    //    is an ancient low from a previous market regime (e.g. $2488.40) and MUST NOT hijack the active channel floor!
-    const cycleLowMin = activeWaveLow !== undefined
-      ? activeWaveLow * (1 - tol)
-      : (activeCycleLows.length > 0 ? Math.min(...activeCycleLows.map((l) => l.price)) : undefined);
-
-    // 2. Structural Ceiling (cycleHighMax): Resistance candidates must not float above the confirmed high of the active cycle
-    //    (e.g. Major HH $2524.59 / $2528.96), unless price has traded above it. Ancient peaks from 3 days ago ($2538.68)
-    //    cannot invent a ceiling that the current wave hasn't reached!
-    const cycleHighMax = activeWaveHigh !== undefined
-      ? activeWaveHigh * (1 + tol)
-      : (activeCycleHighs.length > 0 ? Math.max(...activeCycleHighs.map((h) => h.price)) : undefined);
-
-    const candidateHighSwings = activeCycleHighs.length > 0 ? activeCycleHighs : canonicalHighs;
-    const candidateLowSwings = activeCycleLows.length > 0 ? activeCycleLows : canonicalLows;
-
-    const peakPoints: SwingPoint[] = (candidateHighSwings.length > 0 ? candidateHighSwings : this.swingHighs)
-      .filter((s) => s.index >= minIdx && (!cycleHighMax || s.price <= cycleHighMax * (1 + tol)));
-    const valleyPoints: SwingPoint[] = (candidateLowSwings.length > 0 ? candidateLowSwings : this.swingLows)
-      .filter((s) => s.index >= minIdx && (!cycleLowMin || s.price >= cycleLowMin * (1 - tol)));
-
-    // Cluster all structural points within tolerance to capture genuine multi-touch levels
-    // Requires distinct touches separated by time (>= 3 bars) and intervening pullbacks/bounces
-    const clusterPoints = (
-      points: SwingPoint[],
-      isHigh: boolean,
-    ): { price: number; touchCount: number; points: SwingPoint[] }[] => {
-      const clusters: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-      const used = new Set<number>();
-
-      // Helper: filter a group of points to distinct touches separated by time & intervening movement
-      const getDistinctTouches = (group: SwingPoint[]): SwingPoint[] => {
-        const distinct: SwingPoint[] = [];
-        const sortedByTime = [...group].sort((a, b) => a.index - b.index);
-
-        for (const pt of sortedByTime) {
-          if (distinct.length === 0) {
-            distinct.push(pt);
-            continue;
-          }
-          const prevPt = distinct[distinct.length - 1]!;
-          const barGap = Math.abs(pt.index - prevPt.index);
-
-          // Must be separated by at least 2 candles
-          if (barGap < 2) continue;
-
-          // Check if there was an intervening pullback (for highs) or bounce (for lows) between the two touches
-          const startIdx = Math.min(prevPt.index, pt.index) + 1;
-          const endIdx = Math.max(prevPt.index, pt.index) - 1;
-          let hadInterveningSeparation = false;
-
-          const clusterAvg = group.reduce((s, p) => s + p.price, 0) / group.length;
-          const separationPct = 0.0015; // At least 0.15% separation dip/bounce
-
-          if (isHigh) {
-            // Highs require a dip between them
-            let minBetween = Infinity;
-            for (let b = startIdx; b <= endIdx; b++) {
-              const candle = this.candles[b];
-              if (candle && candle.low < minBetween) minBetween = candle.low;
-            }
-            if (minBetween <= clusterAvg * (1 - separationPct)) {
-              hadInterveningSeparation = true;
-            }
-          } else {
-            // Lows require a bounce between them
-            let maxBetween = -Infinity;
-            for (let b = startIdx; b <= endIdx; b++) {
-              const candle = this.candles[b];
-              if (candle && candle.high > maxBetween) maxBetween = candle.high;
-            }
-            if (maxBetween >= clusterAvg * (1 + separationPct)) {
-              hadInterveningSeparation = true;
-            }
-          }
-
-          if (hadInterveningSeparation) {
-            distinct.push(pt);
-          }
-        }
-        return distinct;
-      };
-
-      // Density-First Clustering:
-      // Evaluate candidate clusters for each unused point to prioritize dense horizontal levels (most touches)
-      // over isolated outlier spikes.
-      while (used.size < points.length) {
-        let bestCandidate: {
-          seedIdx: number;
-          clusterPrice: number;
-          touchingPoints: SwingPoint[];
-          consumedIndices: number[];
-        } | undefined;
-
-        for (let i = 0; i < points.length; i++) {
-          if (used.has(i)) continue;
-          const p1 = points[i]!;
-          const candidateGroup: SwingPoint[] = [p1];
-          const candidateIndices: number[] = [i];
-
-          for (let j = 0; j < points.length; j++) {
-            if (i === j || used.has(j)) continue;
-            const p2 = points[j]!;
-            if (Math.abs(p2.price - p1.price) / p1.price <= tol) {
-              candidateGroup.push(p2);
-              candidateIndices.push(j);
-            }
-          }
-
-          const distinct = getDistinctTouches(candidateGroup);
-          if (distinct.length === 0) continue;
-
-          // For Resistance: Strictly use min peak price so every peak reaches and touches the resistance line
-          // For Support: Strictly use min valley price so the support floor line sits at the bottom of the valleys
-          const cPrice = isHigh
-            ? Math.min(...distinct.map((p) => p.price))
-            : Math.min(...distinct.map((p) => p.price));
-
-          // Strict Touch Verification:
-          // Only points that genuinely touch cPrice within tight tolerance (<= 0.10%) count as touches of this line!
-          // Outlier spikes that overshot/undershot the line are excluded from touching this level.
-          // Use 0.001 (0.10%) — tighter than the grouping tolerance (tol) — so floating swings above/below the
-          // cluster line cannot masquerade as genuine S/R touches.
-          const lineTouchTol = Math.min(tol, 0.001);
-          const touchingPts = distinct.filter(
-            (p) => Math.abs(p.price - cPrice) / cPrice <= lineTouchTol,
-          );
-          if (touchingPts.length === 0) continue;
-
-          const consumed = candidateIndices.filter((idx) => {
-            const pt = points[idx]!;
-            return touchingPts.some((tp) => tp.time === pt.time && tp.price === pt.price);
-          });
-
-          // Score candidate:
-          // 1. More genuine touches wins (Density first!)
-          // 2. Tie-break: Resistance closer to currentPrice, or Support closer to currentPrice
-          const isBetter = !bestCandidate ||
-            touchingPts.length > bestCandidate.touchingPoints.length ||
-            (touchingPts.length === bestCandidate.touchingPoints.length &&
-              Math.abs(cPrice - currentPrice) < Math.abs(bestCandidate.clusterPrice - currentPrice));
-
-          if (isBetter) {
-            bestCandidate = {
-              seedIdx: i,
-              clusterPrice: cPrice,
-              touchingPoints: touchingPts,
-              consumedIndices: consumed,
-            };
-          }
-        }
-
-        if (!bestCandidate) {
-          // Mark remaining points as used so loop terminates
-          for (let i = 0; i < points.length; i++) used.add(i);
-          break;
-        }
-
-        clusters.push({
-          price: bestCandidate.clusterPrice,
-          touchCount: bestCandidate.touchingPoints.length,
-          points: bestCandidate.touchingPoints,
-        });
-
-        // Mark consumed points as used
-        for (const idx of bestCandidate.consumedIndices) {
-          used.add(idx);
-        }
-        // Always mark at least the seed to ensure progress
-        used.add(bestCandidate.seedIdx);
-      }
-      return clusters;
-    };
-
-    // 2. Cluster Peaks (Swing Highs only) for Resistance
-    const resClusters = clusterPoints(peakPoints, true);
-
-    // 3. Cluster Valleys (Swing Lows only) for Support
-    const supClusters = clusterPoints(valleyPoints, false);
-
-    const validResClusters = resClusters.filter((c) => c.touchCount >= minTouchCount);
-    const validSupClusters = supClusters.filter((c) => c.touchCount >= minTouchCount);
-
-    // ── User S/R Logic ────────────────────────────────────────────────────────
-    // "ดูจากราคาปัจจุบัน หายอดที่อยู่ทางซ้ายที่สูงพอ ถ้าพบว่ามีจุดสัมผัสมากกว่า 1 จุด ให้ใช้เป็นแนวต้านได้
-    //  หรือ ถ้าไม่มีให้หาต่อไป ถ้าไม่มีเลย ให้ใช้แนวต้านสูงสุดของรอบคลื่นตัวเอง ในส่วนของ แนวรับก็เช่นกัน"
-    // "รวมถึงกรอบบนด้วยนะ ไม่ใช่เส้นกรอบมาลอยๆ โดยไม่อิงกับยอดอะไรเลย อย่างน้อยต้องมี 1 จุด
-    //  ถ้ามี สองจุดที่ต่ำกว่า ถือให้ใช้กรอบนั้น อย่างในรูปไม่รู้กรอบมาจากจุดยอดหรือเหวไหน"
-
-    // ── Structural Candidate Pool (Confirmed Swings Only) ──────────────────────
-    // 🔒 Dow Theory Rule: เน้นยืนยัน เหว หรือ ยอด เท่านั้น! ไม่นับแท่งเทียนหรือราคาแลบ
-    // Candidates must be strictly within reachable span of maxChannelWidthPct from the wave low or price
-    const anchorWaveLow = activeWaveLow ?? currentPrice;
-    const anchorWaveHigh = activeWaveHigh ?? currentPrice;
-    const maxResPrice = anchorWaveLow * (1 + (maxSpanPct / 100));
-    const minSupPrice = anchorWaveHigh * (1 - (maxSpanPct / 100));
-
-    // 1. Confirmed Resistance Candidates (sorted ascending by price)
-    const resCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-    for (const c of validResClusters.filter((c) => c.price <= maxResPrice && (!cycleHighMax || c.price <= cycleHighMax * 1.002))) {
-      resCandidates.push(c);
-    }
-    for (const c of resClusters.filter((c) => c.touchCount < minTouchCount && c.price <= maxResPrice && (!cycleHighMax || c.price <= cycleHighMax * 1.002))) {
-      // Skip sub-clusters whose points are already covered by a valid multi-touch cluster
-      if (resCandidates.some((r) => r.touchCount >= minTouchCount && c.points.some((pt) => r.points.some((rpt) => rpt.time === pt.time)))) {
-        continue;
-      }
-      if (!resCandidates.some((r) => Math.abs(r.price - c.price) / c.price < 0.001)) {
-        resCandidates.push(c);
-      }
-    }
-    for (const p of peakPoints.filter((s) => s.price <= maxResPrice && (!cycleHighMax || s.price <= cycleHighMax * 1.002))) {
-      if (resCandidates.some((r) => r.points.some((pt) => pt.index === p.index || pt.time === p.time))) {
-        continue;
-      }
-      if (!resCandidates.some((r) => Math.abs(r.price - p.price) / p.price < 0.001)) {
-        resCandidates.push({ price: p.price, touchCount: 1, points: [p] });
-      }
-    }
-    // Always ensure activeWaveHigh / activeCeiling is represented in resCandidates
-    if (activeWaveHigh && !resCandidates.some((r) => Math.abs(r.price - activeWaveHigh) / activeWaveHigh < 0.001)) {
-      const matchPeak = peakPoints.find((s) => Math.abs(s.price - activeWaveHigh) / activeWaveHigh < 0.001) ?? this.swingHighs.find((s) => Math.abs(s.price - activeWaveHigh) / activeWaveHigh < 0.001);
-      resCandidates.push(matchPeak ? { price: matchPeak.price, touchCount: 1, points: [matchPeak] } : { price: activeWaveHigh, touchCount: 1, points: [] });
-    }
-    if (resCandidates.length === 0 && validResClusters.length > 0) {
-      const validClusters = validResClusters.filter((c) => !cycleHighMax || c.price <= cycleHighMax * 1.002);
-      if (validClusters.length > 0) {
-        const nearestMulti = [...validClusters].sort((a, b) => b.price - a.price)[0]!;
-        resCandidates.push(nearestMulti);
-      }
-    }
-    if (resCandidates.length === 0 && peakPoints.length > 0) {
-      const lastH = peakPoints[peakPoints.length - 1]!;
-      resCandidates.push({ price: lastH.price, touchCount: 1, points: [lastH] });
-    }
-    // Strictly sort resistance candidates ascending by price
-    resCandidates.sort((a, b) => a.price - b.price);
-
-    // 2. Confirmed Support Candidates (sorted descending by price)
-    // Strictly restricted to valleyPoints (active cycle canonical lows) to prevent ancient historical lows (e.g. $2488) from hijacking the channel floor!
-    const supCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-    for (const c of validSupClusters.filter((c) => c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * (1 - tol)))) {
-      supCandidates.push(c);
-    }
-    for (const c of supClusters.filter((c) => c.touchCount < minTouchCount && c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * (1 - tol)))) {
-      if (supCandidates.some((s) => s.touchCount >= minTouchCount && c.points.some((pt) => s.points.some((spt) => spt.time === pt.time)))) {
-        continue;
-      }
-      if (!supCandidates.some((s) => Math.abs(s.price - c.price) / c.price < 0.001)) {
-        supCandidates.push(c);
-      }
-    }
-    for (const l of valleyPoints.filter((s) => s.price >= minSupPrice && (!cycleLowMin || s.price >= cycleLowMin * (1 - tol)))) {
-      if (supCandidates.some((s) => s.points.some((pt) => pt.index === l.index || pt.time === l.time))) {
-        continue;
-      }
-      if (!supCandidates.some((s) => Math.abs(s.price - l.price) / l.price < 0.001)) {
-        supCandidates.push({ price: l.price, touchCount: 1, points: [l] });
-      }
-    }
-    // Always ensure activeWaveLow / activeValley is represented in supCandidates
-    if (activeWaveLow && !supCandidates.some((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow < 0.001)) {
-      const matchLow = valleyPoints.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow < 0.001) ?? this.swingLows.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow < 0.001);
-      supCandidates.push(matchLow ? { price: matchLow.price, touchCount: 1, points: [matchLow] } : { price: activeWaveLow, touchCount: 1, points: [] });
-    }
-    if (supCandidates.length === 0 && valleyPoints.length > 0) {
-      const lastL = valleyPoints[valleyPoints.length - 1]!;
-      supCandidates.push({ price: lastL.price, touchCount: 1, points: [lastL] });
-    }
-    // Strictly sort support candidates descending by price
-    supCandidates.sort((a, b) => b.price - a.price);
-
-    // ── 3. Find Optimal Structural Pair Fitting [minSpanPct, maxSpanPct] ─────────
-    // Primary anchor: Active wave structure (activeWaveHigh & activeWaveLow)
-    const targetAnchorRes = activeWaveHigh
-      ? resCandidates.find((r) => Math.abs(r.price - activeWaveHigh) / activeWaveHigh <= tol)
-      : undefined;
-    const targetAnchorSup = activeWaveLow
-      ? supCandidates.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol)
-      : undefined;
-
-    // Baseline tradeable span floor: Allow natural structural swings within slight tolerance (0.95x minSpanPct, e.g. 2.85% vs 3.0%)
-    const effectiveTradeableMinSpan = minSpanPct * 0.95;
-
-    let bestPair: {
-      res: { price: number; touchCount: number; points: SwingPoint[] };
-      sup: { price: number; touchCount: number; points: SwingPoint[] };
-      score: number;
-    } | undefined;
-
-    for (let j = 0; j < resCandidates.length; j++) {
-      const r = resCandidates[j]!;
-      for (let i = 0; i < supCandidates.length; i++) {
-        const s = supCandidates[i]!;
-        if (r.price <= s.price) continue;
-
-        const widthPct = ((r.price - s.price) / s.price) * 100;
-        const isTradeableWidth = widthPct >= effectiveTradeableMinSpan && widthPct <= maxSpanPct;
-        const meetsUserMinSpan = widthPct >= minSpanPct;
-
-        let score: number;
-        if (isTradeableWidth) {
-          // 1. Multi-touch cluster bonus (touchCount >= 2): Top priority for structural multi-touch levels!
-          const touchBonus = (r.touchCount >= 2 ? 3000 : 0) + (s.touchCount >= 2 ? 3000 : 0);
-
-          // 2. Structural Anchor Bonus: Strongest affinity for the confirmed Active Wave High & Low
-          const isTargetRes = Boolean(targetAnchorRes && Math.abs(r.price - targetAnchorRes.price) / r.price <= tol);
-          const isTargetSup = Boolean(targetAnchorSup && Math.abs(s.price - targetAnchorSup.price) / s.price <= tol);
-          const anchorBonus = (isTargetRes ? 4000 : 0) + (isTargetSup ? 4000 : 0);
-
-          // 3. Bonus for meeting full user minSpanPct target
-          const spanTargetBonus = meetsUserMinSpan ? 500 : 0;
-
-          // 4. Priority for confirmed Lower High (LH) or Higher Low (HL) in wave structure
-          const isAtWaveHigh = Boolean(activeWaveHigh && Math.abs(r.price - activeWaveHigh) / activeWaveHigh <= tol);
-          const isAtWaveLow = Boolean(activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol);
-          const waveHighBonus = isAtWaveHigh ? (isConfirmedLowerHigh && r.touchCount >= 2 ? 1500 : 500) : 0;
-          const waveLowBonus = isAtWaveLow ? 500 : 0;
-
-          // 5. Heavy penalty for ancient lows that sit far below the active Higher Low / recent base valley
-          const isRecentCanonicalLow = activeCycleLows.some((l) => Math.abs(l.price - s.price) / s.price <= tol);
-          const ancientLowPenalty = (activeWaveLow && s.price < activeWaveLow * (1 - tol * 2) && !isRecentCanonicalLow) ? 6000 : 0;
-
-          // 6. Prefer pairs where support matches the current active wave base/valley
-          const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 2000 : 0;
-
-          // 7. LL (Lower Low) Structural Priority Bonus:
-          // When the current wave cycle's confirmed swing minimum (LL) is a fresh new low below all prior lows,
-          // it is the TRUE structural floor and must take priority over older multi-touch clusters sitting above it.
-          // Without this, a 3x cluster at $2509.56 (old level) can outscore a fresh LL at $2503.28 (true floor)
-          // purely because of its accumulated touch count history.
-          const cycleLowMin = activeCycleLows.length > 0
-            ? Math.min(...activeCycleLows.map((l) => l.price))
-            : undefined;
-          const isStructuralCycleLow = cycleLowMin !== undefined && Math.abs(s.price - cycleLowMin) / cycleLowMin <= tol;
-          // Only award the bonus when this candidate IS the cycle minimum AND it hasn't accumulated multi-touch yet
-          // (i.e., it's a fresh LL that doesn't need old-history touch count to prove structural importance)
-          const structuralLlBonus = isStructuralCycleLow && s.touchCount < 2 ? 3000 : 0;
-
-          // 8. Absolute Structural Swing Stability:
-          // Strictly anchor to confirmed peaks & valleys. Zero tick price penalties/bonuses!
-          score = 10000 + touchBonus + anchorBonus + spanTargetBonus + waveHighBonus + waveLowBonus + currentBaseBonus + structuralLlBonus - ancientLowPenalty;
-        } else if (widthPct < effectiveTradeableMinSpan) {
-          // Narrow structural pair: Score by touches, active wave alignment, and proximity to tradeable span
-          const touchBonus = (r.touchCount >= 2 ? 1500 : 0) + (s.touchCount >= 2 ? 1500 : 0);
-          const isTargetRes = Boolean(targetAnchorRes && Math.abs(r.price - targetAnchorRes.price) / r.price <= tol);
-          const isTargetSup = Boolean(targetAnchorSup && Math.abs(s.price - targetAnchorSup.price) / s.price <= tol);
-          const anchorBonus = (isTargetRes ? 2500 : 0) + (isTargetSup ? 2500 : 0);
-          const currentBaseBonus = (activeWaveLow && Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol) ? 1000 : 0;
-          const spanProximityBonus = (widthPct / effectiveTradeableMinSpan) * 2000;
-          score = 5000 + spanProximityBonus + touchBonus + anchorBonus + currentBaseBonus;
-        } else {
-          // Too wide (> maxSpanPct): VIOLATES MAX CHANNEL WIDTH!
-          const excessWidth = widthPct - maxSpanPct;
-          score = Math.max(0, 50 - excessWidth * 10);
-        }
-
-        if (!bestPair || score > bestPair.score) {
-          bestPair = { res: r, sup: s, score };
-        }
-      }
-    }
-
-    const bestRes = bestPair?.res;
-    const bestSup = bestPair?.sup;
-
-    return {
-      resistance: bestRes,
-      support: bestSup,
-      allResistanceClusters: resClusters.filter((c) => c.touchCount >= minTouchCount),
-      allSupportClusters: supClusters.filter((c) => c.touchCount >= minTouchCount),
-    };
   }
 
   /**
@@ -1687,34 +1244,14 @@ export class DowStructureEngine {
     let rawWidthPct: number | undefined;
     let minWidthPct: number | undefined;
     let maxWidthPct: number | undefined;
-    let srResult: ReturnType<typeof this.findMultiTouchSR> | undefined;
 
-    // S/R parameters
-    const srLookback = options?.srLookbackCandles ?? 300;
-    const srMinTouches = options?.srMinTouchCount ?? 2;
-    const srTol = options?.srTouchTolerancePct ?? 1.0;
     const minPct = (options?.minChannelWidthPct ?? 1.8) / 100;
     const maxPct = (options?.maxChannelWidthPct ?? 6.0) / 100;
     const minSpan = price * minPct;
     const maxSpan = price * maxPct;
 
-    // Only run Multi-Touch S/R if explicitly requested in legacy MULTI_TOUCH_SR mode
-    if (mode === "MULTI_TOUCH_SR") {
-      srResult = this.findMultiTouchSR(
-        price,
-        srLookback,
-        srMinTouches,
-        srTol,
-        options?.minChannelWidthPct ?? 1.8,
-        options?.maxChannelWidthPct ?? 6.0,
-        activeCeilingPoint?.price,
-        activeValley?.price,
-        isLatestHighLh,
-      );
-    }
-
     // ── 4. Calculate Final Bounds by Selected Channel Mode ────────────────────
-    if (mode === "MULTI_TOUCH_SR" || mode === "DOW_SWINGS") {
+    if (mode !== "DONCHIAN_ATR") {
       // 🔒 Pure Dow Theory Active Wave Swing Bounds
       // "ยึดจากราคาปัจจุบัน และ เหว ยอดที่อยู่ใกล้ๆ ให้ได้ความกว้างอย่างต่ำที่ min chan ไม่ได้ก็ขยับไปเรื่อยๆ"
       const minSpanFromPct = price * minPct;
@@ -1816,7 +1353,8 @@ export class DowStructureEngine {
       rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
       minWidthPct = (minSpan / price) * 100;
       maxWidthPct = (maxSpan / price) * 100;
-    } else if (mode === "DONCHIAN_ATR") {
+    } else {
+      // DONCHIAN_ATR mode
       const lookback = Math.min(n, options?.donchianLookback ?? 20);
       const donchianCandles = this.candles.slice(Math.max(0, n - lookback));
       const allLows = donchianCandles.map((c) => (useTrueWick ? c.low : getEffectiveLow(c, false))).filter(Number.isFinite);
@@ -1826,145 +1364,17 @@ export class DowStructureEngine {
       const rawUpper = allHighs.length > 0 ? Math.max(...allHighs) : price * 1.015;
 
       const minDonchianSpan = Math.max(price * 0.015, price * effAtrPct * 2.0);
-
-      if (srResult?.support && srResult?.resistance) {
-        bottomBound = srResult.support.price;
-        upperBound = srResult.resistance.price;
-      } else if (srResult?.resistance) {
-        upperBound = srResult.resistance.price;
-        bottomBound = upperBound - minDonchianSpan;
-      } else if (srResult?.support) {
-        bottomBound = srResult.support.price;
-        upperBound = bottomBound + minDonchianSpan;
-      } else {
-        bottomBound = price * (1 - minPct / 2);
-        upperBound = price * (1 + minPct / 2);
-      }
+      bottomBound = rawBottom;
+      upperBound = rawUpper;
       isSwingConfirmed = true;
 
       if (upperBound - bottomBound < minDonchianSpan) {
         upperBound = bottomBound + minDonchianSpan;
       }
-    } else {
-      let rawBottom: number;
-      let rawUpper: number;
 
-      if (activeValley) {
-        rawBottom = activeValley.price;
-        isSwingConfirmed = true;
-      } else {
-        const closedCandles = this.candles.slice(0, Math.max(1, n - k));
-        const allLows = closedCandles.map((c) => getEffectiveLow(c, useTrueWick)).filter(Number.isFinite);
-        rawBottom = allLows.length > 0 ? Math.min(...allLows) : price * 0.985;
-      }
-
-      if (activePeak) {
-        rawUpper = activePeak.price;
-        isSwingConfirmed = true;
-      } else {
-        const closedCandles = this.candles.slice(0, Math.max(1, n - k));
-        const allHighs = closedCandles.map((c) => getEffectiveHigh(c, useTrueWick)).filter(Number.isFinite);
-        rawUpper = allHighs.length > 0 ? Math.max(...allHighs) : price * 1.015;
-      }
-
-      let minSpan: number;
-      let maxSpan: number;
-
-      if (mode === "FIXED_PCT_CLAMP") {
-        const minPct = (options?.minChannelWidthPct ?? 1.8) / 100;
-        const maxPct = (options?.maxChannelWidthPct ?? 4.0) / 100;
-        minSpan = price * minPct;
-        maxSpan = price * maxPct;
-      } else {
-        // Default: DOW_ATR_CLAMP (Dynamic ATR min/max width clamping & true wick support)
-        const minMult = options?.atrMinMultiplier ?? 2.5;
-        const maxMult = options?.atrMaxMultiplier ?? 5.0;
-        const minFromPct = (options?.minChannelWidthPct && options.minChannelWidthPct > 0) ? price * (options.minChannelWidthPct / 100) : price * 0.015;
-        const maxFromPct = (options?.maxChannelWidthPct && options.maxChannelWidthPct > 0) ? price * (options.maxChannelWidthPct / 100) : price * 0.05;
-
-        // ATR-scaled spans
-        minSpan = Math.max(minFromPct, Math.min(price * effAtrPct * minMult, maxFromPct * 0.5));
-        maxSpan = Math.max(minSpan * 1.5, Math.max(maxFromPct, price * effAtrPct * maxMult));
-      }
-
-      rawWidthPct = rawBottom > 0 ? ((rawUpper - rawBottom) / rawBottom) * 100 : 0;
-      minWidthPct = price > 0 ? (minSpan / price) * 100 : 0;
-      maxWidthPct = Number.isFinite(maxSpan) && price > 0 ? (maxSpan / price) * 100 : undefined;
-
-      if (srResult?.support && srResult?.resistance) {
-        // Both multi-touch levels confirmed from calculated swings! Lock onto exact structural levels
-        bottomBound = srResult.support.price;
-        upperBound = srResult.resistance.price;
-        clampStatus = "NATURAL_SWING";
-        anchorSide = "NONE";
-      } else if (srResult?.resistance && !srResult?.support) {
-        // Resistance has confirmed multi-touches! Anchor ceiling to resistance.
-        // For floor, use active wave valley (เหวที่ต่ำสุดของรอบคลื่นตัวเอง)
-        upperBound = srResult.resistance.price;
-        const candidateFloor = activeValley?.price
-          ?? (this.swingLows.length > 0 ? this.swingLows[this.swingLows.length - 1]?.price : undefined);
-        bottomBound = (candidateFloor !== undefined && candidateFloor < upperBound)
-          ? candidateFloor
-          : upperBound - minSpan;
-        if (candidateFloor !== undefined && candidateFloor < upperBound) {
-          clampStatus = "NATURAL_SWING";
-          anchorSide = "NONE";
-        } else {
-          clampStatus = "CLAMPED_MIN";
-          anchorSide = "UPPER_CEILING";
-        }
-      } else if (!srResult?.resistance && srResult?.support) {
-        // Support has confirmed multi-touches! Anchor floor to support.
-        // For ceiling, use active ceiling so it strictly aligns with the major calculated swing peak on the chart!
-        bottomBound = srResult.support.price;
-        const candidateCeil = activeCeilingPoint?.price
-          ?? activePeak?.price
-          ?? (this.swingHighs.length > 0 ? this.swingHighs[this.swingHighs.length - 1]?.price : undefined);
-        upperBound = (candidateCeil !== undefined && candidateCeil > bottomBound)
-          ? candidateCeil
-          : bottomBound + minSpan;
-        if (candidateCeil !== undefined && candidateCeil > bottomBound) {
-          clampStatus = "NATURAL_SWING";
-          anchorSide = "NONE";
-        } else {
-          clampStatus = "CLAMPED_MIN";
-          anchorSide = "LOWER_FLOOR";
-        }
-      } else {
-        // Neither side has confirmed multi-touch swings; anchor to calculated active wave swings
-        // "ถ้าไม่มีเลย ให้ใช้แนวต้านสูงสุดของรอบคลื่นตัวเอง ในส่วนของ แนวรับก็เช่นกัน"
-        const candidateFloor = activeValley?.price
-          ?? (this.swingLows.length > 0 ? this.swingLows[this.swingLows.length - 1]?.price : undefined);
-        const candidateCeil = activeCeilingPoint?.price
-          ?? activePeak?.price
-          ?? (this.swingHighs.length > 0 ? this.swingHighs[this.swingHighs.length - 1]?.price : undefined);
-        bottomBound = candidateFloor ?? price * (1 - minPct / 2);
-        upperBound = candidateCeil ?? price * (1 + minPct / 2);
-        if (candidateFloor !== undefined && candidateCeil !== undefined && candidateCeil > candidateFloor) {
-          clampStatus = "NATURAL_SWING";
-          anchorSide = "NONE";
-        } else {
-          clampStatus = "CLAMPED_MIN";
-          anchorSide = "NONE";
-        }
-      }
-
-      // Enforce minSpan
-      const minSpanFromPct = (options?.minChannelWidthPct && options.minChannelWidthPct > 0)
-        ? price * (options.minChannelWidthPct / 100)
-        : price * 0.018;
-
-      if (clampStatus === "NATURAL_SWING" || (srResult?.support && srResult?.resistance)) {
-        // Both bounds anchored to genuine structural points: keep bounds locked without dilation!
-        clampStatus = "NATURAL_SWING";
-        anchorSide = "NONE";
-      } else if (anchorSide === "UPPER_CEILING") {
-        clampStatus = "NATURAL_SWING";
-      } else if (anchorSide === "LOWER_FLOOR") {
-        clampStatus = "NATURAL_SWING";
-      } else {
-        clampStatus = "NATURAL_SWING";
-      }
+      rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
+      minWidthPct = (minSpan / price) * 100;
+      maxWidthPct = (maxSpan / price) * 100;
     }
 
     // 🔒 Dow Theory overrides: Ensure Ceiling snaps to HH and steps down on confirmed LH
@@ -1975,9 +1385,8 @@ export class DowStructureEngine {
       const postPeakHighs = canonicalHighs.filter((h) => macroPeak && h.index >= macroPeak.index);
 
       // 🔒 Dow Theory Rule ("ถ้ายังไม่ทำ LH ไม่ควรปรับลดกรอบบนลงมา"):
-      const hasConfirmedMultiTouchRes = Boolean(srResult?.resistance && srResult.resistance.touchCount >= 2);
       const isLatestHighHh = lastCanonicalHigh?.dowLabel === "HH";
-      if (!hasConfirmedMultiTouchRes && isLatestHighHh && lastCanonicalHigh && upperBound < lastCanonicalHigh.price) {
+      if (isLatestHighHh && lastCanonicalHigh && upperBound < lastCanonicalHigh.price) {
         upperBound = lastCanonicalHigh.price;
         clampStatus = "NATURAL_SWING";
       }
@@ -2145,8 +1554,6 @@ export class DowStructureEngine {
       minWidthPct,
       maxWidthPct,
       anchorSide,
-      resistanceTouchCount: srResult?.resistance?.touchCount,
-      supportTouchCount: srResult?.support?.touchCount,
     };
 
     // Wave cycles were computed earlier and used to determine canonical activeValley/activePeak
@@ -2165,124 +1572,6 @@ export class DowStructureEngine {
       lastLl,
       waveCycle.annotatedSwings,
     );
-
-    // ── Sync cluster to the final upperBound / bottomBound after all Dow Theory overrides ──────────
-    // After overrides (HH protection, LH adaptation, LL floor drop, min-width enforcement),
-    // upperBound and bottomBound may differ from srResult.resistance/support.price.
-    // We must build effective clusters whose .price AND .points both reflect the actual bound source
-    // so that the 🎯 touch badges on the dashboard AND the channel border line sit at the same position.
-
-    // Determine the source of upperBound:
-    //   a) srResult.resistance exists AND its price equals upperBound within tolerance → use original cluster
-    //   b) An existing cluster in allResistanceClusters matches upperBound → use that cluster
-    //   c) A canonical high or swing high matches upperBound → use that swing high
-    //   d) Points from srResult.resistance genuinely touch upperBound → filter to those points
-    //   e) Never leak points from a far-away cluster (e.g. 0.2210) to a different upper bound level (e.g. 0.2097)!
-    const clusterToleranceRatio = Math.max(0.001, (srTol ?? 1.0) / 100);
-    const upperMatchesSR = srResult?.resistance && Math.abs(upperBound - srResult.resistance.price) / srResult.resistance.price <= clusterToleranceRatio;
-
-    let effectiveResCluster: { price: number; touchCount: number; points: SwingPoint[] } | undefined;
-    if (upperMatchesSR && srResult?.resistance) {
-      const tightTol = Math.min(clusterToleranceRatio, 0.0025);
-      const pointsAtCeiling = srResult.resistance.points.filter(
-        (pt) => Math.abs(pt.price - upperBound) / upperBound <= tightTol,
-      );
-      effectiveResCluster = {
-        ...srResult.resistance,
-        price: upperBound,
-        touchCount: pointsAtCeiling.length > 0 ? pointsAtCeiling.length : srResult.resistance.touchCount,
-        points: pointsAtCeiling.length > 0 ? pointsAtCeiling : srResult.resistance.points,
-      };
-    } else {
-      const matchCluster = srResult?.allResistanceClusters?.find(
-        (c) => Math.abs(c.price - upperBound) / upperBound <= clusterToleranceRatio,
-      );
-      if (matchCluster) {
-        effectiveResCluster = { ...matchCluster, price: upperBound };
-      } else {
-        const matchingHighs = (canonicalHighs.length > 0 ? canonicalHighs : this.swingHighs).filter(
-          (h) => Math.abs(h.price - upperBound) / upperBound <= clusterToleranceRatio,
-        );
-        if (matchingHighs.length > 0) {
-          effectiveResCluster = {
-            price: upperBound,
-            touchCount: matchingHighs.length,
-            points: matchingHighs,
-          };
-        } else if (srResult?.resistance) {
-          const pointsAtCeiling = srResult.resistance.points.filter(
-            (pt) => Math.abs(pt.price - upperBound) / upperBound <= clusterToleranceRatio,
-          );
-          if (pointsAtCeiling.length > 0) {
-            effectiveResCluster = {
-              price: upperBound,
-              touchCount: pointsAtCeiling.length,
-              points: pointsAtCeiling,
-            };
-          } else {
-            effectiveResCluster = undefined;
-          }
-        } else {
-          effectiveResCluster = undefined;
-        }
-      }
-    }
-
-    // Determine the source of bottomBound:
-    //   a) srResult.support price equals bottomBound within tolerance → use original cluster
-    //   b) An existing cluster in allSupportClusters matches bottomBound → use that cluster
-    //   c) A canonical low or swing low matches bottomBound → use that swing low
-    //   d) Points from srResult.support genuinely touch bottomBound → filter to those points
-    //   e) Never leak points from a far-away cluster to a different floor level!
-    const bottomMatchesSR = srResult?.support && Math.abs(bottomBound - srResult.support.price) / srResult.support.price <= clusterToleranceRatio;
-
-    let effectiveSupCluster: { price: number; touchCount: number; points: SwingPoint[] } | undefined;
-    if (bottomMatchesSR && srResult?.support) {
-      const tightTol = Math.min(clusterToleranceRatio, 0.0025);
-      const pointsAtFloor = srResult.support.points.filter(
-        (pt) => Math.abs(pt.price - bottomBound) / bottomBound <= tightTol,
-      );
-      effectiveSupCluster = {
-        ...srResult.support,
-        price: bottomBound,
-        touchCount: pointsAtFloor.length > 0 ? pointsAtFloor.length : srResult.support.touchCount,
-        points: pointsAtFloor.length > 0 ? pointsAtFloor : srResult.support.points,
-      };
-    } else {
-      const matchCluster = srResult?.allSupportClusters?.find(
-        (c) => Math.abs(c.price - bottomBound) / bottomBound <= clusterToleranceRatio,
-      );
-      if (matchCluster) {
-        effectiveSupCluster = { ...matchCluster, price: bottomBound };
-      } else {
-        const matchingLows = (canonicalLows.length > 0 ? canonicalLows : this.swingLows).filter(
-          (l) => Math.abs(l.price - bottomBound) / bottomBound <= clusterToleranceRatio,
-        );
-        if (matchingLows.length > 0) {
-          effectiveSupCluster = {
-            price: bottomBound,
-            touchCount: matchingLows.length,
-            points: matchingLows,
-          };
-        } else if (srResult?.support) {
-          const pointsAtFloor = srResult.support.points.filter(
-            (pt) => Math.abs(pt.price - bottomBound) / bottomBound <= clusterToleranceRatio,
-          );
-          if (pointsAtFloor.length > 0) {
-            effectiveSupCluster = {
-              price: bottomBound,
-              touchCount: pointsAtFloor.length,
-              points: pointsAtFloor,
-            };
-          } else {
-            effectiveSupCluster = undefined;
-          }
-        } else {
-          effectiveSupCluster = undefined;
-        }
-      }
-    }
-
     return {
       upperBound,
       bottomBound,
@@ -2306,10 +1595,6 @@ export class DowStructureEngine {
       swingHighs: this.swingHighs,
       swingLows: this.swingLows,
       waveCycle,
-      resistanceCluster: effectiveResCluster,
-      supportCluster: effectiveSupCluster,
-      allResistanceClusters: srResult?.allResistanceClusters,
-      allSupportClusters: srResult?.allSupportClusters,
     };
   }
 

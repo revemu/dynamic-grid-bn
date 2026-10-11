@@ -373,8 +373,6 @@ export class DynamicGrid {
       narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct ?? 0.05,
       narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct ?? 0.05,
       lockChannelInPosition: this.cfg.lockChannelInPosition !== false,
-      srMinTouchCount: this.cfg.srMinTouchCount ?? 2,
-      srTouchTolerancePct: this.cfg.srTouchTolerancePct ?? 0.35,
       srLookbackCandles: this.cfg.srLookbackCandles ?? 300,
       initialCandleCount: this.cfg.initialCandleCount ?? 300,
       maxCandleCount: this.cfg.maxCandleCount ?? 600,
@@ -1682,8 +1680,6 @@ export class DynamicGrid {
       atrPct: this.atrSource.atrPct?.(),
       useTrueWick: this.cfg.useTrueWick,
       wickThresholdPct: this.cfg.wickThresholdPct,
-      srMinTouchCount: this.cfg.srMinTouchCount,
-      srTouchTolerancePct: this.cfg.srTouchTolerancePct,
       srLookbackCandles: this.cfg.srLookbackCandles,
       enableNarrowChannelCollapse: this.cfg.enableNarrowChannelCollapse,
       narrowChannelThresholdPct: this.cfg.narrowChannelThresholdPct,
@@ -1774,43 +1770,6 @@ export class DynamicGrid {
                 currentFloor + dSpan * 0.10,
               ];
         }
-      } else if (
-        dow?.resistanceCluster &&
-        dow.resistanceCluster.price < this.lastDynamicBounds.upperBound &&
-        (avgEntry <= 0 || dow.resistanceCluster.price >= avgEntry * 1.01)
-      ) {
-        // 🎯 If a genuine structural Multi-Touch Resistance exists below the old frozen ceiling
-        // AND it provides healthy profit (>1.0% above avgEntry), adapt the ceiling down to the real resistance!
-        // This ensures the bot can actually hit sell targets and take profit rather than waiting for an unreachable high ceiling.
-        const realResPrice = dow.resistanceCluster.price;
-        const currentFloor = this.lastDynamicBounds.lowerBound;
-        if (realResPrice > currentFloor * 1.015) {
-          this.log(`🎯 [REAL CEILING SYNC] Synchronized locked ceiling ($${this.lastDynamicBounds.upperBound.toFixed(6)} -> Real S/R Ceil $${realResPrice.toFixed(6)}) with confirmed profit (Avg Entry: $${avgEntry.toFixed(6)})`);
-          this.lastDynamicBounds.upperBound = realResPrice;
-          this.lastDynamicBounds.centerPrice = (currentFloor + realResPrice) / 2;
-          const dSpan = realResPrice - currentFloor;
-          const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
-          const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
-          const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
-          const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
-          const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
-          this.lastDynamicBounds.sellLevels = isNarrowChannel
-            ? [realResPrice * (1 - sellBufferFrac)]
-            : [
-                currentFloor + dSpan * 0.60,
-                currentFloor + dSpan * 0.70,
-                currentFloor + dSpan * 0.80,
-                currentFloor + dSpan * 0.90,
-              ];
-          this.lastDynamicBounds.buyLevels = isNarrowChannel
-            ? [currentFloor * (1 + buyBufferFrac)]
-            : [
-                currentFloor + dSpan * 0.40,
-                currentFloor + dSpan * 0.30,
-                currentFloor + dSpan * 0.20,
-                currentFloor + dSpan * 0.10,
-              ];
-        }
       }
 
       lowerBound = this.lastDynamicBounds.lowerBound;
@@ -1838,20 +1797,6 @@ export class DynamicGrid {
       }
 
       const minShiftPct = (this.cfg.minChannelShiftPct ?? 1.0) / 100;
-      // Do not retain previous bounds if a confirmed structural swing pivot or S/R cluster has changed to a new level!
-      // NOTE: When holding a position, new support is ONLY accepted if it is LOWER, never higher!
-      const hasNewSupportLevel = Boolean(
-        dow?.supportCluster &&
-        this.lastDynamicBounds &&
-        (!isHoldingPosition
-          ? Math.abs(dow.supportCluster.price - this.lastDynamicBounds.lowerBound) / this.lastDynamicBounds.lowerBound >= 0.002
-          : dow.supportCluster.price < this.lastDynamicBounds.lowerBound * 0.998)
-      );
-      const hasNewResistanceLevel = Boolean(
-        dow?.resistanceCluster &&
-        this.lastDynamicBounds &&
-        Math.abs(dow.resistanceCluster.price - this.lastDynamicBounds.upperBound) / this.lastDynamicBounds.upperBound >= 0.002
-      );
 
       // 🔒 Ironclad Floor Protection while holding position:
       // When holding position, lowerBound must NEVER be raised above previous locked floor!
@@ -1859,7 +1804,7 @@ export class DynamicGrid {
         lowerBound = this.lastDynamicBounds.lowerBound;
       }
 
-      if (this.lastDynamicBounds && !hasNewSupportLevel && !hasNewResistanceLevel) {
+      if (this.lastDynamicBounds) {
         const lowerShift = Math.abs(lowerBound - this.lastDynamicBounds.lowerBound) / this.lastDynamicBounds.lowerBound;
         const upperShift = Math.abs(upperBound - this.lastDynamicBounds.upperBound) / this.lastDynamicBounds.upperBound;
         if (lowerShift < minShiftPct && upperShift < minShiftPct) {
@@ -2117,8 +2062,7 @@ export class DynamicGrid {
     const requireAvgProfit = (this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW")) === "PORTFOLIO_AVG_PROFIT";
     const isProfitableExit = !requireAvgProfit || avgEntryPrice <= 0 || (effectiveMid >= avgEntryPrice * 1.0005) || (bestBid !== undefined && bestBid >= avgEntryPrice * 1.0005);
     const highestSellTarget = sellLevels.length > 0 ? sellLevels[sellLevels.length - 1]! : upperBound;
-    const realSrCeil = dow?.resistanceCluster?.price;
-    const realCeilingReached = isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound) || refPrice >= highestSellTarget || (bestBid !== undefined && bestBid >= highestSellTarget) || (realSrCeil !== undefined && (refPrice >= realSrCeil || (bestBid !== undefined && bestBid >= realSrCeil)));
+    const realCeilingReached = isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound) || refPrice >= highestSellTarget || (bestBid !== undefined && bestBid >= highestSellTarget);
 
     if (
       !this.isPaused &&
@@ -2746,141 +2690,9 @@ export class DynamicGrid {
         minWidthPct: gridZone?.minWidthPct,
         maxWidthPct: gridZone?.maxWidthPct,
         anchorSide: gridZone?.anchorSide ?? "NONE",
-        resistanceTouchCount: gridZone?.resistanceTouchCount,
-        supportTouchCount: gridZone?.supportTouchCount,
-        resistanceCluster: (() => {
-          if (!dow?.resistanceCluster) return undefined;
-          // If active upperBound matches dow.resistanceCluster price within tolerance (0.5%)
-          if (Math.abs(dow.resistanceCluster.price - upperBound) / upperBound <= 0.005) {
-            const validPts = (dow.resistanceCluster.points || []).filter(
-              (p) => Math.abs(p.price - upperBound) / upperBound <= 0.0025,
-            );
-            return {
-              price: upperBound,
-              touchCount: validPts.length > 0 ? validPts.length : dow.resistanceCluster.touchCount,
-              points: (validPts.length > 0 ? validPts : dow.resistanceCluster.points || []).map((p) => ({
-                time: p.time,
-                price: p.price,
-                index: p.index,
-                type: p.type,
-              })),
-            };
-          }
-          // If upperBound was locked in position or adapted, find cluster or point matching upperBound
-          const matchCluster = dow.allResistanceClusters?.find(
-            (c) => Math.abs(c.price - upperBound) / upperBound <= 0.005,
-          );
-          if (matchCluster) {
-            const validPts = (matchCluster.points || []).filter(
-              (p) => Math.abs(p.price - upperBound) / upperBound <= 0.0025,
-            );
-            return {
-              price: upperBound,
-              touchCount: validPts.length > 0 ? validPts.length : matchCluster.touchCount,
-              points: (validPts.length > 0 ? validPts : matchCluster.points).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-            };
-          }
-          const matchHigh = dow.waveCycle?.annotatedSwings?.find(
-            (s) => s.type === "HIGH" && Math.abs(s.price - upperBound) / upperBound <= 0.005,
-          );
-          if (matchHigh) {
-            return {
-              price: upperBound,
-              touchCount: 1,
-              points: [{ time: matchHigh.time, price: matchHigh.price, index: matchHigh.index, type: matchHigh.type }],
-            };
-          }
-          const validPoints = (dow.resistanceCluster.points || []).filter(
-            (p) => Math.abs(p.price - upperBound) / upperBound <= 0.0025,
-          );
-          if (validPoints.length > 0) {
-            return {
-              price: upperBound,
-              touchCount: validPoints.length,
-              points: validPoints.map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-            };
-          }
-          return undefined;
-        })(),
-        supportCluster: (() => {
-          if (!dow?.supportCluster) return undefined;
-          if (Math.abs(dow.supportCluster.price - lowerBound) / lowerBound <= 0.005) {
-            const validPts = (dow.supportCluster.points || []).filter(
-              (p) => Math.abs(p.price - lowerBound) / lowerBound <= 0.0025,
-            );
-            return {
-              price: lowerBound,
-              touchCount: validPts.length > 0 ? validPts.length : dow.supportCluster.touchCount,
-              points: (validPts.length > 0 ? validPts : dow.supportCluster.points || []).map((p) => ({
-                time: p.time,
-                price: p.price,
-                index: p.index,
-                type: p.type,
-              })),
-            };
-          }
-          const matchCluster = dow.allSupportClusters?.find(
-            (c) => Math.abs(c.price - lowerBound) / lowerBound <= 0.005,
-          );
-          if (matchCluster) {
-            const validPts = (matchCluster.points || []).filter(
-              (p) => Math.abs(p.price - lowerBound) / lowerBound <= 0.0025,
-            );
-            return {
-              price: lowerBound,
-              touchCount: validPts.length > 0 ? validPts.length : matchCluster.touchCount,
-              points: (validPts.length > 0 ? validPts : matchCluster.points).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-            };
-          }
-          const matchLow = dow.waveCycle?.annotatedSwings?.find(
-            (s) => s.type === "LOW" && Math.abs(s.price - lowerBound) / lowerBound <= 0.005,
-          );
-          if (matchLow) {
-            return {
-              price: lowerBound,
-              touchCount: 1,
-              points: [{ time: matchLow.time, price: matchLow.price, index: matchLow.index, type: matchLow.type }],
-            };
-          }
-          const validPoints = (dow.supportCluster.points || []).filter(
-            (p) => Math.abs(p.price - lowerBound) / lowerBound <= 0.005,
-          );
-          if (validPoints.length > 0) {
-            return {
-              price: lowerBound,
-              touchCount: validPoints.length,
-              points: validPoints.map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-            };
-          }
-          return undefined;
-        })(),
-        allResistanceClusters: (dow?.allResistanceClusters || []).map((c) => ({
-          price: c.price,
-          touchCount: c.touchCount,
-          points: (c.points || []).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-        })),
-        allSupportClusters: (dow?.allSupportClusters || []).map((c) => ({
-          price: c.price,
-          touchCount: c.touchCount,
-          points: (c.points || []).map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-        })),
         isChannelLocked: Boolean(isHoldingPosition && lockChannelInPosition && this.lockedChannel),
         liveCalculatedUpperBound: dow?.gridZone?.upperBound ?? dow?.upperBound,
         liveCalculatedBottomBound: dow?.gridZone?.bottomBound ?? dow?.bottomBound,
-        liveResistanceCluster: dow?.resistanceCluster ? {
-          price: dow.resistanceCluster.price,
-          touchCount: dow.resistanceCluster.touchCount,
-          points: (dow.resistanceCluster.points || [])
-            .filter((p) => Math.abs(p.price - dow.resistanceCluster!.price) / dow.resistanceCluster!.price <= 0.0025)
-            .map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-        } : undefined,
-        liveSupportCluster: dow?.supportCluster ? {
-          price: dow.supportCluster.price,
-          touchCount: dow.supportCluster.touchCount,
-          points: (dow.supportCluster.points || [])
-            .filter((p) => Math.abs(p.price - dow.supportCluster!.price) / dow.supportCluster!.price <= 0.0025)
-            .map((p) => ({ time: p.time, price: p.price, index: p.index, type: p.type })),
-        } : undefined,
         regime: activeRegime,
         isSwingConfirmed: dow?.isSwingConfirmed ?? false,
         maxInventoryQuote: this.cfg.maxInventoryQuote,

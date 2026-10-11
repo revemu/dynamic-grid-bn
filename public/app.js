@@ -1313,19 +1313,13 @@
 
     // Channel Clamp Mode & Swing Details
     const widthPct = data.zoneWidthPct !== undefined ? data.zoneWidthPct : 0;
-    let clampStr = data.clampStatus === "CLAMPED_MIN"
-      ? `Clamped Min (${(data.minWidthPct || 0).toFixed(1)}%)`
-      : data.clampStatus === "CLAMPED_MAX"
-        ? `Clamped Max (${(data.maxWidthPct || 0).toFixed(1)}%)`
-        : `Natural Swing (${widthPct.toFixed(1)}%)`;
-
-    if (data.channelMode === "DOW_SWINGS" || data.channelMode === "MULTI_TOUCH_SR") {
-      clampStr = `Pure Dow Swings`;
-    } else if (data.resistanceCluster || data.supportCluster) {
-      const resT = data.resistanceCluster?.touchCount ? `${data.resistanceCluster.touchCount}x` : (data.resistanceTouchCount ? `${data.resistanceTouchCount}x` : "-");
-      const supT = data.supportCluster?.touchCount ? `${data.supportCluster.touchCount}x` : (data.supportTouchCount ? `${data.supportTouchCount}x` : "-");
-      clampStr = `S/R Multi-Touch [Res: ${resT}, Sup: ${supT}]`;
-    }
+    let clampStr = data.channelMode === "DOW_SWINGS"
+      ? `Pure Dow Swings`
+      : data.clampStatus === "CLAMPED_MIN"
+        ? `Clamped Min (${(data.minWidthPct || 0).toFixed(1)}%)`
+        : data.clampStatus === "CLAMPED_MAX"
+          ? `Clamped Max (${(data.maxWidthPct || 0).toFixed(1)}%)`
+          : `Natural Swing (${widthPct.toFixed(1)}%)`;
 
     if (data.isChannelLocked) {
       const realCeilStr = data.liveCalculatedUpperBound && Math.abs(data.liveCalculatedUpperBound - data.upperBound) / data.upperBound > 0.001
@@ -1883,43 +1877,6 @@
     if (data.swingHighs || data.swingLows || (data.waveCycle && data.waveCycle.annotatedSwings)) {
       const markerMap = new Map();
 
-      // Multi-Touch S/R Touch Points Lookup (Disabled in DOW_SWINGS / MULTI_TOUCH_SR pure Dow modes)
-      const isPureDowMode = data.channelMode === "DOW_SWINGS" || data.channelMode === "MULTI_TOUCH_SR";
-      const activeResCluster = !isPureDowMode ? (data.resistanceCluster || (data.isChannelLocked ? data.liveResistanceCluster : undefined)) : undefined;
-      const resTouchPoints = (activeResCluster && Array.isArray(activeResCluster.points))
-        ? activeResCluster.points.filter((p) => {
-            if (!p || typeof p.price !== "number") return false;
-            // Only mark genuine touches: point must be within 0.10% of the actual bound line
-            const matchesUpper = data.upperBound && Math.abs(p.price - data.upperBound) / data.upperBound <= 0.001;
-            const matchesLive = data.liveCalculatedUpperBound && Math.abs(p.price - data.liveCalculatedUpperBound) / data.liveCalculatedUpperBound <= 0.001;
-            return matchesUpper || matchesLive;
-          })
-        : [];
-      const activeSupCluster = !isPureDowMode ? (data.supportCluster || (data.isChannelLocked ? data.liveSupportCluster : undefined)) : undefined;
-      const supTouchPoints = (activeSupCluster && Array.isArray(activeSupCluster.points))
-        ? activeSupCluster.points.filter((p) => {
-            if (!p || typeof p.price !== "number") return false;
-            // Only mark genuine touches: point must be within 0.10% of the actual bound line
-            const matchesBottom = data.bottomBound && Math.abs(p.price - data.bottomBound) / data.bottomBound <= 0.001;
-            const matchesLive = data.liveCalculatedBottomBound && Math.abs(p.price - data.liveCalculatedBottomBound) / data.liveCalculatedBottomBound <= 0.001;
-            return matchesBottom || matchesLive;
-          })
-        : [];
-
-      const resTouchTimes = new Map();
-      resTouchPoints.forEach((p, idx) => {
-        if (p && typeof p.time === "number") {
-          resTouchTimes.set(p.time, { num: idx + 1, total: resTouchPoints.length, price: p.price });
-        }
-      });
-
-      const supTouchTimes = new Map();
-      supTouchPoints.forEach((p, idx) => {
-        if (p && typeof p.time === "number") {
-          supTouchTimes.set(p.time, { num: idx + 1, total: supTouchPoints.length, price: p.price });
-        }
-      });
-
       // Get annotated swings from backend or compute with client fallback
       const annotated = (data.waveCycle && Array.isArray(data.waveCycle.annotatedSwings) && data.waveCycle.annotatedSwings.length > 0)
         ? data.waveCycle.annotatedSwings
@@ -1942,28 +1899,11 @@
           const isActiveHigh = Boolean(data.activePeak   && data.activePeak.time   === s.time);
           const isActiveLow  = Boolean(data.activeValley && data.activeValley.time === s.time);
           const isActive = isActiveHigh || isActiveLow;
-          const isResTouch = resTouchTimes.has(s.time);
-          const isSupTouch = supTouchTimes.has(s.time);
-          const isTouch = isResTouch || isSupTouch;
 
-          // If wave is hidden, only show active key bounds AND S/R touch points
-          if (!isWaveVisible && !isActive && !isTouch) continue;
+          // If wave is hidden, only show active key bounds
+          if (!isWaveVisible && !isActive) continue;
 
           if (s.type === "HIGH") {
-            // S/R touch peaks → badge sits ON the actual candle top (s.price), not floating at cluster line
-            if (isResTouch) {
-              const count = activeResCluster?.touchCount || data.resistanceCluster?.touchCount || 0;
-              const clusterPrice = activeResCluster?.price ?? data.resistanceCluster?.price ?? s.price;
-              const label = count > 1 ? `${count}x` : "1x";
-              if (!swingBadgeTimes.has(s.time)) {
-                // Y = s.price so badge sits exactly on THIS candle's high
-                pushSwingBadge(s.time, s.price, label, "🎯", "badge-res-touch", false,
-                  `Resistance touch ${label} @ ${s.price?.toFixed ? s.price.toFixed(6) : s.price} (level ${clusterPrice?.toFixed ? clusterPrice.toFixed(6) : clusterPrice})`);
-                swingBadgeTimes.add(s.time);
-              }
-              continue;
-            }
-
             // Swing peak → HTML badge
             let label, icon, cssClass, title;
             if (isActive) {
@@ -1988,20 +1928,6 @@
 
           } else {
             // LOW (เหว)
-            // S/R touch valleys → badge sits ON the actual candle bottom (s.price)
-            if (isSupTouch) {
-              const count = activeSupCluster?.touchCount || data.supportCluster?.touchCount || 0;
-              const clusterPrice = activeSupCluster?.price ?? data.supportCluster?.price ?? s.price;
-              const label = count > 1 ? `${count}x` : "1x";
-              if (!swingBadgeTimes.has(s.time)) {
-                // Y = s.price so badge sits exactly on THIS candle's low
-                pushSwingBadge(s.time, s.price, label, "🎯", "badge-sup-touch", true,
-                  `Support touch ${label} @ ${s.price?.toFixed ? s.price.toFixed(6) : s.price} (level ${clusterPrice?.toFixed ? clusterPrice.toFixed(6) : clusterPrice})`);
-                swingBadgeTimes.add(s.time);
-              }
-              continue;
-            }
-
             // Swing valley → HTML badge
             let label, icon, cssClass, title;
             if (isActive) {
@@ -2026,30 +1952,6 @@
               swingBadgeTimes.add(s.time);
             }
           }
-        }
-      }
-
-      // Guarantee any remaining Resistance touch points that weren't in annotated swings
-      // Use info.price (the actual touch point price) so badge sits on the candle
-      for (const [t, info] of resTouchTimes.entries()) {
-        if (!swingBadgeTimes.has(t)) {
-          const count = data.resistanceCluster?.touchCount || 0;
-          const clusterPrice = data.resistanceCluster?.price ?? info.price;
-          pushSwingBadge(t, info.price, count > 1 ? `${count}x` : "1x", "🎯", "badge-res-touch", false,
-            `Resistance touch @ ${info.price?.toFixed ? info.price.toFixed(6) : info.price} (level ${clusterPrice?.toFixed ? clusterPrice.toFixed(6) : clusterPrice})`);
-          swingBadgeTimes.add(t);
-        }
-      }
-
-      // Guarantee any remaining Support touch points that weren't in annotated swings
-      // Use info.price (the actual touch point price) so badge sits on the candle
-      for (const [t, info] of supTouchTimes.entries()) {
-        if (!swingBadgeTimes.has(t)) {
-          const count = data.supportCluster?.touchCount || 0;
-          const clusterPrice = data.supportCluster?.price ?? info.price;
-          pushSwingBadge(t, info.price, count > 1 ? `${count}x` : "1x", "🎯", "badge-sup-touch", true,
-            `Support touch @ ${info.price?.toFixed ? info.price.toFixed(6) : info.price} (level ${clusterPrice?.toFixed ? clusterPrice.toFixed(6) : clusterPrice})`);
-          swingBadgeTimes.add(t);
         }
       }
 
@@ -3060,8 +2962,6 @@
       setVal("cfg_narrowChannelThresholdPct", data.narrowChannelThresholdPct ?? 1.2);
       setVal("cfg_narrowChannelBuyBufferPct", data.narrowChannelBuyBufferPct ?? 0.05);
       setVal("cfg_narrowChannelSellBufferPct", data.narrowChannelSellBufferPct ?? 0.05);
-      setVal("cfg_srMinTouchCount", data.srMinTouchCount ?? 2);
-      setVal("cfg_srTouchTolerancePct", data.srTouchTolerancePct ?? 0.35);
       setVal("cfg_srLookbackCandles", data.srLookbackCandles ?? 300);
       setVal("cfg_minChannelShiftPct", data.minChannelShiftPct);
       setVal("cfg_wickThresholdPct", data.wickThresholdPct ?? 20.0);
@@ -3169,8 +3069,6 @@
       narrowChannelThresholdPct: document.getElementById("cfg_narrowChannelThresholdPct") ? parseFloat(document.getElementById("cfg_narrowChannelThresholdPct").value) : 1.2,
       narrowChannelBuyBufferPct: document.getElementById("cfg_narrowChannelBuyBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelBuyBufferPct").value) : 0.05,
       narrowChannelSellBufferPct: document.getElementById("cfg_narrowChannelSellBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelSellBufferPct").value) : 0.05,
-      srMinTouchCount: parseInt(document.getElementById("cfg_srMinTouchCount").value, 10) || 2,
-      srTouchTolerancePct: parseFloat(document.getElementById("cfg_srTouchTolerancePct").value) || 0.35,
       srLookbackCandles: parseInt(document.getElementById("cfg_srLookbackCandles").value, 10) || 300,
       minChannelShiftPct: parseFloat(document.getElementById("cfg_minChannelShiftPct").value),
       wickThresholdPct: parseFloat(document.getElementById("cfg_wickThresholdPct").value),

@@ -236,18 +236,22 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                 - ใน `sellAllUser()`: เพิ่มการเรียก `await this.cancelAllOrdersUser();` และ `await this.refreshWalletBalances();` ตั้งแต่เริ่มต้น เพื่อยกเลิกออเดอร์ตั้งขายที่ค้างอยู่บนกระดานทั้งหมดและปลดล็อคยอดเหรียญ Base กลับเข้า Free Balance ก่อนทำการคำนวณยอดที่จะขาย
                 - เพิ่ม Fallback ให้ดึง `held = availableBase` หากยอดใน Position Memory ต่ำกว่า `minQty` แต่ใน Wallet มีเหรียญจริงพร้อมเทรด ทำให้การกด Sell All สำเร็จ 100% เสมอ
 
-            8. **Complete Elimination of Multi-Touch S/R Clustering & True Pure Dow Wave Bounds (`src/market-structure.ts`)**:
+            8. **Complete Purge of Multi-Touch S/R & Progressive Nearest-Swing Channel Expansion (`DOW_SWINGS`)**:
                - **สาเหตุ & ปัญหาเดิม**:
-                 - ระบบเคยมีตรรกะค้นหาจุดสัมผัสซ้ำหลายครั้ง (`findMultiTouchSR`) ซึ่งหากมีสวิงย่อยชนระดับราคาซ้ำกัน 2 ครั้ง (เช่น เหวย่อย $2504.83 สัมผัส 2x) ระบบจะเลือกคู่นั้นมาเป็น Floor/Ceiling ทันที แม้จะกว้างเพียง **0.38%** ทำให้กรอบแคบเกินไปและละเลยยอดหลัก HH ($2524.59) หรือเหวหลัก LL ($2501.75) ของคลื่น
-                 - นอกจากนี้ `activeWaveBaseIndex` เคยเริ่มที่ `lastLl` ย่อย ($2504.83) ทำให้ตัดสวิงใหญ่ $2501.75 และ $2524.59 ออกจาก Pool
-               - **การแก้ไขในระบบ**:
-                 - เพิ่มโหมด **`DOW_SWINGS`** (Pure Dow Theory Waves) และยกเลิกการใช้ Multi-touch Clusters ในการกำหนดกรอบราคา 100%
-                 - ปรับ `activeWaveBaseIndex` ให้ยึดจาก `macroLow` (จุดต่ำสุดจริงของรอบคลื่น $2501.75) เสมอ ทำให้สวิงหลักทั้งหมดอยู่ในรอบคลื่น
-                 - กำหนดกรอบจากโครงสร้าง **Pure Dow Theory Active Wave Swings**:
-                   - **Upper Bound (กรอบบน)**: ยึดจุดยอดสูงสุดของรอบคลื่นปัจจุบัน (`activePeak` เช่น Major HH $2524.59)
-                   - **Bottom Bound (กรอบล่าง)**: ยึดจุดเหวต่ำสุดของรอบคลื่นปัจจุบัน (`activeValley` เช่น Major LL $2501.75)
-                 - บังคับเกณฑ์ **`minChannelWidthPct` (เช่น 2.0% - 3.0%)** อย่างเข้มงวด: หากกรอบแคบกว่าเกณฑ์ ระบบจะขยายไปหายอดคลื่นใหญ่ `macroPeak` ($2524.59) และเหวใหญ่ `macroLow` ($2501.75) ทันที ห้ามบีบกรอบแคบ 0.38% เด็ดขาด
-                 - ปิดการแสดงผลป้ายสัมผัสหลายจุด (`🎯 Nx`) บนหน้าแดชบอร์ดในโหมด Pure Dow Swings
+                 - อัลกอริทึม Multi-Touch S/R (`findMultiTouchSR`) มักสร้างคลัสเตอร์สัมผัสซ้ำ (เช่น `🎯 6x` ที่ยอด $2515.22) แล้วล็อกเพดานไว้ที่นั่น ขณะเดียวกันฝั่งแนวรับไม่มีจุดที่มี touch >= 2 ใกล้ราคา จึงถอยหลังย้อนอดีตไปขุดเอา Swing Low เก่าโบราณจาก 36 ชั่วโมงก่อนหน้า ($2483.11, `🎯 1x`) มาเป็น Floor ทำให้กรอบราคาเบี้ยว ไม่สมดุล และไม่สะท้อนโครงสร้างราคาปัจจุบัน
+                 - นอกจากนี้ การบล็อกหรือบายพาสด้วย if-else ยังคงเหลือโค้ด คลัสเตอร์ ป้าย marker และ telemetry ค้างอยู่มากมาย
+               - **การแก้ไขในระบบ (Complete Purge)**:
+                 1. **ลบโค้ด Multi-Touch ออกจากทั้งระบบ 100%**:
+                    - ลบฟังก์ชัน `findMultiTouchSR()` ขนาด ~430 บรรทัดออกจาก `src/market-structure.ts`
+                    - ลบฟิลด์ `resistanceCluster`, `supportCluster`, `allResistanceClusters`, `allSupportClusters`, `resistanceTouchCount`, `supportTouchCount` ออกจาก Interface และ Telemetry ทั้งหมดใน `market-structure.ts`, `strategy.ts`, `types.ts`
+                    - ลบตัวเลือก `srMinTouchCount` และ `srTouchTolerancePct` ออกจาก `config.ts`, `strategy.ts`, `public/app.js`, และ `public/index.html`
+                    - ลบโค้ดวาดป้าย `🎯 Nx` overlay badge และป้ายข้อความ `S/R Multi-Touch [Res: ..., Sup: ...]` ออกจาก `public/app.js`
+                 2. **Symmetrical Nearest-Swing Progressive Expansion ใน `DOW_SWINGS`**:
+                    - เริ่มต้นจากราคาปัจจุบัน (`refPrice`) หา Swing High ที่ใกล้ที่สุดเหนือราคา (`upSwings`) และ Swing Low ที่ใกล้ที่สุดใต้ราคา (`downSwings`)
+                    - หากความกว้างเริ่มต้นยังน้อยกว่า `minChannelWidthPct` (เช่น 0.5% หรือ 2.0%) ระบบจะขยายกรอบทีละขั้นอย่างสมดุล (Symmetrical Expansion):
+                      - คำนวณระยะห่างไปยัง High ถัดไปด้านบน และ Low ถัดไปด้านล่าง
+                      - เลือกขยายฝั่งที่อยู่ใกล้ที่สุดก่อน หรือขยายทั้งสองฝั่งพร้อมกัน จนกระทั่ง `width >= minChannelWidthPct`
+                    - ไม่มีการล็อกยอดเดิม ไม่มีการถอยไปหาเหวโบราณ และไม่มีการเสกเส้นลอยกลางอากาศ กรอบราคาจะยึดสวิงจริงรอบราคาปัจจุบันอย่างเป็นธรรมชาติ 100%
 
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)

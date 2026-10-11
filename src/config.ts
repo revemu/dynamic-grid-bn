@@ -165,10 +165,10 @@ export const defaultStrategyConfig = {
    * 3. "FIXED_PCT_CLAMP": Dow Theory Swings clamped to fixed min/max percentage width.
    * 4. "DONCHIAN_ATR": Adaptive Donchian Channel (Highest High & Lowest Low of lookback bars) + ATR buffer.
    */
-  channelMode: "DOW_SWINGS" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "MULTI_TOUCH_SR",
-  /** Min channel width for DOW_SWINGS, FIXED_PCT_CLAMP & MULTI_TOUCH_SR (in %, default 2.5%). */
+  channelMode: "DOW_SWINGS" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR",
+  /** Min channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 2.5%). */
   minChannelWidthPct: 2.5,
-  /** Max channel width for DOW_SWINGS, FIXED_PCT_CLAMP & MULTI_TOUCH_SR (in %, default 6.0%). */
+  /** Max channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 6.0%). */
   maxChannelWidthPct: 6.0,
   /** When true, freezes/locks channel bounds while holding inventory position to avoid shifting sell targets. */
   lockChannelInPosition: true,
@@ -178,11 +178,7 @@ export const defaultStrategyConfig = {
   atrMaxMultiplier: 5.0,
   /** Donchian lookback bars for DONCHIAN_ATR mode (default 20 bars). */
   donchianLookback: 20,
-  /** Minimum touch count for horizontal support/resistance levels in MULTI_TOUCH_SR mode (default 2). */
-  srMinTouchCount: 2,
-  /** Tolerance % to cluster swing highs/lows into a single S/R level in MULTI_TOUCH_SR mode (default 1.0%). */
-  srTouchTolerancePct: 1.0,
-  /** Shared lookback (bars) for Peak/Valley detection, trendlines AND multi-touch S/R analysis (default 300 = initial candle load). */
+  /** Shared lookback (bars) for Peak/Valley detection, trendlines and market structure analysis (default 300 = initial candle load). */
   srLookbackCandles: 300,
   /** Safety buffer below floor (in % of price, default 0.25%). */
   floorBufferPct: 0.25,
