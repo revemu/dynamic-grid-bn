@@ -662,8 +662,8 @@ export class DowStructureEngine {
       ? supCandidates.find((s) => Math.abs(s.price - activeWaveLow) / activeWaveLow <= tol)
       : undefined;
 
-    // Baseline tradeable span floor: Strictly honor user's configured minSpanPct (e.g. 3.0%)
-    const effectiveTradeableMinSpan = minSpanPct;
+    // Baseline tradeable span floor: Allow natural structural swings within slight tolerance (0.95x minSpanPct, e.g. 2.85% vs 3.0%)
+    const effectiveTradeableMinSpan = minSpanPct * 0.95;
 
     let bestPair: {
       res: { price: number; touchCount: number; points: SwingPoint[] };
@@ -1623,30 +1623,15 @@ export class DowStructureEngine {
 
     let baseValley: SwingPoint | undefined;
     if (recentCanonicalLows.length > 0) {
-      // Check if there is a confirmed Higher Low (HL) that price is actively respecting (price >= hl.price * 0.995).
-      // Since canonicalLows are strictly alternating with peaks, any candLow with candLow.price > priorLow.price
-      // is a genuine structural Higher Low with an intervening peak to its left!
-      let confirmedHl: SwingPoint | undefined;
-      for (let i = recentCanonicalLows.length - 1; i >= 1; i--) {
-        const candLow = recentCanonicalLows[i]!;
-        const priorLow = recentCanonicalLows[i - 1]!;
-        const isBrokenBySubsequentLow = activeCycleLows.some((l) => l.index > candLow.index && l.price <= candLow.price * 1.0005);
-        if (candLow.price > priorLow.price && price >= candLow.price * 0.998 && !isBrokenBySubsequentLow) {
-          confirmedHl = candLow;
-          break;
-        }
+      // 🔒 Pure Dow Structural Floor: Anchor to the confirmed lowest valley of the active cycle!
+      // This guarantees that Major LL (e.g. $0.2026 / $2501.75) is respected as the structural base,
+      // preventing minor Higher Lows (HL) from prematurely lifting the channel floor.
+      const lowsPool = activeCycleLows.length > 0 ? activeCycleLows : recentCanonicalLows;
+      let minLow = lowsPool[0]!;
+      for (const l of lowsPool) {
+        if (l.price < minLow.price) minLow = l;
       }
-
-      if (confirmedHl) {
-        baseValley = confirmedHl;
-      } else {
-        const lowsPool = activeCycleLows.length > 0 ? activeCycleLows : recentCanonicalLows;
-        let minLow = lowsPool[0]!;
-        for (const l of lowsPool) {
-          if (l.price < minLow.price) minLow = l;
-        }
-        baseValley = minLow;
-      }
+      baseValley = minLow;
     } else if (activeCycleLows.length > 0) {
       baseValley = activeCycleLows[activeCycleLows.length - 1];
     } else if (canonicalLows.length > 0) {

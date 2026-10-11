@@ -209,6 +209,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
           3. **Multi-Touch Base Valley Tolerance Harmonization (`src/market-structure.ts`):**
              - ปรับปรุงการคัดกรอง `cycleLowMin` ใน `findMultiTouchSR` (ทั้ง `valleyPoints` และ `supCandidates`) ให้ใช้เกณฑ์ความคลาดเคลื่อน `(1 - tol)` สอดคล้องกับ grouping tolerance แทนที่เกณฑ์เดิมที่แคบเกินไป (`0.999` หรือ 0.10%)
              - ป้องกันบั๊กที่เหวฐานล่างแท้จริงของรอบคลื่น (เช่น 0.2042 ที่มี 3 touches) โดนตัดทิ้งเพียงเพราะอยู่ต่ำกว่า Higher Low ล่าสุด (0.2045) เล็กน้อย ทำให้แนวรับ Multi-Touch สัมผัสพื้นฐานเหวที่ต่ำที่สุดได้อย่างสมบูรณ์แบบ ไม่ลอยขึ้นมาที่ 0.2044 อีกต่อไป
+          4. **Pure Structural Wave Base Anchoring (`src/market-structure.ts`):**
+             - ปรับตรรกะ `baseValley` ใน `getStructure` ให้ยึดจุดต่ำสุดจริงของรอบคลื่นปัจจุบัน (`Math.min(...activeCycleLows)` เช่น LL $0.2026 / $2501.75) เสมอ แทนการดึงยกตาม Higher Low (`confirmedHl`) ย่อย
+             - ผ่อนปรน `effectiveTradeableMinSpan = minSpanPct * 0.95` เพื่อรองรับคู่สวิงธรรมชาติของคลื่นหลัก (เช่น กรอบ 2.96% จากยอด $0.2086 ถึงเหว $0.2026) ไม่ให้ถูกตีตกไปเข้าโหมด Clamped แคบ
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)
