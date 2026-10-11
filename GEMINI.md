@@ -706,6 +706,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        - หากยังต่ำกว่า $5.00 (เช่น ถือแค่ $7.00) $\rightarrow$ ยุบเหลือ **1 ไม้** 100%
     2. **Fast Exit Allocation (Sell Target 1 & 2)**: เมื่อยุบเหลือ 2 ไม้ ระบบจะเลือกวางที่ **2 ระดับแรกที่อยู่ใกล้ราคาตลาดที่สุด** (Sell Target 1 60% zone ขาย 50% และ Sell Target 2 70% zone ขาย 50% Full Exit) เพื่อความรวดเร็วในการ Take Profit และคืนทุนเป็น Cash โดยไม่ต้องรอราคาพุ่งไปถึง Target 4 (90%)
     3. **Stale Level Cleanup**: ออเดอร์ที่เคยค้างอยู่ในระดับที่ไม่ถูกเลือก (Target 3, 4) จะถูกยกเลิกอัตโนมัติ เพื่อรวบ Inventory มารวมไว้ใน 2 ไม้ที่ผ่านเกณฑ์ $5.00 อย่างสมบูรณ์ 100%
+- **S/R Multi-Touch Active Cycle Restriction & Elimination of Ancient Out-of-Cycle Swings**:
+  - **สาเหตุของปัญหาเดิม**:
+    1. ใน `findMultiTouchSR` มี Lookback ย้อนหลังถึง 300 แท่ง (75 ชั่วโมง / > 3 วัน) ทำให้เหวโบราณในอดีต (เช่น `$2488.40` ที่เคยสะสม touchCount 3 ครั้ง) และยอดโบราณ (`$2538.68` ที่เคยสะสม touchCount 2-3 ครั้ง) ถูกนำมาเป็น candidate
+    2. คลื่นปัจจุบันแคบกว่าค่า `minSpanPct` (เช่น คลื่นปัจจุบันมี LL อยู่ที่ `$2503.28` และ HH อยู่ที่ `$2528.96` คิดเป็นความกว้างเพียง 1.02% ซึ่งน้อยกว่า `minSpanPct` 2.0%)
+    3. ส่งผลให้ระบบให้คะแนนคู่โบราณ `$2538.68 / $2488.40` ที่มีความกว้าง 2.02% และมี Touch bonus สูงกว่า ชนะคลื่นปัจจุบัน และแสดงผลเส้นประ `Real Ceil: $2538.68` และ `Real Floor: $2488.40` ลอยอยู่ในอากาศโดยไม่มีจุด Swing High / Low ใดๆ บนหน้าจอให้เห็น
+  - **การแก้ไข** (`src/market-structure.ts`):
+    1. **Active Cycle Boundaries (`cycleLowMin` & `cycleHighMax`)**: ใน `findMultiTouchSR` กำหนดขอบเขตจากรอบคลื่นปัจจุบัน (`activeWaveLow` / `recentCanonicalLows` และ `activeWaveHigh` / `recentCanonicalHighs`) โดย candidate แนวรับต้องไม่ต่ำกว่าจุดต่ำสุดของคลื่นปัจจุบัน (`c.price >= cycleLowMin * 0.999`) และ candidate แนวต้านต้องไม่ลอยสูงกว่ายอดของคลื่นปัจจุบัน (`c.price <= cycleHighMax * 1.002`)
+    2. **Strict Candidate Pool Filtering**: กรอง `peakPoints`, `valleyPoints`, `resCandidates`, `supCandidates` ทั้งหมดให้ถูกจำกัดอยู่ในกรอบรอบคลื่นปัจจุบัน ป้องกันไม่ให้จุด Swing โบราณจาก 3 วันที่แล้วหลุดเข้ามาแย่งกรอบ
+    3. **Elimination of Artificial Price Synthesis**: ใน `calculateChannelBounds` ปรับปรุง Fallback ของกรอบบนและล่างให้ยึดโยงกับ Swing จริงของรอบคลื่นปัจจุบันเสมอ (`activeCeilingPoint` / `activePeak` และ `activeValley` / `recentConfirmedLow`) โดยไม่ใช้สูตรบวกเปอร์เซ็นต์ลอยๆ (`bottomBound + minSpan` หรือ `upperBound - minSpan`) หากคลื่นแคบจะแสดงตามจริงและจัดเป็น `NARROW_CHANNEL` (Triangle Squeeze) ตามหลัก Dow Theory อย่างถูกต้อง 100%
 
 ---
 

@@ -340,8 +340,6 @@ export class DowStructureEngine {
     const waveCycle = this.calculateWaveCycles();
     const canonicalHighs = waveCycle.annotatedSwings.filter((s) => s.type === "HIGH");
     const canonicalLows = waveCycle.annotatedSwings.filter((s) => s.type === "LOW");
-    const recentCanonicalHighs = canonicalHighs.slice(-4);
-    const recentCanonicalLows = canonicalLows.slice(-4);
     const macroPeak = canonicalHighs.length > 0
       ? canonicalHighs.reduce((max, h) => (!max || h.price > max.price ? h : max), canonicalHighs[0]!)
       : undefined;
@@ -358,7 +356,32 @@ export class DowStructureEngine {
       canonicalHighs.some((h) => h.index > macroLow.index)
     );
 
-    let candidateHighSwings = canonicalHighs;
+    // Active cycle swings: Swings strictly belonging to the ongoing active price cycle / consolidation
+    const activeCycleHighs = (isNewCycleFromLow && macroLow)
+      ? canonicalHighs.filter((h) => h.index > macroLow.index)
+      : (macroPeak && currentPrice < macroPeak.price * 0.999 ? canonicalHighs.filter((h) => h.index >= macroPeak.index) : canonicalHighs);
+    const activeCycleLows = (isNewCycleFromLow && macroLow)
+      ? canonicalLows.filter((l) => l.index >= macroLow.index)
+      : canonicalLows;
+
+    const recentCanonicalHighs = activeCycleHighs.slice(-4);
+    const recentCanonicalLows = activeCycleLows.slice(-4);
+
+    // 🔒 Structural Bounds Constraints for Active Cycle:
+    // 1. Structural Floor (cycleLowMin): Any support candidate below the confirmed lowest valley of the active cycle
+    //    is an ancient low from a previous market regime (e.g. $2488.40) and MUST NOT hijack the active channel floor!
+    const cycleLowMin = activeWaveLow !== undefined
+      ? activeWaveLow
+      : (recentCanonicalLows.length > 0 ? Math.min(...recentCanonicalLows.map((l) => l.price)) : undefined);
+
+    // 2. Structural Ceiling (cycleHighMax): Resistance candidates must not float above the confirmed high of the active cycle
+    //    (e.g. $2528.96 or Lower High $2516.02), unless price has traded above it. Ancient peaks from 3 days ago ($2538.68)
+    //    cannot invent a ceiling that the current wave hasn't reached!
+    const cycleHighMax = activeWaveHigh !== undefined
+      ? activeWaveHigh
+      : (recentCanonicalHighs.length > 0 ? Math.max(...recentCanonicalHighs.map((h) => h.price)) : undefined);
+
+    let candidateHighSwings = activeCycleHighs;
     if (isNewCycleFromLow && macroLow) {
       const postLowHighs = canonicalHighs.filter((h) => h.index > macroLow.index);
       const maxPostLow = postLowHighs.length > 0 ? Math.max(...postLowHighs.map((h) => h.price)) : 0;
@@ -372,8 +395,10 @@ export class DowStructureEngine {
       }
     }
 
-    const peakPoints: SwingPoint[] = (candidateHighSwings.length > 0 ? candidateHighSwings : (canonicalHighs.length > 0 ? canonicalHighs : this.swingHighs)).filter((s) => s.index >= minIdx);
-    const valleyPoints: SwingPoint[] = (canonicalLows.length > 0 ? canonicalLows : this.swingLows).filter((s) => s.index >= minIdx);
+    const peakPoints: SwingPoint[] = (candidateHighSwings.length > 0 ? candidateHighSwings : (activeCycleHighs.length > 0 ? activeCycleHighs : this.swingHighs))
+      .filter((s) => s.index >= minIdx && (!cycleHighMax || s.price <= cycleHighMax * 1.002));
+    const valleyPoints: SwingPoint[] = (activeCycleLows.length > 0 ? activeCycleLows : this.swingLows)
+      .filter((s) => s.index >= minIdx && (!cycleLowMin || s.price >= cycleLowMin * 0.999));
 
     // Cluster all structural points within tolerance to capture genuine multi-touch levels
     // Requires distinct touches separated by time (>= 3 bars) and intervening pullbacks/bounces
@@ -553,10 +578,10 @@ export class DowStructureEngine {
 
     // 1. Confirmed Resistance Candidates (sorted ascending by price)
     const resCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-    for (const c of validResClusters.filter((c) => c.price <= maxResPrice)) {
+    for (const c of validResClusters.filter((c) => c.price <= maxResPrice && (!cycleHighMax || c.price <= cycleHighMax * 1.002))) {
       resCandidates.push(c);
     }
-    for (const c of resClusters.filter((c) => c.touchCount < minTouchCount && c.price <= maxResPrice)) {
+    for (const c of resClusters.filter((c) => c.touchCount < minTouchCount && c.price <= maxResPrice && (!cycleHighMax || c.price <= cycleHighMax * 1.002))) {
       // Skip sub-clusters whose points are already covered by a valid multi-touch cluster
       if (resCandidates.some((r) => r.touchCount >= minTouchCount && c.points.some((pt) => r.points.some((rpt) => rpt.time === pt.time)))) {
         continue;
@@ -565,7 +590,7 @@ export class DowStructureEngine {
         resCandidates.push(c);
       }
     }
-    for (const p of peakPoints.filter((s) => s.price <= maxResPrice)) {
+    for (const p of peakPoints.filter((s) => s.price <= maxResPrice && (!cycleHighMax || s.price <= cycleHighMax * 1.002))) {
       if (resCandidates.some((r) => r.points.some((pt) => pt.index === p.index || pt.time === p.time))) {
         continue;
       }
@@ -575,15 +600,18 @@ export class DowStructureEngine {
     }
     // Always ensure activeWaveHigh / activeCeiling is represented in resCandidates
     if (activeWaveHigh && !resCandidates.some((r) => Math.abs(r.price - activeWaveHigh) / activeWaveHigh < 0.001)) {
-      const matchPeak = this.swingHighs.find((s) => Math.abs(s.price - activeWaveHigh) / activeWaveHigh < 0.001);
+      const matchPeak = peakPoints.find((s) => Math.abs(s.price - activeWaveHigh) / activeWaveHigh < 0.001) ?? this.swingHighs.find((s) => Math.abs(s.price - activeWaveHigh) / activeWaveHigh < 0.001);
       resCandidates.push(matchPeak ? { price: matchPeak.price, touchCount: 1, points: [matchPeak] } : { price: activeWaveHigh, touchCount: 1, points: [] });
     }
     if (resCandidates.length === 0 && validResClusters.length > 0) {
-      const nearestMulti = [...validResClusters].sort((a, b) => b.price - a.price)[0]!;
-      resCandidates.push(nearestMulti);
+      const validClusters = validResClusters.filter((c) => !cycleHighMax || c.price <= cycleHighMax * 1.002);
+      if (validClusters.length > 0) {
+        const nearestMulti = [...validClusters].sort((a, b) => b.price - a.price)[0]!;
+        resCandidates.push(nearestMulti);
+      }
     }
-    if (resCandidates.length === 0 && this.swingHighs.length > 0) {
-      const lastH = this.swingHighs[this.swingHighs.length - 1]!;
+    if (resCandidates.length === 0 && peakPoints.length > 0) {
+      const lastH = peakPoints[peakPoints.length - 1]!;
       resCandidates.push({ price: lastH.price, touchCount: 1, points: [lastH] });
     }
     // Strictly sort resistance candidates ascending by price
@@ -592,10 +620,10 @@ export class DowStructureEngine {
     // 2. Confirmed Support Candidates (sorted descending by price)
     // Strictly restricted to valleyPoints (active cycle canonical lows) to prevent ancient historical lows (e.g. $2488) from hijacking the channel floor!
     const supCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-    for (const c of validSupClusters.filter((c) => c.price >= minSupPrice)) {
+    for (const c of validSupClusters.filter((c) => c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * 0.999))) {
       supCandidates.push(c);
     }
-    for (const c of supClusters.filter((c) => c.touchCount < minTouchCount && c.price >= minSupPrice)) {
+    for (const c of supClusters.filter((c) => c.touchCount < minTouchCount && c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * 0.999))) {
       if (supCandidates.some((s) => s.touchCount >= minTouchCount && c.points.some((pt) => s.points.some((spt) => spt.time === pt.time)))) {
         continue;
       }
@@ -603,7 +631,7 @@ export class DowStructureEngine {
         supCandidates.push(c);
       }
     }
-    for (const l of valleyPoints.filter((s) => s.price >= minSupPrice)) {
+    for (const l of valleyPoints.filter((s) => s.price >= minSupPrice && (!cycleLowMin || s.price >= cycleLowMin * 0.999))) {
       if (supCandidates.some((s) => s.points.some((pt) => pt.index === l.index || pt.time === l.time))) {
         continue;
       }
@@ -1725,34 +1753,36 @@ export class DowStructureEngine {
       } else if (srResult.support && !srResult.resistance) {
         bottomBound = srResult.support.price;
         foundFloor = true;
-        const peakCeil = (activeCeilingPoint && activeCeilingPoint.price > price)
+        const peakCeil = (activeCeilingPoint && activeCeilingPoint.price > bottomBound)
           ? activeCeilingPoint.price
-          : (activePeak && activePeak.price > price)
+          : (activePeak && activePeak.price > bottomBound)
             ? activePeak.price
             : (recentCanonicalHighs.length > 0 ? Math.max(...recentCanonicalHighs.map((h) => h.price)) : undefined) ??
-              this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
+              this.swingHighs.filter((s) => s.price > bottomBound * 1.001).pop()?.price;
         upperBound = (peakCeil !== undefined && peakCeil > bottomBound)
           ? peakCeil
-          : Math.max(price * (1 + minPct / 2), bottomBound + minSpan);
+          : bottomBound + minSpan;
       } else if (!srResult.support && srResult.resistance) {
         upperBound = srResult.resistance.price;
         foundCeiling = true;
         // If no multi-touch support below price, check recent confirmed swing low first (Higher Low / local base), fallback to active wave valley or nearest valid swing low
-        const recentLowsBelowPrice = (canonicalLows.length > 0 ? canonicalLows : this.swingLows).filter((l) => l.price < Math.min(price * 0.999, upperBound * 0.999)).sort((a, b) => b.price - a.price);
-        const recentConfirmedLow = recentLowsBelowPrice.length > 0 ? recentLowsBelowPrice[0]?.price : undefined;
+        const recentLowsBelowCeil = (activeCycleLows.length > 0 ? activeCycleLows : (canonicalLows.length > 0 ? canonicalLows : this.swingLows))
+          .filter((l) => l.price < upperBound * 0.999)
+          .sort((a, b) => b.price - a.price);
+        const recentConfirmedLow = recentLowsBelowCeil.length > 0 ? recentLowsBelowCeil[0]?.price : undefined;
         const lowestWaveValley = (activeValley && activeValley.price < upperBound) ? activeValley.price : recentConfirmedLow;
-        bottomBound = lowestWaveValley ?? (recentConfirmedLow ?? Math.min(price * (1 - minPct / 2), upperBound - minSpan));
+        bottomBound = lowestWaveValley ?? (recentConfirmedLow ?? upperBound - minSpan);
         foundFloor = lowestWaveValley !== undefined || recentConfirmedLow !== undefined;
       } else {
-        // Neither side has multi-touch: use recent confirmed swings
-        const recentLowsBelowPrice = this.swingLows.filter((l) => l.price < price * 0.999);
-        const recentConfirmedLow = recentLowsBelowPrice.length > 0 ? recentLowsBelowPrice[recentLowsBelowPrice.length - 1]?.price : undefined;
-        const lowestWaveValley = recentConfirmedLow ?? activeValley?.price;
-        const highestWavePeak = (activeCeilingPoint && activeCeilingPoint.price > price)
-          ? activeCeilingPoint.price
-          : (activePeak && activePeak.price > price)
-            ? activePeak.price
-            : this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
+        // Neither side has multi-touch: strictly anchor to confirmed active wave swings
+        const recentLowsBelowCeil = (activeCycleLows.length > 0 ? activeCycleLows : this.swingLows)
+          .filter((l) => l.price < price * 0.999);
+        const recentConfirmedLow = recentLowsBelowCeil.length > 0 ? recentLowsBelowCeil[recentLowsBelowCeil.length - 1]?.price : undefined;
+        const lowestWaveValley = activeValley?.price ?? recentConfirmedLow;
+        const highestWavePeak = activeCeilingPoint?.price
+          ?? activePeak?.price
+          ?? (recentCanonicalHighs.length > 0 ? Math.max(...recentCanonicalHighs.map((h) => h.price)) : undefined)
+          ?? this.swingHighs.filter((s) => s.price > price * 1.001).pop()?.price;
         bottomBound = lowestWaveValley ?? price * (1 - minPct / 2);
         upperBound = highestWavePeak ?? price * (1 + minPct / 2);
         foundFloor = lowestWaveValley !== undefined;
