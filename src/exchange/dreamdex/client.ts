@@ -570,12 +570,17 @@ export class DreamDexClient implements IExchangeClient {
     // For IOC orders on EVM, wait for transaction receipt to confirm execution on-chain
     let executedQty = 0;
     let orderStatus: ExchangeOrderResult["status"] = "NEW";
+    let gasFee: number | undefined;
     if (params.type === "IOC") {
       try {
         const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
         if (receipt && receipt.status === "success") {
           executedQty = qty;
           orderStatus = "FILLED";
+          if (receipt.gasUsed && receipt.effectiveGasPrice) {
+            const feeWei = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
+            gasFee = Number(formatUnits(feeWei, 18));
+          }
         } else {
           orderStatus = "CANCELED";
         }
@@ -601,6 +606,7 @@ export class DreamDexClient implements IExchangeClient {
       type: params.type,
       side: params.side,
       txHash: hash,
+      gasFee,
     };
   }
 
@@ -647,6 +653,22 @@ export class DreamDexClient implements IExchangeClient {
 
   public getWalletAddress(): string | undefined {
     return this.account?.address;
+  }
+
+  public async getTransactionFee(txHash: string): Promise<number | undefined> {
+    try {
+      let receipt = await this.publicClient.getTransactionReceipt({ hash: txHash as `0x${string}` }).catch(() => null);
+      if (!receipt) {
+        receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash as `0x${string}`, timeout: 8000 }).catch(() => null);
+      }
+      if (receipt && receipt.gasUsed && receipt.effectiveGasPrice) {
+        const feeWei = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
+        return Number(formatUnits(feeWei, 18));
+      }
+    } catch (err) {
+      this.log(`⚠️ Failed to fetch transaction fee for ${txHash}: ${(err as Error).message}`);
+    }
+    return undefined;
   }
 
   public async getRecentOrders(symbol: string, limit = 50): Promise<ExchangeOpenOrder[]> {

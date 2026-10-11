@@ -167,7 +167,24 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
          4. ใน `public/app.js`:
             - `loadSettings()`: ดึงค่าจาก Database มาตั้งสถานะ Checkbox ทั้ง 8 ตัว
             - `saveSettings()`: อ่านค่า Checkbox ส่งบันทึกผ่าน API `/api/db/settings`
-            - `updateZoneLevelBars()`: ซิงค์สถานะ Disabled กับ Grid Ladder Meter แบบ Real-time
+            - updateZoneLevelBars(): ซิงค์สถานะ Disabled กับ Grid Ladder Meter แบบ Real-time
+     - **DreamDEX On-Chain Gas Tracking & Buy Fill Gas Compensation (ระบบชดเชยค่าแก๊สอัตโนมัติป้องกันยอด SOMI ร่อยหรอ)**:
+       - **ปัญหาเดิม**:
+         - ใน `src/strategy.ts` เมธอด `trackTxGas` เดิมเป็น empty stub (`return;`) และตัวแปรสะสมแก๊ส `accumulatedGasBase` เคยอัปเดตเฉพาะในโหมด `dryRun` เท่านั้น ทำให้ใน Live Trading ค่าแก๊สที่จ่ายจริงไม่ถูกบันทึก
+         - ส่งผลให้ `uncompensatedGas = 0` และ `compBase = 0` เสมอ เมื่อเข้าซื้อเหรียญ SOMI ยอดที่ซื้อมาทั้งหมดจะถูกนำไปสร้าง Lot 100% และเมื่อขายทำกำไรก็จะถูกขายออกไปจนหมด ทำให้ Native SOMI ในกระเป๋าที่ถูกหักเป็นค่าธรรมเนียมแก๊ส On-chain ค่อยๆ ลดลงเรื่อยๆ ตามจำนวนธุรกรรม
+       - **การแก้ไขในระบบ**:
+         1. **Exchange Layer (`src/exchange/types.ts` & `src/exchange/dreamdex/client.ts`)**:
+            - เพิ่ม `gasFee?: number;` ลงใน `ExchangeOrderResult`
+            - เพิ่มเมธอด `getTransactionFee(txHash: string): Promise<number | undefined>` ใน `IExchangeClient` และ `DreamDexClient` โดยอ่าน `gasUsed` และ `effectiveGasPrice` จาก `TransactionReceipt` บน Somnia Network แปลงเป็นหน่วย SOMI ผ่าน `formatUnits(feeWei, 18)`
+            - ใน `placeOrder` (DreamDexClient) สำหรับคำสั่ง IOC: ดึงค่าแก๊สจาก receipt แนบกลับมาใน `gasFee` ทันทีที่คำสั่งส่งสำเร็จ
+         2. **Strategy Gas Tracking (`src/strategy.ts`)**:
+            - อิมพลีเมนต์ `trackTxGas(txHash, label)` อย่างสมบูรณ์: เรียก `getTransactionFee` จาก exchange, สะสมยอดแก๊สเข้า `this.accumulatedGasBase`, `this.totalGasSpentBase`, คำนวณมูลค่าเทียบเคียง `accumulatedGasQuote`, เพิ่ม `totalTxCount`, บันทึกลงใน DB ผ่าน `this.db.updateTxGas(...)` และส่ง Real-time Telemetry
+            - ใน `buyTrancheIOC`: หาก `res.gasFee` มีค่า (> 0) จะนำมาสะสมเข้า `accumulatedGasBase` ทันทีล่วงหน้าก่อนเข้าสู่ `processBuyFill`
+         3. **Buy Fill Gas Compensation (`src/strategy.ts` -> `processBuyFill`)**:
+            - เมื่อเข้าซื้อเหรียญที่มี `baseAsset === "SOMI"`: ปรับยกเว้น Spot Commission (เพราะบน DEX หักในพูลแล้ว) และทำการคำนวณชดเชยค่าแก๊ส `compBase = Math.min(uncompensatedGas, qty * 0.5)`
+            - หักค่าชดเชยออกจากขนาด Lot ที่จะนำไปตั้งขาย (`netQty = qty - compBase`) เพื่อให้คงเหลือ SOMI ในกระเป๋าสำหรับเป็นค่าแก๊สหมุนเวียน ไม่ถูกนำไปตั้งขายจนหมด
+            - ตัดทอน `accumulatedGasBase` ลงตามจำนวนที่ชดเชย และบันทึก `totalGasDeductedBase`
+            - แสดง Log ละเอียด: `⛽ Gas Compensated: X.XXXX SOMI (-$X.XXXX) returned to wallet gas reserve`
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

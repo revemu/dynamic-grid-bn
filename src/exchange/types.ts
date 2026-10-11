@@ -44,6 +44,7 @@ export interface ExchangeOrderResult {
   type: string;
   side: "BUY" | "SELL";
   txHash?: string;
+  gasFee?: number;
   fills?: Array<{
     price: string;
     qty: string;
@@ -107,6 +108,7 @@ export interface IExchangeClient {
   cancelAllOpenOrders(symbol: string): Promise<any>;
   updateCredentials(apiKey: string, apiSecret: string, baseUrl?: string): void;
   getCredentials?(): { apiKey: string; apiSecret: string };
+  getTransactionFee?(txHash: string): Promise<number | undefined>;
   getRecentOrders?(symbol: string, limit?: number): Promise<ExchangeOpenOrder[]>;
   createUserDataStream?(): Promise<string>;
   keepAliveUserDataStream?(listenKey: string): Promise<void>;

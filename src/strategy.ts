@@ -3192,18 +3192,25 @@ export class DynamicGrid {
     const fillNotional = price * qty;
     const now = Date.now();
 
-    // ── Instant Gas/Fee Compensation & Binance Spot Trading Fee ───────────────
-    // On Binance Spot:
-    // If quote is FDUSD and Maker order: 0.0% fee
-    // Otherwise standard taker/maker spot fee (default 0.075% with BNB or 0.1% without)
-    const isZeroFeeMaker = this.quoteAsset.toUpperCase() === "FDUSD" && !isIoc;
-    const spotFeeRate = isZeroFeeMaker ? 0.0 : (this.cfg.dryRun ? 0.0 : 0.00075);
+    // ── Instant Gas/Fee Compensation & Spot Trading Fee ───────────────────────
+    // On DreamDEX: Trading fees are settled on-chain by the SpotPool contract.
+    // On Binance Spot: Standard taker/maker spot fee (default 0.075% with BNB or 0.1% without), 0% for FDUSD maker.
+    const isDreamdex = this.binance.exchangeName === "dreamdex";
+    const isSomiBase = this.baseAsset.toUpperCase() === "SOMI";
+    const isZeroFeeMaker = (this.quoteAsset.toUpperCase() === "FDUSD" && !isIoc) || isDreamdex;
+    const spotFeeRate = (isDreamdex || isZeroFeeMaker || this.cfg.dryRun) ? 0.0 : 0.00075;
     const spotTradingFeeBase = qty * spotFeeRate;
 
     let compBase = 0;
     let gasLossQuote = 0;
-    const uncompensatedGas = Math.max(this.accumulatedGasBase, this.totalGasSpentBase - this.totalGasDeductedBase);
+    // On DreamDEX when baseAsset is SOMI, or in dryRun: compensate native gas by withholding from buy lot
+    const canCompensateGas = isSomiBase || this.cfg.dryRun;
+    const uncompensatedGas = canCompensateGas
+      ? Math.max(this.accumulatedGasBase, this.totalGasSpentBase - this.totalGasDeductedBase)
+      : 0;
+
     if (uncompensatedGas > 0) {
+      // Can compensate up to 50% of the buy quantity per fill to keep position sizing healthy
       const maxComp = Math.max(0, qty * 0.5);
       compBase = Math.min(uncompensatedGas, maxComp);
       if (compBase > 0) {
@@ -3216,7 +3223,7 @@ export class DynamicGrid {
       }
     }
     const rawNetQty = Math.max(0, qty - compBase - spotTradingFeeBase);
-    // Align lot qty with exchange stepSize and precision (4 decimals for ETH)
+    // Align lot qty with exchange stepSize and precision (4 decimals for ETH/SOMI)
     const netQty = roundToStep(rawNetQty, this.stepSize || 0.0001, 4);
     this.lots.push({ price, qty: netQty, time: now });
     this.needsSellRebalance = true;
@@ -3226,10 +3233,10 @@ export class DynamicGrid {
     const feeLog = spotTradingFeeBase > 0
       ? ` | 🏷️ Spot Fee: ${spotTradingFeeBase.toFixed(6)} ${this.baseAsset}`
       : isZeroFeeMaker
-      ? " | 🎁 0% Maker Fee (FDUSD)"
+      ? " | 🎁 0% Maker Fee"
       : "";
     const gasCompLog = compBase > 0
-      ? ` | ⛽ Fee Compensated: ${compBase.toFixed(4)} ${this.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet`
+      ? ` | ⛽ Gas Compensated: ${compBase.toFixed(4)} ${this.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet gas reserve`
       : "";
     const fillLabel = isIoc ? "IOC BUY FILLED" : "MAKER BUY FILLED";
     this.log(
@@ -5292,6 +5299,17 @@ export class DynamicGrid {
         return false;
       }
 
+      // If gas fee was returned from the transaction receipt (DreamDEX On-Chain IOC):
+      if (res.gasFee !== undefined && res.gasFee > 0) {
+        this.accumulatedGasBase += res.gasFee;
+        this.totalGasSpentBase += res.gasFee;
+        const refP = effectivePrice || 0.20;
+        this.accumulatedGasQuote += res.gasFee * refP;
+        this.totalGasSpentQuote += res.gasFee * refP;
+        this.totalTxCount++;
+        this.log(`⛽ [GAS ON BUY] Spent ${res.gasFee.toFixed(5)} SOMI on this IOC buy transaction. Included in uncompensated gas.`);
+      }
+
       const actualQty = Math.min(finalQty, filledQty > 0 ? filledQty : finalQty);
       this.processBuyFill({
         price: effectivePrice,
@@ -5303,7 +5321,7 @@ export class DynamicGrid {
         dryRun: false,
         isIoc: true,
       });
-      if (res?.txHash) {
+      if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
         this.trackTxGas(res.txHash, actionLabel);
       }
       await this.refreshWalletBalances();
@@ -5564,6 +5582,44 @@ export class DynamicGrid {
    * Asynchronously fetch transaction receipt to track gas fee spent
    */
   public async trackTxGas(txHash?: string, label?: string): Promise<void> {
-    return;
+    if (!txHash) return;
+    if (this.cfg.dryRun) return;
+    if (this.binance.exchangeName !== "dreamdex") return;
+
+    try {
+      const getFeeFn = (this.binance as any).getTransactionFee;
+      let feeSomi: number | undefined;
+      if (typeof getFeeFn === "function") {
+        feeSomi = await (this.binance as any).getTransactionFee(txHash);
+      }
+      if (feeSomi !== undefined && feeSomi > 0) {
+        this.accumulatedGasBase += feeSomi;
+        this.totalGasSpentBase += feeSomi;
+        const refPrice = this.lastRefPrice || this.getAvgEntryPrice() || 0.20;
+        const feeQuote = feeSomi * refPrice;
+        this.accumulatedGasQuote += feeQuote;
+        this.totalGasSpentQuote += feeQuote;
+        this.totalTxCount++;
+
+        this.log(
+          `⛽ [GAS TRACKED] ${label || "Tx"} (${txHash.slice(0, 10)}...): Spent ${feeSomi.toFixed(5)} SOMI (~$${feeQuote.toFixed(4)}) | Total uncompensated gas: ${this.accumulatedGasBase.toFixed(5)} SOMI`,
+        );
+
+        if (typeof (this.db as any).updateTxGas === "function") {
+          try {
+            (this.db as any).updateTxGas(txHash, {
+              gasUsed: 0,
+              gasSomi: feeSomi,
+              gasUsdso: feeQuote,
+            });
+          } catch {}
+        }
+
+        this.saveState();
+        this.emitTelemetryTick();
+      }
+    } catch (err) {
+      this.log(`⚠️ Failed to track gas for tx ${txHash}: ${(err as Error).message}`);
+    }
   }
 }
