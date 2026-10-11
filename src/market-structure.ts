@@ -150,6 +150,10 @@ export interface ChannelOptions {
   srMinTouchCount?: number;    // minimum touches for S/R in MULTI_TOUCH_SR mode (default 2)
   srTouchTolerancePct?: number;// tolerance % to group touches (default 0.35%)
   srLookbackCandles?: number;  // candles lookback for S/R scanning (default 100)
+  enableNarrowChannelCollapse?: boolean; // collapse to edge brackets in narrow channels (default true)
+  narrowChannelThresholdPct?: number;   // narrow channel threshold % (default 1.2%)
+  narrowChannelBuyBufferPct?: number;   // buffer % above floor for buy edge (default 0.05%)
+  narrowChannelSellBufferPct?: number;  // buffer % below ceiling for sell edge (default 0.05%)
 }
 
 /**
@@ -2082,14 +2086,20 @@ export class DowStructureEngine {
       zoneType = "BUY_ZONE";
     }
 
-    // Check channel width: In narrow channels (e.g. < 1.2%), adapt grid levels towards edges (Floor + 0.2% / Ceil - 0.2%)
+    // Check channel width: In narrow channels (e.g. < narrowChannelThresholdPct%), adapt grid levels towards edges
     // to preserve tradeable edge swings and avoid clustering dust orders in the middle.
-    const isNarrowChannel = bottomBound > 0 && ((finalSpan / bottomBound) * 100) < 1.20;
+    const enableCollapse = options?.enableNarrowChannelCollapse !== false;
+    const narrowThresh = options?.narrowChannelThresholdPct ?? 1.20;
+    const channelWidthPct = bottomBound > 0 ? ((finalSpan / bottomBound) * 100) : 0;
+    const isNarrowChannel = enableCollapse && bottomBound > 0 && channelWidthPct < narrowThresh;
+
+    const buyBufferFrac = (options?.narrowChannelBuyBufferPct ?? 0.05) / 100;
+    const sellBufferFrac = (options?.narrowChannelSellBufferPct ?? 0.05) / 100;
 
     // Grid Levels in 10% to 50% (Buy Zone): 40%, 30%, 20%, 10% (0%-5% is safe buffer above floor)
-    // In narrow channels (< 1.2%), collapse to a single edge-bracket level: Buy at Floor + 0.2%
+    // In narrow channels (< threshold), collapse to a single edge-bracket level: Buy at Floor + Buffer%
     const buyLevels = isNarrowChannel
-      ? [bottomBound * 1.002]
+      ? [bottomBound * (1 + buyBufferFrac)]
       : [
           bottomBound + finalSpan * 0.40,
           bottomBound + finalSpan * 0.30,
@@ -2098,9 +2108,9 @@ export class DowStructureEngine {
         ];
 
     // Grid Levels in 50% to 100% (Sell Zone): 60%, 70%, 80%, 90% (Hold 0% near 100% Upper Bound)
-    // In narrow channels (< 1.2%), collapse to a single edge-bracket level: Sell at Ceiling - 0.2%
+    // In narrow channels (< threshold), collapse to a single edge-bracket level: Sell at Ceiling - Buffer%
     const sellLevels = isNarrowChannel
-      ? [upperBound * 0.998]
+      ? [upperBound * (1 - sellBufferFrac)]
       : [
           bottomBound + finalSpan * 0.60,
           bottomBound + finalSpan * 0.70,
