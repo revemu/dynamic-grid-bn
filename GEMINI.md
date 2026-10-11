@@ -205,6 +205,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
             - ใน `findMultiTouchSR`: `supCandidates` ถูกจำกัดให้ดึงเฉพาะ `valleyPoints` (สวิงเหวที่เป็น canonical lows ในรอบคลื่นปัจจุบัน) ป้องกันเหวโบราณนอกรอบคลื่นไม่ให้หลุดเข้ามาเป็น Floor อีกต่อไป
          2. **Zero Synthesized Clamping / Strict Swing Snapping (`src/market-structure.ts`)**:
             - ใน `calculateChannelBounds`: ยกเลิกการคำนวณบวกเปอร์เซ็นต์ลอยๆ (`bottomBound + maxSpanFromPct`) หากกรอบกว้างเกินหรือต้องการปรับลดเพดาน/พื้น ระบบจะ Snap ล็อคเกาะกับยอดสวิง Peak จริง (`activePeak` / `recentCanonicalHighs` เช่น HH $2528.96 หรือ LH $2516.02) และเหวจริง (`activeValley` / `recentCanonicalLows` เช่น LL $2503.28) เท่านั้น 100%
+          3. **Multi-Touch Base Valley Tolerance Harmonization (`src/market-structure.ts`):**
+             - ปรับปรุงการคัดกรอง `cycleLowMin` ใน `findMultiTouchSR` (ทั้ง `valleyPoints` และ `supCandidates`) ให้ใช้เกณฑ์ความคลาดเคลื่อน `(1 - tol)` สอดคล้องกับ grouping tolerance แทนที่เกณฑ์เดิมที่แคบเกินไป (`0.999` หรือ 0.10%)
+             - ป้องกันบั๊กที่เหวฐานล่างแท้จริงของรอบคลื่น (เช่น 0.2042 ที่มี 3 touches) โดนตัดทิ้งเพียงเพราะอยู่ต่ำกว่า Higher Low ล่าสุด (0.2045) เล็กน้อย ทำให้แนวรับ Multi-Touch สัมผัสพื้นฐานเหวที่ต่ำที่สุดได้อย่างสมบูรณ์แบบ ไม่ลอยขึ้นมาที่ 0.2044 อีกต่อไป
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

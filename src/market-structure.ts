@@ -370,15 +370,17 @@ export class DowStructureEngine {
     // 🔒 Structural Bounds Constraints for Active Cycle:
     // 1. Structural Floor (cycleLowMin): Any support candidate below the confirmed lowest valley of the active cycle
     //    is an ancient low from a previous market regime (e.g. $2488.40) and MUST NOT hijack the active channel floor!
+    //    Note: When activeWaveLow is used (e.g. recent HL), allow valleys within tolerance (1 - tol) so that
+    //    horizontal base valleys (e.g. 0.2042 vs 0.2045) can form a unified multi-touch support base!
     const cycleLowMin = activeWaveLow !== undefined
-      ? activeWaveLow
+      ? activeWaveLow * (1 - tol)
       : (activeCycleLows.length > 0 ? Math.min(...activeCycleLows.map((l) => l.price)) : undefined);
 
     // 2. Structural Ceiling (cycleHighMax): Resistance candidates must not float above the confirmed high of the active cycle
     //    (e.g. Major HH $2524.59 / $2528.96), unless price has traded above it. Ancient peaks from 3 days ago ($2538.68)
     //    cannot invent a ceiling that the current wave hasn't reached!
     const cycleHighMax = activeWaveHigh !== undefined
-      ? activeWaveHigh
+      ? activeWaveHigh * (1 + tol)
       : (activeCycleHighs.length > 0 ? Math.max(...activeCycleHighs.map((h) => h.price)) : undefined);
 
     let candidateHighSwings = activeCycleHighs;
@@ -396,9 +398,9 @@ export class DowStructureEngine {
     }
 
     const peakPoints: SwingPoint[] = (candidateHighSwings.length > 0 ? candidateHighSwings : (activeCycleHighs.length > 0 ? activeCycleHighs : this.swingHighs))
-      .filter((s) => s.index >= minIdx && (!cycleHighMax || s.price <= cycleHighMax * 1.002));
+      .filter((s) => s.index >= minIdx && (!cycleHighMax || s.price <= cycleHighMax * (1 + tol)));
     const valleyPoints: SwingPoint[] = (activeCycleLows.length > 0 ? activeCycleLows : this.swingLows)
-      .filter((s) => s.index >= minIdx && (!cycleLowMin || s.price >= cycleLowMin * 0.999));
+      .filter((s) => s.index >= minIdx && (!cycleLowMin || s.price >= cycleLowMin * (1 - tol)));
 
     // Cluster all structural points within tolerance to capture genuine multi-touch levels
     // Requires distinct touches separated by time (>= 3 bars) and intervening pullbacks/bounces
@@ -620,10 +622,10 @@ export class DowStructureEngine {
     // 2. Confirmed Support Candidates (sorted descending by price)
     // Strictly restricted to valleyPoints (active cycle canonical lows) to prevent ancient historical lows (e.g. $2488) from hijacking the channel floor!
     const supCandidates: { price: number; touchCount: number; points: SwingPoint[] }[] = [];
-    for (const c of validSupClusters.filter((c) => c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * 0.999))) {
+    for (const c of validSupClusters.filter((c) => c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * (1 - tol)))) {
       supCandidates.push(c);
     }
-    for (const c of supClusters.filter((c) => c.touchCount < minTouchCount && c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * 0.999))) {
+    for (const c of supClusters.filter((c) => c.touchCount < minTouchCount && c.price >= minSupPrice && (!cycleLowMin || c.price >= cycleLowMin * (1 - tol)))) {
       if (supCandidates.some((s) => s.touchCount >= minTouchCount && c.points.some((pt) => s.points.some((spt) => spt.time === pt.time)))) {
         continue;
       }
@@ -631,7 +633,7 @@ export class DowStructureEngine {
         supCandidates.push(c);
       }
     }
-    for (const l of valleyPoints.filter((s) => s.price >= minSupPrice && (!cycleLowMin || s.price >= cycleLowMin * 0.999))) {
+    for (const l of valleyPoints.filter((s) => s.price >= minSupPrice && (!cycleLowMin || s.price >= cycleLowMin * (1 - tol)))) {
       if (supCandidates.some((s) => s.points.some((pt) => pt.index === l.index || pt.time === l.time))) {
         continue;
       }
