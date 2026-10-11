@@ -714,7 +714,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   - **การแก้ไข** (`src/market-structure.ts`):
     1. **Active Cycle Boundaries (`cycleLowMin` & `cycleHighMax`)**: ใน `findMultiTouchSR` กำหนดขอบเขตจากรอบคลื่นปัจจุบัน (`activeWaveLow` / `recentCanonicalLows` และ `activeWaveHigh` / `recentCanonicalHighs`) โดย candidate แนวรับต้องไม่ต่ำกว่าจุดต่ำสุดของคลื่นปัจจุบัน (`c.price >= cycleLowMin * 0.999`) และ candidate แนวต้านต้องไม่ลอยสูงกว่ายอดของคลื่นปัจจุบัน (`c.price <= cycleHighMax * 1.002`)
     2. **Strict Candidate Pool Filtering**: กรอง `peakPoints`, `valleyPoints`, `resCandidates`, `supCandidates` ทั้งหมดให้ถูกจำกัดอยู่ในกรอบรอบคลื่นปัจจุบัน ป้องกันไม่ให้จุด Swing โบราณจาก 3 วันที่แล้วหลุดเข้ามาแย่งกรอบ
-    3. **Elimination of Artificial Price Synthesis**: ใน `calculateChannelBounds` ปรับปรุง Fallback ของกรอบบนและล่างให้ยึดโยงกับ Swing จริงของรอบคลื่นปัจจุบันเสมอ (`activeCeilingPoint` / `activePeak` และ `activeValley` / `recentConfirmedLow`) โดยไม่ใช้สูตรบวกเปอร์เซ็นต์ลอยๆ (`bottomBound + minSpan` หรือ `upperBound - minSpan`) หากคลื่นแคบจะแสดงตามจริงและจัดเป็น `NARROW_CHANNEL` (Triangle Squeeze) ตามหลัก Dow Theory อย่างถูกต้อง 100%
+    3. **Active Cycle Extremes Preservation (No `slice(-4)` Major Peak/Valley Truncation)**:
+       - **ปัญหาเดิม**: การใช้ `slice(-4)` ทำให้เมื่อมีคลื่นย่อยเกิดขึ้นเกิน 4 ครั้ง ยอดหลัก **HH บนสุด** จะหลุดหายไปจากตัวเลือก และระบบไปคว้ายอด Lower High เตี้ยๆ ในคลื่นย่อย ($2518.06) และเหวย่อย ($2504.83) ทำให้กรอบหดแคบเหลือเพียง 0.53%
+       - **การแก้ไข**: ขอบเขตของรอบคลื่นปัจจุบัน (`activeCycleHighs` และ `activeCycleLows`) จะถูกนิยามครอบคลุมตั้งแต่ `macroPeak` เป็นต้นมาอย่างสมบูรณ์ ทำให้ `activePeak` และ `cycleHighMax` ล็อคยอดสูงสุดของรอบคลื่น (**Major HH $2524.59 / $2528.96**) และ `activeValley` และ `cycleLowMin` ล็อคเหวต่ำสุดของรอบคลื่น (**Major LL $2501.75**) เสมอ ไม่ถูกยอดเตี้ยของสวิงย่อยบีบกรอบอีกต่อไป
 
 ---
 
