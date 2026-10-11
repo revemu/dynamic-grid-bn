@@ -212,6 +212,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
           4. **Pure Structural Wave Base Anchoring (`src/market-structure.ts`):**
              - ปรับตรรกะ `baseValley` ใน `getStructure` ให้ยึดจุดต่ำสุดจริงของรอบคลื่นปัจจุบัน (`Math.min(...activeCycleLows)` เช่น LL $0.2026 / $2501.75) เสมอ แทนการดึงยกตาม Higher Low (`confirmedHl`) ย่อย
              - ผ่อนปรน `effectiveTradeableMinSpan = minSpanPct * 0.95` เพื่อรองรับคู่สวิงธรรมชาติของคลื่นหลัก (เช่น กรอบ 2.96% จากยอด $0.2086 ถึงเหว $0.2026) ไม่ให้ถูกตีตกไปเข้าโหมด Clamped แคบ
+           5. **Active Wave Dow Theory Ceiling & Floor Snapping (New HH & Recent LL Anchor) (`src/market-structure.ts`):**
+              - **สาเหตุ & ปัญหาเดิม**:
+                - **กรอบล่างตกไปที่ $0.2002**: ใน `baseValley` เดิมกำหนด `lowsPool = activeCycleLows.length > 0 ? activeCycleLows : recentCanonicalLows;` ซึ่ง `activeCycleLows` ดึงครอบคลุมย้อนหลังตั้งแต่ `macroPeak` (ดึงยาวกว่า 200 แท่ง) จึงเผลอดึงจุดเหวโบราณในอดีต ($0.2002) มาเป็น Floor ทั้งที่คลื่นการสวิงปัจจุบันยกตัวสร้างฐานอยู่ที่ LL $0.2023 - $0.2026
+                - **กรอบบนค้างอยู่ที่ $0.2086 ไม่ยอมปรับมาที่ New HH $0.2073**: เมื่อราคาเด้งขึ้นทำยอดใหม่ Higher High (`HH` ที่ $0.2073) โค้ดเดิมตรวจจับเฉพาะ Lower High (`isLatestHighLh`) หากไม่ใช่ LH ระบบจะ fallback ไปหา `maxHigh` จาก `activeCycleHighs` ทั้งหมด ซึ่งมีสวิงยอด $0.2086 จากรอบก่อนการทิ้งตัวลง LL จึงทำให้เพดานถูกแช่แข็งไว้ที่ $0.2086 ไม่ยอมขยับตาม New HH
+              - **การแก้ไขในระบบ**:
+                - **Floor Snapping to Recent Wave LL**: ปรับ `lowsPool = recentCanonicalLows.length > 0 ? recentCanonicalLows : activeCycleLows;` ให้ยึดสวิงเหวในรอบคลื่นปัจจุบัน (4 canonical lows ล่าสุด) เสมอ ทำให้ `baseValley` และ `activeValley` ล็อคตรงกับจุดต่ำสุดของรอบปัจจุบัน ($0.2023 - $0.2026) ตัดเหวโบราณ $0.2002 ออก 100%
+                - **Ceiling Snapping to New HH**: เพิ่มตัวตรวจจับ `isLatestHighHh` (เมื่อ `lastCanonicalHigh` เป็น `HH` หรือราคาสูงกว่ายอดก่อนหน้า) โดยเมื่อทำ New HH สำเร็จ ระบบจะปรับ `activePeak` และ `recentMajorHigh` ไปที่ยอดใหม่ทันที ($0.2073) แทนที่จะค้างอยู่ที่ยอดเก่า $0.2086
+                - **Multi-Touch S/R Bounds Localization**: ใน `findMultiTouchSR` ปรับ `candidateLowSwings`, `candidateHighSwings`, `cycleLowMin`, และ `cycleHighMax` ให้จำกัดอยู่ภายใน `recentCanonicalLows` และ `recentCanonicalHighs` เพื่อให้การจัดกลุ่ม S/R สะท้อนคลื่นปัจจุบัน ($0.2023 - $0.2073) อย่างแม่นยำตรงตาม Dow Theory
+
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)
