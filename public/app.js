@@ -3047,6 +3047,10 @@
       setVal("cfg_channelMode", data.channelMode);
       setVal("cfg_minChannelWidthPct", data.minChannelWidthPct);
       setVal("cfg_maxChannelWidthPct", data.maxChannelWidthPct);
+      setCheck("cfg_enableNarrowChannelCollapse", data.enableNarrowChannelCollapse !== false);
+      setVal("cfg_narrowChannelThresholdPct", data.narrowChannelThresholdPct ?? 1.2);
+      setVal("cfg_narrowChannelBuyBufferPct", data.narrowChannelBuyBufferPct ?? 0.05);
+      setVal("cfg_narrowChannelSellBufferPct", data.narrowChannelSellBufferPct ?? 0.05);
       setVal("cfg_srMinTouchCount", data.srMinTouchCount ?? 2);
       setVal("cfg_srTouchTolerancePct", data.srTouchTolerancePct ?? 0.35);
       setVal("cfg_srLookbackCandles", data.srLookbackCandles ?? 300);
@@ -3152,6 +3156,10 @@
       channelMode: document.getElementById("cfg_channelMode").value,
       minChannelWidthPct: parseFloat(document.getElementById("cfg_minChannelWidthPct").value),
       maxChannelWidthPct: parseFloat(document.getElementById("cfg_maxChannelWidthPct").value),
+      enableNarrowChannelCollapse: document.getElementById("cfg_enableNarrowChannelCollapse") ? document.getElementById("cfg_enableNarrowChannelCollapse").checked : true,
+      narrowChannelThresholdPct: document.getElementById("cfg_narrowChannelThresholdPct") ? parseFloat(document.getElementById("cfg_narrowChannelThresholdPct").value) : 1.2,
+      narrowChannelBuyBufferPct: document.getElementById("cfg_narrowChannelBuyBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelBuyBufferPct").value) : 0.05,
+      narrowChannelSellBufferPct: document.getElementById("cfg_narrowChannelSellBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelSellBufferPct").value) : 0.05,
       srMinTouchCount: parseInt(document.getElementById("cfg_srMinTouchCount").value, 10) || 2,
       srTouchTolerancePct: parseFloat(document.getElementById("cfg_srTouchTolerancePct").value) || 0.35,
       srLookbackCandles: parseInt(document.getElementById("cfg_srLookbackCandles").value, 10) || 300,

@@ -191,6 +191,16 @@ export const defaultStrategyConfig = {
   /** Rejection wick threshold (% of candle range) to clip to candle body when useTrueWick is false (default 50.0%). */
   wickThresholdPct: 50.0,
 
+  // ── Narrow Channel Mode & Edge Bracketing ───────────────────────────────
+  /** When true, collapses stepped grid levels to edge brackets (Floor + buffer / Ceil - buffer) if channel width < narrowChannelThresholdPct. */
+  enableNarrowChannelCollapse: true,
+  /** Channel width (%) threshold below which narrow channel mode is active (default 1.2%). */
+  narrowChannelThresholdPct: 1.2,
+  /** Buffer (%) above floor for Buy Edge Floor limit price in narrow channels (default 0.05%). */
+  narrowChannelBuyBufferPct: 0.05,
+  /** Buffer (%) below ceiling for Sell Edge Ceil limit price in narrow channels (default 0.05%). */
+  narrowChannelSellBufferPct: 0.05,
+
   // ── Order Stability & Fee Optimization (Hysteresis) ─────────────────────
   /** Minimum % change in channel bounds before shifting grid levels (default 1.0%). Prevents order churn and fee waste on minor fluctuations. */
   minChannelShiftPct: 1.0,
@@ -258,6 +268,10 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.dryRun !== undefined) merged.dryRun = Boolean(saved.dryRun);
       if (saved.timezone !== undefined) merged.timezone = String(saved.timezone);
       if (saved.dashboardPort !== undefined) merged.dashboardPort = Number(saved.dashboardPort);
+      if (saved.enableNarrowChannelCollapse !== undefined) merged.enableNarrowChannelCollapse = Boolean(saved.enableNarrowChannelCollapse);
+      if (saved.narrowChannelThresholdPct !== undefined) merged.narrowChannelThresholdPct = Number(saved.narrowChannelThresholdPct);
+      if (saved.narrowChannelBuyBufferPct !== undefined) merged.narrowChannelBuyBufferPct = Number(saved.narrowChannelBuyBufferPct);
+      if (saved.narrowChannelSellBufferPct !== undefined) merged.narrowChannelSellBufferPct = Number(saved.narrowChannelSellBufferPct);
       if (Array.isArray(saved.enabledBuyLevels)) {
         merged.enabledBuyLevels = saved.enabledBuyLevels.map((v: any) => Boolean(v));
       }

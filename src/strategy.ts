@@ -121,7 +121,6 @@ export class DynamicGrid {
   private tickCount = 0;
   private isPaused = true;
   private isSqueezePaused = false;
-  private channelStructureStandby = false; // true when no structural peak/valley pair >= minChannelWidthPct
   private stepBps: number;
   private recentOrders: any[] = [];
   private recentTrades: any[] = [];
@@ -369,6 +368,10 @@ export class DynamicGrid {
       channelMode: this.cfg.channelMode,
       minChannelWidthPct: this.cfg.minChannelWidthPct,
       maxChannelWidthPct: this.cfg.maxChannelWidthPct,
+      enableNarrowChannelCollapse: this.cfg.enableNarrowChannelCollapse !== false,
+      narrowChannelThresholdPct: this.cfg.narrowChannelThresholdPct ?? 1.2,
+      narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct ?? 0.05,
+      narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct ?? 0.05,
       lockChannelInPosition: this.cfg.lockChannelInPosition !== false,
       srMinTouchCount: this.cfg.srMinTouchCount ?? 2,
       srTouchTolerancePct: this.cfg.srTouchTolerancePct ?? 0.35,
@@ -466,6 +469,18 @@ export class DynamicGrid {
     }
     if (newSettings.minGasReserveSomi !== undefined) {
       this.cfg.minGasReserveSomi = Math.max(0, Number(newSettings.minGasReserveSomi));
+    }
+    if (newSettings.enableNarrowChannelCollapse !== undefined) {
+      this.cfg.enableNarrowChannelCollapse = Boolean(newSettings.enableNarrowChannelCollapse);
+    }
+    if (newSettings.narrowChannelThresholdPct !== undefined) {
+      this.cfg.narrowChannelThresholdPct = Math.max(0, Number(newSettings.narrowChannelThresholdPct));
+    }
+    if (newSettings.narrowChannelBuyBufferPct !== undefined) {
+      this.cfg.narrowChannelBuyBufferPct = Math.max(0, Number(newSettings.narrowChannelBuyBufferPct));
+    }
+    if (newSettings.narrowChannelSellBufferPct !== undefined) {
+      this.cfg.narrowChannelSellBufferPct = Math.max(0, Number(newSettings.narrowChannelSellBufferPct));
     }
     this.syncDowEngineSettings();
     const configToPersist = {
@@ -641,8 +656,14 @@ export class DynamicGrid {
               const currentBounds = this.lockedChannel || this.lastDynamicBounds;
               if (currentBounds) {
                 if (isBid && currentBounds.buyLevels) {
-                  const buyNames = ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
-                  const buyTargets = [0.25, 0.50, 0.75, 1.0];
+                  const isSingleBuy = currentBounds.buyLevels.length === 1;
+                  const buyBufPct = this.cfg.narrowChannelBuyBufferPct ?? 0.05;
+                  const buyNames = isSingleBuy
+                    ? [`Buy Edge Floor (+${buyBufPct.toFixed(2)}%)`]
+                    : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
+                  const buyTargets = isSingleBuy
+                    ? [1.0]
+                    : [0.25, 0.50, 0.75, 1.0];
                   let bestBuyIdx = -1;
                   let minBuyDiff = Infinity;
                   for (let i = 0; i < currentBounds.buyLevels.length; i++) {
@@ -660,8 +681,14 @@ export class DynamicGrid {
                     matchedTargetFraction = buyTargets[bestBuyIdx] || 1.0;
                   }
                 } else if (!isBid && currentBounds.sellLevels) {
-                  const sellNames = ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
-                  const sellTargets = [0.75, 0.50, 0.25, 0.0];
+                  const isSingleSell = currentBounds.sellLevels.length === 1;
+                  const sellBufPct = this.cfg.narrowChannelSellBufferPct ?? 0.05;
+                  const sellNames = isSingleSell
+                    ? [`Sell Edge Ceil (-${sellBufPct.toFixed(2)}%)`]
+                    : ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
+                  const sellTargets = isSingleSell
+                    ? [0.0]
+                    : [0.75, 0.50, 0.25, 0.0];
                   let bestSellIdx = -1;
                   let minSellDiff = Infinity;
                   for (let i = 0; i < currentBounds.sellLevels.length; i++) {
@@ -1650,25 +1677,12 @@ export class DynamicGrid {
       srMinTouchCount: this.cfg.srMinTouchCount,
       srTouchTolerancePct: this.cfg.srTouchTolerancePct,
       srLookbackCandles: this.cfg.srLookbackCandles,
+      enableNarrowChannelCollapse: this.cfg.enableNarrowChannelCollapse,
+      narrowChannelThresholdPct: this.cfg.narrowChannelThresholdPct,
+      narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct,
+      narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct,
     });
     const gridZone = dow?.gridZone;
-
-    // 🔒 CHANNEL STRUCTURE STANDBY GUARD:
-    // If no genuine structural peak/valley pair meets minChannelWidthPct, pause all buying.
-    const hasValidChannel = dow?.hasValidStructuralChannel !== false;
-    if (!hasValidChannel && !this.channelStructureStandby) {
-      this.channelStructureStandby = true;
-      this.log(`⚠️ [CHANNEL STANDBY] No structural peak/valley pair >= minChannelWidthPct — pausing buying. Reason: ${dow?.channelInvalidReason ?? "unknown"}`);
-      // Cancel all resting buy orders
-      const buyOrders = this.openOrders.filter((o) => o.isBid);
-      for (const o of buyOrders) {
-        try { await this.binance.cancelOrder(this.symbol, o.id); } catch { /* ignore */ }
-      }
-    } else if (hasValidChannel && this.channelStructureStandby) {
-      this.channelStructureStandby = false;
-      this.needsBuyRebalance = true;
-      this.log(`✅ [CHANNEL STANDBY CLEARED] Structural channel valid again — resuming buy orders`);
-    }
 
     const currentFloorBufferPct = this.cfg.floorBufferPct ?? 0.0;
 
@@ -1730,45 +1744,64 @@ export class DynamicGrid {
           this.lastDynamicBounds.upperBound = newCeiling;
           this.lastDynamicBounds.centerPrice = (currentFloor + newCeiling) / 2;
           const dSpan = newCeiling - currentFloor;
-          this.lastDynamicBounds.sellLevels = [
-            currentFloor + dSpan * 0.60,
-            currentFloor + dSpan * 0.70,
-            currentFloor + dSpan * 0.80,
-            currentFloor + dSpan * 0.90,
-          ];
-          this.lastDynamicBounds.buyLevels = [
-            currentFloor + dSpan * 0.40,
-            currentFloor + dSpan * 0.30,
-            currentFloor + dSpan * 0.20,
-            currentFloor + dSpan * 0.10,
-          ];
+          const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
+          const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
+          const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
+          const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
+          const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
+          this.lastDynamicBounds.sellLevels = isNarrowChannel
+            ? [newCeiling * (1 - sellBufferFrac)]
+            : [
+                currentFloor + dSpan * 0.60,
+                currentFloor + dSpan * 0.70,
+                currentFloor + dSpan * 0.80,
+                currentFloor + dSpan * 0.90,
+              ];
+          this.lastDynamicBounds.buyLevels = isNarrowChannel
+            ? [currentFloor * (1 + buyBufferFrac)]
+            : [
+                currentFloor + dSpan * 0.40,
+                currentFloor + dSpan * 0.30,
+                currentFloor + dSpan * 0.20,
+                currentFloor + dSpan * 0.10,
+              ];
         }
       } else if (
-        dow &&
-        dow.upperBound < this.lastDynamicBounds.upperBound &&
-        (avgEntry <= 0 || dow.upperBound >= avgEntry * 1.002)
+        dow?.resistanceCluster &&
+        dow.resistanceCluster.price < this.lastDynamicBounds.upperBound &&
+        (avgEntry <= 0 || dow.resistanceCluster.price >= avgEntry * 1.01)
       ) {
-        // 🎯 If current structural ceiling (dow.upperBound) is below the old frozen ceiling
-        // AND it covers entry basis, adapt the ceiling down to the real active market ceiling!
-        const realCeilPrice = dow.upperBound;
+        // 🎯 If a genuine structural Multi-Touch Resistance exists below the old frozen ceiling
+        // AND it provides healthy profit (>1.0% above avgEntry), adapt the ceiling down to the real resistance!
+        // This ensures the bot can actually hit sell targets and take profit rather than waiting for an unreachable high ceiling.
+        const realResPrice = dow.resistanceCluster.price;
         const currentFloor = this.lastDynamicBounds.lowerBound;
-        if (realCeilPrice > currentFloor * 1.005) {
-          this.log(`🎯 [REAL CEILING SYNC] Synchronized locked ceiling ($${this.lastDynamicBounds.upperBound.toFixed(6)} -> Real Ceil $${realCeilPrice.toFixed(6)}) with entry basis (Avg Entry: $${avgEntry.toFixed(6)})`);
-          this.lastDynamicBounds.upperBound = realCeilPrice;
-          this.lastDynamicBounds.centerPrice = (currentFloor + realCeilPrice) / 2;
-          const dSpan = realCeilPrice - currentFloor;
-          this.lastDynamicBounds.sellLevels = [
-            currentFloor + dSpan * 0.60,
-            currentFloor + dSpan * 0.70,
-            currentFloor + dSpan * 0.80,
-            currentFloor + dSpan * 0.90,
-          ];
-          this.lastDynamicBounds.buyLevels = [
-            currentFloor + dSpan * 0.40,
-            currentFloor + dSpan * 0.30,
-            currentFloor + dSpan * 0.20,
-            currentFloor + dSpan * 0.10,
-          ];
+        if (realResPrice > currentFloor * 1.015) {
+          this.log(`🎯 [REAL CEILING SYNC] Synchronized locked ceiling ($${this.lastDynamicBounds.upperBound.toFixed(6)} -> Real S/R Ceil $${realResPrice.toFixed(6)}) with confirmed profit (Avg Entry: $${avgEntry.toFixed(6)})`);
+          this.lastDynamicBounds.upperBound = realResPrice;
+          this.lastDynamicBounds.centerPrice = (currentFloor + realResPrice) / 2;
+          const dSpan = realResPrice - currentFloor;
+          const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
+          const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
+          const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
+          const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
+          const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
+          this.lastDynamicBounds.sellLevels = isNarrowChannel
+            ? [realResPrice * (1 - sellBufferFrac)]
+            : [
+                currentFloor + dSpan * 0.60,
+                currentFloor + dSpan * 0.70,
+                currentFloor + dSpan * 0.80,
+                currentFloor + dSpan * 0.90,
+              ];
+          this.lastDynamicBounds.buyLevels = isNarrowChannel
+            ? [currentFloor * (1 + buyBufferFrac)]
+            : [
+                currentFloor + dSpan * 0.40,
+                currentFloor + dSpan * 0.30,
+                currentFloor + dSpan * 0.20,
+                currentFloor + dSpan * 0.10,
+              ];
         }
       }
 
@@ -1827,16 +1860,44 @@ export class DynamicGrid {
           upperBound = this.lastDynamicBounds.upperBound;
           centerPrice = this.lastDynamicBounds.centerPrice;
           const dSpan = upperBound - lowerBound;
+          const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
+          const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
+          const isNarrowChannel = enableCollapse && lowerBound > 0 && ((dSpan / lowerBound) * 100) < narrowThresh;
+          const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
+          const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
 
           if (!Array.isArray(this.lastDynamicBounds.buyLevels) || this.lastDynamicBounds.buyLevels.length === 0) {
+            this.lastDynamicBounds.buyLevels = isNarrowChannel
+              ? [lowerBound * (1 + buyBufferFrac)]
+              : [
+                  lowerBound + dSpan * 0.40,
+                  lowerBound + dSpan * 0.30,
+                  lowerBound + dSpan * 0.20,
+                  lowerBound + dSpan * 0.10,
+                ];
+          }
+          if (!Array.isArray(this.lastDynamicBounds.sellLevels) || this.lastDynamicBounds.sellLevels.length === 0) {
+            this.lastDynamicBounds.sellLevels = isNarrowChannel
+              ? [upperBound * (1 - sellBufferFrac)]
+              : [
+                  lowerBound + dSpan * 0.60,
+                  lowerBound + dSpan * 0.70,
+                  lowerBound + dSpan * 0.80,
+                  lowerBound + dSpan * 0.90,
+                ];
+          }
+
+          // If channel mode changed between narrow and normal, adapt buyLevels/sellLevels accordingly
+          if (isNarrowChannel && this.lastDynamicBounds.buyLevels.length > 1) {
+            this.lastDynamicBounds.buyLevels = [lowerBound * (1 + buyBufferFrac)];
+            this.lastDynamicBounds.sellLevels = [upperBound * (1 - sellBufferFrac)];
+          } else if (!isNarrowChannel && this.lastDynamicBounds.buyLevels.length === 1) {
             this.lastDynamicBounds.buyLevels = [
               lowerBound + dSpan * 0.40,
               lowerBound + dSpan * 0.30,
               lowerBound + dSpan * 0.20,
               lowerBound + dSpan * 0.10,
             ];
-          }
-          if (!Array.isArray(this.lastDynamicBounds.sellLevels) || this.lastDynamicBounds.sellLevels.length === 0) {
             this.lastDynamicBounds.sellLevels = [
               lowerBound + dSpan * 0.60,
               lowerBound + dSpan * 0.70,
@@ -2432,14 +2493,6 @@ export class DynamicGrid {
           ? `Trendlines converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%)`
           : `Channel width ${currentChannelWidthPct.toFixed(2)}% < ${minTradeableWidth.toFixed(1)}% tradeable threshold`,
         nextTrigger: `Waiting channel expansion >= ${minTradeableWidth.toFixed(1)}%`,
-        severity: "warning",
-      };
-    } else if (this.channelStructureStandby) {
-      botActionState = {
-        code: "CHANNEL_STRUCTURE_STANDBY",
-        title: "⚠️ Channel Structure Standby",
-        reason: `No structural peak/valley pair meets minChannelWidthPct (${(this.cfg.minChannelWidthPct ?? 1.8).toFixed(1)}%). ${dow?.channelInvalidReason ?? "Waiting for confirmed swing highs & lows"}`,
-        nextTrigger: `Wait for confirmed structural swing high & low spanning >= ${(this.cfg.minChannelWidthPct ?? 1.8).toFixed(1)}%`,
         severity: "warning",
       };
     } else if (isTlBuyTrigger && tlBuyPrice !== undefined) {
@@ -3067,7 +3120,7 @@ export class DynamicGrid {
       this.sellOrdersActive = true;
     }
 
-    const canBuy = !offloadOnly && !this.channelStructureStandby && !trendFiltered && !trendlineFiltered && !this.isSqueezePaused && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive;
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !this.isSqueezePaused && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive;
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
       await this.executeIocBracketGrid(
@@ -3357,7 +3410,11 @@ export class DynamicGrid {
         await this.cancelAllRestingOrders("BUY", pauseReason);
       }
     } else {
-      const levelNames = ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
+      const isSingleBuyLevel = buyLevels.length === 1;
+      const buyBufPct = this.cfg.narrowChannelBuyBufferPct ?? 0.05;
+      const levelNames = isSingleBuyLevel
+        ? [`Buy Edge Floor (+${buyBufPct.toFixed(2)}%)`]
+        : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
 
       // Check if Uptrend Support Line is active and sits above standard buy targets ("ถ้าเลย buy target")
       const isTlAboveBuyTarget = Boolean(
@@ -3377,7 +3434,9 @@ export class DynamicGrid {
         effectiveLevelNames[0] = `Buy TL Support ($${activeUptrendLine.currentLinePrice.toFixed(4)})`;
       }
 
-      const buyTargets = [0.25, 0.50, 0.75, 1.0];
+      const buyTargets = isSingleBuyLevel
+        ? [1.0]
+        : [0.25, 0.50, 0.75, 1.0];
 
       // Clean up stale resting buy orders or correct mislabeled levelDesc to closest buyLevel
       const remainingStaleBuys: OpenOrder[] = [];
@@ -3755,7 +3814,10 @@ export class DynamicGrid {
         await this.cancelAllRestingOrders("SELL", "Price below Buy Level 1 (< 40%) — cancelling sell orders to avoid churn while accumulating");
       }
     } else {
-      const sellNames = ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
+      const isSingleSellLevel = sellLevels.length === 1;
+      const sellNames = isSingleSellLevel
+        ? ["Sell Edge Ceil (-0.2%)"]
+        : ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
 
       const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
       const activeSellCount = enabledSells.filter(Boolean).length;
@@ -4133,7 +4195,9 @@ export class DynamicGrid {
       }
 
       // ── Standard Sell Order Logic (no active trendline) ────────────────────────
-      const sellHoldingTargets = [0.75, 0.50, 0.25, 0.0];
+      const sellHoldingTargets = isSingleSellLevel
+        ? [0.0]
+        : [0.75, 0.50, 0.25, 0.0];
 
       // Clean up stale resting sell orders or correct mislabeled levelDesc to closest sellLevel
       const remainingStaleSells: OpenOrder[] = [];
