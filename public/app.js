@@ -977,19 +977,22 @@
     }
 
     // 2. Define ladder steps with percentage targets
+    const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true];
+    const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true];
+
     const ladderSteps = [
-      { pct: 100, el: elStepCeil, priceEl: elStepPriceCeil, defaultAction: "Flat 0%", price: ceil },
-      { pct: 90, el: elStepSell4, priceEl: elStepPriceSell4, defaultAction: "Hold 0%", price: floor + span * 0.90 },
-      { pct: 80, el: elStepSell3, priceEl: elStepPriceSell3, defaultAction: "Hold 25%", price: floor + span * 0.80 },
-      { pct: 70, el: elStepSell2, priceEl: elStepPriceSell2, defaultAction: "Hold 50%", price: floor + span * 0.70 },
-      { pct: 60, el: elStepSell1, priceEl: elStepPriceSell1, defaultAction: "Hold 75%", price: floor + span * 0.60 },
-      { pct: 50, el: elStepCenter, priceEl: elStepPriceCenter, defaultAction: "Midline", price: center },
-      { pct: 40, el: elStepBuy1, priceEl: elStepPriceBuy1, defaultAction: "Hold 25%", price: floor + span * 0.40 },
-      { pct: 30, el: elStepBuy2, priceEl: elStepPriceBuy2, defaultAction: "Hold 50%", price: floor + span * 0.30 },
-      { pct: 20, el: elStepBuy3, priceEl: elStepPriceBuy3, defaultAction: "Hold 75%", price: floor + span * 0.20 },
-      { pct: 10, el: elStepBuy4, priceEl: elStepPriceBuy4, defaultAction: "Hold 100%", price: floor + span * 0.10 },
-      { pct: 5, el: elStepBuffer, priceEl: elStepPriceBuffer, defaultAction: "Hold 100%", price: floor + span * 0.05 },
-      { pct: 0, el: elStepFloor, priceEl: elStepPriceFloor, defaultAction: "Cut Loss", price: floor },
+      { pct: 100, el: elStepCeil, priceEl: elStepPriceCeil, defaultAction: "Flat 0%", price: ceil, enabled: true },
+      { pct: 90, el: elStepSell4, priceEl: elStepPriceSell4, defaultAction: "Hold 0%", price: floor + span * 0.90, enabled: enabledSells[3] !== false },
+      { pct: 80, el: elStepSell3, priceEl: elStepPriceSell3, defaultAction: "Hold 25%", price: floor + span * 0.80, enabled: enabledSells[2] !== false },
+      { pct: 70, el: elStepSell2, priceEl: elStepPriceSell2, defaultAction: "Hold 50%", price: floor + span * 0.70, enabled: enabledSells[1] !== false },
+      { pct: 60, el: elStepSell1, priceEl: elStepPriceSell1, defaultAction: "Hold 75%", price: floor + span * 0.60, enabled: enabledSells[0] !== false },
+      { pct: 50, el: elStepCenter, priceEl: elStepPriceCenter, defaultAction: "Midline", price: center, enabled: true },
+      { pct: 40, el: elStepBuy1, priceEl: elStepPriceBuy1, defaultAction: "Hold 25%", price: floor + span * 0.40, enabled: enabledBuys[0] !== false },
+      { pct: 30, el: elStepBuy2, priceEl: elStepPriceBuy2, defaultAction: "Hold 50%", price: floor + span * 0.30, enabled: enabledBuys[1] !== false },
+      { pct: 20, el: elStepBuy3, priceEl: elStepPriceBuy3, defaultAction: "Hold 75%", price: floor + span * 0.20, enabled: enabledBuys[2] !== false },
+      { pct: 10, el: elStepBuy4, priceEl: elStepPriceBuy4, defaultAction: "Hold 100%", price: floor + span * 0.10, enabled: enabledBuys[3] !== false },
+      { pct: 5, el: elStepBuffer, priceEl: elStepPriceBuffer, defaultAction: "Hold 100%", price: floor + span * 0.05, enabled: true },
+      { pct: 0, el: elStepFloor, priceEl: elStepPriceFloor, defaultAction: "Cut Loss", price: floor, enabled: true },
     ];
 
     // Reset all ladder steps to default clean state
@@ -997,11 +1000,17 @@
       if (!step.el) return;
       step.el.classList.remove("has-resting-buy", "has-resting-sell", "active-ladder-step");
       const actionEl = step.el.querySelector(".step-action");
-      if (actionEl) {
-        if (step.pct === 0) {
-          actionEl.textContent = "0% Floor";
-        } else {
-          actionEl.textContent = step.defaultAction;
+      if (step.enabled === false) {
+        step.el.classList.add("step-disabled");
+        if (actionEl) actionEl.textContent = "Disabled (OFF)";
+      } else {
+        step.el.classList.remove("step-disabled");
+        if (actionEl) {
+          if (step.pct === 0) {
+            actionEl.textContent = "0% Floor";
+          } else {
+            actionEl.textContent = step.defaultAction;
+          }
         }
       }
       if (step.priceEl) step.priceEl.textContent = step.price.toFixed(6);
@@ -3065,6 +3074,18 @@
       setVal("cfg_orderPriceTolerancePct", data.orderPriceTolerancePct);
       setVal("cfg_orderQtyTolerancePct", data.orderQtyTolerancePct);
       setVal("cfg_minGasReserveSomi", data.minGasReserveSomi ?? 2.0);
+
+      const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true];
+      setCheck("cfg_buy_l1", enabledBuys[0] !== false);
+      setCheck("cfg_buy_l2", enabledBuys[1] !== false);
+      setCheck("cfg_buy_l3", enabledBuys[2] !== false);
+      setCheck("cfg_buy_l4", enabledBuys[3] !== false);
+
+      const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true];
+      setCheck("cfg_sell_t1", enabledSells[0] !== false);
+      setCheck("cfg_sell_t2", enabledSells[1] !== false);
+      setCheck("cfg_sell_t3", enabledSells[2] !== false);
+      setCheck("cfg_sell_t4", enabledSells[3] !== false);
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -3163,6 +3184,18 @@
       orderPriceTolerancePct: parseFloat(document.getElementById("cfg_orderPriceTolerancePct").value),
       orderQtyTolerancePct: parseFloat(document.getElementById("cfg_orderQtyTolerancePct").value),
       minGasReserveSomi: document.getElementById("cfg_minGasReserveSomi") ? parseFloat(document.getElementById("cfg_minGasReserveSomi").value) : 0,
+      enabledBuyLevels: [
+        document.getElementById("cfg_buy_l1") ? document.getElementById("cfg_buy_l1").checked : true,
+        document.getElementById("cfg_buy_l2") ? document.getElementById("cfg_buy_l2").checked : true,
+        document.getElementById("cfg_buy_l3") ? document.getElementById("cfg_buy_l3").checked : true,
+        document.getElementById("cfg_buy_l4") ? document.getElementById("cfg_buy_l4").checked : true,
+      ],
+      enabledSellTargets: [
+        document.getElementById("cfg_sell_t1") ? document.getElementById("cfg_sell_t1").checked : true,
+        document.getElementById("cfg_sell_t2") ? document.getElementById("cfg_sell_t2").checked : true,
+        document.getElementById("cfg_sell_t3") ? document.getElementById("cfg_sell_t3").checked : true,
+        document.getElementById("cfg_sell_t4") ? document.getElementById("cfg_sell_t4").checked : true,
+      ],
     };
 
     try {

@@ -994,6 +994,72 @@
         <!-- Tab 3: Execution & Guard -->
         <div class="tab-pane" id="tab-execution">
           <div class="settings-grid">
+            <!-- Dynamic Grid Level Enable / Disable Section -->
+            <div class="form-group grid-levels-control-group" style="grid-column: 1 / -1; margin-bottom: 6px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                <label style="font-size: 13px; font-weight: 700; color: #f1f5f9; display: flex; align-items: center; gap: 6px; margin: 0;">
+                  <span>🎯 Dynamic Grid Target Levels (เปิด / ปิด ระดับการซื้อขาย)</span>
+                </label>
+                <span class="kpi-badge badge-soft" style="font-size: 10px;">Proportional Dynamic Weight</span>
+              </div>
+              <p style="font-size: 11px; color: #94a3b8; margin: 0 0 12px 0; line-height: 1.5;">
+                หากปิดระดับใด บอทจะไม่ Trigger หรือวางคำสั่งที่ระดับนั้น โดยระบบจะหารเฉลี่ยสัดส่วนตามจำนวนระดับที่เปิดใช้งานจริง (เช่น เปิด Buy Level 1 อันเดียวจะเข้าซื้อ 100% เต็มพอร์ตที่ระดับนี้)
+              </p>
+              <div class="levels-dual-card" style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <!-- Buy Levels Column -->
+                <div class="level-box level-box-buy" style="background: rgba(16, 185, 129, 0.05); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 12px;">
+                  <div style="font-weight: 700; font-size: 12px; color: #10b981; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(16, 185, 129, 0.15); padding-bottom: 6px;">
+                    <span>🟢 Buy Levels (ฝั่งซื้อ)</span>
+                    <span style="font-size: 10px; color: #6ee7b7; font-weight: 500;">สะสมเหรียญ</span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Buy Level 1 (40% Zone)</span>
+                      <input type="checkbox" id="cfg_buy_l1" checked style="accent-color: #10b981; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Buy Level 2 (30% Zone)</span>
+                      <input type="checkbox" id="cfg_buy_l2" checked style="accent-color: #10b981; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Buy Level 3 (20% Zone)</span>
+                      <input type="checkbox" id="cfg_buy_l3" checked style="accent-color: #10b981; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Buy Level 4 (10% Zone)</span>
+                      <input type="checkbox" id="cfg_buy_l4" checked style="accent-color: #10b981; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Sell Targets Column -->
+                <div class="level-box level-box-sell" style="background: rgba(249, 115, 22, 0.05); border: 1px solid rgba(249, 115, 22, 0.25); border-radius: 8px; padding: 12px;">
+                  <div style="font-weight: 700; font-size: 12px; color: #f97316; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(249, 115, 22, 0.15); padding-bottom: 6px;">
+                    <span>🟠 Sell Targets (ฝั่งขาย)</span>
+                    <span style="font-size: 10px; color: #fdba74; font-weight: 500;">กระจายขายทำกำไร</span>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Sell Target 1 (60% Zone)</span>
+                      <input type="checkbox" id="cfg_sell_t1" checked style="accent-color: #f97316; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Sell Target 2 (70% Zone)</span>
+                      <input type="checkbox" id="cfg_sell_t2" checked style="accent-color: #f97316; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Sell Target 3 (80% Zone)</span>
+                      <input type="checkbox" id="cfg_sell_t3" checked style="accent-color: #f97316; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                    <label style="display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #e2e8f0; cursor: pointer; padding: 4px 6px; border-radius: 4px; background: rgba(0,0,0,0.15);">
+                      <span>Sell Target 4 (90% Zone)</span>
+                      <input type="checkbox" id="cfg_sell_t4" checked style="accent-color: #f97316; width: 16px; height: 16px; cursor: pointer;" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="form-group">
               <label for="cfg_orderExecutionMode">
                 Order Execution Mode (รูปแบบการส่งคำสั่ง)

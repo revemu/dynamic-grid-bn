@@ -147,7 +147,26 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - เพิ่มปุ่ม 💥 Sell All บน Top Navigation Bar ของ Web Dashboard (public/index.html, public/style.css, public/app.js)
       - รองรับการขาย Position ทั้งหมด (sellAllUser()) ทันทีที่ราคาตลาด (IOC/Market Exit) โดยยกเลิกคำสั่ง Resting Orders ทั้งหมดก่อนส่งคำสั่งขาย
       - มี Confirmation Modal ป้องกันการเผลอกดผิดพลาด และเมื่อขายสำเร็จระบบจะสลับเป็นสถานะ Pause อัตโนมัติเพื่อไม่ให้บอทกระโดดเข้าซื้อรอบใหม่ทันที
-      - รองรับทั้งโหมด DRY_RUN และ Live Trading ทั้งบน Binance Spot และ DreamDEX On-Chain พร้อม API Endpoint POST /api/bot/sell-all\n4. **Asset Precision & Terminology**:
+      - รองรับทั้งโหมด DRY_RUN และ Live Trading ทั้งบน Binance Spot และ DreamDEX On-Chain พร้อม API Endpoint POST /api/bot/sell-all
+     - **Dynamic Grid Level Enable/Disable & Proportional Weight Allocation (เปิด/ปิดระดับ Buy & Sell แยกอิสระพร้อมจัดสรรสัดส่วนแบบไดนามิก)**:
+       - **ความต้องการ**: ผู้ใช้ต้องการให้สามารถเปิด/ปิดแต่ละระดับเป้าหมายซื้อ (`Buy Level 1..4`) และขาย (`Sell Target 1..4`) แยกกันได้อย่างอิสระ หากปิดระดับใด บอทจะไม่ Trigger หรือวางคำสั่งที่ระดับนั้นเด็ดขาด และการจัดสรรงบประมาณ (ฝั่งซื้อ) หรือจำนวนเหรียญที่ขาย (ฝั่งขาย) ให้หารตามจำนวนระดับที่เปิดใช้งานจริง (เช่น หากเปิด Buy Level 1 เพียงระดับเดียว จะเข้าซื้อ 100% เต็มพอร์ตที่ระดับนี้ หากเปิด 2 ระดับ จะแบ่งเป็น 50% / 50%)
+       - **การแก้ไขในโค้ด**:
+         1. ใน `src/config.ts`: เพิ่ม `enabledBuyLevels: boolean[]` (default `[true, true, true, true]`) และ `enabledSellTargets: boolean[]` (default `[true, true, true, true]`) พร้อมตัวแปลง array ใน `loadConfigFromDatabase()`
+         2. ใน `src/strategy.ts`:
+            - `getRuntimeConfig()` & `updateRuntimeSettings()`: รองรับการอ่านและบันทึกค่าลง `settings.db.json` โดยเมื่อมีการแก้ไขจะตั้งค่า `needsBuyRebalance = true`, `needsSellRebalance = true` และรีเซ็ต `iocBracketSellCycle = undefined` ทันที
+            - Target Holding Rebalancing (`targetHoldingFraction`): คำนวณแบบ Dynamic ตามสัดส่วนจำนวนระดับที่เปิดใช้งานจริง (`activeBuyCount` และ `activeSellCount`)
+            - `executeIocBracketGrid`: ฝั่งซื้อคำนวณ `baseTrancheQuote = maxInv / activeBuyCount` และข้ามระดับที่ถูกปิด, ฝั่งขายจับคู่เฉพาะ `activeSellIndices`
+            - `placeBuyOrders` & `placeSellOrders` (Maker Limit mode): ตรวจสอบ `enabledBuys[i]` และ `enabledSells[i]` ข้ามการวางออเดอร์และยกเลิกคำสั่งเดิมที่ค้างอยู่ที่ระดับที่ถูกปิด
+            - Next Triggers (`buyTrigger` / `sellTrigger`): กรองเฉพาะระดับที่เปิดใช้งานจริง
+            - `telemetryData`: ส่ง `enabledBuyLevels` และ `enabledSellTargets` ไปยังหน้าบ้าน Dashboard
+         3. ใน `public/index.html` & `public/style.css`:
+            - เพิ่มส่วน UI `🎯 Dynamic Grid Target Levels` ใน Settings Modal (แท็บ Execution & Guard) แสดงการ์ด 2 คอลัมน์สีเขียว/ส้ม พร้อม Checkbox ควบคุม Buy L1..L4 และ Sell T1..T4 อย่างชัดเจน
+            - เพิ่มสไตล์ `.ladder-step.step-disabled` สำหรับขีดฆ่าและ dim สเต็ปที่ปิดใช้งานบน Grid Ladder Meter
+         4. ใน `public/app.js`:
+            - `loadSettings()`: ดึงค่าจาก Database มาตั้งสถานะ Checkbox ทั้ง 8 ตัว
+            - `saveSettings()`: อ่านค่า Checkbox ส่งบันทึกผ่าน API `/api/db/settings`
+            - `updateZoneLevelBars()`: ซิงค์สถานะ Disabled กับ Grid Ladder Meter แบบ Real-time
+4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)
 5. **Data Feeds & Dual-Exchange Candle Mapping Pipeline**:

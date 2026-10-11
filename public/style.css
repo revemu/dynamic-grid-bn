@@ -1449,6 +1449,25 @@ body {
 .step-buffer  { border-left: 3px solid #818cf8; }
 .step-floor   { border-left: 3px solid #c084fc; }
 
+/* Disabled Grid Level Step in Ladder */
+.ladder-step.step-disabled {
+  opacity: 0.38;
+  filter: grayscale(60%);
+  background: rgba(15, 23, 42, 0.4) !important;
+  border-left-color: #475569 !important;
+}
+.ladder-step.step-disabled .step-pct {
+  color: #64748b !important;
+  text-decoration: line-through;
+}
+.ladder-step.step-disabled .step-title {
+  color: #64748b !important;
+}
+.ladder-step.step-disabled .step-action {
+  color: #94a3b8 !important;
+  font-style: italic;
+}
+
 /* Resting Maker Order Highlighting */
 .ladder-step.has-resting-buy {
   background: linear-gradient(90deg, rgba(16, 185, 129, 0.2) 0%, rgba(12, 18, 32, 0.95) 65%) !important;

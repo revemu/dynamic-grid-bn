@@ -401,6 +401,8 @@ export class DynamicGrid {
       minGasReserveSomi: this.cfg.minGasReserveSomi ?? 2.0,
       timezone: this.cfg.timezone || "Asia/Bangkok",
       dashboardPort: this.cfg.dashboardPort ?? 3333,
+      enabledBuyLevels: Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true],
+      enabledSellTargets: Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true],
     };
   }
 
@@ -421,6 +423,17 @@ export class DynamicGrid {
       if (key in this.cfg && val !== undefined) {
         // If updating secret/key and user kept the masked placeholder, do not overwrite
         if ((key === "binanceApiSecret" || key === "dreamdexPrivateKey") && val === "******") continue;
+        if (key === "enabledBuyLevels" && Array.isArray(val)) {
+          this.cfg.enabledBuyLevels = val.map(Boolean);
+          this.needsBuyRebalance = true;
+          continue;
+        }
+        if (key === "enabledSellTargets" && Array.isArray(val)) {
+          this.cfg.enabledSellTargets = val.map(Boolean);
+          this.needsSellRebalance = true;
+          this.iocBracketSellCycle = undefined;
+          continue;
+        }
         (this.cfg as any)[key] = val;
       }
     }
@@ -2124,42 +2137,77 @@ export class DynamicGrid {
     }
 
     // ── Target Holding % Rebalancing Model based on Ladder Zone ───────────────
+    const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
+    const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+    const activeBuyCount = enabledBuys.filter(Boolean).length;
+    const activeSellCount = enabledSells.filter(Boolean).length;
+
     let targetHoldingFraction = 0;
     let activeLevelName = "";
 
     if (isBelowFloor || positionPct <= 0) {
       targetHoldingFraction = 0.0;
       activeLevelName = this.baseHeld() > 0 ? "0% Floor (Cut Loss)" : "0% Floor (Protected in Cash)";
-    } else if (positionPct <= 10) {
-      targetHoldingFraction = 1.0;
-      activeLevelName = positionPct < 5 ? "Safe Buffer (0-5%)" : "10% Buy Level 4";
-    } else if (positionPct <= 20) {
-      targetHoldingFraction = 0.75;
-      activeLevelName = "20% Buy Level 3";
-    } else if (positionPct <= 30) {
-      targetHoldingFraction = 0.50;
-      activeLevelName = "30% Buy Level 2";
-    } else if (positionPct <= 40) {
-      targetHoldingFraction = 0.25;
-      activeLevelName = "40% Buy Level 1";
     } else if (positionPct < 50) {
-      targetHoldingFraction = 0.0;
-      activeLevelName = "Accumulation Midline (40-50%)";
+      // Buy Zone: 0% .. 50%
+      // Map Buy Level 4 (10%), Buy Level 3 (20%), Buy Level 2 (30%), Buy Level 1 (40%)
+      const buyLevelBands = [
+        { idx: 3, maxPct: 10, name: "10% Buy Level 4" },
+        { idx: 2, maxPct: 20, name: "20% Buy Level 3" },
+        { idx: 1, maxPct: 30, name: "30% Buy Level 2" },
+        { idx: 0, maxPct: 40, name: "40% Buy Level 1" },
+      ];
+
+      // Find which buy band price sits in
+      const matchedBand = buyLevelBands.find((b) => positionPct <= b.maxPct);
+      if (matchedBand) {
+        activeLevelName = matchedBand.name;
+        if (activeBuyCount === 0) {
+          targetHoldingFraction = 0.0;
+        } else {
+          // Count how many enabled buy levels have been reached down to matchedBand.idx
+          // (level 0 is highest buy price, level 3 is lowest buy price)
+          let reachedActiveBuyCount = 0;
+          for (let bIdx = 0; bIdx <= matchedBand.idx; bIdx++) {
+            if (enabledBuys[bIdx]) reachedActiveBuyCount++;
+          }
+          targetHoldingFraction = Math.min(1.0, reachedActiveBuyCount / activeBuyCount);
+        }
+      } else {
+        targetHoldingFraction = 0.0;
+        activeLevelName = "Accumulation Midline (40-50%)";
+      }
     } else if (positionPct <= 55) {
       targetHoldingFraction = 1.0;
       activeLevelName = "50% Center Midline (Hold 100%)";
-    } else if (positionPct <= 65) {
-      targetHoldingFraction = 0.75;
-      activeLevelName = "60% Sell Target 1";
-    } else if (positionPct <= 75) {
-      targetHoldingFraction = 0.50;
-      activeLevelName = "70% Sell Target 2";
-    } else if (positionPct <= 85) {
-      targetHoldingFraction = 0.25;
-      activeLevelName = "80% Sell Target 3";
     } else if (positionPct < 100 && !isAboveCeiling) {
-      targetHoldingFraction = 0.0;
-      activeLevelName = "90% Sell Target 4";
+      // Sell Zone: 55% .. 100%
+      // Map Sell Target 1 (60%), Target 2 (70%), Target 3 (80%), Target 4 (90%)
+      const sellTargetBands = [
+        { idx: 0, maxPct: 65, name: "60% Sell Target 1" },
+        { idx: 1, maxPct: 75, name: "70% Sell Target 2" },
+        { idx: 2, maxPct: 85, name: "80% Sell Target 3" },
+        { idx: 3, maxPct: 99.9, name: "90% Sell Target 4" },
+      ];
+
+      const matchedBand = sellTargetBands.find((b) => positionPct <= b.maxPct);
+      if (matchedBand) {
+        activeLevelName = matchedBand.name;
+        if (activeSellCount === 0) {
+          targetHoldingFraction = 1.0; // No sell targets active, hold position
+        } else {
+          // Count how many active sell targets have been reached up to matchedBand.idx
+          let reachedActiveSellCount = 0;
+          for (let sIdx = 0; sIdx <= matchedBand.idx; sIdx++) {
+            if (enabledSells[sIdx]) reachedActiveSellCount++;
+          }
+          // Target remaining fraction decreases with each reached active sell step
+          targetHoldingFraction = Math.max(0.0, 1.0 - (reachedActiveSellCount / activeSellCount));
+        }
+      } else {
+        targetHoldingFraction = 0.0;
+        activeLevelName = "100% Ceiling (Exit All)";
+      }
     } else {
       targetHoldingFraction = 0.0;
       activeLevelName = "100% Ceiling (Exit All)";
@@ -2177,17 +2225,25 @@ export class DynamicGrid {
 
     // Active Buy Trigger in Buy Zone
     let buyTrigger: number;
-    if (inventoryQuote < targetInventoryQuote - 1.0) {
-      const activeZoneCeiling = buyLevels.find((lvl) => lvl >= refPrice * 0.9995) ?? buyLevels[0] ?? (lowerBound + span * 0.40);
+    const enabledBuyLvlPrices = buyLevels.filter((_, idx) => enabledBuys[idx]);
+    if (enabledBuyLvlPrices.length === 0) {
+      buyTrigger = 0;
+    } else if (inventoryQuote < targetInventoryQuote - 1.0) {
+      const activeZoneCeiling = enabledBuyLvlPrices.find((lvl) => lvl >= refPrice * 0.9995) ?? enabledBuyLvlPrices[0] ?? (lowerBound + span * 0.40);
       buyTrigger = activeZoneCeiling;
     } else {
-      const nextBuyLevel = buyLevels.find((lvl) => lvl < refPrice * 0.999);
-      buyTrigger = nextBuyLevel ?? (buyLevels[buyLevels.length - 1] ?? (lowerBound + span * 0.20));
+      const nextBuyLevel = enabledBuyLvlPrices.find((lvl) => lvl < refPrice * 0.999);
+      buyTrigger = nextBuyLevel ?? (enabledBuyLvlPrices[enabledBuyLvlPrices.length - 1] ?? (lowerBound + span * 0.20));
     }
 
     let sellTrigger: number;
-    const nextSellLevel = sellLevels.find((lvl) => lvl > refPrice * 1.0001);
-    sellTrigger = nextSellLevel ?? sellLevels[sellLevels.length - 1] ?? (lowerBound + span * 0.90);
+    const enabledSellLvlPrices = sellLevels.filter((_, idx) => enabledSells[idx]);
+    if (enabledSellLvlPrices.length === 0) {
+      sellTrigger = 0;
+    } else {
+      const nextSellLevel = enabledSellLvlPrices.find((lvl) => lvl > refPrice * 1.0001);
+      sellTrigger = nextSellLevel ?? enabledSellLvlPrices[enabledSellLvlPrices.length - 1] ?? (lowerBound + span * 0.90);
+    }
 
     // Grid spacing per zone step in %
     const gridStepPct = span > 0 && lowerBound > 0 ? ((span * 0.10) / lowerBound) * 100 : (this.stepBps / 100);
@@ -2658,6 +2714,8 @@ export class DynamicGrid {
         sellOrdersActive: this.sellOrdersActive,
         buyLevels: buyLevels,
         sellLevels: sellLevels,
+        enabledBuyLevels: this.cfg.enabledBuyLevels ?? [true, true, true, true],
+        enabledSellTargets: this.cfg.enabledSellTargets ?? [true, true, true, true],
         openOrders: this.openOrders.map((o) => ({
           id: o.id,
           onChainOrderId: o.onChainOrderId,
@@ -3429,12 +3487,16 @@ export class DynamicGrid {
       const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
       const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
 
+      const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
+
       // Determine which buy levels are actually eligible for placing/holding orders
-      // (not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
+      // (not disabled by user, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
       const eligibleBuyIndices = effectiveBuyLevels
         .map((lvl, idx) => ({ lvl, idx }))
         .filter(({ lvl, idx }) => {
           if (!lvl) return false;
+          // Check if disabled by user
+          if (enabledBuys[idx] === false) return false;
           // Holding Fraction Guard
           const lvlTargetFraction = buyTargets[idx] ?? ((idx + 1) / (effectiveBuyLevels.length || 4));
           if (currentHoldFraction >= (lvlTargetFraction - 0.05) && idx < effectiveBuyLevels.length - 1) {
@@ -3535,6 +3597,22 @@ export class DynamicGrid {
         for (let i = 0; i < effectiveBuyLevels.length; i++) {
           const lvlPrice = effectiveBuyLevels[i];
           if (!lvlPrice) continue;
+
+          // If this buy level is disabled by user, cancel any existing order and skip
+          if (enabledBuys[i] === false) {
+            const existingDisabledBuy = this.openOrders.find(
+              (o) => o.isBid && (o.levelDesc === effectiveLevelNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
+            );
+            if (existingDisabledBuy) {
+              await this.cancelOrderInternal(
+                existingDisabledBuy,
+                `User disabled Buy Level ${i + 1} — cancelling resting order`,
+              );
+              this.openOrders = this.openOrders.filter((o) => o !== existingDisabledBuy);
+              this.saveState();
+            }
+            continue;
+          }
 
           // ── Downtrend Trendline Buy Filter ────────────────────────────────────
           // When a descending trendline (เส้นกด) is active, only place buy orders
@@ -3741,6 +3819,35 @@ export class DynamicGrid {
         ? ["Sell Edge Ceil (-0.2%)"]
         : ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
 
+      const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+      const activeSellCount = enabledSells.filter(Boolean).length;
+      if (activeSellCount === 0) {
+        // All sell targets disabled: cancel resting sell orders
+        const openSells = this.openOrders.filter((o) => !o.isBid && o.levelDesc && sellNames.includes(o.levelDesc));
+        if (openSells.length > 0) {
+          for (const o of openSells) {
+            await this.cancelOrderInternal(o, "All sell targets disabled by configuration");
+          }
+          this.openOrders = this.openOrders.filter((o) => !openSells.includes(o));
+          this.saveState();
+        }
+        return;
+      }
+
+      // Cancel resting sell orders for disabled sell targets
+      const disabledSellOrders = this.openOrders.filter((o) => {
+        if (o.isBid || !o.levelDesc) return false;
+        const idx = sellNames.indexOf(o.levelDesc);
+        return idx >= 0 && !enabledSells[idx];
+      });
+      if (disabledSellOrders.length > 0) {
+        for (const o of disabledSellOrders) {
+          await this.cancelOrderInternal(o, `Sell target disabled by configuration: ${o.levelDesc}`);
+        }
+        this.openOrders = this.openOrders.filter((o) => !disabledSellOrders.includes(o));
+        this.saveState();
+      }
+
       // ── Downtrend Trendline Sell Override ──────────────────────────────────────
       // When an active descending trendline (เส้นกด) is present (not broken), only sell at targets that are
       // BELOW the trendline. If no target is below the trendline, wait for IOC sell at TL price.
@@ -3752,7 +3859,7 @@ export class DynamicGrid {
         const allSellNames = [...sellNames, "Sell TL Exit (Trendline)"];
 
         // Determine which standard sell levels are below the trendline
-        const levelsUnderTL = sellLevels.filter((lvl) => lvl < tlPrice);
+        const levelsUnderTL = sellLevels.filter((lvl, idx) => lvl < tlPrice && enabledSells[idx]);
 
         if (levelsUnderTL.length === 0) {
           if (isIocMode) {
@@ -3898,7 +4005,7 @@ export class DynamicGrid {
           // Identify eligible levels (strictly below TL and strictly above minAllowedSellPrice)
           const eligibleIndices = sellLevels
             .map((lvl, idx) => ({ lvl, idx }))
-            .filter(({ lvl }) => lvl < tlPrice && lvl > minAllowedSellPrice)
+            .filter(({ lvl, idx }) => lvl < tlPrice && lvl > minAllowedSellPrice && enabledSells[idx])
             .map(({ idx }) => idx);
 
           const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
@@ -3940,6 +4047,7 @@ export class DynamicGrid {
           for (let i = 0; i < sellLevels.length; i++) {
             const lvlPrice = sellLevels[i];
             if (!lvlPrice) continue;
+            if (!enabledSells[i]) continue;
 
             // Skip levels that are at or above the trendline
             if (lvlPrice >= tlPrice) {
@@ -4142,7 +4250,7 @@ export class DynamicGrid {
       // Determine eligible sell levels strictly ABOVE minAllowedSellPrice
       const eligibleSellIndices = sellLevels
         .map((lvl, idx) => ({ lvl, idx }))
-        .filter(({ lvl }) => lvl > minAllowedSellPrice)
+        .filter(({ lvl, idx }) => lvl > minAllowedSellPrice && enabledSells[idx])
         .map(({ idx }) => idx);
 
       const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
@@ -4192,6 +4300,7 @@ export class DynamicGrid {
       for (let i = 0; i < sellLevels.length; i++) {
         const originalLvlPrice = sellLevels[i];
         if (!originalLvlPrice) continue;
+        if (!enabledSells[i]) continue;
 
         // Strictly match by level name to prevent adjacent grid levels from stealing/cancelling each other's orders
         const currentOpenSellAtLvl = this.openOrders.find(
@@ -4708,20 +4817,18 @@ export class DynamicGrid {
     const maxInv = this.cfg.maxInventoryQuote ?? 40;
     const currentHeldQuote = this.baseHeld() * refPrice;
     const currentHeldUsdso = currentHeldQuote;
-    const numBuyLevels = buyLevels.length || 4;
-    const baseTrancheQuote = maxInv / numBuyLevels; // e.g. $10 per tranche
+    const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
+    const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+    const activeBuyCount = enabledBuys.filter(Boolean).length;
+    const baseTrancheQuote = activeBuyCount > 0 ? (maxInv / activeBuyCount) : 0;
     const baseTrancheUsdso = baseTrancheQuote;
 
     // ── BUY SIDE (IOC Accumulation with Tranche Aggregation) ──────────────────
     // Safety Guard: Check that currentBestAsk is sane and not an outlier/phantom order
     const isAskPriceSane = refPrice > 0 && currentBestAsk > 0 && Math.abs(currentBestAsk - refPrice) / refPrice <= 0.05;
 
-    if (canBuy && this.buyOrdersActive && currentBestAsk > 0 && isAskPriceSane) {
+    if (canBuy && this.buyOrdersActive && currentBestAsk > 0 && isAskPriceSane && activeBuyCount > 0) {
       // Determine which buy band the market price has reached
-      // Band 1: currentBestAsk <= buyLevels[0] (40%) -> target tranches = 1
-      // Band 2: currentBestAsk <= buyLevels[1] (30%) -> target tranches = 2
-      // Band 3: currentBestAsk <= buyLevels[2] (20%) -> target tranches = 3
-      // Band 4: currentBestAsk <= buyLevels[3] (10%) -> target tranches = 4
       let targetTranches = 0;
       let matchedLevelIndex = -1;
       let isTlBuy = false;
@@ -4730,30 +4837,34 @@ export class DynamicGrid {
       const tlPrice = (activeUptrendLine && !activeUptrendLine.isBroken) ? activeUptrendLine.currentLinePrice : undefined;
 
       // 1. Trendline Support Entry ("ถ้าเลย buy target สามารถเข้าซื้อได้ที่เส้น trend")
-      // When ascending trendline is active and sits above standard Buy Level 1:
-      // If ask price tests or reaches the trendline, trigger entry at the trendline support!
       if (
         (this.cfg.enableBuyAboveTrendSupport !== false) &&
         tlPrice !== undefined &&
         tlPrice > (buyLevels[0] ?? 0) &&
         currentBestAsk <= tlPrice * 1.002 &&
-        currentBestAsk >= tlPrice * 0.990
+        currentBestAsk >= tlPrice * 0.990 &&
+        enabledBuys[0] // Only trigger TL buy if Buy Level 1 is enabled
       ) {
         targetTranches = 1;
         matchedLevelIndex = 0;
         isTlBuy = true;
         matchedBuyPrice = tlPrice;
       } else {
-        // 2. Standard Grid Buy Levels or Breakdown Entry ("ถ้าหลุดไปรอซื้อที่ level ตาม position การถือครอง")
-        // Require both currentBestAsk AND refPrice to confirm entry into buy level zone
+        // 2. Standard Grid Buy Levels: count how many ACTIVE buy levels have been crossed
+        let activeReached = 0;
         for (let i = 0; i < buyLevels.length; i++) {
           const lvlPrice = buyLevels[i];
           if (lvlPrice !== undefined && currentBestAsk <= lvlPrice && refPrice <= lvlPrice * 1.001) {
-            targetTranches = i + 1;
-            matchedLevelIndex = i;
+            if (enabledBuys[i]) {
+              activeReached++;
+              matchedLevelIndex = i;
+            }
           }
         }
-        matchedBuyPrice = matchedLevelIndex >= 0 ? buyLevels[matchedLevelIndex] : undefined;
+        if (activeReached > 0 && matchedLevelIndex >= 0) {
+          targetTranches = activeReached;
+          matchedBuyPrice = buyLevels[matchedLevelIndex];
+        }
       }
 
       // Check trendline resistance filter (if descending trendline is active, cannot buy at or above TL)
@@ -4761,7 +4872,7 @@ export class DynamicGrid {
         targetTranches = 0;
       }
 
-      if (targetTranches > 0 && matchedLevelIndex >= 0 && matchedBuyPrice !== undefined) {
+      if (targetTranches > 0 && matchedLevelIndex >= 0 && matchedBuyPrice !== undefined && baseTrancheQuote > 0) {
         const targetCapacityQuote = targetTranches * baseTrancheQuote;
         const deficitQuote = targetCapacityQuote - currentHeldQuote;
 
@@ -4815,6 +4926,7 @@ export class DynamicGrid {
     const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableTradingBase);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const totalHeldQuote = held * currentBestBid;
+    const activeSellIndices = [0, 1, 2, 3].filter((idx) => enabledSells[idx] && sellLevels[idx] !== undefined);
 
     // Ceiling / Upper Bound Guard: If price reached or exceeded Upper Bound, do NOT execute stepped ladder tranches.
     // Stepped tranches (Step 1..4) are for intra-channel distribution only. Upper bound exit is handled by 100% Full Take Profit.
@@ -4823,14 +4935,14 @@ export class DynamicGrid {
       return;
     }
 
-    if (this.sellOrdersActive && held >= this.minQty && totalHeldQuote >= minNotional && currentBestBid > 0) {
+    if (this.sellOrdersActive && held >= this.minQty && totalHeldQuote >= minNotional && currentBestBid > 0 && activeSellIndices.length > 0) {
       // 1. Maintain or initialize sell distribution cycle
       // If no active cycle, or position grew significantly (new buy filled), establish new baseline
       if (
         !this.iocBracketSellCycle ||
         held > this.iocBracketSellCycle.baselineHeldQty * 1.05
       ) {
-        let numSellTranches = Math.min(4, Math.max(1, sellLevels.length));
+        let numSellTranches = Math.min(activeSellIndices.length, Math.max(1, sellLevels.length));
         while (numSellTranches > 1 && (totalHeldQuote / numSellTranches) < minNotional) {
           numSellTranches--;
         }
@@ -4845,32 +4957,22 @@ export class DynamicGrid {
       const cycle = this.iocBracketSellCycle;
       const numSellTranches = cycle.numSellTranches;
 
-      // 2. Map number of active sell tranches to target remaining inventory fractions
-      // Each tranche corresponds to a step index (0 to numSellTranches - 1)
-      // For 1 tranche:  Target 1 -> remaining 0.0 (100% full exit)
-      // For 2 tranches: Target 1 -> remaining 0.50, Target 4 -> remaining 0.0
-      // For 3 tranches: Target 1 -> remaining 0.67, Target 2 -> remaining 0.33, Target 4 -> remaining 0.0
-      // For 4 tranches: Target 1 -> remaining 0.75, Target 2 -> remaining 0.50, Target 3 -> remaining 0.25, Target 4 -> remaining 0.0
       interface SellStep {
         levelIndex: number;
         targetRemainingFraction: number;
         stepNum: number;
       }
       const activeSteps: SellStep[] = [];
-      if (numSellTranches === 1) {
-        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 0.0, stepNum: 1 });
-      } else if (numSellTranches === 2) {
-        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 0.50, stepNum: 1 });
-        activeSteps.push({ levelIndex: 3, targetRemainingFraction: 0.00, stepNum: 2 });
-      } else if (numSellTranches === 3) {
-        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 2 / 3, stepNum: 1 });
-        activeSteps.push({ levelIndex: 1, targetRemainingFraction: 1 / 3, stepNum: 2 });
-        activeSteps.push({ levelIndex: 3, targetRemainingFraction: 0.00, stepNum: 3 });
-      } else {
-        activeSteps.push({ levelIndex: 0, targetRemainingFraction: 0.75, stepNum: 1 });
-        activeSteps.push({ levelIndex: 1, targetRemainingFraction: 0.50, stepNum: 2 });
-        activeSteps.push({ levelIndex: 2, targetRemainingFraction: 0.25, stepNum: 3 });
-        activeSteps.push({ levelIndex: 3, targetRemainingFraction: 0.00, stepNum: 4 });
+      const selectedIndices = activeSellIndices.slice(0, numSellTranches);
+      for (let s = 0; s < selectedIndices.length; s++) {
+        const lvlIdx = selectedIndices[s]!;
+        const isFinal = (s === selectedIndices.length - 1);
+        const remFraction = isFinal ? 0.0 : ((selectedIndices.length - 1 - s) / selectedIndices.length);
+        activeSteps.push({
+          levelIndex: lvlIdx,
+          targetRemainingFraction: remFraction,
+          stepNum: s + 1,
+        });
       }
 
       // 3. Find candidate sell steps that have been reached by market bid but NOT yet sold in this cycle
