@@ -213,13 +213,28 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
              - ปรับตรรกะ `baseValley` ใน `getStructure` ให้ยึดจุดต่ำสุดจริงของรอบคลื่นปัจจุบัน (`Math.min(...activeCycleLows)` เช่น LL $0.2026 / $2501.75) เสมอ แทนการดึงยกตาม Higher Low (`confirmedHl`) ย่อย
              - ผ่อนปรน `effectiveTradeableMinSpan = minSpanPct * 0.95` เพื่อรองรับคู่สวิงธรรมชาติของคลื่นหลัก (เช่น กรอบ 2.96% จากยอด $0.2086 ถึงเหว $0.2026) ไม่ให้ถูกตีตกไปเข้าโหมด Clamped แคบ
            5. **Active Wave Dow Theory Ceiling & Floor Snapping (New HH & Recent LL Anchor) (`src/market-structure.ts`):**
+              - **Ceiling Snapping to New HH**: เพิ่มตัวตรวจจับ `isLatestHighHh` (เมื่อ `lastCanonicalHigh` เป็น `HH` หรือราคาสูงกว่ายอดก่อนหน้า) โดยเมื่อทำ New HH สำเร็จ ระบบจะปรับ `activePeak` และ `recentMajorHigh` ไปที่ยอดใหม่ทันที ($0.2073) แทนที่จะค้างอยู่ที่ยอดเก่า $0.2086
+              - **Multi-Touch S/R Bounds Localization**: ใน `findMultiTouchSR` ปรับ `candidateLowSwings`, `candidateHighSwings`, `cycleLowMin`, และ `cycleHighMax` ให้จำกัดอยู่ภายในสวิงของรอบคลื่นปัจจุบัน เพื่อให้การจัดกลุ่ม S/R สะท้อนคลื่นปัจจุบันอย่างแม่นยำตรงตาม Dow Theory
+           6. **Elimination of Synthesized Floating Channels (`midEst2 * 1.01 / 0.99`) & Active Wave Base Anchoring (`src/market-structure.ts`)**:
               - **สาเหตุ & ปัญหาเดิม**:
-                - **กรอบล่างตกไปที่ $0.2002**: ใน `baseValley` เดิมกำหนด `lowsPool = activeCycleLows.length > 0 ? activeCycleLows : recentCanonicalLows;` ซึ่ง `activeCycleLows` ดึงครอบคลุมย้อนหลังตั้งแต่ `macroPeak` (ดึงยาวกว่า 200 แท่ง) จึงเผลอดึงจุดเหวโบราณในอดีต ($0.2002) มาเป็น Floor ทั้งที่คลื่นการสวิงปัจจุบันยกตัวสร้างฐานอยู่ที่ LL $0.2023 - $0.2026
-                - **กรอบบนค้างอยู่ที่ $0.2086 ไม่ยอมปรับมาที่ New HH $0.2073**: เมื่อราคาเด้งขึ้นทำยอดใหม่ Higher High (`HH` ที่ $0.2073) โค้ดเดิมตรวจจับเฉพาะ Lower High (`isLatestHighLh`) หากไม่ใช่ LH ระบบจะ fallback ไปหา `maxHigh` จาก `activeCycleHighs` ทั้งหมด ซึ่งมีสวิงยอด $0.2086 จากรอบก่อนการทิ้งตัวลง LL จึงทำให้เพดานถูกแช่แข็งไว้ที่ $0.2086 ไม่ยอมขยับตาม New HH
+                - ใน `market-structure.ts` เดิมมีตรรกะบังคับความกว้างกรอบขั้นต่ำ:
+                  ```ts
+                  if (upperBound <= bottomBound || (upperBound - bottomBound) / bottomBound < 0.005) {
+                    const midEst2 = (upperBound + bottomBound) / 2 || price;
+                    upperBound = midEst2 * 1.01;   // เช่น $2507.995 * 1.01 = $2533.074950
+                    bottomBound = midEst2 * 0.99;  // เช่น $2507.995 * 0.99 = $2482.915050
+                  }
+                  ```
+                - เมื่อใช้ `slice(-4)` สวิงขนาดเล็กถูกดึงเข้ามาคำนวณและมีช่วงสวิงแคบกว่า 0.5% ทำให้สูตรคณิตศาสตร์เสกกรอบลอยกลางอากาศขึ้นมาทันที ($2533.07 / $2482.91 ความกว้าง 2.02%) โดยไม่มีแท่งเทียนหรือสวิงจริง
               - **การแก้ไขในระบบ**:
-                - **Floor Snapping to Recent Wave LL**: ปรับ `lowsPool = recentCanonicalLows.length > 0 ? recentCanonicalLows : activeCycleLows;` ให้ยึดสวิงเหวในรอบคลื่นปัจจุบัน (4 canonical lows ล่าสุด) เสมอ ทำให้ `baseValley` และ `activeValley` ล็อคตรงกับจุดต่ำสุดของรอบปัจจุบัน ($0.2023 - $0.2026) ตัดเหวโบราณ $0.2002 ออก 100%
-                - **Ceiling Snapping to New HH**: เพิ่มตัวตรวจจับ `isLatestHighHh` (เมื่อ `lastCanonicalHigh` เป็น `HH` หรือราคาสูงกว่ายอดก่อนหน้า) โดยเมื่อทำ New HH สำเร็จ ระบบจะปรับ `activePeak` และ `recentMajorHigh` ไปที่ยอดใหม่ทันที ($0.2073) แทนที่จะค้างอยู่ที่ยอดเก่า $0.2086
-                - **Multi-Touch S/R Bounds Localization**: ใน `findMultiTouchSR` ปรับ `candidateLowSwings`, `candidateHighSwings`, `cycleLowMin`, และ `cycleHighMax` ให้จำกัดอยู่ภายใน `recentCanonicalLows` และ `recentCanonicalHighs` เพื่อให้การจัดกลุ่ม S/R สะท้อนคลื่นปัจจุบัน ($0.2023 - $0.2073) อย่างแม่นยำตรงตาม Dow Theory
+                - กำจัดสูตรสังเคราะห์ `midEst2 * 1.01` และ `midEst2 * 0.99` ออกจากระบบ 100%
+                - ปรับการหาขอบเขตคลื่นยึดตาม **Active Wave Base Index** (`waveCycle.lastLl.index` หรือ `macroLow.index`) ทำให้สวิงหลักทั้งหมดของรอบคลื่น (ตั้งแต่ Major LL $2501.75 ถึง Major HH $2524.59) อยู่ใน Pool คำนวณเสมอ
+                - หากกรอบมีช่วงแคบ ให้ Snap เกาะกับสวิงจริงที่ใกล้ที่สุด (`candidateHighs` / `candidateLows`) เสมอ ป้องกันการเกิดกรอบลอยกลางอากาศอย่างเด็ดขาด
+           7. **Manual "Sell All" Resting Orders Auto-Purge & Balance Unlock (`src/strategy.ts`)**:
+              - **สาเหตุ & ปัญหาเดิม**: เมื่อผู้ใช้กดปุ่ม "Sell All" ผ่านแดชบอร์ด ในโหมด Binance Spot เหรียญส่วนใหญ่ถูกล็อคอยู่ในออเดอร์ตั้งขายเดิม (`locked` balance เช่น 0.0349 ETH) ทำให้ `walletBaseBalance` (free balance) เหลือเพียง `0.0001 ETH` ซึ่งต่ำกว่า `minQty` ส่งผลให้ระบบแจ้งเตือนข้อผิดพลาด: `❌ ไม่สามารถขายได้: Position quantity (0.0001 ETH) is below minimum order size (0.0001)`
+              - **การแก้ไขในระบบ**:
+                - ใน `sellAllUser()`: เพิ่มการเรียก `await this.cancelAllOrdersUser();` และ `await this.refreshWalletBalances();` ตั้งแต่เริ่มต้น เพื่อยกเลิกออเดอร์ตั้งขายที่ค้างอยู่บนกระดานทั้งหมดและปลดล็อคยอดเหรียญ Base กลับเข้า Free Balance ก่อนทำการคำนวณยอดที่จะขาย
+                - เพิ่ม Fallback ให้ดึง `held = availableBase` หากยอดใน Position Memory ต่ำกว่า `minQty` แต่ใน Wallet มีเหรียญจริงพร้อมเทรด ทำให้การกด Sell All สำเร็จ 100% เสมอ
 
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)

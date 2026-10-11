@@ -1395,6 +1395,9 @@ export class DynamicGrid {
 
   public async sellAllUser(): Promise<{ success: boolean; soldQty: number; price: number; error?: string }> {
     this.log(`💥 User triggered MANUAL SELL ALL.`);
+
+    // 1. Cancel resting orders first so base asset is unlocked from open limit sell orders on exchange
+    await this.cancelAllOrdersUser();
     await this.refreshWalletBalances();
 
     // Determine current best execution price
@@ -1422,7 +1425,12 @@ export class DynamicGrid {
 
     const minGasReserveBase = this.getEffectiveGasReserveBase();
     const availableBase = Math.max(0, this.walletBaseBalance - minGasReserveBase);
-    const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableBase > 0 ? availableBase : this.baseHeld());
+    let held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableBase > 0 ? availableBase : this.baseHeld());
+
+    // Fallback: If memory held is 0 or below minQty, but actual wallet base balance is available, use availableBase
+    if (held < this.minQty && availableBase >= this.minQty) {
+      held = availableBase;
+    }
 
     if (held < this.minQty) {
       return { success: false, soldQty: 0, price: execPrice, error: `Position quantity (${held.toFixed(4)} ${this.baseAsset}) is below minimum order size (${this.minQty})` };
