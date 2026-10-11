@@ -3424,6 +3424,32 @@
     });
   }
 
+  const elBtnSellAll = document.getElementById("btnSellAll");
+  if (elBtnSellAll) {
+    elBtnSellAll.addEventListener("click", async () => {
+      const ok = confirm(`💥 Emergency Sell All: ขายเหรียญทั้งหมดทันที?\n\nคำสั่งนี้จะยกเลิกออเดอร์ค้างทั้งหมด และส่งคำสั่งขายเหรียญ ${activeBaseAsset} ใน Position ทั้งหมดออกทันทีที่ราคาตลาด (IOC/Market Exit) พร้อมทั้งหยุดการทำงานของบอทชั่วคราว (Pause)\n\nต้องการดำเนินการต่อหรือไม่?`);
+      if (!ok) return;
+      try {
+        elBtnSellAll.disabled = true;
+        elBtnSellAll.textContent = "Selling All...";
+        const res = await fetch("/api/bot/sell-all", { method: "POST" });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ ขายเหรียญทั้งหมดสำเร็จ!\nจำนวน: ${data.soldQty} ${activeBaseAsset}\nราคา: $${data.price}\n\n(บอทได้ถูกสลับเป็นสถานะ Pause เรียบร้อยแล้ว)`);
+          checkBotPauseStatus();
+          refreshFrontPageState();
+        } else {
+          alert("❌ ไม่สามารถขายได้: " + (data.error || "Unknown error"));
+        }
+      } catch (err) {
+        alert("❌ Error: " + (err?.message || err));
+      } finally {
+        elBtnSellAll.disabled = false;
+        elBtnSellAll.innerHTML = '<span class="btn-icon">💥</span><span>Sell All</span>';
+      }
+    });
+  }
+
   const elBtnResetPosition = document.getElementById("btnResetPosition");
   if (elBtnResetPosition) {
     elBtnResetPosition.addEventListener("click", async () => {

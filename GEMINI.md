@@ -143,7 +143,11 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
           - เชื่อมต่อการบันทึกลงฐานข้อมูล Database (`settings.db.json`) และอัปเดตแบบ Live ทันที
    - จัดการ Time Synchronization กับ Server อัตโนมัติ (`syncTime()`)
    - ปรับความละเอียดตาม Symbol Filter เสมอ (`stepSize`, `tickSize`, `minQty`, `minNotional`)
-4. **Asset Precision & Terminology**:
+    - **Emergency Sell All Button (ขายเหรียญทั้งหมดทันทีจากแดชบอร์ด)**:
+      - เพิ่มปุ่ม 💥 Sell All บน Top Navigation Bar ของ Web Dashboard (public/index.html, public/style.css, public/app.js)
+      - รองรับการขาย Position ทั้งหมด (sellAllUser()) ทันทีที่ราคาตลาด (IOC/Market Exit) โดยยกเลิกคำสั่ง Resting Orders ทั้งหมดก่อนส่งคำสั่งขาย
+      - มี Confirmation Modal ป้องกันการเผลอกดผิดพลาด และเมื่อขายสำเร็จระบบจะสลับเป็นสถานะ Pause อัตโนมัติเพื่อไม่ให้บอทกระโดดเข้าซื้อรอบใหม่ทันที
+      - รองรับทั้งโหมด DRY_RUN และ Live Trading ทั้งบน Binance Spot และ DreamDEX On-Chain พร้อม API Endpoint POST /api/bot/sell-all\n4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)
 5. **Data Feeds & Dual-Exchange Candle Mapping Pipeline**:

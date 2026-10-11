@@ -1380,6 +1380,59 @@ export class DynamicGrid {
     return { success: true, clearedLots: count };
   }
 
+  public async sellAllUser(): Promise<{ success: boolean; soldQty: number; price: number; error?: string }> {
+    this.log(`💥 User triggered MANUAL SELL ALL.`);
+    await this.refreshWalletBalances();
+
+    // Determine current best execution price
+    let execPrice = this.lastRefPrice || 0;
+    try {
+      if (this.wsBookTicker && Date.now() - this.wsBookTicker.time < 10_000 && this.wsBookTicker.bestBid > 0) {
+        execPrice = this.wsBookTicker.bestBid;
+      } else {
+        const top = await this.binance.getTopOfBook(this.symbol);
+        if (top?.bestBid && top.bestBid > 0) {
+          execPrice = top.bestBid;
+        }
+      }
+    } catch (e) {
+      this.log(`⚠️ Failed to query orderbook for Sell All: ${(e as Error).message}`);
+    }
+
+    if (!execPrice || execPrice <= 0) {
+      execPrice = this.lastRefPrice || this.atrSource.getLatestPrice?.() || 0;
+    }
+
+    if (execPrice <= 0) {
+      return { success: false, soldQty: 0, price: 0, error: "Unable to determine current market price" };
+    }
+
+    const minGasReserveBase = this.getEffectiveGasReserveBase();
+    const availableBase = Math.max(0, this.walletBaseBalance - minGasReserveBase);
+    const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableBase > 0 ? availableBase : this.baseHeld());
+
+    if (held < this.minQty) {
+      return { success: false, soldQty: 0, price: execPrice, error: `Position quantity (${held.toFixed(4)} ${this.baseAsset}) is below minimum order size (${this.minQty})` };
+    }
+
+    const prevHeld = held;
+    await this.sellAll(execPrice, "SELL");
+
+    // Automatically pause bot to prevent immediate re-accumulation
+    this.isPaused = true;
+    this.saveState(true);
+    this.emitTelemetryTick();
+
+    const remaining = this.baseHeld();
+    const soldQty = Math.max(0, prevHeld - remaining);
+
+    return {
+      success: true,
+      soldQty: soldQty > 0 ? soldQty : prevHeld,
+      price: execPrice,
+    };
+  }
+
   public emitTelemetryTick(): void {
     const mid = this.lastRefPrice || 0.2;
     const avgEntry = this.getAvgEntryPrice();

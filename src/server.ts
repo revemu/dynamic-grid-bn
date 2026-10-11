@@ -23,6 +23,7 @@ export interface DashboardServerOptions {
   onPauseBot?: (paused: boolean) => boolean;
   getIsPaused?: () => boolean;
   onCancelAll?: () => Promise<{ cancelledCount: number }>;
+  onSellAll?: () => Promise<{ success: boolean; soldQty: number; price: number; error?: string }>;
   onResetBot?: (opts?: { resetPnl?: boolean; clearTrades?: boolean }) => Promise<{ success: boolean }>;
   onResetPosition?: () => Promise<{ success: boolean; clearedLots: number }>;
   onReloadState?: () => void;
@@ -471,6 +472,21 @@ export class DashboardServer {
         } catch (e: any) {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: (e as Error).message }));
+        }
+      })();
+      return;
+    }
+
+    // Bot Control: Emergency Sell All Position API
+    if (pathname === "/api/bot/sell-all" && req.method === "POST") {
+      (async () => {
+        try {
+          const result = this.opts.onSellAll ? await this.opts.onSellAll() : { success: false, soldQty: 0, price: 0, error: "Handler not registered" };
+          res.writeHead(result.success ? 200 : 400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
         }
       })();
       return;

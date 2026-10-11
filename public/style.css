@@ -177,6 +177,18 @@ body {
   color: #fff;
 }
 
+.ctrl-btn-sell-all {
+  background: rgba(225, 29, 72, 0.15);
+  border-color: rgba(225, 29, 72, 0.45);
+  color: #fb7185;
+}
+.ctrl-btn-sell-all:hover {
+  background: rgba(225, 29, 72, 0.35);
+  border-color: rgba(225, 29, 72, 0.8);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(225, 29, 72, 0.3);
+}
+
 .ctrl-btn-pos-reset {
   background: rgba(245, 158, 11, 0.1);
   border-color: rgba(245, 158, 11, 0.3);

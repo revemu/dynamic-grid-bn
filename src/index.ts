@@ -369,6 +369,7 @@ async function main(): Promise<void> {
     onPauseBot: (paused) => grid.setPaused(paused),
     getIsPaused: () => grid.getIsPaused(),
     onCancelAll: () => grid.cancelAllOrdersUser(),
+    onSellAll: () => grid.sellAllUser(),
     onResetBot: (opts) => grid.resetBotState(opts),
     onResetPosition: () => grid.resetPosition(),
     onReloadState: () => {
