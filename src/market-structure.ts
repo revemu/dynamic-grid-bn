@@ -849,12 +849,28 @@ export class DowStructureEngine {
         let transitionType: DowSwingPoint["transitionType"];
         let changePct: number | undefined;
 
+        // ค้นหาจุดต่ำสุดของรอบทุบ/สวิงโลว์ก่อนหน้านับตั้งแต่ยอด High ล่าสุด (lastHigh)
+        // หากอยู่ในช่วงขาลงหลังจากยอด High (s.time > lastHigh.time):
+        // เหวใดๆ ที่เกิดขึ้นระหว่างรอบทุบ หากราคาต่ำกว่าเหวก่อนหน้า หรือต่ำกว่าเหวฐาน ต้องเป็น LL เสมอ!
+        const priorLowsInDownwave = this.swingLows.filter(
+          (l) => lastHigh && l.time > lastHigh.time && l.time < s.time
+        );
+        const hasHigherPriorLowInWave = priorLowsInDownwave.some((l) => l.price > s.price);
+
         if (!lastLow) {
           dowLabel = "LL";
           lastLowLabel = "LL";
         } else {
           changePct = ((s.price - lastLow.price) / lastLow.price) * 100;
-          if (s.price > lastLow.price) {
+          // ถ้ามีเหวก่อนหน้าในรอบทุบนี้ที่สูงกว่าจุดนี้ แปลว่าจุดนี้รูดลงมาทำนิวโลว์ -> ต้องเป็น LL!
+          if (hasHigherPriorLowInWave) {
+            dowLabel = "LL";
+            if (lastLowLabel === "HL") {
+              isTransitionStart = true;
+              transitionType = "START_LL";
+            }
+            lastLowLabel = "LL";
+          } else if (s.price > lastLow.price) {
             dowLabel = "HL";
             if (lastLowLabel === "LL") {
               isTransitionStart = true;
