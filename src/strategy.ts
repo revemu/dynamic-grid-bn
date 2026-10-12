@@ -108,6 +108,10 @@ export class DynamicGrid {
     sellLevels: number[];
   };
   private lockedChannel?: LockedChannel;
+  private lastActivePeakTime?: number;
+  private lastActivePeakPrice?: number;
+  private lastActiveValleyTime?: number;
+  private lastActiveValleyPrice?: number;
   /** State machine for IOC Bracket Sell distribution cycle */
   private iocBracketSellCycle?: {
     baselineHeldQuote: number;
@@ -1794,7 +1798,25 @@ export class DynamicGrid {
       if (!isHoldingPosition && this.lockedChannel) {
         this.log(`🔓 [POSITION UNLOCKED] Position returned to 100% cash — channel unfrozen for fresh accumulation (${symbolKey})`);
         this.lockedChannel = undefined;
+        this.lastDynamicBounds = undefined;
         this.db.saveLockedChannel(symbolKey, undefined);
+      }
+
+      const curPeakTime = dow?.activePeak?.time;
+      const curPeakPrice = dow?.activePeak?.price;
+      const curValleyTime = dow?.activeValley?.time;
+      const curValleyPrice = dow?.activeValley?.price;
+
+      const swingChanged = Boolean(
+        (curPeakTime !== undefined && (curPeakTime !== this.lastActivePeakTime || curPeakPrice !== this.lastActivePeakPrice)) ||
+        (curValleyTime !== undefined && (curValleyTime !== this.lastActiveValleyTime || curValleyPrice !== this.lastActiveValleyPrice))
+      );
+
+      if (swingChanged) {
+        this.lastActivePeakTime = curPeakTime;
+        this.lastActivePeakPrice = curPeakPrice;
+        this.lastActiveValleyTime = curValleyTime;
+        this.lastActiveValleyPrice = curValleyPrice;
       }
 
       const minShiftPct = (this.cfg.minChannelShiftPct ?? 1.0) / 100;
@@ -1805,7 +1827,15 @@ export class DynamicGrid {
         lowerBound = this.lastDynamicBounds.lowerBound;
       }
 
-      if (this.lastDynamicBounds) {
+      // Hysteresis smoothing: Only retain previous bounds when holding position AND within the same swing pivot.
+      // When flat (100% cash / !isHoldingPosition) or when a new confirmed Dow swing forms, channel adapts dynamically.
+      const shouldApplyHysteresis = Boolean(
+        isHoldingPosition &&
+        !swingChanged &&
+        this.lastDynamicBounds
+      );
+
+      if (shouldApplyHysteresis && this.lastDynamicBounds) {
         const lowerShift = Math.abs(lowerBound - this.lastDynamicBounds.lowerBound) / this.lastDynamicBounds.lowerBound;
         const upperShift = Math.abs(upperBound - this.lastDynamicBounds.upperBound) / this.lastDynamicBounds.upperBound;
         if (lowerShift < minShiftPct && upperShift < minShiftPct) {
@@ -5418,6 +5448,7 @@ export class DynamicGrid {
       if (this.walletBaseBalance - minGasReserveBase <= (this.minQty || 0.0001)) {
         this.lots = [];
         this.lockedChannel = undefined;
+        this.lastDynamicBounds = undefined;
       }
       this.saveState();
     } catch (err) {
@@ -5427,6 +5458,7 @@ export class DynamicGrid {
       if (this.walletBaseBalance - minGasReserveBase <= (this.minQty || 0.0001)) {
         this.lots = [];
         this.lockedChannel = undefined;
+        this.lastDynamicBounds = undefined;
         this.saveState();
       }
     }
@@ -5475,6 +5507,7 @@ export class DynamicGrid {
     if (this.baseHeld() < dustThreshold) {
       this.lots = [];
       this.lockedChannel = undefined;
+      this.lastDynamicBounds = undefined;
       this.iocBracketSellCycle = undefined;
     }
   }

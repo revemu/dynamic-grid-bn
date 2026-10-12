@@ -282,6 +282,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                       - ในสภาวะ Downwave หลังยอด Macro Peak (macroPeak.index > macroLow.index):
                       - ตรวจหา postPeakLows ที่เกิดขึ้นหลังยอด Macro Peak หากมีอยู่ ให้ยึดจุดต่ำสุดของรอบทุบนี้ (lowestPostPeak เช่น .48) เป็น ctiveWaveBaseIndex และกำหนดให้ aseValley ล็อคเกาะจุดต่ำสุดนี้เป็น Floor ทันที
                       - ส่งผลให้กรอบล่าง Snap เข้ากับจุดสวิงเหวแท้จริงของรอบคลื่นปัจจุบันอย่างแม่นยำ ไม่ถอยหลังไปหาฐานส่งในอดีต
+              11. **Dynamic Channel Hysteresis Bypass on Confirmed Swings & Flat Inventory (`src/strategy.ts`):**
+                  - **สาเหตุ & ปัญหาเดิม:**
+                    - ใน `strategy.ts` มีการตรวจสอบ `lowerShift < minShiftPct && upperShift < minShiftPct` (โดย `minShiftPct` ตั้งไว้ที่ 1.0% ใน `settings.db.json`)
+                    - เมื่อราคาทำยอด New High (HH) หรือทำเหวใหม่ (HL/LL) ที่ขยับน้อยกว่า 1.0% (เช่น ราคา ETH ขยับจาก $2,572.50 ไป $2,582.43 คิดเป็น +0.386%) ระบบจะทับค่ากลับไปใช้ยอดเดิม $2,572.50 ใน `lastDynamicBounds` ซ้ำทุก Tick
+                    - ทำให้เกิดอาการ Deadlock ค้างอยู่ที่ยอดเดิมตลอดเวลา แม้เวลาผ่านไปหลายแท่งเทียน จนกว่าผู้ใช้จะกด Restart บอทเพื่อล้างหน่วยความจำ RAM
+                  - **การแก้ไขในระบบ:**
+                    1. **Confirmed Swing Change Detection (`swingChanged`)**: ติดตาม `lastActivePeakTime/Price` และ `lastActiveValleyTime/Price` หากมีจุดสวิงใหม่ที่ Dow Theory ยืนยันแล้ว (เกิด HH, LH, HL, LL ใหม่) ระบบจะอนุญาตให้ปรับกรอบทันทีโดยไม่ถูก `minShiftPct` บล็อค
+                    2. **Unrestricted Dynamic Updates When Flat (`!isHoldingPosition`)**: ในช่วงที่ไม่ได้ถือครอง Position (0 Open Lots / ถือเงินสด 100% รอสะสมของ) กรอบ Ceiling, Midline, Floor และ Buy Levels 1..4 จะปรับตัวแบบ Dynamic ตามโครงสร้างตลาดล่าสุดเสมอ ไม่ถูกแช่แข็ง
+                    3. **State Clear on Position Exit**: เมื่อปิด Position ทั้งหมด (`sellAllUser()`, `closeLots()`, หรือยอดคงเหลือต่ำกว่าเกณฑ์ dust) จะเคลียร์ `this.lastDynamicBounds = undefined` ทันที เพื่อให้รอบการสะสมใหม่คำนวณจากโครงสร้างตลาดที่สดใหม่อย่างแท้จริง
 
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
