@@ -95,7 +95,11 @@ export interface PlaceOrderParams {
 
 export interface IExchangeClient {
   readonly exchangeName: string;
+  readonly isDex: boolean;
+  readonly hasGasFees: boolean;
+  readonly nativeGasAsset?: string;
   readonly supportsOrderExpiry?: boolean;
+  onGasSpent?: (fee: number, label: string, txHash?: string) => void;
   hasCredentials(): boolean;
   syncTime(): Promise<number>;
   getExchangeInfo(symbol: string): Promise<ExchangeSymbolInfo>;

@@ -54,8 +54,13 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
 
 ## 2. Multi-Exchange Adapter Architecture & Spot Execution
 
-1. **Exchange Adapter Pattern (`src/exchange/types.ts` & `src/exchange/index.ts`)**:
+1. **Exchange Adapter Pattern & Clean CEX vs DEX Decoupling (`src/exchange/types.ts` & `src/exchange/index.ts`)**:
    - ประกาศ Standard Interface: `IExchangeClient` เพื่อรองรับการสลับระหว่าง Binance Spot (CEX) และ DreamDEX Spot (DEX) โดยไม่แตะต้องตรรกะใน Strategy
+   - **Strict CEX vs DEX Capability Flags (`isDex`, `hasGasFees`, `nativeGasAsset`, `onGasSpent`)**:
+     - แยกตรรกะค่าธรรมเนียมและค่าแก๊สออกจากกันอย่างเด็ดขาด:
+       - **CEX (Binance)**: `isDex = false`, `hasGasFees = false` ตัดระบบแก๊ส On-chain ออกทั้งหมด ไม่มีการติดตามแก๊ส ไม่มีการหัก/คืนแก๊ส คิดเฉพาะ CEX Trading Fee (0.075% / 0% Maker) ปกติ
+       - **DEX (DreamDEX)**: `isDex = true`, `hasGasFees = true`, `nativeGasAsset = "SOMI"` มีระบบดักฟังค่าแก๊ส On-Chain จาก EVM Transaction Receipt (`client.onGasSpent`) ทุกธุรกรรม (Place, Cancel, Approval, IOC)
+     - ใน `strategy.ts`: `wireExchangeGasListener` ผูก `onGasSpent` กับ DEX อัตโนมัติ 100% ทำให้ค่าแก๊สถูกสะสมเข้า `accumulatedGasBase` อย่างต่อเนื่อง และถูกดึงมาชดเชยใน Buy Fill พร้อมแสดงป้าย `🛡️ +... SOMI Gas Ret` และกระจาย Event `order_gas` ไปอัปเดตแถบ Activity Feed ทันที
    - เมธอดมาตรฐาน: `getExchangeInfo`, `getAccountBalances`, `getOpenOrders`, `getOrder`, `getTopOfBook`, `placeOrder`, `cancelOrder`, `cancelAllOpenOrders`, `syncTime`
    - Factory function: `createExchangeClient({ exchange, ... })` เลือกกระดานผ่าน DB (`settings.exchange = "binance" | "dreamdex"`)
 2. **Binance Spot Implementation (`src/exchange/binance/client.ts` & `src/exchange/binance/feed.ts`)**:

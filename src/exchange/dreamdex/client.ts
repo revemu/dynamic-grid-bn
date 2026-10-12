@@ -187,6 +187,9 @@ export interface DreamDexClientOptions {
 
 export class DreamDexClient implements IExchangeClient {
   public readonly exchangeName = "dreamdex";
+  public readonly isDex = true;
+  public readonly hasGasFees = true;
+  public readonly nativeGasAsset = "SOMI";
   public readonly supportsOrderExpiry = true;
   private privateKey?: `0x${string}`;
   private rpcUrl: string;

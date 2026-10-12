@@ -393,12 +393,14 @@ async function main(): Promise<void> {
   }
   tradingFeed?.start();
 
-  // Forward strategy events (ticks, buy/sell/cut executions) to dashboard
+  // Forward strategy events (ticks, buy/sell/cut executions, gas updates) to dashboard
   grid.onEvent((event) => {
     if (event.type === "tick") {
       dashboard.updateTick(event.data);
     } else if (event.type === "order") {
       dashboard.addOrder(event.data);
+    } else if (event.type === "order_gas") {
+      dashboard.updateOrderGas(event.data.txHash, event.data.gasFeeBase, event.data.gasFeeQuote);
     }
   });
 
