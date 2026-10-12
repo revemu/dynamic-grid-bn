@@ -844,6 +844,21 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        - จัดลำดับความสำคัญให้ขยายขอบล่าง (Floor) ก่อน เพื่อรักษายอด LH ปัจจุบันให้ทำหน้าที่เป็นแนวต้าน (Ceiling) ไว้ได้อย่างสมบูรณ์
     3. **Price Enclosure**:
        - การันตีว่ากรอบต้องครอบคลุมราคาปัจจุบันเสมอ (`Floor <= Price <= Ceiling`) หากราคาเบรคทะลุกรอบบนหรือล่าง กรอบจะปรับรับราคาทันที
+- **DreamDEX Level Buy via DEX Ask Orderbook Trigger**:
+  - **ความต้องการ & หลักการของผู้ใช้**:
+    - "สำหรับ dreamdex level buy สามารถดูได้จาก ask ถ้าอยู่ในระดับเดียวหรือต่ำกว่า ก็สามารถเข้าซื้อได้นะ ไม่ต้องรอ trigger จาก ราคาแท่งเทียนอย่างเดียว"
+  - **ปัญหาเดิม**:
+    1. ใน `executeIocBracketGrid` มีเงื่อนไขผูกติดแบบ AND: `currentBestAsk <= lvlPrice && refPrice <= lvlPrice * 1.001`
+    2. ทำให้เมื่อมีคนตั้งขาย (Ask) บน DreamDEX ในระดับราคาเท่ากับหรือถูกกว่า Buy Level (`currentBestAsk <= lvlPrice`) แต่ราคาแท่งเทียน Binance (`refPrice`) ยังไม่ย่อลงมา บอทจะปฏิเสธการเข้าซื้อเพราะติดรอราคาแท่งเทียน
+    3. ในโหมด `syncRestingOrders` มีการจำกัด `maxAllowedBuyPrice = Math.min(currentBestBid, refPrice)` ทำให้ไม่ส่งคำสั่งเข้าจับคู่กับ Ask ที่มีอยู่
+  - **การแก้ไข**:
+    1. **Direct DEX Ask Buy Trigger**:
+       - สำหรับ DreamDEX (`!isCexExchange`): ปรับเงื่อนไข `isLevelTriggered` ให้เข้าซื้อได้ทันทีหาก `currentBestAsk <= lvlPrice` (DEX Ask อยู่ในระดับเดียวหรือต่ำกว่า Buy Level) โดยไม่ต้องรอราคาแท่งเทียน Binance
+       - หรือถ้าราคาแท่งเทียนย่อลงมาแตะระดับ (`refPrice <= lvlPrice * 1.001`) และ Ask บน DEX อยู่ในกรอบที่รับได้ ก็เข้าซื้อได้เช่นเดียวกัน
+    2. **Immediate IOC Fill in Maker Mode**:
+       - ใน `syncRestingOrders`: หากพบว่า `currentBestAsk <= lvlPrice` ให้ใช้ `buyTrancheIOC` ส่งคำสั่งซื้อจับคู่กับสภาพคล่องฝั่ง Ask ทันที ไม่ปล่อยโอกาสหลุดมือ
+    3. **Hysteresis & Buy Zone Sensitivity**:
+       - นำ `currentBestAsk` มาร่วมพิจารณาใน hysteresis (`isDexAskInAccumulationZone`) และ `buyTrigger` เพื่อป้องกันการปิดกั้นสัญญาณซื้อขณะที่ Ask บน DEX กำลังอยู่ในโซนซื้อ
 
 ---
 

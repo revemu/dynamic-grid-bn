@@ -2168,6 +2168,7 @@ export class DynamicGrid {
 
     const targetInventoryQuote = targetHoldingFraction * this.cfg.maxInventoryQuote;
     const targetInventoryUsdso = targetInventoryQuote;
+    const isCexExchange = this.binance.exchangeName === "binance";
     const currentBestBid = bestBid ?? effectiveMid;
     const currentBestAsk = bestAsk ?? effectiveMid;
     const inventoryQuote = this.baseHeld() * refPrice;
@@ -2179,13 +2180,14 @@ export class DynamicGrid {
     // Active Buy Trigger in Buy Zone
     let buyTrigger: number;
     const enabledBuyLvlPrices = buyLevels.filter((_, idx) => enabledBuys[idx]);
+    const effectivePriceForBuyTrigger = (!isCexExchange && currentBestAsk > 0) ? Math.min(refPrice, currentBestAsk) : refPrice;
     if (enabledBuyLvlPrices.length === 0) {
       buyTrigger = 0;
     } else if (inventoryQuote < targetInventoryQuote - 1.0) {
-      const activeZoneCeiling = enabledBuyLvlPrices.find((lvl) => lvl >= refPrice * 0.9995) ?? enabledBuyLvlPrices[0] ?? (lowerBound + span * 0.40);
+      const activeZoneCeiling = enabledBuyLvlPrices.find((lvl) => lvl >= effectivePriceForBuyTrigger * 0.9995) ?? enabledBuyLvlPrices[0] ?? (lowerBound + span * 0.40);
       buyTrigger = activeZoneCeiling;
     } else {
-      const nextBuyLevel = enabledBuyLvlPrices.find((lvl) => lvl < refPrice * 0.999);
+      const nextBuyLevel = enabledBuyLvlPrices.find((lvl) => lvl < effectivePriceForBuyTrigger * 0.999);
       buyTrigger = nextBuyLevel ?? (enabledBuyLvlPrices[enabledBuyLvlPrices.length - 1] ?? (lowerBound + span * 0.20));
     }
 
@@ -2959,14 +2961,14 @@ export class DynamicGrid {
     // Rule: Hysteresis for Buy Orders / IOC Buy Trigger
     // On Binance (CEX): No gas or fee concerns, orders remain active continuously across the grid.
     // On DreamDEX (DEX): Apply hysteresis to reduce on-chain gas churn.
-    const isCexExchange = this.binance.exchangeName === "binance";
     const buyActionTerm = this.cfg.orderExecutionMode === "IOC_BRACKET" ? "IOC buy trigger" : "buy orders";
     if (!isCexExchange && this.cfg.enableBuyBelowSellLevel1 !== false) {
-      if (this.buyOrdersActive && (positionPct > 60.5 || refPrice > sellLevel1Price * 1.001)) {
+      const isDexAskInAccumulationZone = currentBestAsk > 0 && currentBestAsk <= sellLevel1Price;
+      if (this.buyOrdersActive && (positionPct > 60.5 || refPrice > sellLevel1Price * 1.001) && !isDexAskInAccumulationZone) {
         this.buyOrdersActive = false;
         this.log(`🛑 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) above Sell Level 1 ($${sellLevel1Price.toFixed(6)}) — pausing ${buyActionTerm} to prevent churn in upper profit zone`);
         this.saveState();
-      } else if (!this.buyOrdersActive && (positionPct <= 60.0 || refPrice <= sellLevel1Price)) {
+      } else if (!this.buyOrdersActive && (positionPct <= 60.0 || refPrice <= sellLevel1Price || isDexAskInAccumulationZone)) {
         this.buyOrdersActive = true;
         this.needsBuyRebalance = true;
         this.log(`🟢 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) returned below Sell Level 1 ($${sellLevel1Price.toFixed(6)}) — reactivating ${buyActionTerm}`);
@@ -3598,6 +3600,24 @@ export class DynamicGrid {
           const levelTargetFraction = buyTargets[i] ?? ((i + 1) / numBuyLevels);
           if (currentHoldFraction >= (levelTargetFraction - 0.05) && i < effectiveBuyLevels.length - 1) {
             continue;
+          }
+
+          // On DreamDEX: ถ้า currentBestAsk <= lvlPrice มีสภาพคล่องฝั่ง Ask ที่ราคาเท่ากับหรือถูกกว่า Buy Level
+          // สามารถเข้าซื้อ (IOC Fill) คว้าสภาพคล่องไม้ Buy Level นั้นได้ทันที ไม่ต้องรอราคาแท่งเทียน
+          const isDexAskAtOrBelowLevel = !isCexExchange && currentBestAsk > 0 && currentBestAsk <= lvlPrice;
+          if (isDexAskAtOrBelowLevel && canBuy && trancheQuote > 0) {
+            const availableBudget = this.cfg.dryRun
+              ? trancheQuote
+              : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance);
+            const desiredBuyQty = availableBudget / currentBestAsk;
+            if (desiredBuyQty >= this.minQty && availableBudget >= minOrderNotional) {
+              const actionLabel = effectiveLevelNames[i] || `Buy Level ${i + 1}`;
+              this.log(
+                `⚡ [DREAMDEX ASK MATCH] Ask $${currentBestAsk.toFixed(6)} <= ${actionLabel} ($${lvlPrice.toFixed(6)}) — executing immediate IOC fill for $${availableBudget.toFixed(2)} ${this.quoteAsset}`,
+              );
+              await this.buyTrancheIOC(desiredBuyQty, currentBestAsk, actionLabel, lvlPrice, availableBudget);
+              continue;
+            }
           }
 
           const isEligibleForNewOrder = lvlPrice < maxAllowedBuyPrice && canBuy;
@@ -4706,8 +4726,13 @@ export class DynamicGrid {
     const baseTrancheUsdso = baseTrancheQuote;
 
     // ── BUY SIDE (IOC Accumulation with Tranche Aggregation) ──────────────────
+    const isCexExchange = this.binance.exchangeName === "binance";
     // Safety Guard: Check that currentBestAsk is sane and not an outlier/phantom order
-    const isAskPriceSane = refPrice > 0 && currentBestAsk > 0 && Math.abs(currentBestAsk - refPrice) / refPrice <= 0.05;
+    const isAskPriceSane = refPrice > 0 && currentBestAsk > 0 && (
+      !isCexExchange
+        ? (currentBestAsk <= refPrice * 1.05 && currentBestAsk >= refPrice * 0.85)
+        : Math.abs(currentBestAsk - refPrice) / refPrice <= 0.05
+    );
 
     if (canBuy && this.buyOrdersActive && currentBestAsk > 0 && isAskPriceSane && activeBuyCount > 0) {
       // Determine which buy band the market price has reached
@@ -4736,8 +4761,13 @@ export class DynamicGrid {
         let activeReached = 0;
         for (let i = 0; i < buyLevels.length; i++) {
           const lvlPrice = buyLevels[i];
-          if (lvlPrice !== undefined && currentBestAsk <= lvlPrice && refPrice <= lvlPrice * 1.001) {
-            if (enabledBuys[i]) {
+          if (lvlPrice !== undefined) {
+            // บน DreamDEX: ดูได้จาก ask ถ้าอยู่ในระดับเดียวหรือต่ำกว่า (currentBestAsk <= lvlPrice) ก็สามารถเข้าซื้อได้ทันที ไม่ต้องรอ trigger จากราคาแท่งเทียน (refPrice) เพียงอย่างเดียว
+            const isLevelTriggered = !isCexExchange
+              ? (currentBestAsk <= lvlPrice || (refPrice <= lvlPrice * 1.001 && currentBestAsk <= lvlPrice * 1.005))
+              : (currentBestAsk <= lvlPrice && refPrice <= lvlPrice * 1.001);
+
+            if (isLevelTriggered && enabledBuys[i]) {
               activeReached++;
               matchedLevelIndex = i;
             }
