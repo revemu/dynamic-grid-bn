@@ -333,7 +333,7 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                  - **สาเหตุ & ปัญหาเดิม**:
                    - เมื่ออยู่ในโหมดป้องกันดาวน์เทรนด์ (Downtrend Drop Guard) และราคาทิ่มหลุดกรอบ Floor เดิมลงไปทำ New Low / candidateValley (เช่น .2019 ในรูป 0/3) กรอบล่าง Floor เดิมจะยังค้างอยู่ที่เหวเก่า (.2030) ทำให้ราคาหลุดออกนอกกรอบล่าง (0% Floor / Below Channel) และกรอบบน Ceiling ยังค้างอยู่ที่ยอดสูงเดิม ไม่ยอมปรับลดลงมารักษาความกว้างให้กระชับ
                  - **การแก้ไขในระบบ (src/market-structure.ts)**:
-                   1. **Real-Time Dynamic Floor Tracking**: เมื่ออยู่ในสภาวะหลุดเหวหรือมีรอบทุบ (isDropBreakdown) และราคาหรือ candidate low หลุดต่ำกว่า Floor เดิม (liveLowCandidate < bottomBound): ปรับ Floor ลงมารับจุด Low ล่าสุดทันทีเพื่อเกาะติดการเคลื่อนไหวของราคา
+                   1. **Real-Time Dynamic Floor Tracking**: เมื่ออยู่ในสภาวะหลุดเหวหรือมีรอบทุบ (isDropBreakdown) และราคาหรือ candidate low หลุดต่ำกว่า Floor เดิม (liveLowCandidate < bottomBound): ปรับ Floor ลงมารับจุด Low ล่าสุดทันทีเพื่อเกาะติดการเคลื่อนไหวของราคา พร้อมซิงค์ activeValley และ activePeak ให้ตรงกับจุดสวิงที่อัปเดตใหม่ 100%
                    2. **Closest Min-Width Peak Ceiling Selection**: เมื่อ Floor ปรับลงมาที่ New Low ระบบจะคำนวณหาระยะกว้างขั้นต่ำ minSpan = bottomBound * minChannelWidthPct และเลือกยอดสวิงที่ยืนยันแล้ว (canonicalHighs) ที่อยู่สูงกว่า New Floor อย่างน้อย minSpan โดยเรียงจากยอดต่ำสุดขึ้นไป (.sort((a, b) => a.price - b.price)) และเลือกยอดแรกที่ใกล้เคียงกับความกว้างขั้นต่ำที่สุด เพื่อให้กรอบราคากระชับและเกาะติดการเคลื่อนที่ของราคาอย่างสมบูรณ์แบบ
                    3. **Zero Floating Math**: ทั้ง Floor และ Ceiling ยึดจากจุดสวิงจริงของแท่งเทียนเท่านั้น ไม่มีการนำตัวเลขลอยมาบวก/ลบในอากาศ
 ---

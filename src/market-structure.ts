@@ -1410,6 +1410,7 @@ export class DowStructureEngine {
     const isLatestLowLl = lastCanonicalLow?.dowLabel === "LL";
     if (isLatestLowLl && lastCanonicalLow && bottomBound > lastCanonicalLow.price) {
       bottomBound = lastCanonicalLow.price;
+      activeValley = lastCanonicalLow;
       clampStatus = "NATURAL_SWING";
     }
 
@@ -1427,6 +1428,11 @@ export class DowStructureEngine {
 
       if (liveLowCandidate !== undefined && liveLowCandidate < bottomBound) {
         bottomBound = liveLowCandidate;
+        if (candidateValley && candidateValley.price === liveLowCandidate) {
+          activeValley = candidateValley;
+        } else if (lastLowPoint && lastLowPoint.price < (activeValley?.price ?? Infinity)) {
+          activeValley = lastLowPoint;
+        }
         clampStatus = "NATURAL_SWING";
 
         // ปรับกรอบบนให้หายอดที่ใกล้เคียงกับความกว้างต่ำสุดที่กำหนดไว้ (minSpan)
@@ -1436,6 +1442,7 @@ export class DowStructureEngine {
 
         if (validHighsAboveNewFloor.length > 0) {
           upperBound = validHighsAboveNewFloor[0]!.price;
+          activePeak = validHighsAboveNewFloor[0]!;
         }
       }
     }
