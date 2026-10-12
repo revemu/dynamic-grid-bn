@@ -828,6 +828,22 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     3. **Absolute Minimum Channel Width Guarantee (`minSpan`)**:
        - หากตรวจสวิงจนสุดประวัติแล้วระยะห่างยังไม่ถึง `minSpanFromPct` (เช่น กราฟไซด์เวย์นิ่งสนิท) หรือหลังการปรับปรุงสวิงใดๆ ความกว้างยังต่ำกว่า `minSpan`:
        - ระบบจะคำนวณ `shortfall = minSpan - (upperBound - bottomBound)` และขยายกรอบบนขึ้น `+ shortfall / 2` และกรอบล่างลง `- shortfall / 2` แบบสมดุลทันที การันตีว่าความกว้างจะไม่มีทางแคบกว่า `minChannelWidthPct` (เช่น 2.0% หรือ 3.0%) 100%
+- **Active Wave Swings & Elimination of Major Peak Override (`DOW_SWINGS`)**:
+  - **ความต้องการ & หลักการของผู้ใช้**:
+    - "อย่าไปเลือก major peak เลย ให้พิจารณาจากราคาปัจจุบันแล้วปรับไปตามกรอบดีกว่า อิงความกว้างตาม min chan ด้วย เพราะพอทำ LH ในคลื่นปัจจุบันก็เป็นแนวต้านละ"
+  - **ปัญหาเดิม**:
+    1. ใน `src/market-structure.ts` เมธอดคำนวณกรอบมีตรรกะ `recentMajorHigh` และ `macroPeak` ที่ค้นหายอดสูงสุดตลอดกาลในอดีต (เช่น ยอดเก่า $0.2093) แล้วนำมาเขียนทับ `activePeak` / `activeCeilingPoint` เสมอ
+    2. ทำให้เมื่อราคาในคลื่นปัจจุบันเกิดยอด **Lower High (LH)** หรือยอดสวิงรอบใหม่ กรอบบน (Ceiling) ไม่ยอมลดลงมาเกาะที่ยอดสวิงแนวต้านปัจจุบัน แต่ยังถูกดึงไปล็อคค้างอยู่ที่ Major Peak โบราณ ทำให้ระยะกรอบกว้างเกินจริงและกึ่งกลาง 50% Center ลอยสูงเกินไป
+    3. หากความกว้างแคบกว่า `minSpanFromPct` มี fallback กระโดดไปดึง `macroPeak` กลับมาอีกครั้ง
+  - **การแก้ไข**:
+    1. **Elimination of Major Peak Override**:
+       - ตัดตัวแปร `recentMajorHigh` และการ override ด้วย `macroPeak` ออกทั้งหมด
+       - กำหนดให้ `activeCeilingPoint = activePeak` โดยตรง ยึดสวิงยอดล่าสุดในคลื่นปัจจุบัน (Confirmed LH หรือ HH) ที่ราคาเทรดอยู่ใต้หรือใกล้เคียง เป็นแนวต้านตาม Dow Theory ทันที
+    2. **Min Channel Width Guarantee with Resistance Preservation**:
+       - ขยายกรอบตามสวิงหรือเติมเต็มระยะห่างให้ได้อย่างน้อยเท่ากับ `minChannelWidthPct` (`minSpanFromPct`)
+       - จัดลำดับความสำคัญให้ขยายขอบล่าง (Floor) ก่อน เพื่อรักษายอด LH ปัจจุบันให้ทำหน้าที่เป็นแนวต้าน (Ceiling) ไว้ได้อย่างสมบูรณ์
+    3. **Price Enclosure**:
+       - การันตีว่ากรอบต้องครอบคลุมราคาปัจจุบันเสมอ (`Floor <= Price <= Ceiling`) หากราคาเบรคทะลุกรอบบนหรือล่าง กรอบจะปรับรับราคาทันที
 
 ---
 

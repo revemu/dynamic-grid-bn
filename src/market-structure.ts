@@ -1258,19 +1258,22 @@ export class DowStructureEngine {
     const highsInActiveWave = canonicalHighs.filter((s) => s.index >= waveStartIndex);
 
     // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้" / "ถ้าทำ HH ปรับขึ้นตามยอดใหม่"):
-    const lastCanonicalHigh = activeCycleHighs.length > 0 ? activeCycleHighs[activeCycleHighs.length - 1] : undefined;
-    const lastCanonicalLow = activeCycleLows.length > 0 ? activeCycleLows[activeCycleLows.length - 1] : (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined);
-    const minSpanRequired = (options?.minChannelWidthPct ?? 1.8) / 100;
+    // ในคลื่นปัจจุบัน ยึดสวิงยอดล่าสุด (LH หรือ HH) ของรอบปัจจุบันเป็น activePeak โดยไม่กระโดดไปหา Major Peak โบราณ
+    const lastCanonicalHigh = activeCycleHighs.length > 0
+      ? activeCycleHighs[activeCycleHighs.length - 1]
+      : (canonicalHighs.length > 0 ? canonicalHighs[canonicalHighs.length - 1] : undefined);
+    const lastCanonicalLow = activeCycleLows.length > 0
+      ? activeCycleLows[activeCycleLows.length - 1]
+      : (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined);
+
     const isLatestHighLh = Boolean(
       lastCanonicalHigh &&
       (lastCanonicalHigh.dowLabel === "LH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price < activeCycleHighs[activeCycleHighs.length - 2]!.price)) &&
-      price <= lastCanonicalHigh.price * 1.0005 &&
-      (!baseValley || (lastCanonicalHigh.price - baseValley.price) / baseValley.price >= minSpanRequired)
+      price <= lastCanonicalHigh.price * 1.0005
     );
     const isLatestHighHh = Boolean(
       lastCanonicalHigh &&
-      (lastCanonicalHigh.dowLabel === "HH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price >= activeCycleHighs[activeCycleHighs.length - 2]!.price)) &&
-      (!baseValley || (lastCanonicalHigh.price - baseValley.price) / baseValley.price >= minSpanRequired)
+      (lastCanonicalHigh.dowLabel === "HH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price >= activeCycleHighs[activeCycleHighs.length - 2]!.price))
     );
 
     const highsPool = activeCycleHighs.length > 0 ? activeCycleHighs : highsInActiveWave;
@@ -1279,6 +1282,9 @@ export class DowStructureEngine {
       activePeak = lastCanonicalHigh;
     } else if (isLatestHighHh && lastCanonicalHigh) {
       activePeak = lastCanonicalHigh;
+    } else if (lastCanonicalHigh && price <= lastCanonicalHigh.price * 1.001) {
+      // สวิงยอดล่าสุดของคลื่นปัจจุบันที่ราคาอยู่ต่ำกว่า ให้ถือเป็นแนวต้าน (activePeak) ทันที
+      activePeak = lastCanonicalHigh;
     } else if (highsPool.length > 0) {
       let maxHigh = highsPool[0]!;
       for (const h of highsPool) {
@@ -1286,24 +1292,14 @@ export class DowStructureEngine {
       }
       activePeak = maxHigh;
     } else if (canonicalHighs.length > 0) {
-      activePeak = canonicalHighs.reduce((max, h) => (h.price > max.price ? h : max), canonicalHighs[0]!);
+      activePeak = canonicalHighs[canonicalHighs.length - 1];
     } else if (confirmedHighs.length > 0) {
       activePeak = confirmedHighs[confirmedHighs.length - 1];
     }
 
-    let recentMajorHigh: SwingPoint | undefined;
-    if (highsPool.length > 0) {
-      let maxHigh = highsPool[0]!;
-      for (const h of highsPool) {
-        if (h.price > maxHigh.price) maxHigh = h;
-      }
-      recentMajorHigh = maxHigh;
-    } else if (activePeak) {
-      recentMajorHigh = activePeak;
-    }
-    const activeCeilingPoint = (recentMajorHigh && (!activePeak || recentMajorHigh.price > activePeak.price))
-      ? recentMajorHigh
-      : activePeak;
+    // 🔒 ไม่ override activePeak ด้วย Major Peak ในอดีต
+    // ยึดยอดสวิงของคลื่นปัจจุบัน (activePeak) เป็นแนวต้าน (activeCeilingPoint) โดยตรง
+    const activeCeilingPoint = activePeak;
 
     let clampStatus: GridZone["clampStatus"] = "NATURAL_SWING";
     let anchorSide: GridZone["anchorSide"] = "NONE";
@@ -1319,13 +1315,13 @@ export class DowStructureEngine {
     // ── 4. Calculate Final Bounds by Selected Channel Mode ────────────────────
     if (mode !== "DONCHIAN_ATR") {
       // 🔒 Pure Dow Theory Active Wave Swing Bounds
-      // กรอบต้องอิงจาก "เหวและยอดที่ยืนยันแล้ว" (Confirmed Swing Valley & Confirmed Swing Peak) ของรอบคลื่นปัจจุบันเท่านั้น 100%
+      // กรอบต้องอิงจาก "เหวและยอดที่ยืนยันแล้ว" ของรอบคลื่นปัจจุบัน และปรับตามราคาปัจจุบัน + minChannelWidthPct
       const minSpanFromPct = price * minPct;
       const maxSpanFromPct = price * maxPct;
 
       // 1. เริ่มต้นจากเหวที่ยืนยันแล้ว (baseValley) และ ยอดที่ยืนยันแล้ว (activeCeilingPoint)
       let curFloor = baseValley?.price ?? (macroLow ? macroLow.price : price * (1 - minPct / 2));
-      let curCeil = activeCeilingPoint?.price ?? (activePeak ? activePeak.price : (macroPeak ? macroPeak.price : price * (1 + minPct / 2)));
+      let curCeil = activeCeilingPoint?.price ?? (activePeak ? activePeak.price : price * (1 + minPct / 2));
 
       // หากทำ New LL ล่าสุด ขอบล่างต้องรับ New LL เสมอ
       if (lastCanonicalLow && lastCanonicalLow.dowLabel === "LL" && lastCanonicalLow.price < curFloor) {
@@ -1336,9 +1332,12 @@ export class DowStructureEngine {
         curCeil = lastCanonicalHigh.price;
       }
 
+      // ป้องกันกรอบไม่ครอบคลุมราคาปัจจุบัน (Guarantee Price Enclosure)
+      if (price > curCeil) curCeil = price * 1.0005;
+      if (price < curFloor) curFloor = price * 0.9995;
+
       // 2. ถ้าความกว้างระหว่างยอดและเหวยังน้อยกว่า minSpanFromPct
-      // ให้ขยายไปยัง "ยอดหรือเหวที่ยืนยันแล้ว" (Confirmed Swings ใน canonicalHighs / canonicalLows) ถัดไป
-      // โดยล็อคกับจุดสวิงจริงเท่านั้น ไม่สร้างเส้นลอยกลางอากาศเด็ดขาด
+      // ให้ขยายกรอบตาม min channel โดยยึดยอดแนวต้านปัจจุบันไว้ และขยายขอบล่างออกไปตามสวิงหรือตาม minSpan
       if (curCeil - curFloor < minSpanFromPct) {
         const higherConfirmedHighs = canonicalHighs
           .filter((h) => h.price > curCeil)
@@ -1356,25 +1355,33 @@ export class DowStructureEngine {
           const hDist = nextH !== undefined ? nextH - curCeil : Infinity;
           const lDist = nextL !== undefined ? curFloor - nextL : Infinity;
 
-          if (hDist <= lDist && nextH !== undefined) {
-            curCeil = nextH;
-            hIdx++;
-          } else if (nextL !== undefined) {
+          // ให้ความสำคัญกับการขยาย Floor ก่อนเพื่อรักษายอด LH/แนวต้านปัจจุบัน
+          if (lDist <= hDist && nextL !== undefined) {
             curFloor = nextL;
             lIdx++;
           } else if (nextH !== undefined) {
             curCeil = nextH;
             hIdx++;
+          } else if (nextL !== undefined) {
+            curFloor = nextL;
+            lIdx++;
           } else {
             break;
           }
         }
-      }
 
-      // Fallback ถ้ายังไม่ถึง minSpan ให้ใช้ macroPeak / macroLow ของสวิงที่ยืนยันแล้ว
-      if (curCeil - curFloor < minSpanFromPct) {
-        if (macroPeak && macroPeak.price > curCeil) curCeil = macroPeak.price;
-        if (macroLow && macroLow.price < curFloor) curFloor = macroLow.price;
+        // หากสวิงยืนยันหมดแล้วแต่ความกว้างยังไม่ถึง minSpanFromPct
+        // ให้ขยาย Floor ลงไปเพื่อเติมเต็ม minChannelWidthPct โดยไม่กระโดดไปดึง Major Peak โบราณ
+        if (curCeil - curFloor < minSpanFromPct) {
+          const needed = minSpanFromPct - (curCeil - curFloor);
+          if (curFloor - needed > 0 && price <= curCeil) {
+            curFloor -= needed;
+          } else {
+            const half = needed / 2;
+            curCeil += half;
+            curFloor = Math.max(0.000001, curFloor - half);
+          }
+        }
       }
 
       upperBound = curCeil;
@@ -1449,7 +1456,7 @@ export class DowStructureEngine {
       // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้"):
       // และเมื่อเปิดโหมดปรับกรอบ ให้หายอดที่ใกล้เคียงกับความกว้างต่ำสุด (minChannelWidthPct) มากที่สุด
       if (upperBound > bottomBound + minSpan) {
-        const candidateLhs = (postPeakHighs.length > 0 ? postPeakHighs : canonicalHighs)
+        const candidateLhs = (activeCycleHighs.length > 0 ? activeCycleHighs : (postPeakHighs.length > 0 ? postPeakHighs : canonicalHighs))
           .filter((h) => (h.dowLabel === "LH" || (lastCanonicalHigh && h.price < (canonicalHighs[0]?.price ?? Infinity))) && h.price > price)
           .filter((h) => h.price - bottomBound >= minSpan && h.price - bottomBound <= maxSpan)
           .sort((a, b) => a.price - b.price); // เรียงจากยอดต่ำไปยอดสูง เพื่อหายอดที่ใกล้เคียงกับความกว้างขั้นต่ำ (minSpan) ที่สุด
