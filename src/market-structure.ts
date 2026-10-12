@@ -1067,6 +1067,7 @@ export class DowStructureEngine {
 
     const price = currentPrice ?? fallbackPrice;
     const n = this.candles.length;
+    const lastCandle = n > 0 ? this.candles[n - 1] : undefined;
     const k = Math.max(2, this.pivotWindow || 3);
     const mode = options?.mode ?? "DOW_SWINGS";
     const useTrueWick = options?.useTrueWick ?? this.useTrueWick ?? true;
@@ -1335,15 +1336,30 @@ export class DowStructureEngine {
       // ป้องกันกรอบไม่ครอบคลุมราคาปัจจุบัน (Guarantee Price Enclosure)
       if (price > curCeil) curCeil = price * 1.0005;
       if (price < curFloor) {
-        // เมื่อราคาหลุดต่ำกว่า Floor เดิม ให้มองหาเหว/แนวรับที่ยืนยันแล้วที่อยู่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน
+        // เมื่อราคาหลุดต่ำกว่า Floor เดิม ให้มองหาเหว/แนวรับที่ยืนยันแล้วที่อยู่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน (และต้องอยู่ในระยะ maxSpanFromPct)
         const lowerValleys = canonicalLows
-          .filter((l) => l.price < price)
+          .filter((l) => l.price < price && curCeil - l.price <= maxSpanFromPct)
           .sort((a, b) => b.price - a.price); // เรียงจากเหวที่ใกล้ราคาที่สุดลงไป
         if (lowerValleys.length > 0) {
           curFloor = lowerValleys[0]!.price;
+          activeValley = lowerValleys[0]!;
         } else {
-          // หากไม่มีเหวในประวัติที่ต่ำกว่าราคานี้แล้ว ให้ขยายตาม minSpanFromPct
-          curFloor = Math.min(curFloor, price - minSpanFromPct);
+          // ในกรณีที่ไม่มีเหวรองรับอีก (หรือเหวในอดีตอยู่ลึกเกิน maxSpanFromPct) ให้อนุญาตให้เกาะแท่งเทียนได้
+          const lastCandleLow = lastCandle ? getEffectiveLow(lastCandle, useTrueWick, this.wickThresholdPct) : undefined;
+          const candleFloor = candidateValley
+            ? candidateValley.price
+            : (lastCandleLow !== undefined ? Math.min(price, lastCandleLow) : price);
+          curFloor = candleFloor;
+          if (candidateValley) {
+            activeValley = candidateValley;
+          } else if (lastCandle) {
+            activeValley = {
+              index: n - 1,
+              time: lastCandle.time,
+              price: candleFloor,
+              type: "LOW",
+            };
+          }
         }
       }
 
@@ -1503,22 +1519,30 @@ export class DowStructureEngine {
     );
 
     if (isDropBreakdown && price < bottomBound) {
-      // เมื่อราคาหลุดต่ำกว่า Floor เดิมในช่วงทุบ ให้มองหาเหวที่ยืนยันแล้วที่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน
+      // เมื่อราคาหลุดต่ำกว่า Floor เดิมในช่วงทุบ ให้มองหาเหวที่ยืนยันแล้วที่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน (และต้องอยู่ในระยะ maxSpan)
       const lowerConfirmedValleys = canonicalLows
-        .filter((l) => l.price < price)
+        .filter((l) => l.price < price && upperBound - l.price <= maxSpan)
         .sort((a, b) => b.price - a.price);
 
       if (lowerConfirmedValleys.length > 0) {
         bottomBound = lowerConfirmedValleys[0]!.price;
         activeValley = lowerConfirmedValleys[0]!;
       } else {
-        // หากไม่มีเหวที่ต่ำกว่าราคาปัจจุบันแล้ว (ทำ Low ใหม่ของช่วง)
-        // ถ้ามี candidateValley ให้ใช้ candidateValley หรือถ้าไม่มีให้ขยายตาม minSpan
-        if (candidateValley && candidateValley.price < price) {
-          bottomBound = candidateValley.price;
+        // ในกรณีที่ไม่มีเหวรองรับอีก (หรือเหวในอดีตอยู่ลึกเกิน maxSpan) ให้อนุญาตให้เกาะแท่งเทียนได้ (Candidate Valley หรือ Candle Low ของแท่งเทียนล่าสุด)
+        const lastCandleLow = lastCandle ? getEffectiveLow(lastCandle, useTrueWick, this.wickThresholdPct) : undefined;
+        const candleFloor = candidateValley
+          ? candidateValley.price
+          : (lastCandleLow !== undefined ? Math.min(price, lastCandleLow) : price);
+        bottomBound = candleFloor;
+        if (candidateValley) {
           activeValley = candidateValley;
-        } else {
-          bottomBound = Math.min(bottomBound, price - minSpan);
+        } else if (lastCandle) {
+          activeValley = {
+            index: n - 1,
+            time: lastCandle.time,
+            price: candleFloor,
+            type: "LOW",
+          };
         }
       }
       clampStatus = "NATURAL_SWING";

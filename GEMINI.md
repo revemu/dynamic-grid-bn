@@ -278,6 +278,13 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                        - **เงื่อนไข 2 (Trendline Breakout)**: แท่งเทียนเบรคทะลุเส้นกด Downtrend Line ยืนยัน $\ge$ 2 แท่ง
                        - *(ตัดเงื่อนไขการปลดล็อกเพราะราคาลงมาใกล้ขอบล่าง 0%-10% ออก 100% เพื่อป้องกันการรับมีดก่อนที่กรอบจะหลุดลงไปทำ New Low ใหม่)*
                   3. **Zero Floating Math Guarantee**:
+              11. **Candle Tracking when No Structural Valley Supports Below Price (เกาะแท่งเทียนเมื่อไม่มีเหวรองรับ) (`src/market-structure.ts`):**
+                  - **สาเหตุ & ปัญหาเดิม:**
+                    - เมื่อราคาเกิดการทุบหรือหลุด Floor เดิมลงมา (Drop Breakdown) ตรรกะเดิมค้นหา `canonicalLows` ที่ต่ำกว่าราคาปัจจุบัน แต่ไม่ได้จำกัดความกว้างกรอบ ทำให้ข้ามรอบไปดึงเหวโบราณในอดีต (เช่น เหว $0.192933 เมื่อ 2 วันก่อน) ส่งผลให้ Real S/R Floor ฉีกกว้างเกิน Max Channel Width (กว้างถึง 6.93% เกิน 6.0%) และระหว่างราคาปัจจุบัน ($0.198900) ถึงเหวโบราณไม่มีเหวรองรับอยู่เลย หรือกรณีที่ไม่มีเหวต่ำกว่าราคาในประวัติศาสตร์เลย ระบบจะใช้ `price - minSpan` แทนที่จะเกาะแท่งเทียน
+                  - **การแก้ไขในระบบ:**
+                    1. **Max Channel Span Guard on Valleys**: กรองเหวโครงสร้างด้านล่าง `lowerValleys` และ `lowerConfirmedValleys` ให้พิจารณาเฉพาะเหวที่อยู่ในระยะความกว้างสูงสุดของกรอบ (`curCeil - l.price <= maxSpanFromPct` หรือ `upperBound - l.price <= maxSpan`)
+                    2. **Candle Tracking Fallback**: ในกรณีที่ไม่มีเหวรองรับอีก (หรือเหวในอดีตอยู่ลึกเกินระยะ Max Channel) ให้อนุญาตให้ Real S/R Floor เกาะแท่งเทียนได้ทันที โดยดึงจากจุดต่ำสุดของแท่งเทียนล่าสุด: `candidateValley` (หากมี Candidate Low) หรือ `lastCandleEffLow` (ไส้ล่างของแท่งเทียนล่าสุด) และกำหนด `activeValley` ชี้ไปที่แท่งเทียนนั้นทันที
+                    3. **Decoupled Strategy Cut Loss Shield**: คงตรรกะการ Cut Loss และ Locked Floor ของ Position ตามเดิมอย่างเข้มงวด เพื่อปกป้องต้นทุนเงินทุนตามการตั้งค่าความปลอดภัยของผู้ใช้
                      - ยกเลิกสูตรบวก/ลบเลข `shortfall / 2` กลางอากาศออก 100% การันตีว่าเส้น Ceiling และ Floor บนกราฟจะไม่มีการลอยเคว้งหรือตัดกลางแท่งเทียนอีกต่อไป
 
              10. **False HL Invalidation & Active Downwave Base Valley Anchoring (src/market-structure.ts):**
