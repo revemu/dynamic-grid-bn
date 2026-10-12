@@ -138,6 +138,8 @@ export class DynamicGrid {
   public minQty: number;
   public stepSize: number;
   public tickSize: number;
+  public qtyPrecision: number;
+  public pricePrecision: number;
   public minNotional: number;
 
   /** On-chain / exchange wallet balance state */
@@ -178,6 +180,8 @@ export class DynamicGrid {
     this.minQty = symbolInfo.minQty;
     this.stepSize = symbolInfo.stepSize;
     this.tickSize = symbolInfo.tickSize;
+    this.qtyPrecision = symbolInfo.qtyPrecision ?? 4;
+    this.pricePrecision = symbolInfo.pricePrecision ?? 6;
     this.minNotional = symbolInfo.minNotional;
 
     this.status = createStatusLogger(log);
@@ -261,6 +265,8 @@ export class DynamicGrid {
     this.minQty = info.minQty;
     this.stepSize = info.stepSize;
     this.tickSize = info.tickSize;
+    this.qtyPrecision = info.qtyPrecision ?? 4;
+    this.pricePrecision = info.pricePrecision ?? 6;
     this.minNotional = info.minNotional;
     this.loadState();
     this.log(`🔄 [strategy] Updated trading pair to ${this.symbol} (${this.baseAsset}/${this.quoteAsset})`);
@@ -4577,8 +4583,8 @@ export class DynamicGrid {
       }
     }
 
-    // Strictly round order quantity to exchange stepSize and precision (4 decimal places for ETH)
-    qty = roundToStep(qty, this.stepSize || 0.0001, 4);
+    // Strictly round order quantity to exchange stepSize and precision
+    qty = roundToStep(qty, this.stepSize || 0.0001, this.qtyPrecision);
     if (qty < this.minQty) {
       return;
     }
@@ -5050,7 +5056,7 @@ export class DynamicGrid {
     if (held < this.minQty || qty < this.minQty) {
       return false;
     }
-    const executeQty = roundToStep(Math.min(held, qty), this.stepSize || 0.0001, 4);
+    const executeQty = roundToStep(Math.min(held, qty), this.stepSize || 0.0001, this.qtyPrecision);
     if (executeQty < this.minQty) {
       return false;
     }
@@ -5223,7 +5229,7 @@ export class DynamicGrid {
 
     if (this.cfg.dryRun) {
       const rawBuyQty = notionalQuote / effectivePrice;
-      const buyQty = roundToStep(rawBuyQty, this.stepSize || 0.0001, 4);
+      const buyQty = roundToStep(rawBuyQty, this.stepSize || 0.0001, this.qtyPrecision);
       if (buyQty < this.minQty) return false;
       this.processBuyFill({
         price: effectivePrice,
@@ -5243,7 +5249,7 @@ export class DynamicGrid {
 
     const availableBudgetQuote = Math.min(notionalQuote, this.walletQuoteBalance);
     const rawFinalQty = availableBudgetQuote / effectivePrice;
-    const finalQty = roundToStep(rawFinalQty, this.stepSize || 0.0001, 4);
+    const finalQty = roundToStep(rawFinalQty, this.stepSize || 0.0001, this.qtyPrecision);
     if (finalQty < this.minQty) {
       this.log(`⚠️ [IOC BUY] Insufficient ${this.quoteAsset} balance ($${this.walletQuoteBalance.toFixed(2)} < $${notionalQuote.toFixed(2)})`);
       return false;
@@ -5389,7 +5395,7 @@ export class DynamicGrid {
     // Liquidate trading inventory: physical available trading balance above gas safety reserve
     // Cap at availableBase so on-chain transactions never attempt to spend non-existent tokens
     const rawExecuteQty = Math.min(held, availableBase > 0 ? availableBase : held);
-    const executeQty = roundToStep(rawExecuteQty, this.stepSize || 0.0001, 4);
+    const executeQty = roundToStep(rawExecuteQty, this.stepSize || 0.0001, this.qtyPrecision);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const orderNotional = executeQty * price;
 

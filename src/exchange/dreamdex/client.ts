@@ -127,8 +127,8 @@ export const DREAMDEX_MARKETS: Record<string, DreamDexMarketMeta> = {
     baseDecimals: 18,
     quoteDecimals: 18,
     baseIsNative: true,
-    minQty: 0.0001,
-    stepSize: 0.0001,
+    minQty: 1.0,
+    stepSize: 0.01,
     tickSize: 0.0001,
     baseToken: "0x28f34DeFd2b4CB48d9eE6d89f2Be4Bc601694c00",
     quoteToken: "0x00000022dA000002656c64D9eA6011ea952D008A",
@@ -270,6 +270,8 @@ export class DreamDexClient implements IExchangeClient {
 
   public async getExchangeInfo(symbol: string): Promise<ExchangeSymbolInfo> {
     const market = this.resolveMarket(symbol);
+    const qtyPrecision = Math.max(0, -Math.floor(Math.log10(market.stepSize) - 1e-9));
+    const pricePrecision = Math.max(0, -Math.floor(Math.log10(market.tickSize) - 1e-9));
     return {
       symbol: market.symbol,
       status: "TRADING",
@@ -280,11 +282,11 @@ export class DreamDexClient implements IExchangeClient {
       minQty: market.minQty,
       maxQty: 1000000,
       stepSize: market.stepSize,
-      qtyPrecision: 4,
+      qtyPrecision,
       minPrice: market.tickSize,
       maxPrice: 1000000,
       tickSize: market.tickSize,
-      pricePrecision: 6,
+      pricePrecision,
       minNotional: 0.1,
     };
   }
