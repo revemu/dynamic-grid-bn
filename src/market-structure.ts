@@ -1143,21 +1143,21 @@ export class DowStructureEngine {
       ? canonicalLows.reduce((min, l) => (!min || l.price < min.price ? l : min), canonicalLows[0]!)
       : undefined;
 
-    // Detect if market bottomed at macroLow and is in an active recovery / new wave cycle:
-    // (trough occurred after macroPeak, and swings formed at or after macroLow)
-    const isNewCycleFromLow = Boolean(
-      macroLow &&
-      macroPeak &&
-      macroLow.index > macroPeak.index &&
-      canonicalHighs.some((h) => h.index > macroLow.index)
-    );
-
-    // Active cycle swings: Anchor to the active major wave cycle
-    // We anchor to macroLow (the true lowest dump/valley of the cycle, e.g. $2501.75) if in a recovery/new cycle,
-    // or to the earliest base of the active wave so that the true structural LL is never truncated by minor intermediate swings.
-    const activeWaveBaseIndex = (isNewCycleFromLow && macroLow)
-      ? macroLow.index
-      : (macroLow ? macroLow.index : (waveCycle.lastLl ? waveCycle.lastLl.index : 0));
+    // Detect active wave cycle base index:
+    // If macroPeak occurred after macroLow, the active cycle is a downwave/correction starting from macroPeak.
+    // If macroLow occurred after macroPeak, the active cycle is an upwave/recovery starting from macroLow.
+    let activeWaveBaseIndex = 0;
+    if (macroPeak && macroLow) {
+      if (macroPeak.index > macroLow.index) {
+        activeWaveBaseIndex = macroPeak.index;
+      } else {
+        activeWaveBaseIndex = macroLow.index;
+      }
+    } else if (macroLow) {
+      activeWaveBaseIndex = macroLow.index;
+    } else if (macroPeak) {
+      activeWaveBaseIndex = macroPeak.index;
+    }
 
     const activeCycleHighs = canonicalHighs.filter((h) => h.index >= activeWaveBaseIndex);
     const activeCycleLows = canonicalLows.filter((l) => l.index >= activeWaveBaseIndex);
@@ -1165,8 +1165,6 @@ export class DowStructureEngine {
     let baseValley: SwingPoint | undefined;
     if (activeCycleLows.length > 0) {
       // 🔒 Pure Dow Structural Floor: Anchor to the confirmed lowest valley of the active cycle!
-      // This guarantees that Major LL (e.g. $2501.75) is respected as the structural base,
-      // preventing minor intermediate lows (HL) from prematurely lifting the channel floor.
       let minLow = activeCycleLows[0]!;
       for (const l of activeCycleLows) {
         if (l.price < minLow.price) minLow = l;
@@ -1179,15 +1177,14 @@ export class DowStructureEngine {
     }
 
     activeValley = baseValley;
-    const waveStartIndex = (isNewCycleFromLow && macroLow)
-      ? macroLow.index
-      : (baseValley ? baseValley.index : (activeCycleLows[0]?.index ?? 0));
+    const waveStartIndex = activeWaveBaseIndex > 0 ? activeWaveBaseIndex : (baseValley?.index ?? 0);
 
     // Highs formed in the active wave (post-valley or post-macroLow)
     const highsInActiveWave = canonicalHighs.filter((s) => s.index >= waveStartIndex);
 
     // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้" / "ถ้าทำ HH ปรับขึ้นตามยอดใหม่"):
     const lastCanonicalHigh = activeCycleHighs.length > 0 ? activeCycleHighs[activeCycleHighs.length - 1] : undefined;
+    const lastCanonicalLow = activeCycleLows.length > 0 ? activeCycleLows[activeCycleLows.length - 1] : (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined);
     const minSpanRequired = (options?.minChannelWidthPct ?? 1.8) / 100;
     const isLatestHighLh = Boolean(
       lastCanonicalHigh &&
@@ -1201,7 +1198,7 @@ export class DowStructureEngine {
       (!baseValley || (lastCanonicalHigh.price - baseValley.price) / baseValley.price >= minSpanRequired)
     );
 
-    const highsPool = activeCycleHighs;
+    const highsPool = activeCycleHighs.length > 0 ? activeCycleHighs : highsInActiveWave;
 
     if (isLatestHighLh && lastCanonicalHigh) {
       activePeak = lastCanonicalHigh;
@@ -1210,12 +1207,6 @@ export class DowStructureEngine {
     } else if (highsPool.length > 0) {
       let maxHigh = highsPool[0]!;
       for (const h of highsPool) {
-        if (h.price > maxHigh.price) maxHigh = h;
-      }
-      activePeak = maxHigh;
-    } else if (highsInActiveWave.length > 0) {
-      let maxHigh = highsInActiveWave[0]!;
-      for (const h of highsInActiveWave) {
         if (h.price > maxHigh.price) maxHigh = h;
       }
       activePeak = maxHigh;
@@ -1253,69 +1244,62 @@ export class DowStructureEngine {
     // ── 4. Calculate Final Bounds by Selected Channel Mode ────────────────────
     if (mode !== "DONCHIAN_ATR") {
       // 🔒 Pure Dow Theory Active Wave Swing Bounds
-      // "ยึดจากราคาปัจจุบัน และ เหว ยอดที่อยู่ใกล้ๆ ให้ได้ความกว้างอย่างต่ำที่ min chan ไม่ได้ก็ขยับไปเรื่อยๆ"
+      // กรอบต้องอิงจาก "เหวและยอดที่ยืนยันแล้ว" (Confirmed Swing Valley & Confirmed Swing Peak) ของรอบคลื่นปัจจุบันเท่านั้น 100%
       const minSpanFromPct = price * minPct;
       const maxSpanFromPct = price * maxPct;
 
-      // 1. รวบรวมสวิงยอด (Highs) เหนือราคาปัจจุบัน และ เหว (Lows) ใต้ราคาปัจจุบัน
-      // รวมทั้ง this.swingHighs และ canonicalHighs เพื่อให้ได้จุดสวิงครบทุกจุด
-      const highMap = new Map<number, SwingPoint>();
-      for (const h of [...canonicalHighs, ...this.swingHighs]) {
-        if (h.price > price) highMap.set(h.price, h);
+      // 1. เริ่มต้นจากเหวที่ยืนยันแล้ว (baseValley) และ ยอดที่ยืนยันแล้ว (activeCeilingPoint)
+      let curFloor = baseValley?.price ?? (macroLow ? macroLow.price : price * (1 - minPct / 2));
+      let curCeil = activeCeilingPoint?.price ?? (activePeak ? activePeak.price : (macroPeak ? macroPeak.price : price * (1 + minPct / 2)));
+
+      // หากทำ New LL ล่าสุด ขอบล่างต้องรับ New LL เสมอ
+      if (lastCanonicalLow && lastCanonicalLow.dowLabel === "LL" && lastCanonicalLow.price < curFloor) {
+        curFloor = lastCanonicalLow.price;
       }
-      const allHighSwings = Array.from(highMap.values()).sort((a, b) => a.price - b.price); // เรียงจากต่ำไปสูง (ใกล้ราคาขึ้นไป)
-
-      const lowMap = new Map<number, SwingPoint>();
-      for (const l of [...canonicalLows, ...this.swingLows]) {
-        if (l.price < price) lowMap.set(l.price, l);
+      // หากทำ New HH ล่าสุด ขอบบนต้องรับ New HH เสมอ
+      if (lastCanonicalHigh && lastCanonicalHigh.dowLabel === "HH" && lastCanonicalHigh.price > curCeil) {
+        curCeil = lastCanonicalHigh.price;
       }
-      const allLowSwings = Array.from(lowMap.values()).sort((a, b) => b.price - a.price); // เรียงจากสูงไปต่ำ (ใกล้ราคาลงไป)
 
-      // เริ่มต้นจากสวิงที่ใกล้ราคาปัจจุบันที่สุด
-      let hIdx = 0;
-      let lIdx = 0;
-      let curCeil = allHighSwings[0]?.price ?? (activePeak && activePeak.price > price ? activePeak.price : price * (1 + minPct / 2));
-      let curFloor = allLowSwings[0]?.price ?? (activeValley && activeValley.price < price ? activeValley.price : price * (1 - minPct / 2));
+      // 2. ถ้าความกว้างระหว่างยอดและเหวยังน้อยกว่า minSpanFromPct
+      // ให้ขยายไปยัง "ยอดหรือเหวที่ยืนยันแล้ว" (Confirmed Swings ใน canonicalHighs / canonicalLows) ถัดไป
+      // โดยล็อคกับจุดสวิงจริงเท่านั้น ไม่สร้างเส้นลอยกลางอากาศเด็ดขาด
+      if (curCeil - curFloor < minSpanFromPct) {
+        const higherConfirmedHighs = canonicalHighs
+          .filter((h) => h.price > curCeil)
+          .sort((a, b) => a.price - b.price); // เรียงจากต่ำไปสูง
+        const lowerConfirmedLows = canonicalLows
+          .filter((l) => l.price < curFloor)
+          .sort((a, b) => b.price - a.price); // เรียงจากสูงไปต่ำ
 
-      // 2. ขยับขยายยอด/เหวออกไปเรื่อยๆ ทีละสเต็ป จนกว่าจะได้ความกว้างอย่างต่ำ >= minSpanFromPct
-      while (curCeil - curFloor < minSpanFromPct && (hIdx + 1 < allHighSwings.length || lIdx + 1 < allLowSwings.length)) {
-        const nextHigh = hIdx + 1 < allHighSwings.length ? allHighSwings[hIdx + 1]!.price : undefined;
-        const nextLow = lIdx + 1 < allLowSwings.length ? allLowSwings[lIdx + 1]!.price : undefined;
+        let hIdx = 0;
+        let lIdx = 0;
+        while (curCeil - curFloor < minSpanFromPct && (hIdx < higherConfirmedHighs.length || lIdx < lowerConfirmedLows.length)) {
+          const nextH = hIdx < higherConfirmedHighs.length ? higherConfirmedHighs[hIdx]!.price : undefined;
+          const nextL = lIdx < lowerConfirmedLows.length ? lowerConfirmedLows[lIdx]!.price : undefined;
 
-        const highDelta = nextHigh !== undefined ? nextHigh - curCeil : Infinity;
-        const lowDelta = nextLow !== undefined ? curFloor - nextLow : Infinity;
+          const hDist = nextH !== undefined ? nextH - curCeil : Infinity;
+          const lDist = nextL !== undefined ? curFloor - nextL : Infinity;
 
-        // ขยับฝั่งที่ขยายแล้วเพิ่มความกว้างได้สมดุลหรือใกล้เคียงที่สุด
-        if (highDelta <= lowDelta && nextHigh !== undefined) {
-          hIdx++;
-          curCeil = nextHigh;
-        } else if (nextLow !== undefined) {
-          lIdx++;
-          curFloor = nextLow;
-        } else if (nextHigh !== undefined) {
-          hIdx++;
-          curCeil = nextHigh;
-        } else {
-          break;
+          if (hDist <= lDist && nextH !== undefined) {
+            curCeil = nextH;
+            hIdx++;
+          } else if (nextL !== undefined) {
+            curFloor = nextL;
+            lIdx++;
+          } else if (nextH !== undefined) {
+            curCeil = nextH;
+            hIdx++;
+          } else {
+            break;
+          }
         }
       }
 
-      // ถ้ายังไม่ถึง minSpan ให้ใช้ activePeak / activeValley หรือ macroPeak / macroLow
-      if (curCeil - curFloor < minSpanFromPct) {
-        if (activePeak && activePeak.price > curCeil) curCeil = activePeak.price;
-        if (activeValley && activeValley.price < curFloor) curFloor = activeValley.price;
-      }
+      // Fallback ถ้ายังไม่ถึง minSpan ให้ใช้ macroPeak / macroLow ของสวิงที่ยืนยันแล้ว
       if (curCeil - curFloor < minSpanFromPct) {
         if (macroPeak && macroPeak.price > curCeil) curCeil = macroPeak.price;
         if (macroLow && macroLow.price < curFloor) curFloor = macroLow.price;
-      }
-
-      // 🔒 HARD GUARANTEE: ถ้าขยายสวิงจนสุดประวัติแล้วความกว้างยังไม่ถึง minSpanFromPct
-      // ให้ขยายบาลานซ์ทั้งสองฝั่งออกจากจุดกึ่งกลาง การันตีว่าความกว้างจะไม่ต่ำกว่า minChannelWidthPct 100%!
-      if (curCeil - curFloor < minSpanFromPct) {
-        const shortfall = minSpanFromPct - (curCeil - curFloor);
-        curCeil += shortfall / 2;
-        curFloor = Math.max(0, curFloor - shortfall / 2);
       }
 
       upperBound = curCeil;
@@ -1334,17 +1318,13 @@ export class DowStructureEngine {
             .sort((a, b) => b.price - a.price);
           if (validHighs.length > 0) {
             upperBound = validHighs[0]!.price;
-          } else {
-            upperBound = bottomBound + maxSpanFromPct;
           }
         } else {
-          const validLows = canonicalLows
+          const validLows = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
             .filter((l) => l.price < price && upperBound - l.price >= minSpanFromPct && upperBound - l.price <= maxSpanFromPct)
             .sort((a, b) => a.price - b.price);
           if (validLows.length > 0) {
             bottomBound = validLows[0]!.price;
-          } else {
-            bottomBound = upperBound - maxSpanFromPct;
           }
         }
         clampStatus = "CLAMPED_MAX";
@@ -1414,16 +1394,14 @@ export class DowStructureEngine {
     // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Lower Low (LL) กรอบล่างต้องปรับลดลงมารับ New Low"):
     // When price establishes a confirmed Lower Low (LL) below the active bottom bound,
     // the previous support level was broken by the market dump. The floor must adjust down to this confirmed LL!
-    const lastCanonicalLow = canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined;
     const isLatestLowLl = lastCanonicalLow?.dowLabel === "LL";
     if (isLatestLowLl && lastCanonicalLow && bottomBound > lastCanonicalLow.price) {
       bottomBound = lastCanonicalLow.price;
       clampStatus = "NATURAL_SWING";
     }
 
-    // Ensure sensible minimum channel width (at least 0.5%) without artificial +/- 1% floating synthesis
+    // Ensure sensible minimum channel width (at least 0.5%) without artificial floating synthesis
     if (upperBound <= bottomBound || (upperBound - bottomBound) / bottomBound < 0.005) {
-      // Find valid swing highs above price and swing lows below price from activeCycle/canonical swings
       const candidateHighs = (activeCycleHighs.length > 0 ? activeCycleHighs : canonicalHighs)
         .filter((h) => h.price > price)
         .sort((a, b) => a.price - b.price);
@@ -1443,13 +1421,14 @@ export class DowStructureEngine {
       }
     }
 
-    // 🔒 Absolute Minimum Channel Width Guarantee:
-    // If the final channel width is narrower than minSpan (minChannelWidthPct), expand bounds symmetrically!
-    // This guarantees that micro-channels (e.g. 0.38%) are NEVER produced when minChannelWidthPct is set (e.g. 2%-3%).
+    // 🔒 Zero Floating Math Guarantee:
+    // If the channel is still narrower than minSpan, expand to confirmed swings (canonicalHighs / canonicalLows)
+    // NEVER synthesize floating lines with +/- shortfall math!
     if (upperBound - bottomBound < minSpan) {
-      const shortfall = minSpan - (upperBound - bottomBound);
-      upperBound += shortfall / 2;
-      bottomBound = Math.max(0, bottomBound - shortfall / 2);
+      const higherHigh = canonicalHighs.filter((h) => h.price > upperBound).sort((a, b) => a.price - b.price)[0];
+      const lowerLow = canonicalLows.filter((l) => l.price < bottomBound).sort((a, b) => b.price - a.price)[0];
+      if (higherHigh) upperBound = higherHigh.price;
+      if (lowerLow) bottomBound = lowerLow.price;
       clampStatus = "CLAMPED_MIN";
     }
 
