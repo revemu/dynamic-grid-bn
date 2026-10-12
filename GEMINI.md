@@ -786,6 +786,10 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         - ใน `public/app.js`: เมื่อเกิด `trade_added` หรือกดเพิ่มสำเร็จ จะเรียก `addOrderActivity(order, false)` เพื่อนำรายการไปแสดงในกล่อง Trade Matches Feed (`#tradesFeed`) และ Combined All Feed (`#allFeed`) พร้อมปักหมุดบนกราฟทันที โดยมีระบบ Guard ป้องกันการ Render ซ้ำด้วย `data-order-id` / `data-clob-id` / `data-txhash`
       - เมื่อผู้ใช้แก้ไขหรือลบ Trade ผ่าน Trade Manager (`updateTrade` / `deleteTrade`):
         - คำนวณ Delta PnL ปรับยอด `tradeRealizedPnl` และ `realizedPnl` ใน State อัตโนมัติ พร้อมทั้งอัปเดต/ลบรายการใน DOM Activity Feed ทันที
+      - **Automatic Historical Manual Trades Reconcile & `statesBySymbol` Isolation Fix (`reconcileManualTradesPnl`)**:
+        - แก้ปัญหา `statesBySymbol` แยกตามเหรียญ (เช่น `SOMI:USDSO`) เขียนทับ State รวม: ฟังก์ชัน `adjustStatePnl` จะอัปเดตยอด `tradeRealizedPnl` และ `realizedPnl` ให้ทั้งใน `state` กลาง และทุกคู่เหรียญใน `statesBySymbol` พร้อมกัน 100% ป้องกัน `getState(symbolKey)` คืนค่าเก่า
+        - เพิ่มระบบ `appliedManualTradeIds`: ตรวจสอบและดึงรายการ Manual Sell ในอดีตที่ยังไม่เคยถูกรวมยอดมาคำนวณบวกเพิ่มให้อัตโนมัติทันทีเมื่อเปิดบอทหรือเรียก Reconcile โดยไม่บวกซ้ำซ้อน
+        - เพิ่ม API `POST /api/db/trades/reconcile-pnl` และปุ่ม `🔄 ซิงค์ Realized PnL` ในหน้าต่าง Trade Manager ให้กดซิงค์กำไรเข้าหัวเว็บได้ทันที
   - **Inventory-Based Round Tracking (Elimination of Time Collisions & Premature Round Splits)**:
     - Previously, `calculateTradeRounds` prematurely closed an active round whenever any BUY arrived after a SELL (`inSellPhase && isBuy`), splitting rounds mid-cycle while holding inventory (e.g. 47.16 SOMI remained unsold in Round #23), which caused Round #23's `endTime` and Round #24's `startTime` to collide at the exact same minute (`11:15`).
     - Now, in a grid strategy, buys following partial profit-taking represent **re-accumulation within the active cycle**. A round remains active until:

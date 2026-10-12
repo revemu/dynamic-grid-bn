@@ -78,6 +78,7 @@ export interface StrategyStateRecord {
   isSqueezePaused?: boolean;
   isPaused?: boolean;
   recentOrders?: any[];
+  appliedManualTradeIds?: string[];
   lastUpdated: number;
 }
 
@@ -203,6 +204,7 @@ export class BotDatabase {
     this.cleanupHijackedMakerFills();
     this.cleanupDuplicateExitFills();
     this.cleanupDuplicateTxRecords();
+    this.reconcileManualTradesPnl();
   }
 
   private loadSeparateSettings(): void {
@@ -1104,6 +1106,101 @@ export class BotDatabase {
 
   // ── Trade & Lot Management API Methods ─────────────────────────────────────
 
+  private adjustStatePnl(diff: number, manualTradeId?: string, isRemove?: boolean): void {
+    if (!Number.isFinite(diff) || Math.abs(diff) < 1e-8) return;
+    if (!this.data.state) this.data.state = this.getDefaultState();
+
+    this.data.state.tradeRealizedPnl = (this.data.state.tradeRealizedPnl || 0) + diff;
+    const totalGasQuote = this.data.state.totalGasDeductedQuote ?? this.data.state.totalGasDeductedUsdso ?? 0;
+    this.data.state.realizedPnl = this.data.state.tradeRealizedPnl - totalGasQuote;
+
+    if (manualTradeId) {
+      if (!Array.isArray(this.data.state.appliedManualTradeIds)) {
+        this.data.state.appliedManualTradeIds = [];
+      }
+      if (isRemove) {
+        this.data.state.appliedManualTradeIds = this.data.state.appliedManualTradeIds.filter((id) => id !== manualTradeId);
+      } else if (!this.data.state.appliedManualTradeIds.includes(manualTradeId)) {
+        this.data.state.appliedManualTradeIds.push(manualTradeId);
+      }
+    }
+
+    if (this.data.statesBySymbol) {
+      for (const sym of Object.keys(this.data.statesBySymbol)) {
+        const s = this.data.statesBySymbol[sym];
+        if (s) {
+          s.tradeRealizedPnl = (s.tradeRealizedPnl || 0) + diff;
+          s.realizedPnl = (s.realizedPnl || 0) + diff;
+          if (this.data.state.appliedManualTradeIds) {
+            s.appliedManualTradeIds = [...this.data.state.appliedManualTradeIds];
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Automatically reconciles and applies any uncounted manual SELL trades PnL to state.tradeRealizedPnl.
+   * Prevents discrepancies where manual trades were added prior to PnL synchronization or across sessions.
+   */
+  public reconcileManualTradesPnl(): number {
+    if (!this.data) return 0;
+    if (!this.data.state) {
+      this.data.state = this.getDefaultState();
+    }
+    if (!Array.isArray(this.data.state.appliedManualTradeIds)) {
+      this.data.state.appliedManualTradeIds = [];
+    }
+    const appliedSet = new Set(this.data.state.appliedManualTradeIds);
+    let totalAdded = 0;
+
+    if (Array.isArray(this.data.orders)) {
+      for (const order of this.data.orders) {
+        const isManual =
+          (order.id && order.id.startsWith("manual_")) ||
+          (order.orderId && order.orderId.startsWith("ord_manual_")) ||
+          order.reason?.includes("Manual") ||
+          order.levelDesc?.includes("Manual");
+
+        if (
+          isManual &&
+          order.status === "FILLED" &&
+          order.side === "SELL" &&
+          order.id &&
+          !appliedSet.has(order.id)
+        ) {
+          const pnl = Number(
+            order.pnlQuote !== undefined
+              ? order.pnlQuote
+              : order.pnlUsdso !== undefined
+              ? order.pnlUsdso
+              : (order.pnl || 0),
+          );
+          if (Number.isFinite(pnl) && Math.abs(pnl) > 1e-8) {
+            totalAdded += pnl;
+            this.adjustStatePnl(pnl, order.id, false);
+          } else {
+            this.data.state.appliedManualTradeIds.push(order.id);
+            if (this.data.statesBySymbol) {
+              for (const sym of Object.keys(this.data.statesBySymbol)) {
+                const s = this.data.statesBySymbol[sym];
+                if (s) s.appliedManualTradeIds = [...this.data.state.appliedManualTradeIds];
+              }
+            }
+          }
+          appliedSet.add(order.id);
+        }
+      }
+    }
+
+    if (Math.abs(totalAdded) > 1e-8) {
+      this.log(`🔄 [reconcile] Applied ${totalAdded >= 0 ? "+" : ""}${totalAdded.toFixed(4)} uncounted manual trade PnL to state`);
+      this.flushSync();
+    }
+
+    return totalAdded;
+  }
+
   public updateTrade(
     id: string,
     updates: Partial<UnifiedOrderRecord> & { syncLot?: boolean },
@@ -1166,8 +1263,7 @@ export class BotDatabase {
       const oldPnlNum = Number(oldPnlQuote || 0);
       const diff = Number(pnlUpdate) - oldPnlNum;
       if (Math.abs(diff) > 1e-8) {
-        this.data.state.tradeRealizedPnl = (this.data.state.tradeRealizedPnl || 0) + diff;
-        this.data.state.realizedPnl = (this.data.state.realizedPnl || 0) + diff;
+        this.adjustStatePnl(diff, order.id, false);
       }
     }
 
@@ -1205,8 +1301,7 @@ export class BotDatabase {
     // Deduct order's PnL from state if it had realized PnL
     const orderPnl = Number(order.pnlQuote !== undefined ? order.pnlQuote : order.pnlUsdso !== undefined ? order.pnlUsdso : (order.pnl || 0));
     if (this.data.state && Number.isFinite(orderPnl) && Math.abs(orderPnl) > 1e-8) {
-      this.data.state.tradeRealizedPnl = (this.data.state.tradeRealizedPnl || 0) - orderPnl;
-      this.data.state.realizedPnl = (this.data.state.realizedPnl || 0) - orderPnl;
+      this.adjustStatePnl(-orderPnl, id, true);
     }
 
     // Check if lot removal was requested
@@ -1301,9 +1396,7 @@ export class BotDatabase {
         // Accumulate Realized PnL into State
         const finalPnl = Number(pnlVal || 0);
         if (Number.isFinite(finalPnl)) {
-          this.data.state.tradeRealizedPnl = (this.data.state.tradeRealizedPnl || 0) + finalPnl;
-          const totalGasQuote = this.data.state.totalGasDeductedQuote ?? this.data.state.totalGasDeductedUsdso ?? 0;
-          this.data.state.realizedPnl = this.data.state.tradeRealizedPnl - totalGasQuote;
+          this.adjustStatePnl(finalPnl, record.id, false);
         }
 
         // Deduct Lots (FIFO) from State

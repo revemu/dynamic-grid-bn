@@ -3605,6 +3605,7 @@
   const elCancelAddTradeBtn = document.getElementById("cancelAddTradeBtn");
   const elConfirmAddTradeBtn = document.getElementById("confirmAddTradeBtn");
   const elTmBtnOpenAddTrade = document.getElementById("tmBtnOpenAddTrade");
+  const elTmBtnReconcilePnl = document.getElementById("tmBtnReconcilePnl");
   const elAddTradeStatus = document.getElementById("addTradeStatus");
 
   const elAtfAction = document.getElementById("atf_action");
@@ -4616,6 +4617,33 @@
         elAddTradeModal.style.display = "flex";
       }
     });
+  if (elTmBtnReconcilePnl) {
+    elTmBtnReconcilePnl.addEventListener("click", async () => {
+      const origText = elTmBtnReconcilePnl.innerHTML;
+      try {
+        elTmBtnReconcilePnl.disabled = true;
+        elTmBtnReconcilePnl.innerHTML = "<span>⏳ กำลังซิงค์...</span>";
+        const res = await fetch(`${API_BASE}/api/db/trades/reconcile-pnl`, { method: "POST" });
+        const data = await res.json();
+        if (data.success) {
+          await refreshFrontPageState();
+          loadTradeManagerData();
+          showToast({
+            title: "REALIZED PNL SYNCED",
+            desc: `ซิงค์ PnL สำเร็จ ${data.added !== 0 ? `(ปรับยอด ${data.added >= 0 ? "+" : ""}$${Number(data.added).toFixed(4)})` : "(ยอดตรงกันอยู่แล้ว)"}`,
+            action: "TAKE_PROFIT",
+          });
+        } else {
+          showToast({ title: "SYNC FAILED", desc: data.error || "ซิงค์ไม่สำเร็จ", action: "CUT" });
+        }
+      } catch (err) {
+        showToast({ title: "SYNC ERROR", desc: err.message, action: "CUT" });
+      } finally {
+        elTmBtnReconcilePnl.disabled = false;
+        elTmBtnReconcilePnl.innerHTML = origText;
+      }
+    });
+  }
   if (elCloseAddTradeModalBtn) elCloseAddTradeModalBtn.addEventListener("click", closeAddTradeModal);
   if (elCancelAddTradeBtn) elCancelAddTradeBtn.addEventListener("click", closeAddTradeModal);
   if (elAddTradeModal) {

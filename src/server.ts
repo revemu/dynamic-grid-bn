@@ -367,6 +367,28 @@ export class DashboardServer {
       return;
     }
 
+    // Trade Manager: Reconcile Manual Trades PnL
+    if (pathname === "/api/db/trades/reconcile-pnl" && (req.method === "POST" || req.method === "GET")) {
+      try {
+        const added = this.db.reconcileManualTradesPnl();
+        this.opts.onReloadState?.();
+        const state = this.db.getState();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            success: true,
+            added,
+            tradeRealizedPnl: state.tradeRealizedPnl,
+            realizedPnl: state.realizedPnl,
+          }),
+        );
+      } catch (e: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+      }
+      return;
+    }
+
     // Lot Manager: Update Lot
     if (pathname === "/api/db/lots/update" && req.method === "POST") {
       let body = "";
