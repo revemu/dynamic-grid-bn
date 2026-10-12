@@ -310,6 +310,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                     2. **Full Lifecycle Gas Tracking (`onGasSpent`)**: เพิ่ม Event Callback `onGasSpent` บน `DreamDexClient` ติดตามค่าแก๊สที่จ่ายจริงจากทุกคำสั่ง (IOC Buy, IOC Sell, Limit Orders, Cancel Sweeps, และ Token Approvals) ส่งเข้าสะสมใน `accumulatedGasBase` ทันทีเมื่อคอนเฟิร์ม Receipt บน Somnia
                     3. **Compensated Gas Reserve Shield (`getEffectiveGasReserveBase`)**: รวม `totalGasDeductedBase` เข้าเป็นส่วนหนึ่งของ Protected Gas Reserve เสมอ การันตีว่า `reconcileInventory` จะไม่มีวันแตะต้องหรือนำเหรียญ SOMI ที่กักกันเป็นค่าแก๊สกลับไปสร้างเป็น Lot ขายอีกต่อไป เหรียญแก๊สที่ชดเชยจะอยู่ถาวรในกระเป๋าจริง
 
+               13. **Lower Confirmed Structural Valley Anchoring on Breakdown (กำจัดบั๊ก Floor เกาะติดใต้แท่งเทียน price * 0.9995) (`src/market-structure.ts`):**
+                   - **สาเหตุ & ปัญหาเดิม:**
+                     - ใน `src/market-structure.ts` มีตรรกะบังคับราคาให้อยู่ในกรอบเดิม `if (price < curFloor) curFloor = price * 0.9995;`
+                     - และในบล็อก `isDropBreakdown`: ดึงเอา `liveLowCandidate = price < bottomBound ? price : undefined` มากำหนด `bottomBound = liveLowCandidate` ตรงๆ
+                     - เมื่อราคาร่วงหลุด Floor เดิม ($2,546.51) ลงมาที่ $2,539.24 บอทคำนวณ $2,539.24 * 0.9995 = $2,537.970380 ทำให้ขอบล่างจริง (`liveCalculatedBottomBound`) สไลด์ตามเกาะติดใต้ไส้แท่งเทียนทันที แทนที่จะยึดเหวโครงสร้างที่ต่ำกว่า (`🌊 LL` ที่ $2,527.41)
+                   - **การแก้ไขในระบบ:**
+                     1. ในบล็อกคำนวณกรอบเริ่มต้น (`mode !== "DONCHIAN_ATR"`): เมื่อ `price < curFloor` ให้ค้นหาเหวที่ยืนยันแล้วในโครงสร้าง (`canonicalLows`) ที่อยู่ต่ำกว่าราคาปัจจุบัน (`l.price < price`) แล้วเลือกเหวที่ใกล้ราคาที่สุดลงไป (เช่น $2,527.41) มาเป็น Floor ทันที หากไม่มีเหวที่ต่ำกว่าราคานี้แล้วจึงค่อยขยายตาม `minSpanFromPct`
+                     2. ในบล็อก `isDropBreakdown`: ปรับให้ค้นหาเหวที่ยืนยันแล้วด้านล่าง (`lowerConfirmedValleys`) ก่อนเสมอ และเมื่อเกิดการสร้างแท่งคอนเฟิร์มเป็น New Swing Low ใหม่จริง จึงค่อยปรับขยับ Floor ลงมารับจุดใหม่ตามทฤษฎี Dow Theory
+
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

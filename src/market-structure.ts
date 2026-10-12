@@ -1334,7 +1334,18 @@ export class DowStructureEngine {
 
       // ป้องกันกรอบไม่ครอบคลุมราคาปัจจุบัน (Guarantee Price Enclosure)
       if (price > curCeil) curCeil = price * 1.0005;
-      if (price < curFloor) curFloor = price * 0.9995;
+      if (price < curFloor) {
+        // เมื่อราคาหลุดต่ำกว่า Floor เดิม ให้มองหาเหว/แนวรับที่ยืนยันแล้วที่อยู่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน
+        const lowerValleys = canonicalLows
+          .filter((l) => l.price < price)
+          .sort((a, b) => b.price - a.price); // เรียงจากเหวที่ใกล้ราคาที่สุดลงไป
+        if (lowerValleys.length > 0) {
+          curFloor = lowerValleys[0]!.price;
+        } else {
+          // หากไม่มีเหวในประวัติที่ต่ำกว่าราคานี้แล้ว ให้ขยายตาม minSpanFromPct
+          curFloor = Math.min(curFloor, price - minSpanFromPct);
+        }
+      }
 
       // 2. ถ้าความกว้างระหว่างยอดและเหวยังน้อยกว่า minSpanFromPct
       // ให้ขยายกรอบตาม min channel โดยยึดยอดแนวต้านปัจจุบันไว้ และขยายขอบล่างออกไปตามสวิงหรือตาม minSpan
@@ -1491,29 +1502,35 @@ export class DowStructureEngine {
       (waveCycle.activeCycleSummary?.includes("LH + LL"))
     );
 
-    if (isDropBreakdown) {
-      const liveLowCandidate = candidateValley && candidateValley.price < bottomBound
-        ? candidateValley.price
-        : (price < bottomBound ? price : undefined);
+    if (isDropBreakdown && price < bottomBound) {
+      // เมื่อราคาหลุดต่ำกว่า Floor เดิมในช่วงทุบ ให้มองหาเหวที่ยืนยันแล้วที่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน
+      const lowerConfirmedValleys = canonicalLows
+        .filter((l) => l.price < price)
+        .sort((a, b) => b.price - a.price);
 
-      if (liveLowCandidate !== undefined && liveLowCandidate < bottomBound) {
-        bottomBound = liveLowCandidate;
-        if (candidateValley && candidateValley.price === liveLowCandidate) {
+      if (lowerConfirmedValleys.length > 0) {
+        bottomBound = lowerConfirmedValleys[0]!.price;
+        activeValley = lowerConfirmedValleys[0]!;
+      } else {
+        // หากไม่มีเหวที่ต่ำกว่าราคาปัจจุบันแล้ว (ทำ Low ใหม่ของช่วง)
+        // ถ้ามี candidateValley ให้ใช้ candidateValley หรือถ้าไม่มีให้ขยายตาม minSpan
+        if (candidateValley && candidateValley.price < price) {
+          bottomBound = candidateValley.price;
           activeValley = candidateValley;
-        } else if (lastLowPoint && lastLowPoint.price < (activeValley?.price ?? Infinity)) {
-          activeValley = lastLowPoint;
+        } else {
+          bottomBound = Math.min(bottomBound, price - minSpan);
         }
-        clampStatus = "NATURAL_SWING";
+      }
+      clampStatus = "NATURAL_SWING";
 
-        // ปรับกรอบบนให้หายอดที่ใกล้เคียงกับความกว้างต่ำสุดที่กำหนดไว้ (minSpan)
-        const validHighsAboveNewFloor = canonicalHighs
-          .filter((h) => h.price > bottomBound + minSpan && h.price > price)
-          .sort((a, b) => a.price - b.price); // ยอดต่ำสุดที่ยัง >= bottomBound + minSpan (ใกล้เคียง minChannelWidthPct ที่สุด)
+      // ปรับกรอบบนให้หายอดที่ใกล้เคียงกับความกว้างต่ำสุดที่กำหนดไว้ (minSpan)
+      const validHighsAboveNewFloor = canonicalHighs
+        .filter((h) => h.price > bottomBound + minSpan && h.price > price)
+        .sort((a, b) => a.price - b.price); // ยอดต่ำสุดที่ยัง >= bottomBound + minSpan (ใกล้เคียง minChannelWidthPct ที่สุด)
 
-        if (validHighsAboveNewFloor.length > 0) {
-          upperBound = validHighsAboveNewFloor[0]!.price;
-          activePeak = validHighsAboveNewFloor[0]!;
-        }
+      if (validHighsAboveNewFloor.length > 0) {
+        upperBound = validHighsAboveNewFloor[0]!.price;
+        activePeak = validHighsAboveNewFloor[0]!;
       }
     }
 
