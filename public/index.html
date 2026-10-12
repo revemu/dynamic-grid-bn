@@ -78,42 +78,50 @@
       </div>
     </header>
 
-    <!-- ═══════════════════ KPI Summary Row (5 consolidated cards across 1 sleek row) ═══════════════════ -->
+    <!-- ═══════════════════ KPI Summary Row (3 consolidated cards across 1 sleek row) ═══════════════════ -->
     <section class="kpi-summary-bar">
-      <!-- 1. Spot Wallet Balance -->
-      <div class="kpi-card kpi-wallet">
+      <!-- 1. Wallet Balance & Position Capacity (Merged Summary) -->
+      <div class="kpi-card kpi-wallet-pos">
         <div class="kpi-header">
-          <span class="kpi-tag">SPOT WALLET</span>
-          <span class="kpi-badge badge-wallet" id="topWalletAddrBadge">Binance</span>
-        </div>
-        <div class="kpi-val highlight-purple" id="topWalletSomi">0.00 BASE</div>
-        <div class="kpi-sub">
-          <span class="kpi-usd" id="topWalletUsdso">$0.00 USDT</span> <span class="kpi-dim">(<span id="topWalletTotalVal">$0.00</span>)</span>
-        </div>
-      </div>
-
-      <!-- 2. Position Allocation & Inventory Capacity (Merged) -->
-      <div class="kpi-card kpi-pos">
-        <div class="kpi-header">
-          <span class="kpi-tag">POSITION &amp; CAPACITY</span>
+          <span class="kpi-tag">WALLET &amp; POSITION</span>
           <div class="kpi-badge-group">
+            <span class="kpi-badge badge-wallet" id="topWalletAddrBadge">Binance</span>
             <span class="kpi-badge badge-cyan" id="topPosBadge">0.0%</span>
             <span class="kpi-badge badge-soft" id="topCapPct">0% Load</span>
           </div>
         </div>
-        <div class="kpi-dual-val-row">
-          <div class="kpi-val" id="topPosBase">0.00 BASE</div>
-          <div class="kpi-val-sub"><span class="kpi-usd" id="topPosUsd">$0.00</span> <span class="kpi-dim">/ $<span id="topMaxInv">90</span></span></div>
-          <span id="inventoryUsd" style="display: none;">$0.00</span>
-        </div>
-        <div class="kpi-sub">
-          <div class="mini-progress-track">
-            <div class="mini-progress-fill" id="inventoryProgress" style="width: 0%;"></div>
+        <div class="wallet-pos-dual-grid">
+          <!-- Left: Spot Wallet Assets -->
+          <div class="wallet-pos-half wallet-side">
+            <div class="pos-half-top">
+              <span class="pnl-mini-tag text-purple">WALLET ASSETS</span>
+            </div>
+            <div class="kpi-val highlight-purple" id="topWalletSomi">0.00 BASE</div>
+            <div class="kpi-sub">
+              <span class="kpi-usd" id="topWalletUsdso">$0.00 USDT</span> <span class="kpi-dim">(<span id="topWalletTotalVal">$0.00</span>)</span>
+            </div>
+          </div>
+          <div class="trigger-divider"></div>
+          <!-- Right: Bot Position & Max Capacity -->
+          <div class="wallet-pos-half pos-side">
+            <div class="pos-half-top">
+              <span class="pnl-mini-tag text-cyan">BOT POSITION</span>
+            </div>
+            <div class="kpi-dual-val-row">
+              <div class="kpi-val" id="topPosBase">0.00 BASE</div>
+              <div class="kpi-val-sub"><span class="kpi-usd" id="topPosUsd">$0.00</span> <span class="kpi-dim">/ $<span id="topMaxInv">90</span></span></div>
+              <span id="inventoryUsd" style="display: none;">$0.00</span>
+            </div>
+            <div class="kpi-sub">
+              <div class="mini-progress-track">
+                <div class="mini-progress-fill" id="inventoryProgress" style="width: 0%;"></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- 3. Profit & Loss: Unrealized + Realized & Gas (Merged) -->
+      <!-- 2. Profit & Loss: Unrealized + Realized & Gas (Merged) -->
       <div class="kpi-card kpi-pnl">
         <div class="kpi-header">
           <span class="kpi-tag">PROFIT &amp; LOSS (PNL)</span>
@@ -148,37 +156,46 @@
         </div>
       </div>
 
-      <!-- 5. Next Buy & Sell Triggers (Merged Dual Slot) -->
-      <div class="kpi-card kpi-triggers">
+      <!-- 3. Exchange Orderbook: Best Bid & Ask -->
+      <div class="kpi-card kpi-book">
         <div class="kpi-header">
-          <span class="kpi-tag">NEXT TRIGGERS</span>
-          <span class="kpi-badge badge-soft">BUY &bull; SELL</span>
+          <span class="kpi-tag">EXCHANGE ORDERBOOK</span>
+          <div class="kpi-badge-group">
+            <span class="kpi-badge badge-soft" id="topBookSpread">Spread: --%</span>
+          </div>
         </div>
         <div class="triggers-dual-grid">
-          <!-- Buy Half -->
+          <!-- Bid Half -->
           <div class="trigger-half trigger-half-buy">
             <div class="trigger-half-top">
-              <span class="trigger-mini-tag text-green">BUY</span>
-              <span class="kpi-badge badge-buy-pill" id="topBuyZonePill">&lt;50% Zone</span>
+              <span class="trigger-mini-tag text-green">BEST BID</span>
+              <span class="kpi-badge badge-buy-pill" id="topBidStatusBadge">Buy Side</span>
             </div>
-            <div class="trigger-half-price highlight-green" id="hudBuyTrigger">--.------</div>
-            <div class="trigger-half-sub" id="hudBuySub">
-              <span id="topBuyStatusText">Waiting for dip</span>
+            <div class="trigger-half-price highlight-green" id="hudBestBid">--.------</div>
+            <div class="trigger-half-sub" id="hudBidSub">
+              <span id="topBidSubText">Highest Buyer</span>
             </div>
           </div>
           <div class="trigger-divider"></div>
-          <!-- Sell Half -->
+          <!-- Ask Half -->
           <div class="trigger-half trigger-half-sell">
             <div class="trigger-half-top">
-              <span class="trigger-mini-tag text-orange">SELL</span>
-              <span class="kpi-badge badge-sell-pill" id="topSellZonePill">&gt;50% Zone</span>
+              <span class="trigger-mini-tag text-orange">BEST ASK</span>
+              <span class="kpi-badge badge-sell-pill" id="topAskStatusBadge">Sell Side</span>
             </div>
-            <div class="trigger-half-price highlight-orange" id="hudSellTrigger">--.------</div>
-            <div class="trigger-half-sub" id="hudSellSub">
-              <span id="topSellStatusText">Waiting for rally</span>
+            <div class="trigger-half-price highlight-orange" id="hudBestAsk">--.------</div>
+            <div class="trigger-half-sub" id="hudAskSub">
+              <span id="topAskSubText">Lowest Seller</span>
             </div>
           </div>
         </div>
+        <!-- Hidden fallback targets for existing JS references if any -->
+        <span id="hudBuyTrigger" style="display:none;"></span>
+        <span id="hudSellTrigger" style="display:none;"></span>
+        <span id="topBuyStatusText" style="display:none;"></span>
+        <span id="topSellStatusText" style="display:none;"></span>
+        <span id="topBuyZonePill" style="display:none;"></span>
+        <span id="topSellZonePill" style="display:none;"></span>
       </div>
     </section>
 

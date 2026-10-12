@@ -859,6 +859,22 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        - ใน `syncRestingOrders`: หากพบว่า `currentBestAsk <= lvlPrice` ให้ใช้ `buyTrancheIOC` ส่งคำสั่งซื้อจับคู่กับสภาพคล่องฝั่ง Ask ทันที ไม่ปล่อยโอกาสหลุดมือ
     3. **Hysteresis & Buy Zone Sensitivity**:
        - นำ `currentBestAsk` มาร่วมพิจารณาใน hysteresis (`isDexAskInAccumulationZone`) และ `buyTrigger` เพื่อป้องกันการปิดกั้นสัญญาณซื้อขณะที่ Ask บน DEX กำลังอยู่ในโซนซื้อ
+- **Top KPI Dashboard 3-Card Redesign: Merged Wallet & Position + Exchange Orderbook (Bid / Ask)**:
+  - **ความต้องการ & หลักการของผู้ใช้**:
+    - "เอา next trigger ออกแล้วแสดง ask bid บน ex แทนได้หรือไม่"
+    - "ให้ยุบรวม wallet balance กับ position ให้รวมกันได้ไหม ออกแบบให้ดูสรุปหน่อย"
+  - **การปรับปรุงหน้าจอ Dashboard**:
+    1. **การ์ดที่ 1: `WALLET & POSITION` (ยุบรวม Spot Wallet + Position)**:
+       - ซีกซ้าย (Wallet Assets): แสดงยอดคงเหลือเหรียญ Base ในกระเป๋า (เช่น SOMI), ยอด Quote (USDso) และมูลค่ารวมพอร์ตจริง
+       - ซีกขวา (Bot Position): แสดงยอดเหรียญที่บอทถือครองในระบบ, ยอดทุนปัจจุบันเทียบกับ Max Inventory Capacity, และแถบ Mini Progress Bar แสดง % Load
+       - หัวการ์ดแสดง Address Badge, Position %, และ % Load สรุปครบถ้วนในช่องเดียว
+    2. **การ์ดที่ 2: `PROFIT & LOSS (PNL)`**:
+       - แสดงผล Unrealized PnL (พร้อม Avg Entry) และ Net Realized PnL (พร้อม Trade/Fee breakdown)
+    3. **การ์ดที่ 3: `EXCHANGE ORDERBOOK (BID / ASK)` (แทนที่ Next Triggers)**:
+       - หัวการ์ดแสดงป้าย `EXCHANGE ORDERBOOK` พร้อม Badge คำนวณ `Spread: X.XX%` ระหว่าง Best Bid กับ Best Ask แบบ Real-time
+       - ซีกซ้าย: แสดงราคา **Best Bid (🟢)** บนกระดานเทรดจริง พร้อมระยะห่างเทียบกับ Mid Price
+       - ซีกขวา: แสดงราคา **Best Ask (🔴)** บนกระดานเทรดจริง พร้อมระยะห่างเทียบกับ Mid Price
+    4. **Layout**: ปรับ Grid สรุปผลด้านบนเป็น 3 คอลัมน์ที่กว้างและอ่านค่าง่าย (`grid-template-columns: 1.25fr 1fr 1fr`)
 
 ---
 

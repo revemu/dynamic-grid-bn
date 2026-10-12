@@ -92,6 +92,13 @@
   const elHudBottomBound = document.getElementById("hudBottomBound");
   const elHudBuyTrigger = document.getElementById("hudBuyTrigger");
   const elHudSellTrigger = document.getElementById("hudSellTrigger");
+  const elHudBestBid = document.getElementById("hudBestBid");
+  const elHudBestAsk = document.getElementById("hudBestAsk");
+  const elTopBookSpread = document.getElementById("topBookSpread");
+  const elTopBidSubText = document.getElementById("topBidSubText");
+  const elTopAskSubText = document.getElementById("topAskSubText");
+  const elTopBidStatusBadge = document.getElementById("topBidStatusBadge");
+  const elTopAskStatusBadge = document.getElementById("topAskStatusBadge");
   const elHudChannelWidth = document.getElementById("hudChannelWidth");
   const elChannelStatusPill = document.getElementById("channelStatusPill");
   const elChannelStatusText = document.getElementById("channelStatusText");
@@ -1547,7 +1554,28 @@
               : "badge-warmup");
     }
 
-    // 5. Next Buy Trigger
+    // 5. Exchange Orderbook: Best Bid & Ask
+    if (elHudBestBid && data.bestBid !== undefined && data.bestBid > 0) {
+      elHudBestBid.textContent = `$${data.bestBid.toFixed(6)}`;
+    }
+    if (elHudBestAsk && data.bestAsk !== undefined && data.bestAsk > 0) {
+      elHudBestAsk.textContent = `$${data.bestAsk.toFixed(6)}`;
+    }
+    if (elTopBookSpread && data.bestBid && data.bestAsk && data.bestBid > 0 && data.bestAsk > 0) {
+      const spPct = ((data.bestAsk - data.bestBid) / data.bestBid) * 100;
+      elTopBookSpread.textContent = `Spread: ${spPct.toFixed(2)}%`;
+      elTopBookSpread.className = `kpi-badge ${spPct > 0.5 ? "badge-soft-orange" : "badge-soft"}`;
+    }
+    if (elTopBidSubText && data.bestBid && data.mid) {
+      const bidDiff = ((data.mid - data.bestBid) / data.mid) * 100;
+      elTopBidSubText.textContent = bidDiff >= 0 ? `Mid -${bidDiff.toFixed(2)}%` : `Mid +${Math.abs(bidDiff).toFixed(2)}%`;
+    }
+    if (elTopAskSubText && data.bestAsk && data.mid) {
+      const askDiff = ((data.bestAsk - data.mid) / data.mid) * 100;
+      elTopAskSubText.textContent = askDiff >= 0 ? `Mid +${askDiff.toFixed(2)}%` : `Mid -${Math.abs(askDiff).toFixed(2)}%`;
+    }
+
+    // Fallback: Next Buy Trigger
     if (data.buyTrigger !== undefined && elHudBuyTrigger) {
       elHudBuyTrigger.textContent = `$${data.buyTrigger.toFixed(6)}`;
       const isCapacityFull = (data.currentHoldPct !== undefined && data.currentHoldPct >= 95) ||
@@ -1566,7 +1594,7 @@
       if (elTopBuyStatusText) elTopBuyStatusText.textContent = buyStatus;
     }
 
-    // 6. Next Sell Trigger
+    // Fallback: Next Sell Trigger
     if (data.sellTrigger !== undefined && elHudSellTrigger) {
       elHudSellTrigger.textContent = `$${data.sellTrigger.toFixed(6)}`;
       let sellStatus = lots.length > 0 ? "Profit-Taking Level" : "No Position Held";
