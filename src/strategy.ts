@@ -202,6 +202,36 @@ export class DynamicGrid {
       this.db.setSettings(this.getRuntimeConfig());
     }
     this.loadState();
+    this.wireExchangeGasListener(this.binance);
+  }
+
+  private wireExchangeGasListener(client: IExchangeClient): void {
+    if (client && typeof (client as any).onGasSpent !== "undefined") {
+      (client as any).onGasSpent = (feeSomi: number, label: string, txHash?: string) => {
+        if (!feeSomi || feeSomi <= 0) return;
+        this.accumulatedGasBase += feeSomi;
+        this.totalGasSpentBase += feeSomi;
+        const refP = this.lastRefPrice || this.getAvgEntryPrice() || 0.20;
+        const feeQuote = feeSomi * refP;
+        this.accumulatedGasQuote += feeQuote;
+        this.totalGasSpentQuote += feeQuote;
+        this.totalTxCount++;
+        this.log(
+          `⛽ [GAS TRACKED] ${label || "On-Chain Op"}${txHash ? ` (${txHash.slice(0, 10)}...)` : ""}: Spent ${feeSomi.toFixed(5)} SOMI (~$${feeQuote.toFixed(4)}) | Total uncompensated gas: ${this.accumulatedGasBase.toFixed(5)} SOMI`,
+        );
+        if (txHash && typeof (this.db as any).updateTxGas === "function") {
+          try {
+            (this.db as any).updateTxGas(txHash, {
+              gasUsed: 0,
+              gasSomi: feeSomi,
+              gasUsdso: feeQuote,
+            });
+          } catch {}
+        }
+        this.saveState();
+        this.emitTelemetryTick();
+      };
+    }
   }
 
   public updateExchangeClient(newClient: IExchangeClient, info?: ExchangeSymbolInfo): void {
@@ -210,6 +240,7 @@ export class DynamicGrid {
     }
     this.binance = newClient;
     this.cfg.exchange = newClient.exchangeName as "binance" | "dreamdex";
+    this.wireExchangeGasListener(newClient);
     if (info) {
       this.updateSymbolInfo(info);
     } else {
@@ -898,13 +929,17 @@ export class DynamicGrid {
    */
   public getEffectiveGasReserveSomi(): number {
     if (this.binance.exchangeName === "dreamdex") {
-      return this.cfg.minGasReserveSomi ?? 2.0;
+      const baseReserve = this.cfg.minGasReserveSomi ?? 2.0;
+      const compensatedGas = this.baseAsset === "SOMI" ? (this.totalGasDeductedBase || 0) : 0;
+      return baseReserve + compensatedGas;
     }
     return 0;
   }
   public getEffectiveGasReserveBase(): number {
     if (this.binance.exchangeName === "dreamdex" && this.baseAsset === "SOMI") {
-      return this.cfg.minGasReserveSomi ?? 2.0;
+      const baseReserve = this.cfg.minGasReserveSomi ?? 2.0;
+      const compensatedGas = this.totalGasDeductedBase || 0;
+      return baseReserve + compensatedGas;
     }
     return 0;
   }
@@ -4701,13 +4736,23 @@ export class DynamicGrid {
     if (!this.cfg.dryRun && this.binance.hasCredentials()) {
       try {
         if (!side) {
-          await this.binance.cancelAllOpenOrders(this.symbol);
+          const hashes = await this.binance.cancelAllOpenOrders(this.symbol);
+          if (Array.isArray(hashes)) {
+            for (const h of hashes) {
+              if (typeof h === "string") {
+                this.trackTxGas(h, "Cancel All Sweep");
+              }
+            }
+          }
         } else {
           const live = await this.binance.getOpenOrders(this.symbol);
           for (const o of live) {
             const matches = (side === "BUY" && o.side === "BUY") || (side === "SELL" && o.side === "SELL");
             if (matches) {
-              await this.binance.cancelOrder(this.symbol, o.orderId);
+              const h = await this.binance.cancelOrder(this.symbol, o.orderId);
+              if (typeof h === "string") {
+                this.trackTxGas(h, `Cancel ${side} Order Sweep #${o.orderId}`);
+              }
             }
           }
         }
@@ -5136,7 +5181,7 @@ export class DynamicGrid {
           isIoc: true,
         },
       });
-      if (res.txHash) {
+      if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
         this.trackTxGas(res.txHash, actionLabel);
       }
       await this.refreshWalletBalances();
@@ -5441,7 +5486,7 @@ export class DynamicGrid {
           isIoc: true,
         },
       });
-      if (res.txHash) {
+      if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
         this.trackTxGas(res.txHash, actionLabel);
       }
       await this.refreshWalletBalances();

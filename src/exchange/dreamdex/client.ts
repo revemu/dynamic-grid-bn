@@ -127,8 +127,8 @@ export const DREAMDEX_MARKETS: Record<string, DreamDexMarketMeta> = {
     baseDecimals: 18,
     quoteDecimals: 18,
     baseIsNative: true,
-    minQty: 1.0,
-    stepSize: 1.0,
+    minQty: 0.0001,
+    stepSize: 0.0001,
     tickSize: 0.0001,
     baseToken: "0x28f34DeFd2b4CB48d9eE6d89f2Be4Bc601694c00",
     quoteToken: "0x00000022dA000002656c64D9eA6011ea952D008A",
@@ -196,6 +196,7 @@ export class DreamDexClient implements IExchangeClient {
   private walletClient?: any;
   private indexer: SomniaIndexerClient;
   private log: (msg: string) => void;
+  public onGasSpent?: (feeSomi: number, label: string, txHash?: string) => void;
 
   constructor(opts: DreamDexClientOptions = {}) {
     this.rpcUrl = opts.rpcUrl || "https://api.infra.mainnet.somnia.network";
@@ -462,8 +463,13 @@ export class DreamDexClient implements IExchangeClient {
         },
         account: this.account,
       });
-      await this.publicClient.waitForTransactionReceipt({ hash });
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
       this.log(`✅ Token approval confirmed: ${hash.slice(0, 10)}...`);
+      if (receipt && receipt.gasUsed && receipt.effectiveGasPrice) {
+        const feeWei = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
+        const feeSomi = Number(formatUnits(feeWei, 18));
+        this.onGasSpent?.(feeSomi, "Token Approval", hash);
+      }
     } catch (err) {
       this.log(`⚠️ Token approval warning: ${(err as Error).message}`);
     }
@@ -580,6 +586,7 @@ export class DreamDexClient implements IExchangeClient {
           if (receipt.gasUsed && receipt.effectiveGasPrice) {
             const feeWei = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
             gasFee = Number(formatUnits(feeWei, 18));
+            this.onGasSpent?.(gasFee, `${params.side} IOC Order`, hash);
           }
         } else {
           orderStatus = "CANCELED";
@@ -590,6 +597,15 @@ export class DreamDexClient implements IExchangeClient {
         executedQty = qty;
         orderStatus = "FILLED";
       }
+    } else {
+      // For Limit / resting orders, track gas fee asynchronously in background
+      this.publicClient.waitForTransactionReceipt({ hash }).then((receipt: any) => {
+        if (receipt && receipt.gasUsed && receipt.effectiveGasPrice) {
+          const feeWei = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
+          const feeSomi = Number(formatUnits(feeWei, 18));
+          this.onGasSpent?.(feeSomi, `Create ${params.side} Limit Order`, hash);
+        }
+      }).catch(() => {});
     }
 
     return {
@@ -630,6 +646,13 @@ export class DreamDexClient implements IExchangeClient {
       },
       account: this.account,
     });
+    this.publicClient.waitForTransactionReceipt({ hash }).then((receipt: any) => {
+      if (receipt && receipt.gasUsed && receipt.effectiveGasPrice) {
+        const feeWei = BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice);
+        const feeSomi = Number(formatUnits(feeWei, 18));
+        this.onGasSpent?.(feeSomi, `Cancel Order #${orderId}`, hash);
+      }
+    }).catch(() => {});
     return hash;
   }
 

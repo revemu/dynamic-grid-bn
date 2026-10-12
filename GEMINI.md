@@ -290,7 +290,15 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                   - **การแก้ไขในระบบ:**
                     1. **Confirmed Swing Change Detection (`swingChanged`)**: ติดตาม `lastActivePeakTime/Price` และ `lastActiveValleyTime/Price` หากมีจุดสวิงใหม่ที่ Dow Theory ยืนยันแล้ว (เกิด HH, LH, HL, LL ใหม่) ระบบจะอนุญาตให้ปรับกรอบทันทีโดยไม่ถูก `minShiftPct` บล็อค
                     2. **Unrestricted Dynamic Updates When Flat (`!isHoldingPosition`)**: ในช่วงที่ไม่ได้ถือครอง Position (0 Open Lots / ถือเงินสด 100% รอสะสมของ) กรอบ Ceiling, Midline, Floor และ Buy Levels 1..4 จะปรับตัวแบบ Dynamic ตามโครงสร้างตลาดล่าสุดเสมอ ไม่ถูกแช่แข็ง
-                    3. **State Clear on Position Exit**: เมื่อปิด Position ทั้งหมด (`sellAllUser()`, `closeLots()`, หรือยอดคงเหลือต่ำกว่าเกณฑ์ dust) จะเคลียร์ `this.lastDynamicBounds = undefined` ทันที เพื่อให้รอบการสะสมใหม่คำนวณจากโครงสร้างตลาดที่สดใหม่อย่างแท้จริง
+              12. **DreamDEX Full Gas Tracking, 4-Decimal SOMI Precision & Compensated Gas Reserve Shield (`src/strategy.ts` & `src/exchange/dreamdex/client.ts`):**
+                  - **สาเหตุ & ปัญหาเดิม:**
+                    1. **Whole Integer Truncation (`stepSize: 1.0`)**: คู่ `SOMI:USDSO` เคยฮาร์ดโค้ด `stepSize: 1.0` ทำให้คำสั่งซื้อขายและการกักกันแก๊สถูกปัดเศษทศนิยมทิ้งหมด (เช่น หักแก๊ส 0.0083 SOMI จากไม้ 196 SOMI กลายเป็นปัดทิ้งเหลือ 195.0 SOMI เสียหายไปเกือบ 1 SOMI)
+                    2. **One-Way Buy Gas Tracking Only**: ค่าแก๊สที่นำเข้าสู่ `accumulatedGasBase` ดึงเฉพาะจาก IOC Buy Fills แต่คำสั่งฝั่ง Sell (Limit/IOC), Cancel orders, และ Token approvals ถูกมองข้าม ไม่เคยนำค่าแก๊สที่จ่ายจริงมาบวกสะสมเพื่อชดเชยคืน
+                    3. **`reconcileInventory` Over-Adoption**: เมื่อกักกัน SOMI ไว้ในกระเป๋า ฟังก์ชัน `reconcileInventory` เห็นว่ามีเหรียญเกินกว่า Lot จึง Auto-Adopt ยอดแก๊สที่กักไว้กลับไปสร้าง Lot รอขาย พอราคาถึงเป้า บอทก็เทขายเหรียญค่าแก๊สทิ้งออกไปเป็น USDso จนหมด ทำให้ยอด SOMI ในกระเป๋าลดลงเรื่อยๆ
+                  - **การแก้ไขในระบบ:**
+                    1. **4-Decimal SOMI Precision (`stepSize: 0.0001`, `minQty: 0.0001`)**: ปลดล็อคให้เทรดและคำนวณ SOMI เป็นเศษทศนิยม 4 ตำแหน่งได้เหมือน WETH/WBTC ทำให้การหักค่าแก๊ส (เช่น 0.0046, 0.0083 SOMI) ทำงานได้แม่นยำ 100%
+                    2. **Full Lifecycle Gas Tracking (`onGasSpent`)**: เพิ่ม Event Callback `onGasSpent` บน `DreamDexClient` ติดตามค่าแก๊สที่จ่ายจริงจากทุกคำสั่ง (IOC Buy, IOC Sell, Limit Orders, Cancel Sweeps, และ Token Approvals) ส่งเข้าสะสมใน `accumulatedGasBase` ทันทีเมื่อคอนเฟิร์ม Receipt บน Somnia
+                    3. **Compensated Gas Reserve Shield (`getEffectiveGasReserveBase`)**: รวม `totalGasDeductedBase` เข้าเป็นส่วนหนึ่งของ Protected Gas Reserve เสมอ การันตีว่า `reconcileInventory` จะไม่มีวันแตะต้องหรือนำเหรียญ SOMI ที่กักกันเป็นค่าแก๊สกลับไปสร้างเป็น Lot ขายอีกต่อไป เหรียญแก๊สที่ชดเชยจะอยู่ถาวรในกระเป๋าจริง
 
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
