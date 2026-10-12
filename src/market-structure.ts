@@ -1384,11 +1384,12 @@ export class DowStructureEngine {
       }
 
       // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้"):
+      // และเมื่อเปิดโหมดปรับกรอบ ให้หายอดที่ใกล้เคียงกับความกว้างต่ำสุด (minChannelWidthPct) มากที่สุด
       if (upperBound > bottomBound + minSpan) {
         const candidateLhs = (postPeakHighs.length > 0 ? postPeakHighs : canonicalHighs)
           .filter((h) => (h.dowLabel === "LH" || (lastCanonicalHigh && h.price < (canonicalHighs[0]?.price ?? Infinity))) && h.price > price)
           .filter((h) => h.price - bottomBound >= minSpan && h.price - bottomBound <= maxSpan)
-          .sort((a, b) => b.price - a.price);
+          .sort((a, b) => a.price - b.price); // เรียงจากยอดต่ำไปยอดสูง เพื่อหายอดที่ใกล้เคียงกับความกว้างขั้นต่ำ (minSpan) ที่สุด
 
         if (candidateLhs.length > 0 && (isLatestHighLh || waveCycle.currentLeg?.direction === "DOWN" || Boolean(waveCycle.lastLh) || upperBound - bottomBound > maxSpan)) {
           const targetLh = candidateLhs[0]!;
@@ -1403,13 +1404,40 @@ export class DowStructureEngine {
       }
     }
 
-    // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Lower Low (LL) กรอบล่างต้องปรับลดลงมารับ New Low"):
-    // When price establishes a confirmed Lower Low (LL) below the active bottom bound,
-    // the previous support level was broken by the market dump. The floor must adjust down to this confirmed LL!
+    // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Lower Low (LL) หรือทะลุหลุดกรอบเดิมลงไป กรอบล่างต้องปรับลดลงมารับ New Low"):
+    // 1) เมื่อเกิด confirmed Lower Low (LL)
+    // 2) เมื่อเกิด candidateValley หรือราคาหลุดต่ำกว่า Floor เดิมในช่วงทุบ (breakdown below previous swing low)
     const isLatestLowLl = lastCanonicalLow?.dowLabel === "LL";
     if (isLatestLowLl && lastCanonicalLow && bottomBound > lastCanonicalLow.price) {
       bottomBound = lastCanonicalLow.price;
       clampStatus = "NATURAL_SWING";
+    }
+
+    const lastLowPoint = this.swingLows[this.swingLows.length - 1];
+    const isDropBreakdown = Boolean(
+      (lastLowPoint && price < lastLowPoint.price) ||
+      (candidateValley && lastLowPoint && candidateValley.price < lastLowPoint.price) ||
+      (waveCycle.activeCycleSummary?.includes("LH + LL"))
+    );
+
+    if (isDropBreakdown) {
+      const liveLowCandidate = candidateValley && candidateValley.price < bottomBound
+        ? candidateValley.price
+        : (price < bottomBound ? price : undefined);
+
+      if (liveLowCandidate !== undefined && liveLowCandidate < bottomBound) {
+        bottomBound = liveLowCandidate;
+        clampStatus = "NATURAL_SWING";
+
+        // ปรับกรอบบนให้หายอดที่ใกล้เคียงกับความกว้างต่ำสุดที่กำหนดไว้ (minSpan)
+        const validHighsAboveNewFloor = canonicalHighs
+          .filter((h) => h.price > bottomBound + minSpan && h.price > price)
+          .sort((a, b) => a.price - b.price); // ยอดต่ำสุดที่ยัง >= bottomBound + minSpan (ใกล้เคียง minChannelWidthPct ที่สุด)
+
+        if (validHighsAboveNewFloor.length > 0) {
+          upperBound = validHighsAboveNewFloor[0]!.price;
+        }
+      }
     }
 
     // Ensure sensible minimum channel width (at least 0.5%) without artificial floating synthesis
