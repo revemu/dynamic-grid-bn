@@ -774,11 +774,18 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - Compacted aggregated targets (e.g. `Aggregated 4 targets up to Target 4` $\rightarrow$ `T1-T4 (4x)`).
       - Suppressed redundant reason text when identical to or already included within `levelDesc`.
       - Strict numeric-only check on order ID (`/^\d+$/` and not starting with `0x`) prevents raw 66-character tx hashes from rendering as `#0x8dc5...` after action labels.
-  - **Trade & Lot Manager Real-Time Front Page Sync**:
+  - **Trade & Lot Manager Real-Time Front Page Sync & PnL State Persistence**:
     - Whenever a trade or lot is deleted, cancelled, edited, or added via Trade Manager:
       - Helper `removeActivityItem(id)` immediately removes matching `.activity-item` elements across all feed DOMs (`elTradesFeed`, `elOnchainFeed`, `elAllFeed`) using `data-order-id`, `data-clob-id`, and `data-txhash` attributes, and decrements feed count badges.
       - Helper `refreshFrontPageState()` fetches `/api/state` and invokes `updateTick(data.latestTick)` to immediately refresh inventory KPIs (`#lotsCount`, `#topPosBase`, `#topPosUsd`, `#posUnrealizedPnl`) on the front page.
       - Server endpoint `/api/db/trades/delete` automatically filters out deleted orders from `this.recentOrders` to prevent resurrected orders on page refresh, and broadcasts `trade_deleted` / `lots_updated` via SSE to trigger `removeActivityItem` and `refreshFrontPageState` across all connected tabs.
+    - **Manual Trade Realized PnL & Activity Feed Sync (`addManualTrade`)**:
+      - เมื่อผู้ใช้เพิ่มรายการ Trade ผ่าน Trade Manager (`POST /api/db/trades/add`):
+        - ใน `src/db.ts`: สะสมกำไร/ขาดทุนเข้า `state.tradeRealizedPnl` และ `state.realizedPnl` ใน DB ทันทีเมื่อเป็น SELL ที่ FILLED พร้อมทั้งตัดลด Lots ใน `state.lots` แบบ FIFO
+        - ใน `src/server.ts`: เรียก `this.addOrder(result.order)` เพื่อเพิ่มเข้า `recentOrders` ทันที และสั่ง `this.opts.onReloadState?.()` เพื่อซิงค์ State เข้า Strategy และกระจาย Telemetry Tick อัปเดต NET REALIZED บนหัวเว็บแบบ Real-time
+        - ใน `public/app.js`: เมื่อเกิด `trade_added` หรือกดเพิ่มสำเร็จ จะเรียก `addOrderActivity(order, false)` เพื่อนำรายการไปแสดงในกล่อง Trade Matches Feed (`#tradesFeed`) และ Combined All Feed (`#allFeed`) พร้อมปักหมุดบนกราฟทันที โดยมีระบบ Guard ป้องกันการ Render ซ้ำด้วย `data-order-id` / `data-clob-id` / `data-txhash`
+      - เมื่อผู้ใช้แก้ไขหรือลบ Trade ผ่าน Trade Manager (`updateTrade` / `deleteTrade`):
+        - คำนวณ Delta PnL ปรับยอด `tradeRealizedPnl` และ `realizedPnl` ใน State อัตโนมัติ พร้อมทั้งอัปเดต/ลบรายการใน DOM Activity Feed ทันที
   - **Inventory-Based Round Tracking (Elimination of Time Collisions & Premature Round Splits)**:
     - Previously, `calculateTradeRounds` prematurely closed an active round whenever any BUY arrived after a SELL (`inSellPhase && isBuy`), splitting rounds mid-cycle while holding inventory (e.g. 47.16 SOMI remained unsold in Round #23), which caused Round #23's `endTime` and Round #24's `startTime` to collide at the exact same minute (`11:15`).
     - Now, in a grid strategy, buys following partial profit-taking represent **re-accumulation within the active cycle**. A round remains active until:

@@ -2484,13 +2484,14 @@
   }
 
   function addOrderActivity(order, isLiveUpdate = false) {
+    if (!order) return;
     const isTradeFill = order.status === "FILLED" || (order.status !== "CANCELLED" && order.status !== "OPEN" && ["BUY", "SELL", "BUY_FILL", "SELL_FILL", "CUT", "EXIT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(order.action));
     const isOnChainAction = order.status === "OPEN" || order.status === "CANCELLED" || ["CREATE_BUY", "CREATE_SELL", "CANCEL_BUY", "CANCEL_SELL"].includes(order.action);
 
     // Track trade executions on chart
     if (isTradeFill) {
       const exists = rawOrders.some(
-        (o) => o.time === order.time && o.action === order.action && o.price === order.price && o.qty === order.qty
+        (o) => (order.id && o.id === order.id) || (o.time === order.time && o.action === order.action && o.price === order.price && o.qty === order.qty)
       );
       if (!exists) {
         rawOrders.push(order);
@@ -2500,6 +2501,15 @@
 
     if (isLiveUpdate && isTradeFill) {
       showTradeToast(order);
+    }
+
+    // Guard against duplicate DOM elements in activity feed
+    const strId = order.id ? String(order.id) : (order.orderId ? String(order.orderId) : (order.txHash ? String(order.txHash) : ""));
+    if (strId) {
+      const existingInDom = document.querySelector(`.activity-item[data-order-id="${strId}"], .activity-item[data-clob-id="${strId}"], .activity-item[data-txhash="${strId}"]`);
+      if (existingInDom) {
+        return;
+      }
     }
 
     // 1. Insert into Trade Matches Feed
@@ -2855,6 +2865,11 @@
             rawOrders.push(payload.order);
             rebuildOrderMarkers();
           }
+          removeActivityItem(payload.id);
+          if (payload.order && payload.order.status !== "CANCELLED") {
+            addOrderActivity(payload.order, false);
+          }
+          refreshFrontPageState();
           if (elTradeManagerModal && elTradeManagerModal.style.display !== "none") {
             loadTradeManagerData();
           }
@@ -2884,9 +2899,8 @@
     sse.addEventListener("trade_added", (e) => {
       try {
         const payload = JSON.parse(e.data);
-        if (payload && payload.order && payload.order.status === "FILLED") {
-          rawOrders.push(payload.order);
-          rebuildOrderMarkers();
+        if (payload && payload.order) {
+          addOrderActivity(payload.order, false);
           refreshFrontPageState();
           if (elTradeManagerModal && elTradeManagerModal.style.display !== "none") {
             loadTradeManagerData();
@@ -4438,8 +4452,7 @@
       if (!data.success) throw new Error(data.error || "Add trade failed");
 
       if (status === "FILLED" && data.order) {
-        rawOrders.push(data.order);
-        rebuildOrderMarkers();
+        addOrderActivity(data.order, false);
       }
 
       if (elAddTradeModal) elAddTradeModal.style.display = "none";

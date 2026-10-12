@@ -291,6 +291,14 @@ export class DashboardServer {
           }
           const result = this.db.updateTrade(parsed.id, parsed.updates || {});
           if (result.success) {
+            if (result.order) {
+              const idx = this.recentOrders.findIndex(
+                (o: any) => o.id === parsed.id || o.orderId === parsed.id || o.txHash === parsed.id,
+              );
+              if (idx >= 0) {
+                this.recentOrders[idx] = { ...this.recentOrders[idx], ...result.order };
+              }
+            }
             this.opts.onReloadState?.();
             this.broadcast("trade_updated", { id: parsed.id, order: result.order });
           }
@@ -343,6 +351,9 @@ export class DashboardServer {
           const parsed = JSON.parse(body);
           const result = this.db.addManualTrade(parsed || {});
           if (result.success) {
+            if (result.order) {
+              this.addOrder(result.order);
+            }
             this.opts.onReloadState?.();
             this.broadcast("trade_added", { order: result.order });
           }

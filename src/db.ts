@@ -1116,6 +1116,7 @@ export class BotDatabase {
     const oldPrice = order.price;
     const oldQty = order.qty;
     const oldTime = order.time || order.placedTime;
+    const oldPnlQuote = order.pnlQuote !== undefined ? order.pnlQuote : order.pnlUsdso !== undefined ? order.pnlUsdso : order.pnl;
 
     if (updates.price !== undefined && Number.isFinite(updates.price)) {
       order.price = Number(updates.price);
@@ -1160,6 +1161,16 @@ export class BotDatabase {
     order.notionalUsdso = computedNotional;
     order.notional = computedNotional;
 
+    // Adjust state PnL if pnl changed
+    if (this.data.state && pnlUpdate !== undefined && Number.isFinite(pnlUpdate)) {
+      const oldPnlNum = Number(oldPnlQuote || 0);
+      const diff = Number(pnlUpdate) - oldPnlNum;
+      if (Math.abs(diff) > 1e-8) {
+        this.data.state.tradeRealizedPnl = (this.data.state.tradeRealizedPnl || 0) + diff;
+        this.data.state.realizedPnl = (this.data.state.realizedPnl || 0) + diff;
+      }
+    }
+
     // If syncLot is requested and order is a BUY fill, update corresponding lot in state.lots
     if (updates.syncLot && this.data.state?.lots) {
       const matchLot = this.data.state.lots.find(
@@ -1190,6 +1201,13 @@ export class BotDatabase {
       return { success: false, error: `Order with ID "${id}" not found` };
     }
     let lotRemoved = false;
+
+    // Deduct order's PnL from state if it had realized PnL
+    const orderPnl = Number(order.pnlQuote !== undefined ? order.pnlQuote : order.pnlUsdso !== undefined ? order.pnlUsdso : (order.pnl || 0));
+    if (this.data.state && Number.isFinite(orderPnl) && Math.abs(orderPnl) > 1e-8) {
+      this.data.state.tradeRealizedPnl = (this.data.state.tradeRealizedPnl || 0) - orderPnl;
+      this.data.state.realizedPnl = (this.data.state.realizedPnl || 0) - orderPnl;
+    }
 
     // Check if lot removal was requested
     if (opts?.removeMatchingLot && this.data.state?.lots) {
@@ -1226,7 +1244,26 @@ export class BotDatabase {
     const action = trade.action || (side === "BUY" ? "BUY_FILL" : "SELL_FILL");
     const status = trade.status || "FILLED";
     const notionalQuote = Number(trade.notionalQuote || trade.notionalUsdso || trade.notional || price * qty);
-    const pnlVal = trade.pnlQuote !== undefined ? trade.pnlQuote : trade.pnlUsdso !== undefined ? trade.pnlUsdso : trade.pnl;
+    let pnlVal = trade.pnlQuote !== undefined ? trade.pnlQuote : trade.pnlUsdso !== undefined ? trade.pnlUsdso : trade.pnl;
+
+    if (!this.data.state) {
+      this.data.state = this.getDefaultState();
+    }
+
+    // If SELL and no PnL provided, calculate against current lots FIFO / average cost
+    if (side === "SELL" && status === "FILLED" && (pnlVal === undefined || !Number.isFinite(pnlVal))) {
+      if (Array.isArray(this.data.state.lots) && this.data.state.lots.length > 0) {
+        let remaining = qty;
+        let sellPnl = 0;
+        for (const lot of this.data.state.lots) {
+          if (remaining <= 1e-12) break;
+          const take = Math.min(lot.qty, remaining);
+          sellPnl += (price - lot.price) * take;
+          remaining -= take;
+        }
+        pnlVal = sellPnl;
+      }
+    }
 
     const record: UnifiedOrderRecord = {
       id: trade.id || `manual_${now}_${Math.random().toString(36).slice(2, 7)}`,
@@ -1254,9 +1291,38 @@ export class BotDatabase {
 
     this.data.orders.unshift(record);
 
-    if (trade.addLot && side === "BUY" && status === "FILLED") {
-      if (!this.data.state.lots) this.data.state.lots = [];
-      this.data.state.lots.push({ price, qty, time: now });
+    if (status === "FILLED") {
+      if (side === "BUY") {
+        if (trade.addLot) {
+          if (!this.data.state.lots) this.data.state.lots = [];
+          this.data.state.lots.push({ price, qty, time: now });
+        }
+      } else if (side === "SELL") {
+        // Accumulate Realized PnL into State
+        const finalPnl = Number(pnlVal || 0);
+        if (Number.isFinite(finalPnl)) {
+          this.data.state.tradeRealizedPnl = (this.data.state.tradeRealizedPnl || 0) + finalPnl;
+          const totalGasQuote = this.data.state.totalGasDeductedQuote ?? this.data.state.totalGasDeductedUsdso ?? 0;
+          this.data.state.realizedPnl = this.data.state.tradeRealizedPnl - totalGasQuote;
+        }
+
+        // Deduct Lots (FIFO) from State
+        if (Array.isArray(this.data.state.lots) && this.data.state.lots.length > 0) {
+          let remaining = qty;
+          while (remaining > 1e-12 && this.data.state.lots.length > 0) {
+            const lot = this.data.state.lots[0]!;
+            const take = Math.min(lot.qty, remaining);
+            lot.qty -= take;
+            remaining -= take;
+            if (lot.qty <= 1e-12) {
+              this.data.state.lots.shift();
+            }
+          }
+          if (this.data.state.lots.reduce((sum, l) => sum + l.qty, 0) < 0.0001) {
+            this.data.state.lots = [];
+          }
+        }
+      }
     }
 
     this.flushSync();
