@@ -121,6 +121,7 @@ export class DynamicGrid {
   private tickCount = 0;
   private isPaused = true;
   private isSqueezePaused = false;
+  private isDowntrendDropPaused = false;
   private stepBps: number;
   private recentOrders: any[] = [];
   private recentTrades: any[] = [];
@@ -2245,6 +2246,44 @@ export class DynamicGrid {
     const isDowntrend = activeRegime === "DOWNTREND";
     const trendFiltered = this.cfg.dowTrendFilter && isDowntrend;
 
+    // 🛡️ Downtrend Drop Guard: Pause buys when market is actively dumping (LH + LL กดตัว)
+    // Prevents catching falling knives. Resumes buying ONLY when:
+    // 1) Higher Low (HL) is confirmed (wave marked HL or higher swing low formed after dump low)
+    // 2) Downtrend Line breakout is confirmed (>= 2 candles breaking above downtrend line)
+    // Note: Never resumes merely because price is near the floor (Condition C is strictly omitted)
+    const isDowntrendDropActive = Boolean(dow?.isDowntrendDropActive);
+    let downtrendDropPaused = false;
+    let downtrendDropReason = "";
+
+    if (isDowntrendDropActive && !this.waitingForHigherLow) {
+      const dumpLow = dow?.downtrendDropLow ?? lowerBound;
+      const lastLl = dow?.waveCycle?.lastLl;
+      const lastHl = dow?.waveCycle?.lastHl;
+      const isHlAfterLl = Boolean(lastHl && lastLl && lastHl.index > lastLl.index && lastHl.price > dumpLow * 1.0005);
+
+      const hlCheck = this.dowEngine?.checkForHigherLow(
+        lastLl?.time ?? (Date.now() / 1000 - 3600),
+        lowerBound,
+        dumpLow,
+        refPrice,
+      );
+
+      const hlConfirmed = isHlAfterLl || Boolean(hlCheck?.confirmed);
+
+      const tlBreakoutConfirmed = Boolean(
+        dow?.downtrendBreakoutConfirmed ||
+        (dow?.downtrendLine?.isBroken && dow.downtrendLine.brokenCandleCount >= 2)
+      );
+
+      if (!hlConfirmed && !tlBreakoutConfirmed) {
+        downtrendDropPaused = true;
+        const previousLow = dow?.lastSwingLow?.price;
+        const lowDesc = previousLow && refPrice < previousLow ? `หลุดเหว $${previousLow.toFixed(6)}` : "ขาลง LH+LL";
+        downtrendDropReason = `[Paused: ${lowDesc} รอตั้งฐาน HL > $${dumpLow.toFixed(6)} หรือ Breakout]`;
+      }
+    }
+    this.isDowntrendDropPaused = downtrendDropPaused;
+
     // Trendline Filter: Active during breakdown recovery until confirmed breakout occurs
     const downtrendLine = dow?.downtrendLine;
     const uptrendLine = dow?.uptrendLine;
@@ -2413,6 +2452,19 @@ export class DynamicGrid {
           severity: "warning",
         };
       }
+    } else if (downtrendDropPaused) {
+      const dumpLow = dow?.downtrendDropLow ?? lowerBound;
+      const previousLow = dow?.lastSwingLow?.price;
+      const isBreakdown = previousLow && refPrice < previousLow;
+      botActionState = {
+        code: "DOWNTREND_DROP_WAIT_BASE",
+        title: isBreakdown ? "🛡️ หลุดเหว รอตั้งฐาน HL" : "🛡️ ขาลง รอตั้งฐาน HL",
+        reason: isBreakdown
+          ? `แท่งเทียนหลุดเหวเก่า ($${previousLow.toFixed(4)}) • หยุดรับมีดชั่วคราว`
+          : `รอบคลื่นขาลง (LH + LL กดตัว) • หยุดรับมีดชั่วคราว`,
+        nextTrigger: `รอสร้างฐาน HL > $${dumpLow.toFixed(4)} หรือ Breakout เส้นกด`,
+        severity: "warning",
+      };
     } else if (isAboveCeiling) {
       botActionState = {
         code: "ABOVE_CEILING_FULL_EXIT",
@@ -2599,6 +2651,7 @@ export class DynamicGrid {
         enableLaggardSnipe: this.cfg.enableLaggardSnipe,
         enableLaggardGuard: this.cfg.enableLaggardGuard,
         laggardGuardActive,
+        downtrendDropPaused,
         waitingForHigherLow: this.waitingForHigherLow,
         waitingForNewValley: this.waitingForHigherLow,
         breakdownFloorPrice: this.breakdownFloorPrice,
@@ -2811,7 +2864,7 @@ export class DynamicGrid {
           `| Zone: ${zoneName} | Position: ${positionSummary}${openOrdersSummary}` +
           ` | Wallet: ${this.walletBaseBalance.toFixed(2)} ${this.baseAsset} / $${this.walletQuoteBalance.toFixed(2)} ${this.quoteAsset}` +
           ` | Speed: ${((this.cfg.intervalMs ?? 2000) / 1000).toFixed(1)}s` +
-          ` | Next Buy: $${buyTrigger.toFixed(6)}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
+          ` | Next Buy: $${buyTrigger.toFixed(6)}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${downtrendDropPaused ? ` ${downtrendDropReason}` : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
           ` | Next Sell: $${sellTrigger.toFixed(6)}` +
           trendlineSummary +
           uptrendSummary +
@@ -2940,7 +2993,7 @@ export class DynamicGrid {
       this.sellOrdersActive = true;
     }
 
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !this.isSqueezePaused && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive;
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive;
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
       await this.executeIocBracketGrid(
@@ -3233,6 +3286,8 @@ export class DynamicGrid {
           ? `Trend support broken ($${activeUptrendLine?.currentLinePrice.toFixed(6)}) — buying paused, waiting to sell or cut loss`
           : this.waitingForHigherLow
           ? "Waiting for Higher Low — cancelled resting buy orders"
+          : this.isDowntrendDropPaused
+          ? "Active Downtrend Drop (LH+LL) — waiting for HL or Trendline Breakout"
           : "Buying paused by filters (Downtrend/Trendline/Lag Guard/Offload)";
         await this.cancelAllRestingOrders("BUY", pauseReason);
       }

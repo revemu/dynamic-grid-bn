@@ -128,6 +128,8 @@ export interface DowStructure {
   swingHighs: SwingPoint[];
   swingLows: SwingPoint[];
   waveCycle?: WaveCycleData;
+  isDowntrendDropActive?: boolean;
+  downtrendDropLow?: number;
 }
 
 export interface ChannelOptions {
@@ -1144,19 +1146,29 @@ export class DowStructureEngine {
       : undefined;
 
     // Detect active wave cycle base index:
-    // If macroPeak occurred after macroLow, the active cycle is a downwave/correction starting from macroPeak.
+    // If macroPeak occurred after macroLow, the market launched from a base valley up to macroPeak,
+    // and is currently in a downwave/correction. The structural base of this wave is the launchpad valley
+    // that pushed price to macroPeak!
     // If macroLow occurred after macroPeak, the active cycle is an upwave/recovery starting from macroLow.
     let activeWaveBaseIndex = 0;
     if (macroPeak && macroLow) {
       if (macroPeak.index > macroLow.index) {
-        activeWaveBaseIndex = macroPeak.index;
+        const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
+        const launchpadLow = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]! : macroLow;
+        // Check if there was an even lower structural base low in the immediate launch base cluster (within 10 bars)
+        const baseClusterLows = prePeakLows.filter((l) => l.index >= launchpadLow.index - 10);
+        const lowestLaunchpad = baseClusterLows.length > 0
+          ? baseClusterLows.reduce((min, l) => (l.price < min.price ? l : min), launchpadLow)
+          : launchpadLow;
+        activeWaveBaseIndex = lowestLaunchpad.index;
       } else {
         activeWaveBaseIndex = macroLow.index;
       }
     } else if (macroLow) {
       activeWaveBaseIndex = macroLow.index;
     } else if (macroPeak) {
-      activeWaveBaseIndex = macroPeak.index;
+      const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
+      activeWaveBaseIndex = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]!.index : macroPeak.index;
     }
 
     const activeCycleHighs = canonicalHighs.filter((h) => h.index >= activeWaveBaseIndex);
@@ -1551,6 +1563,35 @@ export class DowStructureEngine {
       lastLl,
       waveCycle.annotatedSwings,
     );
+    // Active downtrend drop detection:
+    // 1) Confirmed LH + LL wave sequence (รอบคลื่นกดตัว), OR
+    // 2) Real-time breakdown of previous valley (หลุดเหวเก่าทันที):
+    //    Triggers immediately when price or candle breaks below the previous confirmed swing low,
+    //    with tendency to form an LL, without waiting 3 bars for a lagging pivot confirmation!
+    const isBreakingBelowLastLow = Boolean(
+      lastLow &&
+      price < lastLow.price &&
+      (lastHigh ? lastHigh.price > lastLow.price : true)
+    );
+    const hasCandidateLl = Boolean(
+      candidateValley &&
+      lastLow &&
+      candidateValley.price < lastLow.price
+    );
+    const isConfirmedDowntrendWave = Boolean(
+      (waveCycle.activeCycleSummary?.includes("LH + LL") || (lastCanonicalHigh?.dowLabel === "LH" && lastCanonicalLow?.dowLabel === "LL")) &&
+      price < (activePeak?.price ?? upperBound)
+    );
+    const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowLastLow || hasCandidateLl;
+
+    const postPeakLows = canonicalLows.filter((l) => macroPeak && l.index > macroPeak.index);
+    const postPeakPrices = postPeakLows.map((l) => l.price);
+    if (candidateValley) postPeakPrices.push(candidateValley.price);
+    postPeakPrices.push(price);
+    const downtrendDropLow = postPeakPrices.length > 0
+      ? Math.min(...postPeakPrices)
+      : (lastCanonicalLow?.price ?? bottomBound);
+
     return {
       upperBound,
       bottomBound,
@@ -1574,6 +1615,8 @@ export class DowStructureEngine {
       swingHighs: this.swingHighs,
       swingLows: this.swingLows,
       waveCycle,
+      isDowntrendDropActive,
+      downtrendDropLow,
     };
   }
 
