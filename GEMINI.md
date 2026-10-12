@@ -270,6 +270,19 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                   3. **Zero Floating Math Guarantee**:
                      - ยกเลิกสูตรบวก/ลบเลข `shortfall / 2` กลางอากาศออก 100% การันตีว่าเส้น Ceiling และ Floor บนกราฟจะไม่มีการลอยเคว้งหรือตัดกลางแท่งเทียนอีกต่อไป
 
+             10. **False HL Invalidation & Active Downwave Base Valley Anchoring (src/market-structure.ts):**
+                 - **สาเหตุ & ปัญหาเดิม:**
+                   - เมื่อเกิดยอดสูงสุด Macro Peak (เช่น .07) แล้วราคาทุบตัวลงมา จุดสวิง Low จุดแรกหลังยอด (เช่น ) ได้รับการประเมินเบื้องต้นเป็น HL เนื่องจากราคาสูงกว่าสวิง Low ก่อนหน้าที่เป็นฐานส่ง (.70)
+                   - แต่เมื่อเวลาผ่านไป แท่งเทียนทุบหลุดต่ำกว่า  ลงไปทำ New Low ใหม่ (เช่น .48) ป้ายที่จุด  กลับยังค้างเป็น HL หลอกตา ทั้งที่ฐานรับถูกทำลายลงไปแล้ว
+                   - นอกจากนี้ ตัวแปร ctiveWaveBaseIndex และ aseValley ใน getStructure() ยังคงวิ่งถอยหลังย้อนอดีตไปหาจุดฐานส่งก่อนหน้า (.70) ทำให้ Floor ไม่ยอมเกาะที่เหวต่ำสุดของรอบทุบปัจจุบัน (.48) แม้ว่าความกว้างระหว่างยอด .07 กับเหว .48 จะกว้างถึง 1.33% (เกินเกณฑ์ minChannelWidthPct = 0.5% บนเซิร์ฟเวอร์จริง) แล้วก็ตาม
+                 - **การแก้ไขในระบบ:**
+                   1. **False HL Invalidation ใน nalyzeWaveCycles:**
+                      - เพิ่มรอบตรวจสอบ Post-processing: หากสวิงใดที่เคยได้รับป้าย HL มีสวิง Low ในอนาคตถัดมาที่มีราคาต่ำกว่ามัน (ext.price < sw.price) แสดงว่าฐานรับถูกทำลาย ให้ Invalidate เปลี่ยนป้ายเป็น LL ทันที และประเมิน lastHl, lastLl, และ lastLowLabel ใหม่อย่างถูกต้อง
+                   2. **Active Downwave Base Valley Anchoring ใน getStructure:**
+                      - ในสภาวะ Downwave หลังยอด Macro Peak (macroPeak.index > macroLow.index):
+                      - ตรวจหา postPeakLows ที่เกิดขึ้นหลังยอด Macro Peak หากมีอยู่ ให้ยึดจุดต่ำสุดของรอบทุบนี้ (lowestPostPeak เช่น .48) เป็น ctiveWaveBaseIndex และกำหนดให้ aseValley ล็อคเกาะจุดต่ำสุดนี้เป็น Floor ทันที
+                      - ส่งผลให้กรอบล่าง Snap เข้ากับจุดสวิงเหวแท้จริงของรอบคลื่นปัจจุบันอย่างแม่นยำ ไม่ถอยหลังไปหาฐานส่งในอดีต
+
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

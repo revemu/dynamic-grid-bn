@@ -907,6 +907,35 @@ export class DowStructureEngine {
       }
     }
 
+    // 2.1 Invalidate False HLs: หากมีจุดสวิง Low ใดที่เคยถูกมองว่าเป็น HL ชั่วคราว
+    // แต่ในเวลาต่อมามีสวิง Low ถัดมา (หรือสวิง Low ในรอบทุบ) ที่กดตัวต่ำกว่ามัน (New Low ต่ำกว่า HL นั้น)
+    // โครงสร้าง Higher Low นั้นถือว่าถูกทำลาย (Broken/Invalidated) ทันที -> ต้องเปลี่ยนป้ายเป็น LL
+    for (let i = 0; i < annotatedSwings.length; i++) {
+      const sw = annotatedSwings[i]!;
+      if (sw.type === "LOW" && sw.dowLabel === "HL") {
+        // ค้นหาว่ามี Low ใดในอนาคตหลังจากจุดนี้ ที่ราคาต่ำกว่ามันหรือไม่
+        const futureLows = annotatedSwings.slice(i + 1).filter((next) => next.type === "LOW");
+        const brokenByFutureLow = futureLows.some((next) => next.price < sw.price);
+        if (brokenByFutureLow) {
+          sw.dowLabel = "LL";
+          sw.labelDescription = "Lower Low (LL) หลุดฐาน";
+          sw.isTransitionStart = false;
+          sw.transitionType = undefined;
+        }
+      }
+    }
+
+    // Re-evaluate lastHl / lastLl after invalidation
+    lastHl = undefined;
+    lastLl = undefined;
+    for (const sw of annotatedSwings) {
+      if (sw.type === "LOW") {
+        if (sw.dowLabel === "HL") lastHl = sw;
+        else if (sw.dowLabel === "LL") lastLl = sw;
+      }
+    }
+    lastLowLabel = annotatedSwings.filter((s) => s.type === "LOW").pop()?.dowLabel ?? "LL";
+
     // 3. Build wave legs and interpolated continuous wave points
     const legs: WaveLeg[] = [];
     const wavePoints: TrendLinePoint[] = [];
@@ -1163,35 +1192,53 @@ export class DowStructureEngine {
 
     // Detect active wave cycle base index:
     // If macroPeak occurred after macroLow, the market launched from a base valley up to macroPeak,
-    // and is currently in a downwave/correction. The structural base of this wave is the launchpad valley
-    // that pushed price to macroPeak!
-    // If macroLow occurred after macroPeak, the active cycle is an upwave/recovery starting from macroLow.
+    // and is currently in a downwave/correction.
+    // In a downwave after macroPeak:
+    // If post-peak lows exist (canonicalLows after macroPeak.index), the true floor of the active downwave
+    // is the lowest confirmed valley of this downwave (postPeakLows), provided the channel width meets minSpanRequired!
+    // If no post-peak low exists yet or postPeakLows width is insufficient, fallback to prePeak launchpad base.
     let activeWaveBaseIndex = 0;
+    const postPeakLows = macroPeak ? canonicalLows.filter((l) => l.index > macroPeak.index) : [];
+
     if (macroPeak && macroLow) {
       if (macroPeak.index > macroLow.index) {
-        const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
-        const launchpadLow = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]! : macroLow;
-        // Check if there was an even lower structural base low in the immediate launch base cluster (within 10 bars)
-        const baseClusterLows = prePeakLows.filter((l) => l.index >= launchpadLow.index - 10);
-        const lowestLaunchpad = baseClusterLows.length > 0
-          ? baseClusterLows.reduce((min, l) => (l.price < min.price ? l : min), launchpadLow)
-          : launchpadLow;
-        activeWaveBaseIndex = lowestLaunchpad.index;
+        if (postPeakLows.length > 0) {
+          // มีเหวที่เกิดขึ้นหลังยอด macroPeak ในรอบคลื่นทุบปัจจุบัน
+          // ให้ยึดจุดต่ำสุดของรอบทุบนี้เป็น activeWaveBaseIndex
+          const lowestPostPeak = postPeakLows.reduce((min, l) => (l.price < min.price ? l : min), postPeakLows[0]!);
+          activeWaveBaseIndex = lowestPostPeak.index;
+        } else {
+          const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
+          const launchpadLow = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]! : macroLow;
+          const baseClusterLows = prePeakLows.filter((l) => l.index >= launchpadLow.index - 10);
+          const lowestLaunchpad = baseClusterLows.length > 0
+            ? baseClusterLows.reduce((min, l) => (l.price < min.price ? l : min), launchpadLow)
+            : launchpadLow;
+          activeWaveBaseIndex = lowestLaunchpad.index;
+        }
       } else {
         activeWaveBaseIndex = macroLow.index;
       }
     } else if (macroLow) {
       activeWaveBaseIndex = macroLow.index;
     } else if (macroPeak) {
-      const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
-      activeWaveBaseIndex = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]!.index : macroPeak.index;
+      if (postPeakLows.length > 0) {
+        const lowestPostPeak = postPeakLows.reduce((min, l) => (l.price < min.price ? l : min), postPeakLows[0]!);
+        activeWaveBaseIndex = lowestPostPeak.index;
+      } else {
+        const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
+        activeWaveBaseIndex = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]!.index : macroPeak.index;
+      }
     }
 
     const activeCycleHighs = canonicalHighs.filter((h) => h.index >= activeWaveBaseIndex);
     const activeCycleLows = canonicalLows.filter((l) => l.index >= activeWaveBaseIndex);
 
     let baseValley: SwingPoint | undefined;
-    if (activeCycleLows.length > 0) {
+    if (postPeakLows.length > 0 && macroPeak && macroLow && macroPeak.index > macroLow.index) {
+      // 🔒 Anchor baseValley to the lowest valley formed in this downwave!
+      baseValley = postPeakLows.reduce((min, l) => (l.price < min.price ? l : min), postPeakLows[0]!);
+    } else if (activeCycleLows.length > 0) {
       // 🔒 Pure Dow Structural Floor: Anchor to the confirmed lowest valley of the active cycle!
       let minLow = activeCycleLows[0]!;
       for (const l of activeCycleLows) {
@@ -1635,8 +1682,8 @@ export class DowStructureEngine {
     );
     const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowLastLow || hasCandidateLl;
 
-    const postPeakLows = canonicalLows.filter((l) => macroPeak && l.index > macroPeak.index);
-    const postPeakPrices = postPeakLows.map((l) => l.price);
+    const dropPostPeakLows = canonicalLows.filter((l) => macroPeak && l.index > macroPeak.index);
+    const postPeakPrices = dropPostPeakLows.map((l) => l.price);
     if (candidateValley) postPeakPrices.push(candidateValley.price);
     postPeakPrices.push(price);
     const downtrendDropLow = postPeakPrices.length > 0
