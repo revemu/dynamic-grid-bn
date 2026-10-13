@@ -171,7 +171,7 @@ export class DynamicGrid {
     private binance: IExchangeClient,
     private symbolInfo: ExchangeSymbolInfo,
     private readonly cfg: Config,
-    private readonly atrSource: AtrSource,
+    private atrSource: AtrSource,
     private readonly log: (msg: string, extra?: unknown) => void,
     private readonly dowEngine?: DowStructureEngine,
     private readonly localTrendEngine?: DowStructureEngine,
@@ -257,7 +257,7 @@ export class DynamicGrid {
     };
   }
 
-  public updateExchangeClient(newClient: IExchangeClient, info?: ExchangeSymbolInfo): void {
+  public updateExchangeClient(newClient: IExchangeClient, info?: ExchangeSymbolInfo, newAtrSource?: AtrSource): void {
     if (this.cfg.persistState) {
       this.saveState(true);
     }
@@ -265,17 +265,34 @@ export class DynamicGrid {
     this.cfg.exchange = newClient.exchangeName as "binance" | "dreamdex";
     this.wireExchangeGasListener(newClient);
     if (info) {
-      this.updateSymbolInfo(info);
+      this.updateSymbolInfo(info, newAtrSource);
     } else {
+      if (newAtrSource) {
+        this.atrSource = newAtrSource;
+      }
       this.loadState();
     }
     this.log(`🔄 [strategy] Switched exchange client to: ${newClient.exchangeName.toUpperCase()}`);
   }
 
-  public updateSymbolInfo(info: ExchangeSymbolInfo): void {
+  public updateSymbolInfo(info: ExchangeSymbolInfo, newAtrSource?: AtrSource): void {
     if (this.cfg.persistState) {
       this.saveState(true);
     }
+    if (newAtrSource) {
+      this.atrSource = newAtrSource;
+    }
+    this.lastRefPrice = undefined;
+    this.wsBookTicker = undefined;
+    this.lastDynamicBounds = undefined;
+    this.lockedChannel = undefined;
+    this.waitingForHigherLow = false;
+    this.breakdownFloorPrice = undefined;
+    this.breakdownLowPrice = undefined;
+    this.breakdownTime = undefined;
+    this.iocBracketSellCycle = undefined;
+    this.orderCooldowns.clear();
+
     this.symbolInfo = info;
     this.symbol = info.symbol;
     this.cfg.symbol = info.symbol;
@@ -1156,6 +1173,11 @@ export class DynamicGrid {
       } else if (typeof data.brokenValleyPrice === "number") {
         this.waitingForHigherLow = true;
         this.breakdownFloorPrice = data.brokenValleyPrice;
+      } else {
+        this.waitingForHigherLow = false;
+        this.breakdownFloorPrice = undefined;
+        this.breakdownLowPrice = undefined;
+        this.breakdownTime = undefined;
       }
       if (typeof data.breakdownFloorPrice === "number") {
         this.breakdownFloorPrice = data.breakdownFloorPrice;
@@ -1170,9 +1192,13 @@ export class DynamicGrid {
       }
       if (typeof data.lastCutLossTime === "number") {
         this.lastCutLossTime = data.lastCutLossTime;
+      } else {
+        this.lastCutLossTime = 0;
       }
       if (typeof data.postCutSingleTrancheOnly === "boolean") {
         this.postCutSingleTrancheOnly = data.postCutSingleTrancheOnly;
+      } else {
+        this.postCutSingleTrancheOnly = false;
       }
       if (
         data.iocBracketSellCycle &&
@@ -1186,6 +1212,8 @@ export class DynamicGrid {
           numSellTranches: data.iocBracketSellCycle.numSellTranches || 1,
           soldStepNums: new Set<number>(Array.isArray(data.iocBracketSellCycle.soldStepNums) ? data.iocBracketSellCycle.soldStepNums : []),
         };
+      } else {
+        this.iocBracketSellCycle = undefined;
       }
       // Restore unified orders from database (up to 5000 items)
       const dbOrders = this.db.getOrders(5000);
@@ -1244,6 +1272,9 @@ export class DynamicGrid {
           this.lastDynamicBounds = undefined;
           this.db.saveLockedChannel(symbolKey, undefined);
         }
+      } else {
+        this.lockedChannel = undefined;
+        this.lastDynamicBounds = undefined;
       }
 
       const totalHeld = this.baseHeld();

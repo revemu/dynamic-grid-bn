@@ -300,9 +300,10 @@ async function main(): Promise<void> {
 
           const nextInfo = await exchange.getExchangeInfo(targetSymbol);
           symbolInfo = nextInfo;
-          grid.updateExchangeClient(newExchange, nextInfo);
           await initFeeds(nextInfo.symbol);
+          grid.updateExchangeClient(newExchange, nextInfo, atrSource!);
           wireFeedsToGrid();
+          dashboard.resetState({ clearTrades: false });
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
             macroDowEngine.addCandle(candle);
@@ -310,6 +311,7 @@ async function main(): Promise<void> {
           });
           macroFeed?.start();
           tradingFeed?.start();
+          wakeSleep?.();
           log(`🔄 Successfully switched Exchange Adapter to: ${exchange.exchangeName.toUpperCase()} (${nextInfo.symbol})`);
         } catch (err) {
           log(`⚠️ Failed to switch exchange adapter to ${targetExchangeName}: ${(err as Error).message}`);
@@ -320,9 +322,10 @@ async function main(): Promise<void> {
         try {
           const nextInfo = await exchange.getExchangeInfo(nextSymbolStr);
           symbolInfo = nextInfo;
-          grid.updateSymbolInfo(nextInfo);
           await initFeeds(nextInfo.symbol);
+          grid.updateSymbolInfo(nextInfo, atrSource!);
           wireFeedsToGrid();
+          dashboard.resetState({ clearTrades: false });
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
             macroDowEngine.addCandle(candle);
@@ -330,6 +333,7 @@ async function main(): Promise<void> {
           });
           macroFeed?.start();
           tradingFeed?.start();
+          wakeSleep?.();
           log(`🔄 Switched active ${exchange.exchangeName} trading pair to: ${nextInfo.symbol}`);
         } catch (err) {
           log(`⚠️ Failed to switch symbol to ${nextSymbolStr}: ${(err as Error).message}`);
