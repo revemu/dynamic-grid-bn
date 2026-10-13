@@ -3095,7 +3095,8 @@ export class DynamicGrid {
           // Check Best Bid liquidity on DEX/CEX before executing IOC
           const effectiveBestBid = bestBid !== undefined && bestBid > 0 ? bestBid : undefined;
           const avgEntry = this.getAvgEntryPrice();
-          const maxAllowedDiscountPct = this.cfg.cutLossMaxBidDiscountPct ?? 1.5; // Default 1.5% max gap between TL & bestBid
+          // Tighten max allowed discount between TL & DEX Best Bid to 0.35% (prevents dumping into discounted bids)
+          const maxAllowedDiscountPct = 0.35;
           const bidDiffPct = (effectiveBestBid && tlPrice > 0) ? ((tlPrice - effectiveBestBid) / tlPrice) * 100 : 0;
           const isBidCloseEnough = effectiveBestBid !== undefined && (effectiveBestBid >= tlPrice || bidDiffPct <= maxAllowedDiscountPct);
           const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
@@ -5557,16 +5558,9 @@ export class DynamicGrid {
         const avgEntry = this.getAvgEntryPrice();
         const slippagePct = (this.cfg.cutLossMaxBidDiscountPct ?? 1.5) / 100;
         if (action === "SELL") {
-          // Take Profit Full Exit: Allow matching slightly below top bid (e.g. 0.3% - 0.5% buffer)
-          // while strictly guaranteeing net profit above avgEntry!
-          const bufferPct = Math.min(0.005, slippagePct);
-          const discountedPrice = price * (1 - bufferPct);
-          if (avgEntry > 0) {
-            const minProfitable = avgEntry * 1.0005;
-            limitPrice = Math.max(minProfitable, discountedPrice);
-          } else {
-            limitPrice = discountedPrice;
-          }
+          // Take Profit / Trendline Exit: Strictly sell at full target price / Best Bid (0% discount)
+          // No artificial haircut below market bid!
+          limitPrice = price;
         } else {
           // Cut Loss: Allow matching down to max bid discount to guarantee immediate execution
           limitPrice = price * (1 - slippagePct);

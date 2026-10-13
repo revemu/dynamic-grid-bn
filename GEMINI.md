@@ -957,6 +957,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        - จัดกลุ่มตัวเลือกใน Dropdown ด้วย `<optgroup>` แยกชัดเจน (`🆓 FDUSD Pairs (0% Maker Fee)`, `⭐ Popular USDT Pairs`, `💵 Other USDT Pairs`, `🪙 USDC Pairs`)
        - เพิ่มตัวเลือก `➕ Custom Pair (พิมพ์คู่เหรียญเอง)...` ใน Dropdown บน Navigation Bar เพื่อให้ผู้ใช้สามารถกรอกชื่อคู่เหรียญใดๆ บน Binance (เช่น `BTCFDUSD`, `SOLFDUSD`, `DOGEFDUSD`) แล้วสลับเทรดได้ทันที
        - เพิ่มปุ่ม `✏️ Custom` สลับระหว่าง Dropdown กับช่องกรอก Text Input ใน Settings Modal เพื่อความยืดหยุ่นในการตั้งค่าคู่เหรียญตามใจชอบ
+  9. **Zero-Discount Trendline Sell & Tightened DEX Bid Gap Guard (0% Haircut)**:
+     - ใน `src/strategy.ts` (`sellAll`): ยกเลิกการหักส่วนลด Slippage buffer 0.50% ใต้ Best Bid สำหรับคำสั่งขายทำกำไร (`action === "SELL"`) โดยปรับเป็น **`limitPrice = price` (0% Discount)** ขายที่ราคาเต็ม Best Bid หรือราคาเป้าหมายโดยตรง ป้องกันการเสียกำไร 0.5% โดยไม่จำเป็น
+     - ใน `src/strategy.ts` (Block 2a - Trendline IOC Sell): ปรับลดเกณฑ์ยอมรับช่องว่างระหว่างราคาเส้นกดเทรนด์ไลน์กับ Best Bid บนกระดานจากเดิม `1.5%` ลงเหลือ **`0.35%`** สูงสุด เพื่อป้องกันไม่ให้บอทโยนขายใส่ Bid ที่ถ่างต่ำกว่าราคาตลาด และเข้าสู่สถานะ Standby รอรอบิดบน DEX ขยับตามราคาจริงเสมอ
 
 ---
 
