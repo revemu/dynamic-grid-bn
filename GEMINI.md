@@ -137,6 +137,14 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     - **Fast-Path IOC Order Execution (Skip Redundant Resting Order Cancels)**:
       - ในโหมด IOC (`IOC_BRACKET`) บอทไม่มีออเดอร์ค้างอยู่บนกระดาน (`openOrders.length === 0`) อยู่แล้ว
       - ใน `sellAllUser()` และ `Block 2a (Trendline Exit)`: ตรวจสอบ `if (this.openOrders.length > 0)` ก่อนเรียก Cancel เท่านั้น หากไม่มีออเดอร์ค้างอยู่ ให้ข้ามขั้นตอน Cancel ทันที 100% ยิงขายออกไปใน 0.1 วินาที ไม่ต้องรอ Delay 600ms - 1s
+    - **Universal Grid Level Slippage Tolerance & Single Floor/Ceiling Caps (Buy Levels 1..4 & Sell Targets 1..4)**:
+      - **เป้าหมาย**: นำเกณฑ์ Slippage Cap เดียวกันที่ผูกตรงกับราคาเป้าหมาย (Level Price) ไปใช้กับบันได Grid ทุกระดับ ทั้งฝั่งซื้อและฝั่งขาย
+      - **ฝั่งขาย (Sell Target 1..4 & 100% Exit)**:
+        - Trigger เมื่อ Best Bid ขึ้นมาในระยะ `lvlPrice * (1 - iocSlippagePct)`
+        - ใน `sellTrancheIOC()`: บังคับ Single Floor Cap `limitPrice >= targetPrice * (1 - iocSlippagePct)` และ `>= avgEntry * 1.0005` ไม่ขายต่ำกว่าเป้าเกินค่า Slippage ที่ตั้งไว้ และรับประกันขายมีกำไร
+      - **ฝั่งซื้อ (Buy Level 1..4 & Trendline Support)**:
+        - Trigger เมื่อ Best Ask ลงมาในระยะ `lvlPrice * (1 + iocSlippagePct)`
+        - ใน `buyTrancheIOC()`: บังคับ Single Ceiling Cap `limitPrice <= targetPrice * (1 + iocSlippagePct)` เพื่อให้กวาด Ask บน Orderbook สำเร็จ 100% ไม่ Revert `0xc04ad919` และไม่มีทางซื้อแพงกว่า Buy Level เกินค่า Slippage
     - **Trendline Dual Trigger & Single Floor Cap (Elimination of Double-Dip Discounts)**:
       - **สาเหตุ & ปัญหาเดิม**: การ Trigger เส้นกดเคยยอมให้ Best Bid ต่ำกว่าเส้นกดได้สูงสุด 0.35% จากนั้นพอส่งคำสั่งใน `sellAll()` ดันเอา Best Bid มาหัก Slippage อีก 0.24% ทำให้เกิดการ "ลดราคาเบิ้ล 2 ต่อ" รวมหลุดต่ำกว่าเส้นกดจริงไปถึง ~0.59%
       - **การแก้ไข**:

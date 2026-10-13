@@ -5013,9 +5013,10 @@ export class DynamicGrid {
         for (let i = 0; i < buyLevels.length; i++) {
           const lvlPrice = buyLevels[i];
           if (lvlPrice !== undefined) {
-            // บน DreamDEX: ดูได้จาก ask ถ้าอยู่ในระดับเดียวหรือต่ำกว่า (currentBestAsk <= lvlPrice) ก็สามารถเข้าซื้อได้ทันที ไม่ต้องรอ trigger จากราคาแท่งเทียน (refPrice) เพียงอย่างเดียว
+            const buySlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+            // บน DreamDEX: ดูได้จาก ask ถ้าอยู่ในระดับเดียวหรือแตะในระยะ Slippage (currentBestAsk <= lvlPrice * (1 + buySlippage)) ก็สามารถเข้าซื้อได้ทันที
             const isLevelTriggered = !isCexExchange
-              ? (currentBestAsk <= lvlPrice || (refPrice <= lvlPrice * 1.001 && currentBestAsk <= lvlPrice * 1.005))
+              ? (currentBestAsk <= lvlPrice * (1 + buySlippage) || (refPrice <= lvlPrice * 1.001 && currentBestAsk <= lvlPrice * (1 + buySlippage * 2)))
               : (currentBestAsk <= lvlPrice && refPrice <= lvlPrice * 1.001);
 
             if (isLevelTriggered && enabledBuys[i]) {
@@ -5146,10 +5147,12 @@ export class DynamicGrid {
       }
 
       // 3. Find candidate sell steps that have been reached by market bid but NOT yet sold in this cycle
+      const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
       let matchedStep: SellStep | undefined;
       for (const step of activeSteps) {
         const lvlPrice = sellLevels[step.levelIndex];
-        if (lvlPrice !== undefined && currentBestBid >= lvlPrice) {
+        const minAllowedBid = lvlPrice !== undefined ? lvlPrice * (1 - sellSlippage) : undefined;
+        if (lvlPrice !== undefined && minAllowedBid !== undefined && (currentBestBid >= minAllowedBid || refPrice >= lvlPrice)) {
           if (!cycle.soldStepNums.has(step.stepNum)) {
             matchedStep = step;
             // Pick the lowest unsold reached step (ladder upwards)
@@ -5303,15 +5306,16 @@ export class DynamicGrid {
     if (finalQty < this.minQty) return false;
 
     try {
-      // In CLOB IOC sell: targetPrice acts as trigger price.
-      // If execPrice (e.g. currentBestBid on book) is valid, profitable, and near targetPrice,
-      // place limitPrice at execPrice (or slightly more aggressive) so it matches immediately against the resting bid!
-      // This prevents Revert 0xc04ad919 when bid on book shifted slightly or CLOB requires matching against the bid price.
+      // In CLOB IOC sell: targetPrice acts as trigger price and anchor.
+      // Enforce Single Floor Cap anchored to targetPrice (Sell Level):
+      // limitPrice must NEVER fall below targetPrice * (1 - slippagePct), and must stay above avg entry
       const avgEntry = this.getAvgEntryPrice();
-      const isProfitableAtExec = avgEntry <= 0 || execPrice >= avgEntry * 1.0005;
-      const limitPrice = (execPrice > 0 && isProfitableAtExec && Math.abs(execPrice - targetPrice) / targetPrice <= 0.02)
-        ? Math.min(execPrice, targetPrice)
-        : targetPrice;
+      const slippagePct = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+      const minAllowedBySlippage = targetPrice * (1 - slippagePct);
+      const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : minAllowedBySlippage;
+      const basePrice = (execPrice > 0) ? execPrice : targetPrice;
+      let limitPrice = Math.max(minProfitablePrice, minAllowedBySlippage, basePrice * (1 - slippagePct));
+      limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
       const res = await this.binance.placeOrder({
         symbol: this.symbol,
         side: "SELL",
@@ -5437,9 +5441,14 @@ export class DynamicGrid {
     }
 
     try {
-      // In CLOB IOC buy: limit price is targetPrice so it matches any ask <= targetPrice
-      // Setting limitPrice = targetPrice ensures on-chain CLOB will NEVER fill above the target buy level
-      const limitPrice = targetPrice;
+      // In CLOB IOC buy: enforce Single Ceiling Cap anchored to targetPrice (Buy Level)
+      // Allow slippage up to iocSlippagePct so on-chain CLOB sweeps resting asks without 0xc04ad919 revert,
+      // but strictly NEVER pays above targetPrice * (1 + slippagePct)!
+      const slippagePct = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+      const maxAllowedPrice = targetPrice * (1 + slippagePct);
+      const basePrice = (execPrice > 0) ? execPrice : targetPrice;
+      let limitPrice = Math.min(maxAllowedPrice, Math.max(targetPrice, basePrice * (1 + slippagePct)));
+      limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
       const res = await this.binance.placeOrder({
         symbol: this.symbol,
         side: "BUY",
