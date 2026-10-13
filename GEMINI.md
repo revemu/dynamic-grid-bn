@@ -929,7 +929,7 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        - ซีกซ้าย: แสดงราคา **Best Bid (🟢)** บนกระดานเทรดจริง พร้อมระยะห่างเทียบกับ Mid Price
        - ซีกขวา: แสดงราคา **Best Ask (🔴)** บนกระดานเทรดจริง พร้อมระยะห่างเทียบกับ Mid Price
     4. **Layout**: ปรับ Grid สรุปผลด้านบนเป็น 3 คอลัมน์ที่กว้างและอ่านค่าง่าย (`grid-template-columns: 1.25fr 1fr 1fr`)
-- **Live Production Audit Logic Improvements (Items #1, #2, #4, #5, #6, #7)**:
+- **Live Production Audit Logic Improvements (Items #1, #2, #3, #4, #5, #6, #7)**:
   1. **API Key Masking (`binanceApiKey` Protection)**:
      - ใน `src/strategy.ts`, `src/index.ts`, และ `src/server.ts`: ทำการ Mask ค่า `binanceApiKey` เป็น `"******"` เสมอเมื่อส่งออกผ่าน `/api/db/settings` หรือ `/api/config` (เช่นเดียวกับ `binanceApiSecret` และ `dreamdexPrivateKey`) และป้องกันไม่ให้ค่า `"******"` เขียนทับคีย์จริงในฐานข้อมูลเมื่อกด Save Settings
   2. **Upper Bound 100% Take Profit Minimum Profit (>= 0.50%) & DEX Bid Discount Guard**:
@@ -948,6 +948,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
      - ปรับปรุง `updateTxGas` (พร้อม `pendingTxGas` cache แก้ปัญหา race condition ที่ `onGasSpent` ทำงานก่อน `recordEvent`) และ `getGasLogs` ให้รองรับธุรกรรมแบบ IOC (`fillTxHash` / `txHash`) และนับ `totalTxCount` ให้ตรงกับจำนวนธุรกรรม On-Chain จริง
   6. **Accurate Dow Theory HL / LL Swing Labeling**:
      - ใน `src/market-structure.ts`: แก้ไขการตรวจสอบ `priorLowsInDownwave` ให้อ้างอิงเฉพาะจุดสวิงที่ยืนยันแล้ว (`annotatedSwings`) แทนการใช้ `this.swingLows` ดิบทั้งหมด ป้องกันไม่ให้จุดยกฐาน (Higher Low จริง เช่น $0.2042 > $0.2026) ถูกติดป้ายผิดเป็น `LL หลุดฐาน`
+  7. **Structural 2+ Pivot Trendline Engine & Uptrend Support Line 1-Tranche Pullback Entry (Item #3)**:
+     - ใน `src/market-structure.ts` (`calculateTrendlines`): อัปเกรดอัลกอริทึมการตีเส้น Trendline ทั้งขาลง (`DESCENDING`) และขาขึ้น (`ASCENDING`) ให้ลากเชื่อมจาก **2+ Confirmed Swing Pivots** (`P1 -> P2` หรือ `V1 -> V2`) พร้อมระบบให้คะแนนความแม่นยำจากจำนวนจุดสวิงที่อยู่ในระนาบ (`alignedSwings`) และจำนวนแท่งเทียน/ไส้เทียนที่ลงมาแตะทดสอบเส้น (`candleTouches`), ตรวจสอบ Outer Envelope ไม่ให้แท่งเทียนระหว่างจุดตัดทะลุเส้นเกิน `0.25%` และจำกัดความชันที่เหมาะสม (`0.015%/hr` ถึง `2.5%/hr`) เพื่อให้ตีเส้นเทรนด์ไลน์ตามโครงสร้างตลาดจริงบน TF 15m ได้อย่างแม่นยำและแสดงผลบนกราฟทันที
+     - ใน `src/strategy.ts`: ปลดล็อก **Uptrend Support Line Entry (`enableBuyAboveTrendSupport`)** ทั้งในโหมด `IOC_BRACKET` และ `MAKER_LIMIT` ให้สามารถเข้าซื้อสะสม **1 ไม้ (`targetTranches = 1`)** เมื่อราคาย่อตัวลงมาแตะเส้นรับขาขึ้น (`uptrendLine`) ที่อยู่สูงกว่า Buy Level ที่เปิดใช้งานและอยู่ต่ำกว่า `Sell Target 1` ได้ทันที แม้ว่าผู้ใช้จะปิด `Buy Level 1` และ `Buy Level 2` ไว้ก็ตาม (และหากราคาหลุดเส้นรับขาลงไป ระบบจะถอยกลับไปรอรับที่ `Buy Level 3` และ `Buy Level 4` ตามปกติ)
 
 ---
 

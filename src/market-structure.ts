@@ -483,240 +483,307 @@ export class DowStructureEngine {
     const latestCandle = this.candles[n - 1];
     const latestTime = latestCandle?.time ?? 0;
 
-    // ── 1. Downtrend Resistance Line: Requires at least 3 touch points (P1 + at least 2 LHs) ──
-    // ตามทฤษฎี Dow Theory:
-    // P1: ต้องเริ่มจากจุดยอด (The Major High) ของรอบคลื่นที่ส่งราคาลงมาทำจุดต่ำสุด (LL ล่าสุด)
-    // เงื่อนไขเข้มงวด: ต้องมีจุดสัมผัส (Touches) ลากผ่านอย่างน้อย 3 จุดขึ้นไป (P1 + 2 LHs ที่อยู่บนหรือใกล้เส้นมาก <= 0.25%)
-    // เพื่อป้องกันเส้นลากจาก 2 จุดที่มักจะชันเกินไป หากมีไม่ถึง 3 จุด ให้ถือว่ายังไม่มีเส้นกด (downtrendLine = undefined)
-    if (confirmedHighs.length >= 3 && confirmedLows.length > 0) {
-      const latestLlCandidate = lastLl ?? confirmedLows.reduce((min, l) => (l.price < min.price ? l : min), confirmedLows[confirmedLows.length - 1]!);
-      const highsBeforeLl = confirmedHighs.filter((h) => h.index < latestLlCandidate.index);
-      
-      let p1: SwingPoint | undefined;
-      if (highsBeforeLl.length > 0) {
-        p1 = highsBeforeLl.reduce((max, h) => (h.price > max.price ? h : max), highsBeforeLl[0]!);
-      } else if (lastHh) {
-        p1 = confirmedHighs.find((h) => h.index === lastHh.index) ?? lastHh;
-      } else if (activePeak) {
-        p1 = confirmedHighs.find((h) => h.index === activePeak.index) ?? activePeak;
-      }
+    // ── 1. Downtrend Resistance Line: Supports 2+ confirmed swing highs (P1 -> LH) with candle touch scoring ──
+    if (confirmedHighs.length >= 2) {
+      // Candidate P1 anchors: top 3 highest swings in the lookback window + activePeak/lastHh
+      const sortedByPriceDesc = [...confirmedHighs].sort((a, b) => b.price - a.price);
+      const p1Candidates = sortedByPriceDesc.slice(0, 4);
 
-      if (p1) {
+      let bestP1: SwingPoint | undefined;
+      let bestP2: SwingPoint | undefined;
+      let bestSlope = -Infinity;
+      let bestScore = -Infinity;
+
+      for (const p1 of p1Candidates) {
         const candidateSubHighs = confirmedHighs.filter(
-          (h) => h.index > p1!.index && h.price < p1!.price && h.time > p1!.time
+          (h) => h.index > p1.index && h.price < p1.price && h.time > p1.time
         );
 
-        // ต้องมี Sub Highs อย่างน้อย 2 จุดขึ้นไป (เพื่อรวมกับ P1 แล้วได้ >= 3 จุด)
-        if (candidateSubHighs.length >= 2) {
-          let bestP2: SwingPoint | undefined;
-          let bestSlope = -Infinity;
-          let bestTouchCount = 0;
+        for (const p2 of candidateSubHighs) {
+          const timeDiff = p2.time - p1.time;
+          if (timeDiff <= 0) continue;
+          const priceDiff = p2.price - p1.price;
+          const slope = priceDiff / timeDiff;
+          if (slope >= 0) continue; // Strictly descending
 
-          // ทดสอบคู่เส้นที่ลากจาก P1 ไปยังแต่ละ candidate P2
-          for (const p2 of candidateSubHighs) {
-            const timeDiff = p2.time - p1.time;
-            const priceDiff = p2.price - p1.price;
-            const slope = priceDiff / timeDiff;
-            if (slope >= 0) continue; // ต้องเป็นเส้นกดขาลงเท่านั้น
+          // Sanity check slope: between 0.015%/hr and 2.5%/hr
+          const pctPerHour = Math.abs((slope * 3600) / p1.price) * 100;
+          if (pctPerHour < 0.015 || pctPerHour > 2.5) continue;
 
-            let violates = false;
-            let touchCount = 1; // นับ P1 เป็นจุดที่ 1
+          const currentLinePrice = p1.price + slope * (latestTime - p1.time);
+          if (currentLinePrice <= 0) continue;
 
-            for (const midHigh of candidateSubHighs) {
-              const lineVal = p1.price + slope * (midHigh.time - p1.time);
-              // หากมียอดใดทะลุเหนือเส้นเกิน 0.05% ถือว่าเส้นผิด (ถูกทะลุ)
-              if (midHigh.price > lineVal * 1.0005) {
-                violates = true;
-                break;
-              }
-              // ถ้ายอดอยู่ใกล้เส้นในระยะ tolerance <= 0.25% ให้นับเป็นจุดสัมผัส
-              if (Math.abs(midHigh.price - lineVal) / lineVal <= 0.0025) {
-                touchCount++;
-              }
+          let violates = false;
+          let swingTouches = 0;
+
+          for (const midHigh of candidateSubHighs) {
+            const lineVal = p1.price + slope * (midHigh.time - p1.time);
+            // Any subsequent swing high exceeding the line by > 0.12% violates the outer envelope
+            if (midHigh.price > lineVal * 1.0012) {
+              violates = true;
+              break;
             }
+            if (Math.abs(midHigh.price - lineVal) / lineVal <= 0.0035) {
+              swingTouches++;
+            }
+          }
+          if (violates) continue;
 
-            if (!violates && touchCount >= 3) {
-              // เลือกเส้นที่มีจุดสัมผัสมากที่สุด หรือถ้าเท่ากันให้เลือก slope ที่ดีที่สุด (outermost)
-              if (touchCount > bestTouchCount || (touchCount === bestTouchCount && slope > bestSlope)) {
-                bestSlope = slope;
-                bestP2 = p2;
-                bestTouchCount = touchCount;
+          // Count candle touches & check breakout status from p2 onwards
+          let candleTouches = 0;
+          let postP2BrokenCandles = 0;
+          let consecutiveBroken = 0;
+          let maxConsecutiveBroken = 0;
+
+          for (let i = p1.index; i < n; i++) {
+            const c = this.candles[i];
+            if (!c) continue;
+            const lineVal = p1.price + slope * (c.time - p1.time);
+            // Before p2, no candle close should deeply violate the line (> 0.20%)
+            if (i <= p2.index && c.close > lineVal * 1.002) {
+              violates = true;
+              break;
+            }
+            if (c.high >= lineVal * 0.997 && c.close <= lineVal * 1.0015) {
+              candleTouches++;
+            }
+            if (i > p2.index) {
+              const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
+              if (testPrice > lineVal * 1.0005) {
+                postP2BrokenCandles++;
+                consecutiveBroken++;
+                if (consecutiveBroken > maxConsecutiveBroken) maxConsecutiveBroken = consecutiveBroken;
+              } else {
+                consecutiveBroken = 0;
               }
             }
           }
+          if (violates) continue;
 
-          // การันตีว่าต้องมีอย่างน้อย 3 จุดสัมผัสจริงๆ ถึงจะยอมรับเป็น Downtrend Line
-          if (bestP2 && Number.isFinite(bestSlope) && bestSlope < 0 && bestTouchCount >= 3) {
-            const currentLinePrice = p1.price + bestSlope * (latestTime - p1.time);
-            if (currentLinePrice > 0) {
-              const points: TrendLinePoint[] = [];
-              for (let cIdx = p1.index; cIdx < n; cIdx++) {
-                const c = this.candles[cIdx];
-                if (!c) continue;
-                const val = p1.price + bestSlope * (c.time - p1.time);
-                points.push({ time: c.time, value: Number(val.toFixed(6)) });
+          const isUnbroken = maxConsecutiveBroken < 2 && postP2BrokenCandles < 2;
+          // Prioritize unbroken active lines, more swing touches, candle touches, and recency
+          const score =
+            (isUnbroken ? 1000 : 0) +
+            swingTouches * 120 +
+            Math.min(candleTouches, 8) * 25 +
+            (p2.index / Math.max(1, n)) * 80;
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestP1 = p1;
+            bestP2 = p2;
+            bestSlope = slope;
+          }
+        }
+      }
+
+      if (bestP1 && bestP2 && Number.isFinite(bestSlope) && bestSlope < 0) {
+        const currentLinePrice = bestP1.price + bestSlope * (latestTime - bestP1.time);
+        if (currentLinePrice > 0) {
+          const points: TrendLinePoint[] = [];
+          for (let cIdx = bestP1.index; cIdx < n; cIdx++) {
+            const c = this.candles[cIdx];
+            if (!c) continue;
+            const val = bestP1.price + bestSlope * (c.time - bestP1.time);
+            points.push({ time: c.time, value: Number(val.toFixed(6)) });
+          }
+
+          let totalBrokenCandles = 0;
+          let consecutiveBrokenCandles = 0;
+          let maxConsecutiveBroken = 0;
+
+          for (let i = bestP2.index + 1; i < n; i++) {
+            const c = this.candles[i];
+            if (!c) continue;
+            const lineVal = bestP1.price + bestSlope * (c.time - bestP1.time);
+            const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
+            if (testPrice > lineVal * 1.0005) {
+              totalBrokenCandles++;
+              consecutiveBrokenCandles++;
+              if (consecutiveBrokenCandles > maxConsecutiveBroken) {
+                maxConsecutiveBroken = consecutiveBrokenCandles;
               }
-
-              // ตรวจสอบการเบรคทะลุเส้นกด (Close > TrendLine)
-              // นับแท่งเทียนทั้งหมดตั้งแต่ p1 เป็นต้นมาว่ามีแท่งที่ทะลุเส้นหรือไม่
-              // หากมีแท่งเทียนปิดเหนือเส้นสะสม >= 2 แท่ง หรือมีแท่งที่เบรคชัดเจน ให้ถือว่าเส้นกดถูกทำลายถาวร (Breakout Invalidation)
-              let totalBrokenCandles = 0;
-              let consecutiveBrokenCandles = 0;
-              let maxConsecutiveBroken = 0;
-
-              for (let i = p1.index; i < n; i++) {
-                const c = this.candles[i];
-                if (!c) continue;
-                const lineVal = p1.price + bestSlope * (c.time - p1.time);
-                const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
-                if (testPrice > lineVal) {
-                  totalBrokenCandles++;
-                  consecutiveBrokenCandles++;
-                  if (consecutiveBrokenCandles > maxConsecutiveBroken) {
-                    maxConsecutiveBroken = consecutiveBrokenCandles;
-                  }
-                } else {
-                  consecutiveBrokenCandles = 0;
-                }
-              }
-
-              // หากแท่งล่าสุดยังอยู่เหนือเส้น หรือเคยมีเบรคยืนยัน (>= 2 แท่งต่อเนื่อง หรือสะสม >= 2 แท่งหลังจากจุด p2)
-              const latestCandleTestPrice = Math.max(currentPrice, this.candles[n - 1]?.close ?? currentPrice);
-              const isCurrentlyAbove = latestCandleTestPrice > currentLinePrice;
-              const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
-
-              if (breakoutConfirmed) {
-                downtrendBreakoutConfirmed = true;
-                // Once breakout is confirmed, the downtrend line is invalidated and removed permanently
-                downtrendLine = undefined;
-              } else {
-                downtrendLine = {
-                  type: "DOWNTREND",
-                  p1,
-                  p2: bestP2,
-                  slope: bestSlope,
-                  currentLinePrice,
-                  isBroken: isCurrentlyAbove || totalBrokenCandles > 0,
-                  breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
-                  brokenCandleCount: totalBrokenCandles,
-                  breakoutConfirmed: false,
-                  points,
-                };
-              }
+            } else {
+              consecutiveBrokenCandles = 0;
             }
+          }
+
+          const latestCandleTestPrice = Math.max(currentPrice, this.candles[n - 1]?.close ?? currentPrice);
+          const isCurrentlyAbove = latestCandleTestPrice > currentLinePrice * 1.0005;
+          const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
+
+          if (breakoutConfirmed) {
+            downtrendBreakoutConfirmed = true;
+            downtrendLine = undefined;
+          } else {
+            downtrendLine = {
+              type: "DOWNTREND",
+              p1: bestP1,
+              p2: bestP2,
+              slope: bestSlope,
+              currentLinePrice,
+              isBroken: isCurrentlyAbove || totalBrokenCandles > 0,
+              breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
+              brokenCandleCount: totalBrokenCandles,
+              breakoutConfirmed: false,
+              points,
+            };
           }
         }
       }
     }
 
-    // ── 2. Uptrend Support Line: Requires at least 3 touch points (V1 + at least 2 HLs) ──
-    // ตามทฤษฎี Dow Theory:
-    // V1: ต้องเริ่มจากจุดต่ำสุดของรอบทุบ (The Lowest Low / LL) ล่าสุด
-    // เงื่อนไขเข้มงวด: ต้องมีจุดสัมผัส (Touches) ลากผ่านอย่างน้อย 3 จุดขึ้นไป (V1 + 2 HLs ที่อยู่บนหรือใกล้เส้นมาก <= 0.25%)
-    // หากมีไม่ถึง 3 จุด ให้ถือว่ายังไม่มีเส้นรับ (uptrendLine = undefined) ป้องกันเส้นชันเกินไป
-    if (confirmedLows.length >= 3) {
-      const v1 = lastLl ?? confirmedLows.reduce((min, l) => (l.price < min.price ? l : min), confirmedLows[confirmedLows.length - 1]!);
+    // ── 2. Uptrend Support Line: Supports 2+ confirmed swing lows (V1 -> HL) with candle touch scoring ──
+    if (confirmedLows.length >= 2) {
+      // Candidate V1 anchors: lowest swings in the lookback window + recent major valleys
+      const sortedByPriceAsc = [...confirmedLows].sort((a, b) => a.price - b.price);
+      const recentLows = confirmedLows.slice(-6);
+      const v1Map = new Map<number, SwingPoint>();
+      for (const l of [...sortedByPriceAsc.slice(0, 4), ...recentLows]) {
+        v1Map.set(l.index, l);
+      }
+      const v1Candidates = Array.from(v1Map.values()).sort((a, b) => a.index - b.index);
 
-      if (v1) {
+      let bestV1: SwingPoint | undefined;
+      let bestV2: SwingPoint | undefined;
+      let bestSlope = Infinity;
+      let bestScore = -Infinity;
+
+      for (const v1 of v1Candidates) {
         const candidateSubLows = confirmedLows.filter(
           (l) => l.index > v1.index && l.price > v1.price && l.time > v1.time
         );
 
-        // ต้องมี Sub Lows อย่างน้อย 2 จุดขึ้นไป (เพื่อรวมกับ V1 แล้วได้ >= 3 จุด)
-        if (candidateSubLows.length >= 2) {
-          let bestV2: SwingPoint | undefined;
-          let bestSlope = Infinity;
-          let bestTouchCount = 0;
+        for (const v2 of candidateSubLows) {
+          const timeDiff = v2.time - v1.time;
+          if (timeDiff <= 0) continue;
+          const priceDiff = v2.price - v1.price;
+          const slope = priceDiff / timeDiff;
+          if (slope <= 0) continue; // Strictly ascending
 
-          // ทดสอบคู่เส้นที่ลากจาก V1 ไปยังแต่ละ candidate V2
-          for (const v2 of candidateSubLows) {
-            const timeDiff = v2.time - v1.time;
-            const priceDiff = v2.price - v1.price;
-            const slope = priceDiff / timeDiff;
-            if (slope <= 0) continue; // ต้องเป็นเส้นรับขาขึ้นเท่านั้น
+          // Sanity check slope: between 0.015%/hr and 2.5%/hr
+          const pctPerHour = ((slope * 3600) / v1.price) * 100;
+          if (pctPerHour < 0.015 || pctPerHour > 2.5) continue;
 
-            let violates = false;
-            let touchCount = 1; // นับ V1 เป็นจุดที่ 1
+          const currentLinePrice = v1.price + slope * (latestTime - v1.time);
+          if (currentLinePrice <= 0) continue;
 
-            for (const midLow of candidateSubLows) {
-              const lineVal = v1.price + slope * (midLow.time - v1.time);
-              // หากมีเหวใดหลุดต่ำกว่าเส้นเกิน 0.05% ถือว่าเส้นผิด (ถูกหลุด)
-              if (midLow.price < lineVal * 0.9995) {
-                violates = true;
-                break;
-              }
-              // ถ้าเหวอยู่ใกล้เส้นในระยะ tolerance <= 0.25% ให้นับเป็นจุดสัมผัส
-              if (Math.abs(midLow.price - lineVal) / lineVal <= 0.0025) {
-                touchCount++;
-              }
+          let violates = false;
+          let swingTouches = 0;
+
+          for (const midLow of candidateSubLows) {
+            const lineVal = v1.price + slope * (midLow.time - v1.time);
+            // Any subsequent confirmed swing low breaking below the line by > 0.12% violates the support envelope
+            if (midLow.price < lineVal * 0.9988) {
+              violates = true;
+              break;
             }
+            if (Math.abs(midLow.price - lineVal) / lineVal <= 0.0035) {
+              swingTouches++;
+            }
+          }
+          if (violates) continue;
 
-            if (!violates && touchCount >= 3) {
-              // เลือกเส้นที่มีจุดสัมผัสมากที่สุด หรือถ้าเท่ากันให้เลือก slope ที่ดีที่สุด (outermost)
-              if (touchCount > bestTouchCount || (touchCount === bestTouchCount && slope < bestSlope)) {
-                bestSlope = slope;
-                bestV2 = v2;
-                bestTouchCount = touchCount;
+          // Count candle touches & check breakdown status
+          let candleTouches = 0;
+          let postV2BrokenCandles = 0;
+          let consecutiveBroken = 0;
+          let maxConsecutiveBroken = 0;
+
+          for (let i = v1.index; i < n; i++) {
+            const c = this.candles[i];
+            if (!c) continue;
+            const lineVal = v1.price + slope * (c.time - v1.time);
+            // Allow minor intra-bar wick pierces if candle closes above line, but reject deep close violations before v2
+            if (i <= v2.index && c.close < lineVal * 0.998) {
+              violates = true;
+              break;
+            }
+            if (c.low <= lineVal * 1.003 && c.close >= lineVal * 0.9985) {
+              candleTouches++;
+            }
+            if (i > v2.index) {
+              const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
+              if (testPrice < lineVal * 0.9995) {
+                postV2BrokenCandles++;
+                consecutiveBroken++;
+                if (consecutiveBroken > maxConsecutiveBroken) maxConsecutiveBroken = consecutiveBroken;
+              } else {
+                consecutiveBroken = 0;
               }
             }
           }
+          if (violates) continue;
 
-          // การันตีว่าต้องมีอย่างน้อย 3 จุดสัมผัสจริงๆ ถึงจะยอมรับเป็น Uptrend Line
-          if (bestV2 && Number.isFinite(bestSlope) && bestSlope > 0 && bestTouchCount >= 3) {
-            const currentLinePrice = v1.price + bestSlope * (latestTime - v1.time);
-            if (currentLinePrice > 0) {
-              const points: TrendLinePoint[] = [];
-              for (let cIdx = v1.index; cIdx < n; cIdx++) {
-                const c = this.candles[cIdx];
-                if (!c) continue;
-                const val = v1.price + bestSlope * (c.time - v1.time);
-                points.push({ time: c.time, value: Number(val.toFixed(6)) });
+          const isUnbroken = maxConsecutiveBroken < 2 && postV2BrokenCandles < 2 && currentPrice >= currentLinePrice * 0.998;
+          // Prioritize unbroken active lines, recent active wave (v2 recency), swing touches, and candle touches
+          const score =
+            (isUnbroken ? 1000 : 0) +
+            swingTouches * 120 +
+            Math.min(candleTouches, 8) * 30 +
+            (v2.index / Math.max(1, n)) * 150 +
+            (v1.index / Math.max(1, n)) * 80;
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestV1 = v1;
+            bestV2 = v2;
+            bestSlope = slope;
+          }
+        }
+      }
+
+      if (bestV1 && bestV2 && Number.isFinite(bestSlope) && bestSlope > 0) {
+        const currentLinePrice = bestV1.price + bestSlope * (latestTime - bestV1.time);
+        if (currentLinePrice > 0) {
+          const points: TrendLinePoint[] = [];
+          for (let cIdx = bestV1.index; cIdx < n; cIdx++) {
+            const c = this.candles[cIdx];
+            if (!c) continue;
+            const val = bestV1.price + bestSlope * (c.time - bestV1.time);
+            points.push({ time: c.time, value: Number(val.toFixed(6)) });
+          }
+
+          let totalBrokenCandles = 0;
+          let consecutiveBrokenCandles = 0;
+          let maxConsecutiveBroken = 0;
+
+          for (let i = bestV2.index + 1; i < n; i++) {
+            const c = this.candles[i];
+            if (!c) continue;
+            const lineVal = bestV1.price + bestSlope * (c.time - bestV1.time);
+            const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
+            if (testPrice < lineVal * 0.9995) {
+              totalBrokenCandles++;
+              consecutiveBrokenCandles++;
+              if (consecutiveBrokenCandles > maxConsecutiveBroken) {
+                maxConsecutiveBroken = consecutiveBrokenCandles;
               }
-
-              // ตรวจสอบการหลุดเส้นรับ (Close < TrendLine)
-              let totalBrokenCandles = 0;
-              let consecutiveBrokenCandles = 0;
-              let maxConsecutiveBroken = 0;
-
-              for (let i = v1.index; i < n; i++) {
-                const c = this.candles[i];
-                if (!c) continue;
-                const lineVal = v1.price + bestSlope * (c.time - v1.time);
-                const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
-                if (testPrice < lineVal) {
-                  totalBrokenCandles++;
-                  consecutiveBrokenCandles++;
-                  if (consecutiveBrokenCandles > maxConsecutiveBroken) {
-                    maxConsecutiveBroken = consecutiveBrokenCandles;
-                  }
-                } else {
-                  consecutiveBrokenCandles = 0;
-                }
-              }
-
-              const latestCandleTestPrice = Math.min(currentPrice, this.candles[n - 1]?.close ?? currentPrice);
-              const isCurrentlyBelow = latestCandleTestPrice < currentLinePrice;
-              const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
-
-              if (breakoutConfirmed) {
-                uptrendBreakdownConfirmed = true;
-                // Once breakdown is confirmed, the uptrend line is invalidated and removed permanently
-                uptrendLine = undefined;
-              } else {
-                uptrendLine = {
-                  type: "UPTREND",
-                  p1: v1,
-                  p2: bestV2,
-                  slope: bestSlope,
-                  currentLinePrice,
-                  isBroken: isCurrentlyBelow || totalBrokenCandles > 0,
-                  breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
-                  brokenCandleCount: totalBrokenCandles,
-                  breakoutConfirmed: false,
-                  points,
-                };
-              }
+            } else {
+              consecutiveBrokenCandles = 0;
             }
+          }
+
+          const latestCandleTestPrice = Math.min(currentPrice, this.candles[n - 1]?.close ?? currentPrice);
+          const isCurrentlyBelow = latestCandleTestPrice < currentLinePrice * 0.9995;
+          const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
+
+          if (breakoutConfirmed) {
+            uptrendBreakdownConfirmed = true;
+            uptrendLine = undefined;
+          } else {
+            uptrendLine = {
+              type: "UPTREND",
+              p1: bestV1,
+              p2: bestV2,
+              slope: bestSlope,
+              currentLinePrice,
+              isBroken: isCurrentlyBelow || totalBrokenCandles > 0,
+              breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
+              brokenCandleCount: totalBrokenCandles,
+              breakoutConfirmed: false,
+              points,
+            };
           }
         }
       }

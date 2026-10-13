@@ -2495,15 +2495,17 @@ export class DynamicGrid {
     // ── Trendline Buy Trigger Override ───────────────────────────────────────
     let isTlBuyTrigger = false;
     let tlBuyPrice: number | undefined;
+    const sellLevel1Cap = sellLevels[0] ?? upperBound;
     if (
       (this.cfg.enableBuyAboveTrendSupport !== false) &&
       uptrendLine &&
       !uptrendLine.isBroken &&
-      refPrice >= uptrendLine.currentLinePrice * 0.995
+      refPrice >= uptrendLine.currentLinePrice * 0.995 &&
+      uptrendLine.currentLinePrice < sellLevel1Cap
     ) {
       const tlPrice = uptrendLine.currentLinePrice;
       // If trendline support sits above standard buyTrigger (i.e. "ถ้าเลย buy target"),
-      // the trendline becomes the active primary buy entry!
+      // the trendline becomes the active primary buy entry (even if Buy L1/L2 are disabled)!
       if (tlPrice > buyTrigger) {
         buyTrigger = tlPrice;
         isTlBuyTrigger = true;
@@ -3488,13 +3490,18 @@ export class DynamicGrid {
         ? [`Buy Edge Floor (+${buyBufPct.toFixed(2)}%)`]
         : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
 
-      // Check if Uptrend Support Line is active and sits above standard buy targets ("ถ้าเลย buy target")
+      const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
+      const highestEnabledBuyPrice = buyLevels.find((_, idx) => enabledBuys[idx]) ?? (buyLevels[0] ?? 0);
+      const sellLevel1Limit = sellLevels[0] ?? upperBound;
+
+      // Check if Uptrend Support Line is active and sits above standard enabled buy targets ("ถ้าเลย buy target")
       const isTlAboveBuyTarget = Boolean(
         (this.cfg.enableBuyAboveTrendSupport !== false) &&
         activeUptrendLine &&
         !activeUptrendLine.isBroken &&
         refPrice >= activeUptrendLine.currentLinePrice * 0.995 &&
-        activeUptrendLine.currentLinePrice > (buyLevels[0] ?? 0)
+        activeUptrendLine.currentLinePrice > highestEnabledBuyPrice &&
+        activeUptrendLine.currentLinePrice < sellLevel1Limit
       );
 
       const effectiveBuyLevels = [...buyLevels];
@@ -3559,16 +3566,15 @@ export class DynamicGrid {
       const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
       const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
 
-      const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
-
       // Determine which buy levels are actually eligible for placing/holding orders
-      // (not disabled by user, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
+      // (not disabled by user unless overridden by active Uptrend Support at idx 0, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
       const eligibleBuyIndices = effectiveBuyLevels
         .map((lvl, idx) => ({ lvl, idx }))
         .filter(({ lvl, idx }) => {
           if (!lvl) return false;
-          // Check if disabled by user
-          if (enabledBuys[idx] === false) return false;
+          // Check if disabled by user (allow idx === 0 if it is the active Uptrend Support Line entry)
+          const isLevelEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
+          if (!isLevelEnabled) return false;
           // Holding Fraction Guard
           const lvlTargetFraction = buyTargets[idx] ?? ((idx + 1) / (effectiveBuyLevels.length || 4));
           if (currentHoldFraction >= (lvlTargetFraction - 0.05) && idx < effectiveBuyLevels.length - 1) {
@@ -3670,8 +3676,9 @@ export class DynamicGrid {
           const lvlPrice = effectiveBuyLevels[i];
           if (!lvlPrice) continue;
 
-          // If this buy level is disabled by user, cancel any existing order and skip
-          if (enabledBuys[i] === false) {
+          // If this buy level is disabled by user (and not overridden by active Uptrend Support at i === 0), cancel any existing order and skip
+          const isLevelEnabled = (i === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[i] !== false);
+          if (!isLevelEnabled) {
             const existingDisabledBuy = this.openOrders.find(
               (o) => o.isBid && (o.levelDesc === effectiveLevelNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
             );
@@ -4940,15 +4947,18 @@ export class DynamicGrid {
       let matchedBuyPrice: number | undefined;
 
       const tlPrice = (activeUptrendLine && !activeUptrendLine.isBroken) ? activeUptrendLine.currentLinePrice : undefined;
+      const highestEnabledBuyPrice = buyLevels.find((_, idx) => enabledBuys[idx]) ?? (buyLevels[0] ?? 0);
+      const sellLevel1Limit = sellLevels[0] ?? upperBound;
 
       // 1. Trendline Support Entry ("ถ้าเลย buy target สามารถเข้าซื้อได้ที่เส้น trend")
       if (
         (this.cfg.enableBuyAboveTrendSupport !== false) &&
         tlPrice !== undefined &&
-        tlPrice > (buyLevels[0] ?? 0) &&
-        currentBestAsk <= tlPrice * 1.002 &&
+        tlPrice > highestEnabledBuyPrice &&
+        tlPrice < sellLevel1Limit &&
+        currentBestAsk <= tlPrice * 1.0025 &&
         currentBestAsk >= tlPrice * 0.990 &&
-        enabledBuys[0] // Only trigger TL buy if Buy Level 1 is enabled
+        activeBuyCount > 0 // Allow 1-tranche TL support buy even when Buy L1/L2 are disabled
       ) {
         targetTranches = 1;
         matchedLevelIndex = 0;
