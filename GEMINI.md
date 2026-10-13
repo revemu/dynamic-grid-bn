@@ -951,6 +951,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   7. **Structural 2+ Pivot Trendline Engine & Uptrend Support Line 1-Tranche Pullback Entry (Item #3)**:
      - ใน `src/market-structure.ts` (`calculateTrendlines`): อัปเกรดอัลกอริทึมการตีเส้น Trendline ทั้งขาลง (`DESCENDING`) และขาขึ้น (`ASCENDING`) ให้ลากเชื่อมจาก **2+ Confirmed Swing Pivots** (`P1 -> P2` หรือ `V1 -> V2`) พร้อมระบบให้คะแนนความแม่นยำจากจำนวนจุดสวิงที่อยู่ในระนาบ (`alignedSwings`) และจำนวนแท่งเทียน/ไส้เทียนที่ลงมาแตะทดสอบเส้น (`candleTouches`), ตรวจสอบ Outer Envelope ไม่ให้แท่งเทียนระหว่างจุดตัดทะลุเส้นเกิน `0.25%` และจำกัดความชันที่เหมาะสม (`0.015%/hr` ถึง `2.5%/hr`) เพื่อให้ตีเส้นเทรนด์ไลน์ตามโครงสร้างตลาดจริงบน TF 15m ได้อย่างแม่นยำและแสดงผลบนกราฟทันที
      - ใน `src/strategy.ts`: ปลดล็อก **Uptrend Support Line Entry (`enableBuyAboveTrendSupport`)** ทั้งในโหมด `IOC_BRACKET` และ `MAKER_LIMIT` ให้สามารถเข้าซื้อสะสม **1 ไม้ (`targetTranches = 1`)** เมื่อราคาย่อตัวลงมาแตะเส้นรับขาขึ้น (`uptrendLine`) ที่อยู่สูงกว่า Buy Level ที่เปิดใช้งานและอยู่ต่ำกว่า `Sell Target 1` ได้ทันที แม้ว่าผู้ใช้จะปิด `Buy Level 1` และ `Buy Level 2` ไว้ก็ตาม (และหากราคาหลุดเส้นรับขาลงไป ระบบจะถอยกลับไปรอรับที่ `Buy Level 3` และ `Buy Level 4` ตามปกติ)
+  8. **Dynamic Binance Spot Pairs Fetching & Free Custom Pair Entry (FDUSD / USDT / USDC)**:
+     - ใน `src/server.ts` (`/api/symbols`): อัปเกรดให้ดึงคู่เทรด Spot ทั้งหมดจาก Binance REST API (`/api/v3/exchangeInfo`) แบบ Real-time พร้อม In-Memory Cache (1 ชั่วโมง) แยกกลุ่มเป็น `fdusd` (คู่ FDUSD ทั้งหมด 32+ คู่สำหรับรับสิทธิ์ 0% Maker Fee), `popular` (คู่ยอดนิยม), `usdt` (คู่ USDT ทั้งหมด) และ `usdc` แทนการ Hardcode รายการคู่เหรียญแบบเดิม
+     - ใน `public/app.js` & `public/index.html`:
+       - จัดกลุ่มตัวเลือกใน Dropdown ด้วย `<optgroup>` แยกชัดเจน (`🆓 FDUSD Pairs (0% Maker Fee)`, `⭐ Popular USDT Pairs`, `💵 Other USDT Pairs`, `🪙 USDC Pairs`)
+       - เพิ่มตัวเลือก `➕ Custom Pair (พิมพ์คู่เหรียญเอง)...` ใน Dropdown บน Navigation Bar เพื่อให้ผู้ใช้สามารถกรอกชื่อคู่เหรียญใดๆ บน Binance (เช่น `BTCFDUSD`, `SOLFDUSD`, `DOGEFDUSD`) แล้วสลับเทรดได้ทันที
+       - เพิ่มปุ่ม `✏️ Custom` สลับระหว่าง Dropdown กับช่องกรอก Text Input ใน Settings Modal เพื่อความยืดหยุ่นในการตั้งค่าคู่เหรียญตามใจชอบ
 
 ---
 

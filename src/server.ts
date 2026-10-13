@@ -38,6 +38,14 @@ export class DashboardServer {
   private latestTick: any = null;
   private db: BotDatabase;
   private maxCandles = 600;
+  private binanceSymbolsCache: {
+    time: number;
+    symbols: string[];
+    popular: string[];
+    fdusd: string[];
+    usdt: string[];
+    usdc: string[];
+  } | null = null;
 
   constructor(private readonly opts: DashboardServerOptions) {
     this.db = opts.db || getDatabase();
@@ -559,36 +567,72 @@ export class DashboardServer {
       return;
     }
 
-    // Popular Spot Symbols list (Binance & DreamDEX)
+    // Dynamic Spot Symbols list (Binance & DreamDEX)
     if (pathname === "/api/symbols" && req.method === "GET") {
-      const exchangeQuery = parsedUrl.searchParams.get("exchange") || "";
+      const exchangeQuery = (parsedUrl.searchParams.get("exchange") || "binance").toLowerCase();
       if (exchangeQuery === "dreamdex") {
         const dreamdexSymbols = ["SOMI", "SOMI:USDSO", "USDC.E:USDSO", "WBTC:USDSO", "WETH:USDSO"];
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ symbols: dreamdexSymbols }));
+        res.end(JSON.stringify({ success: true, exchange: "dreamdex", symbols: dreamdexSymbols, popular: dreamdexSymbols }));
         return;
       }
 
-      const popular = [
-        "BTCUSDT",
-        "ETHUSDT",
-        "SOLUSDT",
-        "BNBUSDT",
-        "DOGEUSDT",
-        "XRPUSDT",
-        "ADAUSDT",
-        "AVAXUSDT",
-        "SUIUSDT",
-        "NEARUSDT",
-        "PEPEUSDT",
-        "SHIBUSDT",
-        "LINKUSDT",
-        "DOTUSDT",
-        "FETUSDT",
-        "SOMIUSDT",
-      ];
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ symbols: popular }));
+      // Check Binance in-memory cache (1 hour)
+      const now = Date.now();
+      if (this.binanceSymbolsCache && now - this.binanceSymbolsCache.time < 3600_000) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: true, exchange: "binance", ...this.binanceSymbolsCache }));
+        return;
+      }
+
+      // Async fetch all active spot trading pairs from Binance
+      (async () => {
+        const fallbackPopular = [
+          "BTCUSDT", "ETHUSDT", "ETHFDUSD", "BTCFDUSD", "SOLUSDT", "SOLFDUSD",
+          "BNBUSDT", "BNBFDUSD", "DOGEUSDT", "DOGEFDUSD", "XRPUSDT", "XRPFDUSD",
+          "ADAUSDT", "AVAXUSDT", "SUIUSDT", "SUIFDUSD", "NEARUSDT", "PEPEUSDT",
+        ];
+        try {
+          const resp = await fetch("https://api.binance.com/api/v3/exchangeInfo");
+          if (resp.ok) {
+            const data = (await resp.json()) as any;
+            const spotSymbols = (data.symbols || []).filter(
+              (s: any) => s.status === "TRADING" && s.isSpotTradingAllowed !== false && ["USDT", "FDUSD", "USDC"].includes(s.quoteAsset),
+            );
+            const fdusd = spotSymbols.filter((s: any) => s.quoteAsset === "FDUSD").map((s: any) => s.symbol).sort();
+            const usdt = spotSymbols.filter((s: any) => s.quoteAsset === "USDT").map((s: any) => s.symbol).sort();
+            const usdc = spotSymbols.filter((s: any) => s.quoteAsset === "USDC").map((s: any) => s.symbol).sort();
+            const allSymbols = spotSymbols.map((s: any) => s.symbol).sort();
+            const popular = fallbackPopular.filter((sym) => allSymbols.includes(sym));
+
+            this.binanceSymbolsCache = {
+              time: now,
+              symbols: allSymbols,
+              popular: popular.length > 0 ? popular : fallbackPopular,
+              fdusd,
+              usdt,
+              usdc,
+            };
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true, exchange: "binance", ...this.binanceSymbolsCache }));
+            return;
+          }
+        } catch (fetchErr) {
+          this.opts.log(`⚠️ Failed to fetch dynamic symbols from Binance API: ${(fetchErr as Error).message}`);
+        }
+
+        // Fallback if fetch fails
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          success: true,
+          exchange: "binance",
+          symbols: fallbackPopular,
+          popular: fallbackPopular,
+          fdusd: ["ETHFDUSD", "BTCFDUSD", "SOLFDUSD", "BNBFDUSD", "DOGEFDUSD", "XRPFDUSD", "SUIFDUSD"],
+          usdt: fallbackPopular.filter((s) => s.endsWith("USDT")),
+          usdc: [],
+        }));
+      })();
       return;
     }
 

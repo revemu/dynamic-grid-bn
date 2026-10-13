@@ -3077,7 +3077,14 @@
     const maxInvVal = parseFloat(document.getElementById("cfg_maxInventoryUsdso").value);
     const payload = {
       exchange: document.getElementById("cfg_exchange") ? document.getElementById("cfg_exchange").value : "binance",
-      symbol: document.getElementById("cfg_symbol") ? document.getElementById("cfg_symbol").value.trim().toUpperCase() : undefined,
+      symbol: (() => {
+        const customInput = document.getElementById("cfg_symbol_custom");
+        if (customInput && customInput.style.display !== "none" && customInput.value.trim()) {
+          return customInput.value.trim().toUpperCase().replace(/[\/\-_:]/g, "");
+        }
+        const sel = document.getElementById("cfg_symbol");
+        return sel ? sel.value.trim().toUpperCase() : undefined;
+      })(),
       binanceApiKey: document.getElementById("cfg_binanceApiKey") ? document.getElementById("cfg_binanceApiKey").value.trim() : undefined,
       binanceApiSecret: (() => {
         const val = document.getElementById("cfg_binanceApiSecret") ? document.getElementById("cfg_binanceApiSecret").value.trim() : "";
@@ -3215,57 +3222,131 @@
     elSaveSettingsBtn.addEventListener("click", saveSettings);
   }
 
-  function renderTopSymbolOptions(exchange, currentSymbol) {
+  const cachedExchangeSymbols = {
+    binance: null,
+    dreamdex: null,
+  };
+
+  async function renderTopSymbolOptions(exchange, currentSymbol) {
     const elTopSymbolSelect = document.getElementById("topSymbolSelect");
-    const elPopularSymbolsList = document.getElementById("popularSymbolsList");
+    const elCfgSymbol = document.getElementById("cfg_symbol");
     const isDreamdex = exchange === "dreamdex";
-    const dreamdexHtml = `
+    const normCur = (currentSymbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+
+    // 1. Initial Quick Render (Fallback options while loading)
+    const dreamdexInitial = `
       <option value="SOMI">SOMI (SOMI/USDso)</option>
       <option value="SOMI:USDSO">SOMI:USDso</option>
       <option value="USDC.E:USDSO">USDC.e:USDso</option>
       <option value="WBTC:USDSO">WBTC:USDso</option>
       <option value="WETH:USDSO">WETH:USDso</option>
+      <option value="__custom__">➕ Custom Symbol (พิมพ์เอง)...</option>
     `;
-    const binanceHtml = `
-      <option value="BTCUSDT">BTC/USDT</option>
-      <option value="ETHUSDT">ETH/USDT</option>
-      <option value="ETHFDUSD">ETH/FDUSD</option>
-      <option value="SOLUSDT">SOL/USDT</option>
-      <option value="BNBUSDT">BNB/USDT</option>
-      <option value="SOMIUSDT">SOMI/USDT</option>
-      <option value="DOGEUSDT">DOGE/USDT</option>
-      <option value="XRPUSDT">XRP/USDT</option>
-      <option value="ADAUSDT">ADA/USDT</option>
-      <option value="AVAXUSDT">AVAX/USDT</option>
-      <option value="SUIUSDT">SUI/USDT</option>
-      <option value="NEARUSDT">NEAR/USDT</option>
-      <option value="PEPEUSDT">PEPE/USDT</option>
+    const binanceInitial = `
+      <optgroup label="🆓 FDUSD Pairs (0% Maker Fee)">
+        <option value="BTCFDUSD">BTC/FDUSD</option>
+        <option value="ETHFDUSD">ETH/FDUSD</option>
+        <option value="SOLFDUSD">SOL/FDUSD</option>
+        <option value="BNBFDUSD">BNB/FDUSD</option>
+        <option value="DOGEFDUSD">DOGE/FDUSD</option>
+        <option value="XRPFDUSD">XRP/FDUSD</option>
+        <option value="SUIFDUSD">SUI/FDUSD</option>
+      </optgroup>
+      <optgroup label="⭐ Popular USDT Pairs">
+        <option value="BTCUSDT">BTC/USDT</option>
+        <option value="ETHUSDT">ETH/USDT</option>
+        <option value="SOLUSDT">SOL/USDT</option>
+        <option value="BNBUSDT">BNB/USDT</option>
+        <option value="DOGEUSDT">DOGE/USDT</option>
+        <option value="XRPUSDT">XRP/USDT</option>
+        <option value="SUIUSDT">SUI/USDT</option>
+        <option value="PEPEUSDT">PEPE/USDT</option>
+      </optgroup>
+      <option value="__custom__">➕ Custom Pair (พิมพ์คู่เหรียญเอง)...</option>
     `;
-    const targetHtml = isDreamdex ? dreamdexHtml : binanceHtml;
-    if (elTopSymbolSelect) {
-      elTopSymbolSelect.innerHTML = targetHtml;
-      if (currentSymbol) {
-        elTopSymbolSelect.value = currentSymbol.toUpperCase();
-        if (!elTopSymbolSelect.value) {
-          elTopSymbolSelect.value = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
+
+    function applyHtml(html) {
+      if (elTopSymbolSelect) {
+        elTopSymbolSelect.innerHTML = html;
+        if (normCur) {
+          elTopSymbolSelect.value = normCur;
+          if (!elTopSymbolSelect.value) {
+            elTopSymbolSelect.value = (currentSymbol || "").toUpperCase();
+          }
+        }
+      }
+      if (elCfgSymbol) {
+        elCfgSymbol.innerHTML = html;
+        if (normCur) {
+          elCfgSymbol.value = normCur;
+          if (!elCfgSymbol.value) {
+            elCfgSymbol.value = (currentSymbol || "").toUpperCase();
+          }
         }
       }
     }
-    const elCfgSymbol = document.getElementById("cfg_symbol");
-    if (elCfgSymbol) {
-      elCfgSymbol.innerHTML = targetHtml;
-      if (currentSymbol) {
-        elCfgSymbol.value = currentSymbol.toUpperCase();
-        if (!elCfgSymbol.value) {
-          elCfgSymbol.value = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
-        }
-      }
-    }
+
+    applyHtml(isDreamdex ? dreamdexInitial : binanceInitial);
+
     const lblSymbol = document.getElementById("lbl_symbol");
     if (lblSymbol) {
       lblSymbol.innerHTML = isDreamdex
         ? `DreamDEX Trading Pair (Symbol) <span class="help-tip" title="Choose or enter DreamDEX pair (e.g. SOMI, SOMI:USDso, WETH:USDso, WBTC:USDso)">ℹ️</span>`
-        : `Binance Trading Pair (Symbol) <span class="help-tip" title="Choose or enter Binance Spot pair (e.g. BTCUSDT, ETHUSDT, ETHFDUSD)">ℹ️</span>`;
+        : `Binance Trading Pair (Symbol) <span class="help-tip" title="Choose from Binance list or type custom pair (e.g. BTCFDUSD, ETHFDUSD, SOLUSDT)">ℹ️</span>`;
+    }
+
+    // 2. Fetch full dynamic symbols list from backend
+    try {
+      const cacheKey = isDreamdex ? "dreamdex" : "binance";
+      let symData = cachedExchangeSymbols[cacheKey];
+      if (!symData) {
+        const resp = await fetch(`${API_BASE}/api/symbols?exchange=${cacheKey}`);
+        if (resp.ok) {
+          symData = await resp.json();
+          cachedExchangeSymbols[cacheKey] = symData;
+        }
+      }
+
+      if (symData) {
+        let fullHtml = "";
+        if (isDreamdex) {
+          const syms = Array.isArray(symData.symbols) ? symData.symbols : ["SOMI", "SOMI:USDSO", "USDC.E:USDSO", "WBTC:USDSO", "WETH:USDSO"];
+          fullHtml = syms.map((s) => `<option value="${s}">${s}</option>`).join("") + `<option value="__custom__">➕ Custom Symbol (พิมพ์เอง)...</option>`;
+        } else {
+          const fdusd = Array.isArray(symData.fdusd) ? symData.fdusd : [];
+          const popular = Array.isArray(symData.popular) ? symData.popular : [];
+          const usdt = Array.isArray(symData.usdt) ? symData.usdt : [];
+          const usdc = Array.isArray(symData.usdc) ? symData.usdc : [];
+
+          // If currentSymbol is not in popular or fdusd, prepend an option for it
+          let currentOptionHtml = "";
+          if (normCur && !popular.includes(normCur) && !fdusd.includes(normCur) && !usdt.includes(normCur)) {
+            currentOptionHtml = `<option value="${normCur}">📍 ${currentSymbol} (Current)</option>`;
+          }
+
+          const fdusdOptions = fdusd.map((s) => `<option value="${s}">${s.replace("FDUSD", "/FDUSD")}</option>`).join("");
+          const popOptions = popular.filter((s) => !s.endsWith("FDUSD")).map((s) => `<option value="${s}">${s.replace("USDT", "/USDT")}</option>`).join("");
+          const otherUsdt = usdt.filter((s) => !popular.includes(s));
+          const otherUsdtOptions = otherUsdt.map((s) => `<option value="${s}">${s.replace("USDT", "/USDT")}</option>`).join("");
+          const usdcOptions = usdc.map((s) => `<option value="${s}">${s.replace("USDC", "/USDC")}</option>`).join("");
+
+          fullHtml = `
+            ${currentOptionHtml}
+            <optgroup label="🆓 FDUSD Pairs (0% Maker Fee)">
+              ${fdusdOptions}
+            </optgroup>
+            <optgroup label="⭐ Popular USDT Pairs">
+              ${popOptions}
+            </optgroup>
+            ${otherUsdtOptions ? `<optgroup label="💵 Other USDT Pairs">${otherUsdtOptions}</optgroup>` : ""}
+            ${usdcOptions ? `<optgroup label="🪙 USDC Pairs">${usdcOptions}</optgroup>` : ""}
+            <option value="__custom__">➕ Custom Pair (พิมพ์คู่เหรียญเอง)...</option>
+          `;
+        }
+        applyHtml(fullHtml);
+      }
+    } catch (err) {
+      console.warn("Failed to load dynamic symbols:", err);
     }
   }
 
@@ -3292,8 +3373,19 @@
   const elTopSymbolSelect = document.getElementById("topSymbolSelect");
   if (elTopSymbolSelect) {
     elTopSymbolSelect.addEventListener("change", async (e) => {
-      const newSym = e.target.value;
+      let newSym = e.target.value;
       if (!newSym) return;
+
+      if (newSym === "__custom__") {
+        const entered = prompt("กรอกชื่อคู่เหรียญที่ต้องการเทรด (เช่น BTCFDUSD, SOLFDUSD, DOGEFDUSD):");
+        if (!entered || !entered.trim()) {
+          const navPill = document.getElementById("navSymbolBadge");
+          elTopSymbolSelect.value = navPill ? navPill.textContent.replace(/[\/\s]/g, "") : "BTCUSDT";
+          return;
+        }
+        newSym = entered.trim().toUpperCase().replace(/[\/\-_:]/g, "");
+      }
+
       try {
         const res = await fetch(`${API_BASE}/api/db/settings`, {
           method: "POST",
@@ -3319,6 +3411,27 @@
         }
       } catch (err) {
         console.error("Failed to switch symbol:", err);
+      }
+    });
+  }
+
+  // Toggle button for custom symbol input in Settings modal
+  const btnToggleCustom = document.getElementById("btnToggleCustomSymbol");
+  const cfgSymbolSelect = document.getElementById("cfg_symbol");
+  const cfgSymbolCustom = document.getElementById("cfg_symbol_custom");
+  if (btnToggleCustom && cfgSymbolSelect && cfgSymbolCustom) {
+    btnToggleCustom.addEventListener("click", () => {
+      const isCustom = cfgSymbolCustom.style.display !== "none";
+      if (isCustom) {
+        cfgSymbolCustom.style.display = "none";
+        cfgSymbolSelect.style.display = "";
+        btnToggleCustom.textContent = "✏️ พิมพ์เอง";
+      } else {
+        cfgSymbolCustom.style.display = "";
+        cfgSymbolSelect.style.display = "none";
+        cfgSymbolCustom.value = cfgSymbolSelect.value || "";
+        cfgSymbolCustom.focus();
+        btnToggleCustom.textContent = "📋 เลือกจากรายการ";
       }
     });
   }

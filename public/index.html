@@ -506,14 +506,19 @@
             <div class="form-group">
               <label for="cfg_symbol" id="lbl_symbol">
                 Trading Pair (Symbol)
-                <span class="help-tip" title="Choose or enter trading pair (e.g. BTCUSDT on Binance or SOMI:USDso on DreamDEX)">ℹ️</span>
+                <span class="help-tip" title="Choose from Binance/DreamDEX list or type custom pair (e.g. BTCFDUSD, SOLFDUSD, SOMI:USDso)">ℹ️</span>
               </label>
-              <select id="cfg_symbol" class="form-select">
-                <option value="BTCUSDT">BTC/USDT</option>
-                <option value="ETHUSDT">ETH/USDT</option>
-                <option value="SOLUSDT">SOL/USDT</option>
-                <option value="BNBUSDT">BNB/USDT</option>
-              </select>
+              <div class="symbol-input-group" style="display:flex;gap:6px;align-items:center;">
+                <select id="cfg_symbol" class="form-select" style="flex:1;">
+                  <option value="BTCUSDT">BTC/USDT</option>
+                  <option value="ETHUSDT">ETH/USDT</option>
+                  <option value="ETHFDUSD">ETH/FDUSD</option>
+                  <option value="BTCFDUSD">BTC/FDUSD</option>
+                  <option value="SOLUSDT">SOL/USDT</option>
+                </select>
+                <input type="text" id="cfg_symbol_custom" class="form-input" placeholder="Type pair e.g. BTCFDUSD" style="flex:1;display:none;text-transform:uppercase;" />
+                <button type="button" id="btnToggleCustomSymbol" class="btn btn-secondary btn-sm" title="Toggle between list selection and typing custom symbol" style="white-space:nowrap;padding:6px 10px;font-size:12px;height:36px;cursor:pointer;">✏️ พิมพ์เอง</button>
+              </div>
             </div>
 
             <div class="form-group">
