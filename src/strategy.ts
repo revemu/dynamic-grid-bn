@@ -1428,13 +1428,13 @@ export class DynamicGrid {
       }
     }
 
-    // Direct Purge: cancel all open orders on Binance
+    // Direct Purge: cancel all open orders on exchange
     if (!this.cfg.dryRun && this.binance.hasCredentials()) {
       try {
         await this.binance.cancelAllOpenOrders(this.symbol);
-        this.log(`🗑️ Directly cancelled all open orders on Binance for ${this.symbol}`);
+        this.log(`🗑️ Directly cancelled all open orders on ${this.binance.exchangeName.toUpperCase()} for ${this.symbol}`);
       } catch (err) {
-        this.log(`⚠️ Binance cancel all orders error: ${(err as Error).message}`);
+        this.log(`⚠️ ${this.binance.exchangeName.toUpperCase()} cancel all orders error: ${(err as Error).message}`);
       }
     }
 
@@ -1459,13 +1459,13 @@ export class DynamicGrid {
       await this.cancelAllRestingOrders(undefined, "Manual Bot Reset");
     }
 
-    // Direct Purge: cancel all open orders on Binance
+    // Direct Purge: cancel all open orders on exchange
     if (!this.cfg.dryRun && this.binance.hasCredentials()) {
       try {
         await this.binance.cancelAllOpenOrders(this.symbol);
-        this.log(`🗑️ Directly cancelled all open orders on Binance for ${this.symbol}`);
+        this.log(`🗑️ Directly cancelled all open orders on ${this.binance.exchangeName.toUpperCase()} for ${this.symbol}`);
       } catch (err) {
-        this.log(`⚠️ Binance cancel all orders error: ${(err as Error).message}`);
+        this.log(`⚠️ ${this.binance.exchangeName.toUpperCase()} cancel all orders error: ${(err as Error).message}`);
       }
     }
 
@@ -1542,14 +1542,22 @@ export class DynamicGrid {
   public async sellAllUser(): Promise<{ success: boolean; soldQty: number; price: number; error?: string }> {
     this.log(`💥 User triggered MANUAL SELL ALL.`);
 
-    // 1. Cancel resting orders first so base asset is unlocked from open limit sell orders on exchange
-    await this.cancelAllOrdersUser();
-    await this.refreshWalletBalances();
+    // 1. Cancel resting orders ONLY if resting orders actually exist (skip in IOC mode when openOrders is empty)
+    if (this.openOrders.length > 0) {
+      await this.cancelAllOrdersUser();
+      await this.refreshWalletBalances();
+    }
 
-    // Determine current best execution price
-    let execPrice = this.lastRefPrice || 0;
+    // Determine current best execution price directly from the active exchange orderbook
+    let execPrice = 0;
     try {
-      if (this.wsBookTicker && Date.now() - this.wsBookTicker.time < 10_000 && this.wsBookTicker.bestBid > 0) {
+      if (this.binance.exchangeName === "dreamdex") {
+        // Authoritative: Query DreamDEX indexer/pool directly (never use Binance WS ticker for DreamDEX!)
+        const top = await this.binance.getTopOfBook(this.symbol);
+        if (top?.bestBid && top.bestBid > 0) {
+          execPrice = top.bestBid;
+        }
+      } else if (this.wsBookTicker && Date.now() - this.wsBookTicker.time < 10_000 && this.wsBookTicker.bestBid > 0) {
         execPrice = this.wsBookTicker.bestBid;
       } else {
         const top = await this.binance.getTopOfBook(this.symbol);
@@ -3117,20 +3125,21 @@ export class DynamicGrid {
       }
 
       if (this.baseHeld() > 0 && !isBelowFloor) {
-        const priceAboveTL = refPrice > tlPrice;
-        if (priceAboveTL) {
+        // Check Best Bid liquidity on DEX/CEX before executing IOC
+        const effectiveBestBid = bestBid !== undefined && bestBid > 0 ? bestBid : undefined;
+        const avgEntry = this.getAvgEntryPrice();
+        // Tighten max allowed discount between TL & DEX Best Bid to 0.35% (prevents dumping into discounted bids)
+        const maxAllowedDiscountPct = 0.35;
+        const bidDiffPct = (effectiveBestBid && tlPrice > 0) ? ((tlPrice - effectiveBestBid) / tlPrice) * 100 : 0;
+        const isBidCloseEnough = effectiveBestBid !== undefined && (effectiveBestBid >= tlPrice || bidDiffPct <= maxAllowedDiscountPct);
+        const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
+
+        // Dual Trigger: EITHER CEX refPrice reaches/exceeds TL, OR on-chain Best Bid reaches touching distance (<=0.35%) of TL with profit!
+        const isTriggered = (refPrice >= tlPrice) || (effectiveBestBid !== undefined && isBidCloseEnough && isProfitableAtBid);
+        if (isTriggered) {
           const iocCooldownKey = `tl_ioc_sell`;
           const lastIocTime = this.orderCooldowns.get(iocCooldownKey) ?? 0;
           const iocCooldownMs = 30_000; // 30-second cooldown to prevent rapid re-triggers
-
-          // Check Best Bid liquidity on DEX/CEX before executing IOC
-          const effectiveBestBid = bestBid !== undefined && bestBid > 0 ? bestBid : undefined;
-          const avgEntry = this.getAvgEntryPrice();
-          // Tighten max allowed discount between TL & DEX Best Bid to 0.35% (prevents dumping into discounted bids)
-          const maxAllowedDiscountPct = 0.35;
-          const bidDiffPct = (effectiveBestBid && tlPrice > 0) ? ((tlPrice - effectiveBestBid) / tlPrice) * 100 : 0;
-          const isBidCloseEnough = effectiveBestBid !== undefined && (effectiveBestBid >= tlPrice || bidDiffPct <= maxAllowedDiscountPct);
-          const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
 
           if (effectiveBestBid && !isBidCloseEnough) {
             // Bid is too depressed compared to TL price -> hold off to avoid heavy slippage
@@ -3156,9 +3165,11 @@ export class DynamicGrid {
               : tlPrice;
 
             this.log(
-              `📉 [TL IOC] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} (${tlState}) — executing IOC sell at ${sellExecPrice === effectiveBestBid ? `Best Bid $${sellExecPrice.toFixed(6)}` : `TL Price $${sellExecPrice.toFixed(6)}`} for all ${this.baseHeld().toFixed(4)} ${this.baseAsset} (Avg Entry: $${avgEntry.toFixed(6)})`,
+              `📉 [TL IOC] Triggered (refPrice: $${refPrice.toFixed(6)}, Best Bid: $${(effectiveBestBid || 0).toFixed(6)} vs TL: $${tlPrice.toFixed(6)}) (${tlState}) — executing IOC sell at ${sellExecPrice === effectiveBestBid ? `Best Bid $${sellExecPrice.toFixed(6)}` : `TL Price $${sellExecPrice.toFixed(6)}`} for all ${this.baseHeld().toFixed(4)} ${this.baseAsset} (Avg Entry: $${avgEntry.toFixed(6)})`,
             );
-            await this.cancelAllRestingOrders(undefined, "Trendline IOC sell: cancelling resting orders before IOC execution");
+            if (this.openOrders.length > 0) {
+              await this.cancelAllRestingOrders(undefined, "Trendline IOC sell: cancelling resting orders before IOC execution");
+            }
             await this.sellAll(sellExecPrice, "SELL");
           }
         }
@@ -5586,12 +5597,21 @@ export class DynamicGrid {
       // On DreamDEX CLOB / IOC bracket, strict limit price with 0 slippage causes Revert 0xc04ad919 if book depth shifts.
       let limitPrice = price;
       if (this.binance.exchangeName === "dreamdex" || this.cfg.orderExecutionMode === "IOC_BRACKET") {
+        if (this.binance.exchangeName === "dreamdex") {
+          try {
+            const top = await this.binance.getTopOfBook(this.symbol);
+            if (top?.bestBid && top.bestBid > 0) {
+              price = Math.min(price, top.bestBid);
+            }
+          } catch {}
+        }
         const avgEntry = this.getAvgEntryPrice();
-        const slippagePct = (this.cfg.cutLossMaxBidDiscountPct ?? 1.5) / 100;
+        const slippagePct = (this.cfg.iocSlippagePct ?? this.cfg.cutLossMaxBidDiscountPct ?? 0.35) / 100;
         if (action === "SELL") {
-          // Take Profit / Trendline Exit: Strictly sell at full target price / Best Bid (0% discount)
-          // No artificial haircut below market bid!
-          limitPrice = price;
+          // Take Profit / Trendline Exit: Allow matching down to slippagePct (0.35%) to sweep orderbook depth,
+          // but strictly guarded to never sell below average entry price!
+          const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : price * (1 - slippagePct);
+          limitPrice = Math.max(minProfitablePrice, price * (1 - slippagePct));
         } else {
           // Cut Loss: Allow matching down to max bid discount to guarantee immediate execution
           limitPrice = price * (1 - slippagePct);

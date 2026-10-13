@@ -126,6 +126,19 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
      - **การแก้ไข**:
        1. ใน `src/exchange/dreamdex/client.ts`: สำหรับคำสั่งแบบ IOC ทำการรอ `waitForTransactionReceipt` ยืนยันจากเชน Somnia และคืนค่า `status: "FILLED"`, `executedQty: qty` ที่แท้จริง
        2. ใน `src/strategy.ts`: ตรวจสอบสถานะการ Match ให้เป็นอิสระต่อทั้ง CEX (Binance) และ On-Chain EVM (DreamDEX) โดยหากได้รับ `res.status === "FILLED"` หรือยืนยัน On-Chain txHash จะทำการ `closeLots()` และตัดจำหน่าย Lots ออกจาก Position ทันที
+   - **DreamDEX Direct Best Bid Order Matching & IOC Sell Slippage Buffer (Elimination of Cross-Exchange Price Leakage & 0xc04ad919 Reverts)**:
+      - **สาเหตุของปัญหา**:
+        1. ใน `sellAllUser()` บอทเคยไปดึงราคา `execPrice` จาก `this.wsBookTicker.bestBid` ซึ่งเป็น WebSocket ของ Binance (SOMIUSDT) ที่มีสภาพคล่องสูงกว่าและราคาดีดขึ้นไปที่ $0.207900 ขณะที่บน DreamDEX มี Best Bid อยู่ที่ $0.207500
+        2. ใน `sellAll()` มีการตั้ง `limitPrice = price` (0% discount) เมื่อคำสั่งขายราคา $0.207900 ถูกส่งไปยังสัญญา `SpotPool` บน DreamDEX สัญญาไม่พบคนตั้งรับซื้อที่ $0.207900 จึง Revert ทันทีด้วย Error `0xc04ad919` (Unmatched IOC Order)
+        3. นอกจากนี้ หากขายไม้ใหญ่ (~486 SOMI) ด้วย 0% discount หาก Best Bid แรกมีสภาพคล่องไม่พอรับ (เช่น มีแค่ 200 SOMI) สัญญา DreamDEX จะ Revert ทันที
+      - **การแก้ไข**:
+        1. ใน `sellAllUser()`: เมื่อรันบน DreamDEX ให้ดึงราคา Best Bid จาก Orderbook ของ DreamDEX (`getTopOfBook`) โดยตรงเสมอ ห้ามนำราคา Bid ของ Binance มาใช้ตั้งขาย
+        2. ใน `sellAll()`: หากรันบน DreamDEX ให้ดึงและ Clamp ราคากับ Best Bid ปัจจุบันของ DreamDEX และอนุญาต Slippage เล็กน้อย (0.35%) ลงมาได้ถึง `Math.max(avgEntry * 1.0005, price * (1 - slippagePct))` เพื่อให้คำสั่ง IOC กวาดสภาพคล่องข้ามช่องได้เต็มจำนวนโดยยังคงรับประกันกำไรเหนือทุนเฉลี่ย 100%
+    - **Fast-Path IOC Order Execution (Skip Redundant Resting Order Cancels)**:
+      - ในโหมด IOC (`IOC_BRACKET`) บอทไม่มีออเดอร์ค้างอยู่บนกระดาน (`openOrders.length === 0`) อยู่แล้ว
+      - ใน `sellAllUser()` และ `Block 2a (Trendline Exit)`: ตรวจสอบ `if (this.openOrders.length > 0)` ก่อนเรียก Cancel เท่านั้น หากไม่มีออเดอร์ค้างอยู่ ให้ข้ามขั้นตอน Cancel ทันที 100% ยิงขายออกไปใน 0.1 วินาที ไม่ต้องรอ Delay 600ms - 1s
+    - **Trendline Dual Trigger (CEX refPrice or On-Chain Best Bid Touch with Profit)**:
+      - ใน `Block 2a`: ปรับเงื่อนไขการ Trigger ให้ทำงานเมื่อ **ราคา CEX ชนเส้นกด (`refPrice >= tlPrice`)** หรือ **Best Bid บนกระดานขยับขึ้นมาจ่อเส้นกด (ส่วนต่าง ≤ 0.35%) และมีกำไรเหนือทุนเฉลี่ย** โดยไม่ต้องรอ CEX ฝั่งเดียว
    - **Trendline IOC Sell Best Bid Matching & Unmatched Error `0xc04ad919` Handling**:
      - **สาเหตุของปัญหา**: เมื่อราคา Binance ทะลุเส้นกด Trendline บอทเคยส่ง IOC Sell ด้วยราคา `tlPrice` (คำนวณจาก CEX) ไปยัง DreamDEX SpotPool Smart Contract แต่ใน Orderbook ฝั่ง Bid บน DEX ราคาซื้อจริงอาจอยู่ต่ำกว่าเล็กน้อย (เช่น TL อยู่ที่ $0.2038 แต่ Best Bid บน DEX มีสภาพคล่องที่ $0.2032) ส่งผลให้สัญญา `placeOrder` แบบ IOC ไม่พบคำสั่งคู่ตรงข้ามและสั่ง Revert ทันทีด้วย Custom Error `0xc04ad919` (Unmatched IOC Order)
      - **การแก้ไข**:
