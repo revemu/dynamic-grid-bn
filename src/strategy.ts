@@ -3128,13 +3128,13 @@ export class DynamicGrid {
         // Check Best Bid liquidity on DEX/CEX before executing IOC
         const effectiveBestBid = bestBid !== undefined && bestBid > 0 ? bestBid : undefined;
         const avgEntry = this.getAvgEntryPrice();
-        // Tighten max allowed discount between TL & DEX Best Bid to 0.35% (prevents dumping into discounted bids)
-        const maxAllowedDiscountPct = 0.35;
+        // Align max allowed discount strictly to user-configured IOC Slippage Tolerance (default 0.2%)
+        const maxAllowedDiscountPct = this.cfg.iocSlippagePct ?? 0.2;
         const bidDiffPct = (effectiveBestBid && tlPrice > 0) ? ((tlPrice - effectiveBestBid) / tlPrice) * 100 : 0;
         const isBidCloseEnough = effectiveBestBid !== undefined && (effectiveBestBid >= tlPrice || bidDiffPct <= maxAllowedDiscountPct);
         const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
 
-        // Dual Trigger: EITHER CEX refPrice reaches/exceeds TL, OR on-chain Best Bid reaches touching distance (<=0.35%) of TL with profit!
+        // Dual Trigger: EITHER CEX refPrice reaches/exceeds TL, OR on-chain Best Bid reaches touching distance of TL with profit!
         const isTriggered = (refPrice >= tlPrice) || (effectiveBestBid !== undefined && isBidCloseEnough && isProfitableAtBid);
         if (isTriggered) {
           const iocCooldownKey = `tl_ioc_sell`;
@@ -3146,7 +3146,7 @@ export class DynamicGrid {
             if (Date.now() - (this.orderCooldowns.get("tl_ioc_bid_warn") ?? 0) > 30_000) {
               this.orderCooldowns.set("tl_ioc_bid_warn", Date.now());
               this.log(
-                `⏳ [TL IOC STANDBY] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} but DEX Best Bid $${effectiveBestBid.toFixed(6)} is discounted ${bidDiffPct.toFixed(2)}% > max ${maxAllowedDiscountPct.toFixed(1)}% — waiting for bid liquidity`,
+                `⏳ [TL IOC STANDBY] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} but DEX Best Bid $${effectiveBestBid.toFixed(6)} is discounted ${bidDiffPct.toFixed(2)}% > max ${maxAllowedDiscountPct.toFixed(2)}% — waiting for bid liquidity`,
               );
             }
           } else if (effectiveBestBid && !isProfitableAtBid) {
@@ -3170,7 +3170,7 @@ export class DynamicGrid {
             if (this.openOrders.length > 0) {
               await this.cancelAllRestingOrders(undefined, "Trendline IOC sell: cancelling resting orders before IOC execution");
             }
-            await this.sellAll(sellExecPrice, "SELL");
+            await this.sellAll(sellExecPrice, "SELL", tlPrice);
           }
         }
       }
@@ -5505,7 +5505,7 @@ export class DynamicGrid {
     }
   }
 
-  private async sellAll(price: number, action: "SELL" | "CUT"): Promise<void> {
+  private async sellAll(price: number, action: "SELL" | "CUT", anchorRefPrice?: number): Promise<void> {
     const actionLabel = action === "CUT" ? "CUT LOSS (SELL ALL)" : "100% FULL EXIT (TAKE PROFIT)";
 
     // 1. Always cancel ALL resting open orders first so base asset is unlocked from limit sells and no buys occur
@@ -5606,12 +5606,14 @@ export class DynamicGrid {
           } catch {}
         }
         const avgEntry = this.getAvgEntryPrice();
-        const slippagePct = (this.cfg.iocSlippagePct ?? this.cfg.cutLossMaxBidDiscountPct ?? 0.35) / 100;
+        const slippagePct = (this.cfg.iocSlippagePct ?? 0.2) / 100;
         if (action === "SELL") {
-          // Take Profit / Trendline Exit: Allow matching down to slippagePct (0.35%) to sweep orderbook depth,
-          // but strictly guarded to never sell below average entry price!
-          const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : price * (1 - slippagePct);
-          limitPrice = Math.max(minProfitablePrice, price * (1 - slippagePct));
+          // Single Floor Cap: If anchorRefPrice (e.g. Trendline) is provided, limit price can NEVER fall below anchor * (1 - slippagePct),
+          // guaranteeing total slippage from trendline is strictly <= iocSlippagePct!
+          const anchor = (anchorRefPrice && anchorRefPrice > 0) ? anchorRefPrice : price;
+          const minAllowedBySlippage = anchor * (1 - slippagePct);
+          const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : minAllowedBySlippage;
+          limitPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
         } else {
           // Cut Loss: Allow matching down to max bid discount to guarantee immediate execution
           limitPrice = price * (1 - slippagePct);

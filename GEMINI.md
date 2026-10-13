@@ -137,8 +137,11 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
     - **Fast-Path IOC Order Execution (Skip Redundant Resting Order Cancels)**:
       - ในโหมด IOC (`IOC_BRACKET`) บอทไม่มีออเดอร์ค้างอยู่บนกระดาน (`openOrders.length === 0`) อยู่แล้ว
       - ใน `sellAllUser()` และ `Block 2a (Trendline Exit)`: ตรวจสอบ `if (this.openOrders.length > 0)` ก่อนเรียก Cancel เท่านั้น หากไม่มีออเดอร์ค้างอยู่ ให้ข้ามขั้นตอน Cancel ทันที 100% ยิงขายออกไปใน 0.1 วินาที ไม่ต้องรอ Delay 600ms - 1s
-    - **Trendline Dual Trigger (CEX refPrice or On-Chain Best Bid Touch with Profit)**:
-      - ใน `Block 2a`: ปรับเงื่อนไขการ Trigger ให้ทำงานเมื่อ **ราคา CEX ชนเส้นกด (`refPrice >= tlPrice`)** หรือ **Best Bid บนกระดานขยับขึ้นมาจ่อเส้นกด (ส่วนต่าง ≤ 0.35%) และมีกำไรเหนือทุนเฉลี่ย** โดยไม่ต้องรอ CEX ฝั่งเดียว
+    - **Trendline Dual Trigger & Single Floor Cap (Elimination of Double-Dip Discounts)**:
+      - **สาเหตุ & ปัญหาเดิม**: การ Trigger เส้นกดเคยยอมให้ Best Bid ต่ำกว่าเส้นกดได้สูงสุด 0.35% จากนั้นพอส่งคำสั่งใน `sellAll()` ดันเอา Best Bid มาหัก Slippage อีก 0.24% ทำให้เกิดการ "ลดราคาเบิ้ล 2 ต่อ" รวมหลุดต่ำกว่าเส้นกดจริงไปถึง ~0.59%
+      - **การแก้ไข**:
+        1. ใน `Block 2a`: ปรับ `maxAllowedDiscountPct` ให้ผูกตรงกับ `iocSlippagePct` (ค่า Slippage ใน Execution Guard เช่น 0.2%) ไม่ยอมให้ Best Bid ห่างจากเส้นกดเกินกว่าค่า Slippage ที่ผู้ใช้กำหนด
+        2. ส่ง `tlPrice` เป็น `anchorRefPrice` เข้า `sellAll(..., tlPrice)` โดยใน `sellAll()` คำนวณ Single Floor Cap: `limitPrice >= tlPrice * (1 - iocSlippagePct)` รับประกันว่าราคาขายต่ำสุดจะไม่มีทางหลุดห่างจากเส้นกดเกินกว่าค่า Slippage ที่ตั้งไว้ใน Execution Guard เด็ดขาด (ไม่เบิ้ล 2 ต่อ)
    - **Trendline IOC Sell Best Bid Matching & Unmatched Error `0xc04ad919` Handling**:
      - **สาเหตุของปัญหา**: เมื่อราคา Binance ทะลุเส้นกด Trendline บอทเคยส่ง IOC Sell ด้วยราคา `tlPrice` (คำนวณจาก CEX) ไปยัง DreamDEX SpotPool Smart Contract แต่ใน Orderbook ฝั่ง Bid บน DEX ราคาซื้อจริงอาจอยู่ต่ำกว่าเล็กน้อย (เช่น TL อยู่ที่ $0.2038 แต่ Best Bid บน DEX มีสภาพคล่องที่ $0.2032) ส่งผลให้สัญญา `placeOrder` แบบ IOC ไม่พบคำสั่งคู่ตรงข้ามและสั่ง Revert ทันทีด้วย Custom Error `0xc04ad919` (Unmatched IOC Order)
      - **การแก้ไข**:
