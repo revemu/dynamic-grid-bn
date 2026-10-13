@@ -849,11 +849,11 @@ export class DowStructureEngine {
         let transitionType: DowSwingPoint["transitionType"];
         let changePct: number | undefined;
 
-        // ค้นหาจุดต่ำสุดของรอบทุบ/สวิงโลว์ก่อนหน้านับตั้งแต่ยอด High ล่าสุด (lastHigh)
+        // ค้นหาจุดต่ำสุดของสวิงโลว์ที่ยืนยันแล้ว (alternatingSwings) ก่อนหน้านับตั้งแต่ยอด High ล่าสุด (lastHigh)
         // หากอยู่ในช่วงขาลงหลังจากยอด High (s.time > lastHigh.time):
-        // เหวใดๆ ที่เกิดขึ้นระหว่างรอบทุบ หากราคาต่ำกว่าเหวก่อนหน้า หรือต่ำกว่าเหวฐาน ต้องเป็น LL เสมอ!
-        const priorLowsInDownwave = this.swingLows.filter(
-          (l) => lastHigh && l.time > lastHigh.time && l.time < s.time
+        // เหวที่ยืนยันแล้วซึ่งเกิดขึ้นระหว่างรอบทุบ หากราคาต่ำกว่าเหวยืนยันก่อนหน้า ต้องเป็น LL เสมอ!
+        const priorLowsInDownwave = annotatedSwings.filter(
+          (l) => l.type === "LOW" && lastHigh && l.time > lastHigh.time && l.time < s.time
         );
         const hasHigherPriorLowInWave = priorLowsInDownwave.some((l) => l.price > s.price);
 

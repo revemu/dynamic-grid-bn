@@ -929,6 +929,25 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        - ซีกซ้าย: แสดงราคา **Best Bid (🟢)** บนกระดานเทรดจริง พร้อมระยะห่างเทียบกับ Mid Price
        - ซีกขวา: แสดงราคา **Best Ask (🔴)** บนกระดานเทรดจริง พร้อมระยะห่างเทียบกับ Mid Price
     4. **Layout**: ปรับ Grid สรุปผลด้านบนเป็น 3 คอลัมน์ที่กว้างและอ่านค่าง่าย (`grid-template-columns: 1.25fr 1fr 1fr`)
+- **Live Production Audit Logic Improvements (Items #1, #2, #4, #5, #6, #7)**:
+  1. **API Key Masking (`binanceApiKey` Protection)**:
+     - ใน `src/strategy.ts`, `src/index.ts`, และ `src/server.ts`: ทำการ Mask ค่า `binanceApiKey` เป็น `"******"` เสมอเมื่อส่งออกผ่าน `/api/db/settings` หรือ `/api/config` (เช่นเดียวกับ `binanceApiSecret` และ `dreamdexPrivateKey`) และป้องกันไม่ให้ค่า `"******"` เขียนทับคีย์จริงในฐานข้อมูลเมื่อกด Save Settings
+  2. **Upper Bound 100% Take Profit Minimum Profit (>= 0.50%) & DEX Bid Discount Guard**:
+     - ใน `src/strategy.ts`: บังคับให้การสั่งขาย 100% Take Profit ที่ขอบบนต้องมีกำไรสุทธิอย่างน้อย `>= 0.50%` เหนือ `avgEntryPrice` เสมอ (คำนวณจาก `bestBid` จริงบนกระดาน DEX ไม่ว่าจะตั้ง `sellProfitMode` เป็นโหมดใด)
+     - เพิ่มการตรวจสอบ `tpBidDiscountPct <= cutLossMaxBidDiscountPct` เทียบกับราคา Binance เพื่อป้องกันการโยนขายใส่ Bid บน DEX ที่ยังขยับตามราคา CEX ไม่ทัน
+     - ตรวจสอบ `highestActiveSellTarget` เฉพาะระดับ Sell Target ที่เปิดใช้งานจริง (`enabledSellTargets`) เท่านั้น
+  3. **Post-Cut Loss Cooldown (15m) & 1-Tranche Incremental DCA Re-Entry Guard**:
+     - ใน `src/strategy.ts` & `src/db.ts`: บันทึก `lastCutLossTime` และ `postCutSingleTrancheOnly = true` ลงใน State ทันทีที่เกิด Cut Loss
+     - บังคับ Cooldown 15 นาที (1 แท่งเทียน 15m) หลัง Cut Loss ก่อนอนุญาตให้ปลดล็อก `waitingForHigherLow` เพื่อป้องกันอาการ Whipsaw ขายก้นเหวแล้วเด้งกลับไปซื้อแพงกว่าเดิมทันที
+     - เมื่อกลับเข้าซื้อไม้แรกหลัง Cut Loss (`postCutSingleTrancheOnly`) ระบบจะจำกัดวงเงินซื้อไม่เกิน 1 ไม้ (`baseTrancheQuote`) ห้ามรวบซื้อ 4 ไม้รวด (`IOC Buy L1-L4 (4x)`) ในคำสั่งเดียว
+  4. **Persistent IOC Bracket Sell Ladder Cycle (`iocBracketSellCycle`)**:
+     - ใน `src/strategy.ts` & `src/db.ts`: บันทึกสถานะ `iocBracketSellCycle` (`baselineHeldQuote`, `baselineHeldQty`, `numSellTranches`, `soldStepNums`) ลงในฐานข้อมูล (`StrategyStateRecord`) และโหลดกลับมาเมื่อบอทรีสตาร์ท ป้องกันปัญหาการขายซ้ำ `Step 1/4` หลายรอบจาก State Reset กลางคัน
+  5. **Per-Symbol Trade Rounds Isolation, Cross-Symbol PnL Self-Healing, Stale Open Orders Cleanup & IOC Gas Logging**:
+     - ใน `src/trade-rounds.ts` & `src/db.ts`: แยกการคำนวณ `calculateTradeRounds` และ `backfillMissingSellPnl` ตามเหรียญ (`symbol` / `baseAsset` หรือช่วงราคา) ป้องกันไม่ให้ประวัติเทรด `WETH` (~$2,556) ไปปนกับต้นทุนของ `SOMI` (~$0.20) จนทำให้ Summary PnL เพี้ยน (-$45.67) พร้อมระบบซ่อมแซมค่า PnL ที่เพี้ยนโดยอัตโนมัติ
+     - เพิ่ม `cleanupStaleOpenOrders()` ตอนเปิดบอท และ `reconcileOpenOrdersWithExchange()` ตอนซิงค์กับกระดาน เพื่อล้างรายการ `OPEN` ที่ค้างอยู่ใน DB (Ghost Orders) ให้เป็น `CANCELLED` ตามสถานะจริง
+     - ปรับปรุง `updateTxGas` (พร้อม `pendingTxGas` cache แก้ปัญหา race condition ที่ `onGasSpent` ทำงานก่อน `recordEvent`) และ `getGasLogs` ให้รองรับธุรกรรมแบบ IOC (`fillTxHash` / `txHash`) และนับ `totalTxCount` ให้ตรงกับจำนวนธุรกรรม On-Chain จริง
+  6. **Accurate Dow Theory HL / LL Swing Labeling**:
+     - ใน `src/market-structure.ts`: แก้ไขการตรวจสอบ `priorLowsInDownwave` ให้อ้างอิงเฉพาะจุดสวิงที่ยืนยันแล้ว (`annotatedSwings`) แทนการใช้ `this.swingLows` ดิบทั้งหมด ป้องกันไม่ให้จุดยกฐาน (Higher Low จริง เช่น $0.2042 > $0.2026) ถูกติดป้ายผิดเป็น `LL หลุดฐาน`
 
 ---
 

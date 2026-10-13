@@ -95,6 +95,8 @@ export class DynamicGrid {
   private breakdownLowPrice?: number;
   private breakdownTime?: number;
   private breakdownCandleTimes = new Set<number>();
+  private lastCutLossTime?: number;
+  private postCutSingleTrancheOnly = false;
   private sellOrdersActive = true;
   private sellZoneTransitionCandleTime?: number;
   private buyOrdersActive = true;
@@ -449,7 +451,7 @@ export class DynamicGrid {
       dryRun: this.cfg.dryRun,
       symbol: this.symbol,
       exchange: this.cfg.exchange || "binance",
-      binanceApiKey: this.cfg.binanceApiKey || "",
+      binanceApiKey: this.cfg.binanceApiKey ? "******" : "",
       binanceApiSecret: this.cfg.binanceApiSecret ? "******" : "",
       binanceBaseUrl: this.cfg.binanceBaseUrl || "https://api.binance.com",
       binanceWsBase: this.cfg.binanceWsBase || "wss://stream.binance.com:9443",
@@ -467,6 +469,10 @@ export class DynamicGrid {
     return this.cfg.dreamdexPrivateKey;
   }
 
+  public getRealBinanceApiKey(): string | undefined {
+    return this.cfg.binanceApiKey;
+  }
+
   public getRealBinanceApiSecret(): string | undefined {
     return this.cfg.binanceApiSecret;
   }
@@ -479,7 +485,7 @@ export class DynamicGrid {
     for (const [key, val] of Object.entries(newSettings)) {
       if (key in this.cfg && val !== undefined) {
         // If updating secret/key and user kept the masked placeholder, do not overwrite
-        if ((key === "binanceApiSecret" || key === "dreamdexPrivateKey") && val === "******") continue;
+        if ((key === "binanceApiKey" || key === "binanceApiSecret" || key === "dreamdexPrivateKey") && val === "******") continue;
         if (key === "enabledBuyLevels" && Array.isArray(val)) {
           this.cfg.enabledBuyLevels = val.map(Boolean);
           this.needsBuyRebalance = true;
@@ -496,7 +502,9 @@ export class DynamicGrid {
     }
     if (this.binance.exchangeName === "binance") {
       if (newSettings.binanceApiKey !== undefined || newSettings.binanceApiSecret !== undefined || newSettings.binanceBaseUrl !== undefined) {
-        const newKey = newSettings.binanceApiKey !== undefined ? newSettings.binanceApiKey : this.cfg.binanceApiKey;
+        const newKey = (newSettings.binanceApiKey !== undefined && newSettings.binanceApiKey !== "******")
+          ? newSettings.binanceApiKey
+          : this.cfg.binanceApiKey;
         const newSecret = (newSettings.binanceApiSecret !== undefined && newSettings.binanceApiSecret !== "******")
           ? newSettings.binanceApiSecret
           : this.cfg.binanceApiSecret;
@@ -543,11 +551,13 @@ export class DynamicGrid {
     const configToPersist = {
       ...this.getRuntimeConfig(),
       // Ensure real secrets are persisted in DB if provided
+      binanceApiKey: this.cfg.binanceApiKey,
       binanceApiSecret: this.cfg.binanceApiSecret,
       dreamdexPrivateKey: this.cfg.dreamdexPrivateKey,
     };
     this.db.setSettings(configToPersist);
     const sanitizedLog = { ...newSettings };
+    if (sanitizedLog.binanceApiKey) sanitizedLog.binanceApiKey = "******";
     if (sanitizedLog.binanceApiSecret) sanitizedLog.binanceApiSecret = "******";
     if (sanitizedLog.dreamdexPrivateKey) sanitizedLog.dreamdexPrivateKey = "******";
     this.log(`⚙️ [settings] updated runtime configuration in database: ${JSON.stringify(sanitizedLog)}`);
@@ -598,9 +608,18 @@ export class DynamicGrid {
       const deltaBase = curBase - prevBase;
       const deltaQuote = curQuote - prevQuote;
 
-      // 1. Query active open orders directly from Binance Spot API
+      // 1. Query active open orders directly from Binance Spot API / DreamDEX
       const liveOrders = await this.binance.getOpenOrders(this.symbol);
       const onChainIdSet = new Set<string>(liveOrders.map((o) => o.orderId.toString()));
+
+      // Reconcile database OPEN order records against live exchange state
+      if (typeof (this.db as any).reconcileOpenOrdersWithExchange === "function") {
+        const reconciledCount = (this.db as any).reconcileOpenOrdersWithExchange(onChainIdSet, this.symbol);
+        if (reconciledCount > 0) {
+          this.recentOrders = this.db.getOrders(5000);
+          this.log(`🧹 [sync] Reconciled ${reconciledCount} stale OPEN order record(s) in database`);
+        }
+      }
 
       // If Binance confirms 0 open orders, purge phantom in-memory orders
       if (onChainIdSet.size === 0 && this.openOrders.length > 0) {
@@ -1149,6 +1168,25 @@ export class DynamicGrid {
       } else if (typeof data.brokenValleyTime === "number") {
         this.breakdownTime = data.brokenValleyTime;
       }
+      if (typeof data.lastCutLossTime === "number") {
+        this.lastCutLossTime = data.lastCutLossTime;
+      }
+      if (typeof data.postCutSingleTrancheOnly === "boolean") {
+        this.postCutSingleTrancheOnly = data.postCutSingleTrancheOnly;
+      }
+      if (
+        data.iocBracketSellCycle &&
+        typeof data.iocBracketSellCycle.baselineHeldQty === "number" &&
+        data.iocBracketSellCycle.baselineHeldQty > 0 &&
+        this.lots.length > 0
+      ) {
+        this.iocBracketSellCycle = {
+          baselineHeldQuote: data.iocBracketSellCycle.baselineHeldQuote || 0,
+          baselineHeldQty: data.iocBracketSellCycle.baselineHeldQty,
+          numSellTranches: data.iocBracketSellCycle.numSellTranches || 1,
+          soldStepNums: new Set<number>(Array.isArray(data.iocBracketSellCycle.soldStepNums) ? data.iocBracketSellCycle.soldStepNums : []),
+        };
+      }
       // Restore unified orders from database (up to 5000 items)
       const dbOrders = this.db.getOrders(5000);
       if (dbOrders.length > 0) {
@@ -1253,6 +1291,16 @@ export class DynamicGrid {
         breakdownFloorPrice: this.breakdownFloorPrice,
         breakdownLowPrice: this.breakdownLowPrice,
         breakdownTime: this.breakdownTime,
+        lastCutLossTime: this.lastCutLossTime,
+        postCutSingleTrancheOnly: this.postCutSingleTrancheOnly,
+        iocBracketSellCycle: this.iocBracketSellCycle
+          ? {
+              baselineHeldQuote: this.iocBracketSellCycle.baselineHeldQuote,
+              baselineHeldQty: this.iocBracketSellCycle.baselineHeldQty,
+              numSellTranches: this.iocBracketSellCycle.numSellTranches,
+              soldStepNums: Array.from(this.iocBracketSellCycle.soldStepNums),
+            }
+          : undefined,
         sellOrdersActive: this.sellOrdersActive,
         buyOrdersActive: this.buyOrdersActive,
         isSqueezePaused: this.isSqueezePaused,
@@ -1275,6 +1323,12 @@ export class DynamicGrid {
 
   private emit(event: StrategyEvent): void {
     if (event.type === "order") {
+      event.data = {
+        ...event.data,
+        symbol: event.data.symbol || this.symbol,
+        baseAsset: event.data.baseAsset || this.baseAsset,
+        quoteAsset: event.data.quoteAsset || this.quoteAsset,
+      };
       this.db.recordEvent(event.data);
       this.recentOrders = this.db.getOrders(5000);
       this.saveState();
@@ -1996,6 +2050,10 @@ export class DynamicGrid {
         this.saveState();
       }
 
+      const cutLossCooldownMs = 15 * 60 * 1000; // 15m (1 candle) mandatory cooldown after Cut Loss
+      const elapsedSinceCutMs = this.lastCutLossTime ? (Date.now() - this.lastCutLossTime) : Infinity;
+      const isInCutLossCooldown = elapsedSinceCutMs < cutLossCooldownMs;
+
       const candles = this.dowEngine?.getCandles() ?? [];
       const lastClosedCandle = candles.length >= 2 ? candles[candles.length - 2] : undefined;
       const currentCandle = candles.length >= 1 ? candles[candles.length - 1] : undefined;
@@ -2005,7 +2063,12 @@ export class DynamicGrid {
         (lastClosedCandle && lastClosedCandle.close >= buyLevel2Price * 0.9995 && refPrice >= buyLevel2Price * 0.999) ||
         (currentCandle && currentCandle.close >= buyLevel2Price && refPrice >= buyLevel2Price);
 
-      if (this.cfg.enableBuyLevel2Recovery && isCandleStandingAboveBuy2) {
+      if (isInCutLossCooldown) {
+        const remainMin = Math.ceil((cutLossCooldownMs - elapsedSinceCutMs) / 60000);
+        this.status(
+          `⏳ POST-CUT-LOSS COOLDOWN: Waiting ${remainMin}m before allowing floor recovery & re-entry (preventing bottom whipsaw)`,
+        );
+      } else if (this.cfg.enableBuyLevel2Recovery && isCandleStandingAboveBuy2) {
         this.log(
           `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Stood above Buy Level 2 $${buyLevel2Price.toFixed(6)} | 30% Zone for at least 1 candle) — Floor breakdown resolved, resuming grid accumulation!`,
         );
@@ -2127,6 +2190,9 @@ export class DynamicGrid {
             await this.cancelAllRestingOrders();
           }
           await this.sellAll(dexBid, "CUT");
+          this.lastCutLossTime = Date.now();
+          this.postCutSingleTrancheOnly = true;
+          this.iocBracketSellCycle = undefined;
           this.stuckSince = undefined;
           this.breakdownCandleTimes.clear();
           this.saveState();
@@ -2145,36 +2211,59 @@ export class DynamicGrid {
     }
 
     // ── 100% UPPER BOUND: 100% FULL TAKE PROFIT EXIT ─────────────────────────
-    // Take profit when the Binance reference price or Best Bid reaches or crosses the 100% Ceiling or highest sell level!
-    // SAFETY: Take Profit must NEVER sell at a loss! It must be strictly profitable above avgEntry.
+    // Take profit when the Binance reference price or Best Bid reaches or crosses the 100% Ceiling or highest ENABLED sell level!
+    // SAFETY: Take Profit must NEVER sell at a loss or micro-dust profit! Strictly require >= 0.50% profit above avgEntry on the actual execution Bid, and check DEX Bid discount vs Binance.
     const avgEntryPrice = this.getAvgEntryPrice();
-    const requireAvgProfit = (this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW")) === "PORTFOLIO_AVG_PROFIT";
-    const isProfitableExit = !requireAvgProfit || avgEntryPrice <= 0 || (effectiveMid >= avgEntryPrice * 1.0005) || (bestBid !== undefined && bestBid >= avgEntryPrice * 1.0005);
-    const highestSellTarget = sellLevels.length > 0 ? sellLevels[sellLevels.length - 1]! : upperBound;
-    const realCeilingReached = isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound) || refPrice >= highestSellTarget || (bestBid !== undefined && bestBid >= highestSellTarget);
+    const tpExecBid = (bestBid !== undefined && bestBid > 0) ? bestBid : effectiveMid;
+    const minTpProfitPct = 0.50;
+    const isProfitableExit = avgEntryPrice <= 0 || tpExecBid >= avgEntryPrice * (1 + minTpProfitPct / 100);
+    const tpMaxBidDiscountPct = this.cfg.cutLossMaxBidDiscountPct ?? 0.75;
+    const tpBidDiscountPct = (binancePrice && binancePrice > 0 && tpExecBid > 0)
+      ? ((binancePrice - tpExecBid) / binancePrice) * 100
+      : 0;
+    const isTpBidHealthy = tpBidDiscountPct <= tpMaxBidDiscountPct;
+
+    const enabledSellsForTp = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+    const activeSellTargetsForTp = sellLevels.filter((_, idx) => enabledSellsForTp[idx]);
+    const highestActiveSellTarget = activeSellTargetsForTp.length > 0
+      ? activeSellTargetsForTp[activeSellTargetsForTp.length - 1]!
+      : upperBound;
+
+    const realCeilingReached =
+      isAboveCeiling ||
+      refPrice >= upperBound ||
+      (bestBid !== undefined && bestBid >= upperBound) ||
+      (tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget);
 
     if (
       !this.isPaused &&
       this.cfg.takeProfitAtUpperBound &&
       this.lots.length > 0 &&
-      isProfitableExit &&
       realCeilingReached
     ) {
-      const exitPrice = (bestBid !== undefined && bestBid > 0 && (!requireAvgProfit || bestBid >= avgEntryPrice * 1.0005))
-        ? bestBid
-        : (bestBid ?? effectiveMid);
-
-      this.log(
-        `🎯 100% TAKE PROFIT: Price $${refPrice.toFixed(6)} (Bid: $${(bestBid ?? 0).toFixed(6)}) reached Upper Bound / Target ($${upperBound.toFixed(6)}) with net profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
-      );
-      await this.cancelAllRestingOrders();
-      await this.sellAll(exitPrice, "SELL");
-      this.stuckSince = undefined;
-      this.lockedChannel = undefined;
-      const symbolKey = this.getSymbolKey();
-      this.db.saveLockedChannel(symbolKey, undefined);
-      this.saveState();
-      return;
+      if (!isProfitableExit) {
+        this.status(
+          `⏳ TAKE PROFIT STANDBY: Price $${refPrice.toFixed(6)} reached Upper Bound ($${upperBound.toFixed(6)}) but DEX Bid $${tpExecBid.toFixed(6)} is below min profit target (+${minTpProfitPct.toFixed(2)}% >= $${(avgEntryPrice * (1 + minTpProfitPct / 100)).toFixed(6)} | Avg Entry: $${avgEntryPrice.toFixed(6)}) — holding for profitable bid`,
+        );
+      } else if (!isTpBidHealthy) {
+        this.status(
+          `⏳ TAKE PROFIT STANDBY: Price $${refPrice.toFixed(6)} reached Upper Bound ($${upperBound.toFixed(6)}) but DEX Bid $${tpExecBid.toFixed(6)} is discounted ${tpBidDiscountPct.toFixed(2)}% below Binance (Max allowed: ${tpMaxBidDiscountPct.toFixed(2)}%) — waiting for DEX bid liquidity to catch up`,
+        );
+      } else {
+        const exitPrice = tpExecBid;
+        this.log(
+          `🎯 100% TAKE PROFIT: Price $${refPrice.toFixed(6)} (Bid: $${exitPrice.toFixed(6)}) reached Upper Bound / Active Target ($${Math.min(upperBound, highestActiveSellTarget).toFixed(6)}) with +${(((exitPrice - avgEntryPrice) / (avgEntryPrice || exitPrice)) * 100).toFixed(2)}% profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
+        );
+        await this.cancelAllRestingOrders();
+        await this.sellAll(exitPrice, "SELL");
+        this.iocBracketSellCycle = undefined;
+        this.stuckSince = undefined;
+        this.lockedChannel = undefined;
+        const symbolKey = this.getSymbolKey();
+        this.db.saveLockedChannel(symbolKey, undefined);
+        this.saveState();
+        return;
+      }
     }
 
     // ── Target Holding % Rebalancing Model based on Ladder Zone ───────────────
@@ -4907,7 +4996,9 @@ export class DynamicGrid {
           // 10s cooldown per level, 3s global debounce
           if (now - lastBuyTime > 10_000 && now - globalBuyCooldown > 3_000) {
             const availableWalletQuote = this.cfg.dryRun ? maxInv : this.walletQuoteBalance;
-            let toSpendQuote = Math.min(deficitQuote, Math.max(0, maxInv - currentHeldQuote), availableWalletQuote);
+            // After a Cut Loss, enforce incremental 1-tranche DCA re-entry (prevent immediate 4x lump-sum whipsaw buy)
+            const maxAllowedPerBuy = this.postCutSingleTrancheOnly ? baseTrancheQuote : deficitQuote;
+            let toSpendQuote = Math.min(deficitQuote, maxAllowedPerBuy, Math.max(0, maxInv - currentHeldQuote), availableWalletQuote);
             const minNotional = Math.max(this.minNotional || 5.0, 5.0);
 
             // If toSpendQuote is below minNotional, try to expand to minNotional if wallet & maxInv headroom allow
@@ -4932,9 +5023,13 @@ export class DynamicGrid {
                 : `IOC Buy Level ${matchedLevelIndex + 1}`;
 
               this.log(
-                `🎯 [IOC BRACKET] Ask $${currentBestAsk.toFixed(6)} <= ${isTlBuy ? "TL Support" : `Buy Band ${matchedLevelIndex + 1}`} ($${matchedBuyPrice.toFixed(6)}) — executing ${actionLabel} for $${toSpendQuote.toFixed(2)} ${this.quoteAsset}`,
+                `🎯 [IOC BRACKET] Ask $${currentBestAsk.toFixed(6)} <= ${isTlBuy ? "TL Support" : `Buy Band ${matchedLevelIndex + 1}`} ($${matchedBuyPrice.toFixed(6)}) — executing ${actionLabel} for $${toSpendQuote.toFixed(2)} ${this.quoteAsset}${this.postCutSingleTrancheOnly ? " [Post-Cut 1x DCA Guard]" : ""}`,
               );
               await this.buyTrancheIOC(buyQty, currentBestAsk, actionLabel, matchedBuyPrice, toSpendQuote);
+              if (this.postCutSingleTrancheOnly) {
+                this.postCutSingleTrancheOnly = false;
+                this.saveState();
+              }
             }
           }
         }
@@ -4973,6 +5068,7 @@ export class DynamicGrid {
           numSellTranches,
           soldStepNums: new Set<number>(),
         };
+        this.saveState();
       }
 
       const cycle = this.iocBracketSellCycle;
@@ -5048,6 +5144,10 @@ export class DynamicGrid {
                   const ok = await this.sellTrancheIOC(sellQty, currentBestBid, actionLabel, matchedSellPrice);
                   if (ok) {
                     cycle.soldStepNums.add(matchedStep.stepNum);
+                    if (matchedStep.targetRemainingFraction === 0 || this.baseHeld() < this.minQty) {
+                      this.iocBracketSellCycle = undefined;
+                    }
+                    this.saveState();
                   }
                 }
               }

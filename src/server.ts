@@ -622,8 +622,12 @@ export class DashboardServer {
         return;
       }
       const current = this.opts.getSettings ? this.opts.getSettings() : this.db.getAllSettings();
+      const masked = { ...current };
+      if (masked.binanceApiKey) masked.binanceApiKey = "******";
+      if (masked.binanceApiSecret) masked.binanceApiSecret = "******";
+      if (masked.dreamdexPrivateKey) masked.dreamdexPrivateKey = "******";
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(current));
+      res.end(JSON.stringify(masked));
       return;
     }
 

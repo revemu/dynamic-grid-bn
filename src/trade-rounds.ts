@@ -113,14 +113,37 @@ export interface TradeRoundsResult {
  * the position is distributed/sold (SELL fills). When a new BUY occurs after
  * a selling phase, a new round is initiated.
  */
-export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsResult {
-  // 1. Filter only genuine executed fills (exclude pure cancellations)
+export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?: string): TradeRoundsResult {
+  const normActiveBase = activeSymbol
+    ? activeSymbol.toUpperCase().split(/[:\/\-_]/)[0]?.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "") || activeSymbol.toUpperCase()
+    : undefined;
+
+  const inferOrderBase = (o: UnifiedOrderRecord): string | undefined => {
+    if (o.baseAsset) return o.baseAsset.toUpperCase();
+    const p = Number(o.fillPrice || o.price || 0);
+    if (p > 50_000) return "WBTC";
+    if (p > 500 && p <= 50_000) return "WETH";
+    if (p > 0.01 && p < 2.0) return "SOMI";
+    return undefined;
+  };
+
+  // 1. Filter only genuine executed fills (exclude pure cancellations) and isolate by active symbol if provided
   const fills = orders.filter(
-    (o) =>
-      (o.status === "FILLED" ||
-        ["BUY_FILL", "SELL_FILL", "CUT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(o.action)) &&
-      !o.action?.startsWith("CANCEL") &&
-      o.status !== "CANCELLED",
+    (o) => {
+      const isFill =
+        (o.status === "FILLED" ||
+          ["BUY_FILL", "SELL_FILL", "CUT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(o.action)) &&
+        !o.action?.startsWith("CANCEL") &&
+        o.status !== "CANCELLED";
+      if (!isFill) return false;
+      if (normActiveBase) {
+        const inferred = inferOrderBase(o);
+        if (inferred && !normActiveBase.includes(inferred) && !inferred.includes(normActiveBase)) {
+          return false;
+        }
+      }
+      return true;
+    },
   );
 
   // 2. Sort chronologically
@@ -144,6 +167,17 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[]): TradeRoundsR
     const gasQuote = Number(f.gasFeeQuote || f.gasFeeUsdso || 0);
     const gasSomi = Number(f.gasFeeSomi || 0);
     const pnl = Number(f.pnlQuote !== undefined ? f.pnlQuote : f.pnlUsdso !== undefined ? f.pnlUsdso : (f.pnl || 0));
+
+    // Guard against cross-symbol price regime jump (>5x difference) within the same round
+    if (currentRound && currentRound.avgBuyPrice > 0 && price > 0) {
+      const ratio = Math.max(price / currentRound.avgBuyPrice, currentRound.avgBuyPrice / price);
+      if (ratio > 5) {
+        finalizeRound(currentRound, false);
+        rounds.push(currentRound);
+        currentRound = null;
+        inSellPhase = false;
+      }
+    }
 
     // Only split into a new round if previous round has completely closed its inventory or was sell-only
     if (currentRound && isBuy) {

@@ -276,9 +276,13 @@ async function main(): Promise<void> {
             ? s.binanceApiSecret
             : grid.getRealBinanceApiSecret();
 
+          const realApiKey = (s.binanceApiKey !== undefined && s.binanceApiKey !== "******")
+            ? s.binanceApiKey
+            : grid.getRealBinanceApiKey();
+
           const newExchange = createExchangeClient({
             exchange: targetExchangeName,
-            apiKey: s.binanceApiKey !== undefined ? s.binanceApiKey : prevConfig.binanceApiKey,
+            apiKey: realApiKey,
             apiSecret: realApiSecret,
             baseUrl: s.binanceBaseUrl || prevConfig.binanceBaseUrl,
             privateKey: (realPrivateKey && realPrivateKey !== "******") ? realPrivateKey : undefined,

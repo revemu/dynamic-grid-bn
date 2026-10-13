@@ -79,6 +79,14 @@ export interface StrategyStateRecord {
   isPaused?: boolean;
   recentOrders?: any[];
   appliedManualTradeIds?: string[];
+  lastCutLossTime?: number;
+  postCutSingleTrancheOnly?: boolean;
+  iocBracketSellCycle?: {
+    baselineHeldQuote: number;
+    baselineHeldQty: number;
+    numSellTranches: number;
+    soldStepNums: number[];
+  };
   lastUpdated: number;
 }
 
@@ -89,6 +97,7 @@ export interface StrategyStateRecord {
 export interface UnifiedOrderRecord {
   id: string;                    // Local DB record ID e.g. "ord_1790467149578_abc"
   orderId: string;               // On-chain or local order ID
+  symbol?: string;               // Trading pair symbol e.g. "SOMI:USDSO"
   side: "BUY" | "SELL";
   price: number;
   qty: number;
@@ -191,6 +200,7 @@ export class BotDatabase {
   private isSettingsDirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private maxHistoryRecords = 5000;
+  private pendingTxGas = new Map<string, { gasUsed: number; effectiveGasPriceGwei?: number; gasSomi: number; gasUsdso: number }>();
 
   constructor(opts: DatabaseOptions = {}) {
     this.dbPath = opts.dbPath ? path.resolve(opts.dbPath) : path.resolve(process.cwd(), "grid-state.db.json");
@@ -204,6 +214,7 @@ export class BotDatabase {
     this.cleanupHijackedMakerFills();
     this.cleanupDuplicateExitFills();
     this.cleanupDuplicateTxRecords();
+    this.cleanupStaleOpenOrders();
     this.reconcileManualTradesPnl();
   }
 
@@ -423,8 +434,26 @@ export class BotDatabase {
 
     let modified = false;
 
-    // 1. Align pnl, pnlQuote, and pnlUsdso if one is present
+    const inferBase = (o: UnifiedOrderRecord): string => {
+      if (o.baseAsset) return o.baseAsset.toUpperCase();
+      const p = Number(o.fillPrice || o.price || 0);
+      if (p > 50_000) return "WBTC";
+      if (p > 500 && p <= 50_000) return "WETH";
+      if (p > 0.01 && p < 2.0) return "SOMI";
+      return "DEFAULT";
+    };
+
+    // 1. Align pnl, pnlQuote, and pnlUsdso if one is present, and backfill inferred baseAsset
     for (const o of this.data.orders) {
+      if (!o.baseAsset) {
+        const inferred = inferBase(o);
+        if (inferred !== "DEFAULT") {
+          o.baseAsset = inferred;
+          o.quoteAsset = o.quoteAsset || "USDSO";
+          o.symbol = o.symbol || `${inferred}:${o.quoteAsset}`;
+          modified = true;
+        }
+      }
       const existingPnl = o.pnlQuote !== undefined ? o.pnlQuote : o.pnl !== undefined ? o.pnl : o.pnlUsdso;
       if (existingPnl !== undefined) {
         if (o.pnlQuote === undefined) { o.pnlQuote = existingPnl; modified = true; }
@@ -439,7 +468,7 @@ export class BotDatabase {
       }
     }
 
-    // 2. Chronologically reconstruct inventory to compute PnL for any sells where both are undefined
+    // 2. Chronologically reconstruct inventory PER ASSET to compute missing PnL and repair cross-symbol corrupted PnLs
     const fills = this.data.orders
       .filter(
         (o) =>
@@ -450,38 +479,49 @@ export class BotDatabase {
       .slice()
       .sort((a, b) => (a.time || a.placedTime || 0) - (b.time || b.placedTime || 0));
 
-    let invQty = 0;
-    let invCost = 0;
+    const invByAsset = new Map<string, { qty: number; cost: number }>();
 
     for (const f of fills) {
+      const assetKey = inferBase(f);
+      const state = invByAsset.get(assetKey) || { qty: 0, cost: 0 };
       const isBuy = f.side === "BUY" || f.action === "BUY_FILL" || f.action === "SNIPE_BUY";
       const qty = Number(f.qty || 0);
       const price = Number(f.fillPrice || f.price || 0);
 
       if (isBuy) {
-        invQty += qty;
-        invCost += qty * price;
+        state.qty += qty;
+        state.cost += qty * price;
       } else {
-        const avgBuyPrice = invQty > 0 ? invCost / invQty : price;
+        const avgBuyPrice = state.qty > 0 ? state.cost / state.qty : price;
         const calcPnl = (price - avgBuyPrice) * qty;
+        const notional = Number(f.notionalQuote || f.notionalUsdso || qty * price || 0);
+        const existingPnl = f.pnlQuote ?? f.pnl ?? f.pnlUsdso;
 
-        if (f.pnl === undefined && f.pnlQuote === undefined && f.pnlUsdso === undefined) {
+        // Repair if PnL is missing OR if historical cross-symbol contamination caused an impossible loss (> 50% of notional on a normal grid trade)
+        const isCorruptedCrossSymbolPnl =
+          existingPnl !== undefined &&
+          notional > 0 &&
+          Math.abs(existingPnl) > notional * 0.5 &&
+          Math.abs(calcPnl) < notional * 0.25;
+
+        if ((existingPnl === undefined) || isCorruptedCrossSymbolPnl) {
           f.pnl = calcPnl;
           f.pnlQuote = calcPnl;
           f.pnlUsdso = calcPnl;
           modified = true;
         }
 
-        const soldRatio = invQty > 0 ? Math.min(1, qty / invQty) : 1;
-        invQty = Math.max(0, invQty - qty);
-        invCost = Math.max(0, invCost * (1 - soldRatio));
+        const soldRatio = state.qty > 0 ? Math.min(1, qty / state.qty) : 1;
+        state.qty = Math.max(0, state.qty - qty);
+        state.cost = Math.max(0, state.cost * (1 - soldRatio));
       }
+      invByAsset.set(assetKey, state);
     }
 
     if (modified) {
       this.isDirty = true;
       this.flushSync();
-      this.log("✅ automatically backfilled missing PnL for historical sell orders");
+      this.log("✅ automatically backfilled & repaired per-symbol PnL for historical sell orders");
     }
   }
 
@@ -612,6 +652,62 @@ export class BotDatabase {
       this.log(`🧹 [cleanup] Deduplicated ${beforeLen - this.data.orders.length} record(s) sharing identical on-chain txHash`);
       this.flushSync();
     }
+  }
+
+  /**
+   * Marks stale OPEN orders in db.orders as CANCELLED on startup when expired or when in IOC_BRACKET mode.
+   */
+  public cleanupStaleOpenOrders(): void {
+    if (!this.data || !Array.isArray(this.data.orders) || this.data.orders.length === 0) return;
+    const now = Date.now();
+    const isIocMode = (this.data.settings?.orderExecutionMode || "IOC_BRACKET") === "IOC_BRACKET";
+    let cleaned = 0;
+
+    for (const o of this.data.orders) {
+      if (o.status === "OPEN") {
+        const isExpired = o.expireTime !== undefined && o.expireTime > 0 && now > o.expireTime;
+        const isVeryOld = o.placedTime > 0 && (now - o.placedTime) > 24 * 3600 * 1000;
+        if (isExpired || isVeryOld || isIocMode) {
+          o.status = "CANCELLED";
+          o.cancelTime = o.cancelTime || now;
+          o.action = o.side === "SELL" ? "CANCEL_SELL" : "CANCEL_BUY";
+          o.reason = o.reason || (isExpired ? "Expired open order cleaned up" : "Stale resting order reconciled (0 open on exchange)");
+          cleaned++;
+        }
+      }
+    }
+
+    if (cleaned > 0) {
+      this.log(`🧹 [cleanup] Marked ${cleaned} stale OPEN order(s) in database as CANCELLED`);
+      this.flushSync();
+    }
+  }
+
+  /**
+   * Synchronizes OPEN records in db.orders with the authoritative set of active orderIds from the exchange.
+   */
+  public reconcileOpenOrdersWithExchange(liveOrderIds: Set<string>, activeSymbol?: string): number {
+    if (!this.data || !Array.isArray(this.data.orders)) return 0;
+    const now = Date.now();
+    let updated = 0;
+    for (const o of this.data.orders) {
+      if (o.status === "OPEN") {
+        if (!o.orderId || !liveOrderIds.has(String(o.orderId))) {
+          // Allow 15s grace period for newly placed orders
+          if (now - (o.placedTime || o.time || 0) > 15_000) {
+            o.status = "CANCELLED";
+            o.cancelTime = now;
+            o.action = o.side === "SELL" ? "CANCEL_SELL" : "CANCEL_BUY";
+            o.reason = o.reason || "Order no longer open on exchange (reconciled)";
+            updated++;
+          }
+        }
+      }
+    }
+    if (updated > 0) {
+      this.scheduleFlush();
+    }
+    return updated;
   }
 
   /**
@@ -1066,6 +1162,25 @@ export class BotDatabase {
     if (this.data.orders.length > this.maxHistoryRecords) {
       this.data.orders = this.data.orders.slice(0, this.maxHistoryRecords);
     }
+
+    if (record) {
+      if (!record.symbol && (eventData.symbol || this.data.settings?.symbol)) {
+        record.symbol = eventData.symbol || this.data.settings?.symbol;
+      }
+      if (!record.baseAsset && (eventData.baseAsset || this.data.state?.baseAsset)) {
+        record.baseAsset = eventData.baseAsset || this.data.state?.baseAsset;
+      }
+      if (!record.quoteAsset && (eventData.quoteAsset || this.data.state?.quoteAsset)) {
+        record.quoteAsset = eventData.quoteAsset || this.data.state?.quoteAsset;
+      }
+      const txKey = (record.txHash || record.fillTxHash || record.createTxHash || "").trim().toLowerCase();
+      if (txKey && this.pendingTxGas.has(txKey)) {
+        const g = this.pendingTxGas.get(txKey)!;
+        this.pendingTxGas.delete(txKey);
+        this.updateTxGas(record.txHash || record.fillTxHash || record.createTxHash || txKey, g);
+      }
+    }
+
     this.scheduleFlush();
     return record;
   }
@@ -1100,8 +1215,9 @@ export class BotDatabase {
     return this.data.orders.slice(0, limit);
   }
 
-  public getTradeRounds(): TradeRoundsResult {
-    return calculateTradeRounds(this.data.orders);
+  public getTradeRounds(symbol?: string): TradeRoundsResult {
+    const activeSym = symbol || this.data.settings?.symbol || this.data.state?.baseAsset;
+    return calculateTradeRounds(this.data.orders, activeSym);
   }
 
   // ── Trade & Lot Management API Methods ─────────────────────────────────────
@@ -1478,28 +1594,40 @@ export class BotDatabase {
     gas: { gasUsed: number; effectiveGasPriceGwei?: number; gasSomi: number; gasUsdso: number },
   ): void {
     const explorerUrl = `https://explorer.somnia.network/tx/${txHash}`;
+    const normTx = (txHash || "").trim().toLowerCase();
     let updated = false;
 
     for (const order of this.data.orders) {
-      if (order.createTxHash === txHash) {
+      if (order.createTxHash && order.createTxHash.toLowerCase() === normTx) {
         order.createGasSomi = gas.gasSomi;
         order.createGasUsdso = gas.gasUsdso;
         order.gasFeeSomi = (order.createGasSomi || 0) + (order.cancelGasSomi || 0);
         order.gasFeeUsdso = (order.createGasUsdso || 0) + (order.cancelGasUsdso || 0);
+        order.gasFeeBase = order.gasFeeSomi;
+        order.gasFeeQuote = order.gasFeeUsdso;
         order.explorerUrl = explorerUrl;
         updated = true;
       }
-      if (order.cancelTxHash === txHash) {
+      if (order.cancelTxHash && order.cancelTxHash.toLowerCase() === normTx) {
         order.cancelGasSomi = gas.gasSomi;
         order.cancelGasUsdso = gas.gasUsdso;
         order.gasFeeSomi = (order.createGasSomi || 0) + (order.cancelGasSomi || 0);
         order.gasFeeUsdso = (order.createGasUsdso || 0) + (order.cancelGasUsdso || 0);
+        order.gasFeeBase = order.gasFeeSomi;
+        order.gasFeeQuote = order.gasFeeUsdso;
         order.explorerUrl = explorerUrl;
         updated = true;
       }
-      if (order.txHash === txHash && !order.createGasSomi && !order.cancelGasSomi) {
+      if (
+        ((order.txHash && order.txHash.toLowerCase() === normTx) ||
+          (order.fillTxHash && order.fillTxHash.toLowerCase() === normTx)) &&
+        !order.createGasSomi &&
+        !order.cancelGasSomi
+      ) {
         order.gasFeeSomi = gas.gasSomi;
         order.gasFeeUsdso = gas.gasUsdso;
+        order.gasFeeBase = gas.gasSomi;
+        order.gasFeeQuote = gas.gasUsdso;
         order.explorerUrl = explorerUrl;
         updated = true;
       }
@@ -1507,6 +1635,13 @@ export class BotDatabase {
 
     if (updated) {
       this.scheduleFlush();
+    } else if (normTx) {
+      // Cache gas for a transaction whose order event will be emitted immediately after waitForTransactionReceipt
+      this.pendingTxGas.set(normTx, gas);
+      if (this.pendingTxGas.size > 500) {
+        const firstKey = this.pendingTxGas.keys().next().value;
+        if (firstKey) this.pendingTxGas.delete(firstKey);
+      }
     }
   }
 
@@ -1554,15 +1689,32 @@ export class BotDatabase {
           explorerUrl: `https://explorer.somnia.network/tx/${o.cancelTxHash}`,
         });
       }
+      const directTx = o.fillTxHash || o.txHash;
+      if (directTx && o.gasFeeSomi && !o.createGasSomi && !o.cancelGasSomi) {
+        logs.push({
+          id: `gas_fill_${o.id}`,
+          timestamp: o.fillTime || o.time || o.placedTime,
+          txHash: directTx,
+          label: `${o.action || o.side} ${o.levelDesc ? `(${o.levelDesc})` : `#${o.orderId}`}`,
+          gasUsed: 0,
+          effectiveGasPriceGwei: 0,
+          gasSomi: o.gasFeeSomi,
+          gasUsdso: o.gasFeeUsdso || o.gasFeeQuote || 0,
+          explorerUrl: `https://explorer.somnia.network/tx/${directTx}`,
+        });
+      }
     }
     return logs.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
   }
 
   public getGasSummary(): { totalGasSpentSomi: number; totalGasSpentUsdso: number; totalTxCount: number } {
+    const somiTxs = this.data.orders.filter(
+      (o) => (o.txHash || o.fillTxHash || o.createTxHash || "").toString().startsWith("0x"),
+    ).length;
     return {
       totalGasSpentSomi: this.data.state.totalGasSpentSomi || 0,
       totalGasSpentUsdso: this.data.state.totalGasSpentUsdso || 0,
-      totalTxCount: this.data.state.totalTxCount || 0,
+      totalTxCount: Math.max(this.data.state.totalTxCount || 0, somiTxs),
     };
   }
 
