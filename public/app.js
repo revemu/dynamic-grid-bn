@@ -2470,8 +2470,10 @@
       cleanReason = cleanReason.replace(/Aggregated\s+(\d+)\s+tranches/i, "Aggregated ($1x)");
 
       // Remove gas comp substring if gasCompBadge is already rendered or gasCompSomi > 0
-      if (order.gasCompSomi && order.gasCompSomi > 0) {
+      const compAmount = Number(order.gasCompSomi || order.gasCompBase || 0);
+      if (compAmount > 0) {
         cleanReason = cleanReason.replace(/\s*\(Gas Comp:[^)]+\)/i, "").trim();
+        cleanReason = cleanReason.replace(/\s*\(Comp:[^)]+\)/i, "").trim();
       }
       // If reason is redundant with cleanLevelDesc or starts with it, suppress duplicate
       const ldLower = cleanLevelDesc.toLowerCase();
@@ -2508,8 +2510,9 @@
     const gasBadge = order.gasFeeSomi !== undefined
       ? `<span class="act-gas-badge" title="Gas fee paid for this tx: ${order.gasFeeSomi.toFixed(6)} SOMI">⛽ ${order.gasFeeSomi.toFixed(5)} SOMI</span>`
       : "";
-    const gasCompBadge = (order.gasCompSomi && order.gasCompSomi > 0)
-      ? `<span class="act-gas-badge" style="background: rgba(16, 185, 129, 0.15); color: #4ade80; border-color: rgba(16, 185, 129, 0.4);" title="Compensated to Wallet: ${order.gasCompSomi.toFixed(4)} SOMI (-$${(order.gasLossUsdso || 0).toFixed(4)}) | Net Lot: ${(order.netQty || order.qty).toFixed(4)} SOMI">🛡️ +${order.gasCompSomi.toFixed(4)} SOMI Gas Ret</span>`
+    const compAmount = Number(order.gasCompSomi || order.gasCompBase || 0);
+    const gasCompBadge = compAmount > 0
+      ? `<span class="act-gas-badge" style="background: rgba(16, 185, 129, 0.15); color: #4ade80; border-color: rgba(16, 185, 129, 0.4);" title="Compensated to Wallet: ${compAmount.toFixed(4)} SOMI (-$${(Number(order.gasLossUsdso || order.gasLossQuote || 0)).toFixed(4)}) | Net Lot: ${(Number(order.netQty || order.qty)).toFixed(4)} SOMI">🛡️ +${compAmount.toFixed(4)} SOMI Gas Ret</span>`
       : "";
 
     if (order.id) div.setAttribute("data-order-id", String(order.id));

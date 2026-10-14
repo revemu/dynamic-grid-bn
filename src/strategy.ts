@@ -1176,6 +1176,21 @@ export class DynamicGrid {
       } else {
         this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
       }
+
+      // ── Resilient Gas Compensation Recovery from Order Ledger ───────────
+      // If totalGasDeductedBase in state was wiped or is 0 on DEX (SOMI base),
+      // restore it from the authoritative order history in DB!
+      const isDex = this.binance?.hasGasFees || this.binance?.isDex || this.binance?.exchangeName === "dreamdex";
+      const isSomiBase = isDex && (this.baseAsset || "").toUpperCase() === "SOMI";
+      if (this.totalGasDeductedBase <= 0 && isSomiBase) {
+        const histComp = this.db.getOrders(5000).reduce((sum, o) => sum + (o.gasCompSomi || o.gasCompBase || 0), 0);
+        if (histComp > 0) {
+          this.totalGasDeductedBase = histComp;
+          this.totalGasDeductedQuote = histComp * (this.lastRefPrice || this.getAvgEntryPrice() || 0.2);
+          this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
+          this.log(`⛽ [STATE SYNC] Restored totalGasDeductedBase = ${histComp.toFixed(4)} SOMI from historical orders ledger.`);
+        }
+      }
       const gasSpentBase = data.totalGasSpentBase ?? data.totalGasSpentSomi;
       if (typeof gasSpentBase === "number" && Number.isFinite(gasSpentBase)) {
         this.totalGasSpentBase = gasSpentBase;

@@ -112,6 +112,24 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         3. **Activity Feed & Trade Manager UI (`public/app.js`)**:
            - ใน `createActivityElement`: เพิ่ม Badge แสดงสถานะและ Telemetry ชัดเจน: `🎯 Target: $... | Slip: ...% (Sent: $...) ➔ Fill: $...` พร้อม Tooltip ข้อมูลเชิงลึกเมื่อนำเมาส์ไปชี้ และปรับ Badge Action ให้ชัดเจนเป็น `IOC BUY`, `IOC SELL`, `IOC CUT`, `IOC TP`
            - ในตาราง Trade Manager Modal (`renderTmTrades`): แสดง Sub-text ใต้ช่องราคา: `🎯 T: $... (Slip ...%)` หรือ `⚡ IOC` และแก้ไขการแสดงชื่อเหรียญให้เป็น Dynamic Base Asset (`o.baseAsset`) แทนการฮาร์ดโค้ด
+   - **Gas Compensation Decoupling, Persistence & Historical Reconcile Architecture**:
+      - **การแยกความแตกต่าง CEX (Binance) vs DEX (DreamDEX) เรื่องแก๊สอย่างเด็ดขาด**:
+        1. **Capability Flags บน Adapter Layer (`IExchangeClient`)**:
+           - **Binance (`BinanceClient`)**: `isDex = false`, `hasGasFees = false`, `nativeGasAsset = undefined` ตัดระบบแก๊ส On-chain ออกทั้งหมด ไม่มีการติดตามแก๊ส ไม่มีการหัก/คืนแก๊ส คิดเฉพาะ CEX Trading Fee (0.075% BNB / 0% Maker FDUSD) ตามปกติ
+           - **DreamDEX (`DreamDexClient`)**: `isDex = true`, `hasGasFees = true`, `nativeGasAsset = "SOMI"`, มี Callback `onGasSpent` ดักฟังค่าแก๊สจาก EVM Receipt จริงทุกคำสั่ง
+        2. **Core Strategy Decoupling (`src/strategy.ts`)**:
+           - ตรวจสอบ `isDex` และ `isSomiBase = isDex && this.baseAsset.toUpperCase() === "SOMI"`
+           - เมื่อเทรดบน Binance Spot (CEX): ระบบจะปิดระบบแก๊สและการคืนแก๊ส 100% (`compBase = 0`, `gasLossQuote = 0`)
+           - เมื่อเทรดบน DreamDEX (DEX) คู่ `SOMI:USDso`: เนื่องจากค่าแก๊สถูกจ่ายออกไปด้วยเหรียญ Native SOMI จากกระเป๋า เมื่อเกิด Buy Fill ระบบจะคำนวณ `uncompensatedGas` และหักเหรียญ SOMI จาก Lot ที่เพิ่งซื้อได้ (สูงสุดไม่เกิน 50%) คืนกลับเข้ากระเป๋า Wallet Gas Reserve ทันที พร้อมแสดงป้าย `🛡️ +X SOMI Gas Ret`
+      - **สาเหตุที่การคืนแก๊สเคยหายไปหลังรีเฟรชหน้าเว็บ**:
+        - ใน `src/db.ts` เดิมฟังก์ชัน `recordEvent()` ไม่ได้นำฟิลด์ `gasCompBase`, `gasCompSomi`, `gasLossQuote`, `gasLossUsdso`, `netQty` ไปบันทึกลงใน `UnifiedOrderRecord` ของฐานข้อมูล JSON
+        - เมื่อออเดอร์ Match สดๆ ป้ายจะแสดงผลผ่าน SSE ได้ แต่เมื่อผู้ใช้กด Refresh หน้าเว็บ (F5) ข้อมูลถูกโหลดใหม่จากฐานข้อมูล ฟิลด์ `gasCompSomi` จึงกลายเป็น `undefined` ทำให้ป้ายคืนแก๊สหายวับไป
+      - **การแก้ไขและระบบ Reconcile ย้อนหลังอัตโนมัติ (`reconcileHistoricalIocAndGasOrders`)**:
+        1. **ถาวรการบันทึกใน DB (`src/db.ts`)**: เพิ่มการบันทึก `gasCompBase`, `gasCompSomi`, `gasLossQuote`, `gasLossUsdso`, `netQty` ลงในทุกสถานะคำสั่ง (`existingFilled`, `existing`, `record`) อย่างถาวร
+        2. **Retrospective Reconcile Engine (`src/db.ts`)**: ทำงานอัตโนมัติทุกครั้งที่บอทเริ่มทำงาน:
+           - **กู้คืน Gas Compensation ย้อนหลัง**: สแกนออเดอร์ซื้อในอดีตที่มีข้อความ `(Comp: X.XXXX SOMI)` หรือ `Gas Comp:` ดึงตัวเลขแก๊สคืนกลับมาบันทึกลงฟิลด์ `gasCompSomi`, `gasCompBase`, `gasLossQuote`, `netQty` ทำให้ป้ายเขียว `🛡️ +... SOMI Gas Ret` ฟื้นคืนชีพกลับมาทุกไม้ในอดีต
+           - **กู้คืน IOC Telemetry ย้อนหลัง**: สแกนออเดอร์ในอดีตทั้งหมดที่ส่งแบบ IOC (CUT, TAKE_PROFIT, หรือมีคีย์เวิร์ด IOC) ดึงราคา `targetPrice` จากข้อความ `(Target: $...)` หรือ trigger price, เติม `slippagePct` และคำนวณ `limitPrice` ที่ส่งไป Match จริงย้อนหลังให้ครบถ้วน 100%
+        3. **Resilient State Sync (`src/strategy.ts`)**: ใน `loadState()` หากค่า `totalGasDeductedBase` ใน State เป็น 0 หรือหลุดหาย ระบบจะคำนวณผลรวม `gasCompSomi` จากประวัติออเดอร์ใน Database แล้วดึงยอดสะสมที่ชดเชยจริงกลับมาเป็นฐานให้โดยอัตโนมัติ
    - **Portfolio Total Equity Protection & Locked Balance Accounting**:
      - **สาเหตุของปัญหา**: ใน `strategy.ts` เดิมดึงเฉพาะยอด `baseFree` และ `quoteFree` จาก exchange แล้วคำนวณ `walletTotalValueQuote = (walletBaseBalance * price) + walletQuoteBalance` โดยตัดยอดที่ถูกล็อกอยู่ใน Open Orders ทิ้งทั้งหมด ทำให้เวลาที่บอทวาง Buy Order $50 × 2 ไม้ ($100 ถูกล็อกอยู่ใน Open Orders) ยอด Equity รวมบนแดชบอร์ดจะวูบลงเหลือแค่ $20.06 ทั้งที่มีทุนจริง $120+
      - **การแก้ไข**:

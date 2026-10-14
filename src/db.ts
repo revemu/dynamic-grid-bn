@@ -124,6 +124,7 @@ export interface UnifiedOrderRecord {
   pnlUsdso?: number;
   reason?: string;
   dryRun?: boolean;
+  maker?: boolean;
   isIoc?: boolean;
   targetPrice?: number;          // Target price before slippage (e.g. Trendline, Level price)
   slippagePct?: number;          // Configured slippage percentage at time of order
@@ -220,6 +221,7 @@ export class BotDatabase {
     this.cleanupDuplicateTxRecords();
     this.cleanupStaleOpenOrders();
     this.reconcileManualTradesPnl();
+    this.reconcileHistoricalIocAndGasOrders();
   }
 
   private loadSeparateSettings(): void {
@@ -708,6 +710,105 @@ export class BotDatabase {
   }
 
   /**
+   * Retrospectively reconciles past order logs in db.orders:
+   * 1. Restores missing gas compensation fields (gasCompSomi, gasCompBase, gasLossQuote, netQty) from trade reasons.
+   * 2. Backfills IOC telemetry (isIoc, targetPrice, slippagePct, limitPrice) for historical IOC/Exit orders.
+   */
+  public reconcileHistoricalIocAndGasOrders(): { reconciledIocCount: number; reconciledGasCount: number } {
+    if (!this.data || !Array.isArray(this.data.orders) || this.data.orders.length === 0) {
+      return { reconciledIocCount: 0, reconciledGasCount: 0 };
+    }
+
+    let reconciledIocCount = 0;
+    let reconciledGasCount = 0;
+    const defaultSlippage = typeof this.data.settings?.iocSlippagePct === "number" ? this.data.settings.iocSlippagePct : 0.2;
+
+    for (const order of this.data.orders) {
+      let changed = false;
+
+      // ── 1. Reconcile Historical Gas Compensation ──────────────────────────
+      if (order.gasCompSomi === undefined || order.gasCompSomi === null) {
+        const fullText = `${order.reason || ""} ${order.levelDesc || ""}`;
+        const gasMatch = fullText.match(/(?:Comp(?:ensated)?|Gas Comp):\s*([\d.]+)/i);
+        if (gasMatch && gasMatch[1]) {
+          const comp = parseFloat(gasMatch[1]);
+          if (!isNaN(comp) && comp > 0) {
+            order.gasCompSomi = comp;
+            order.gasCompBase = comp;
+            order.gasLossUsdso = comp * (order.price || 0);
+            order.gasLossQuote = order.gasLossUsdso;
+            if (order.netQty === undefined && order.qty) {
+              order.netQty = Math.max(0, order.qty - comp);
+            }
+            reconciledGasCount++;
+            changed = true;
+          }
+        }
+      }
+
+      // ── 2. Reconcile Historical IOC Orders Telemetry ──────────────────────
+      const isIoc = Boolean(
+        order.isIoc ||
+        order.maker === false ||
+        order.levelDesc?.startsWith("IOC") ||
+        order.levelDesc?.includes("[IOC") ||
+        order.levelDesc?.toLowerCase().includes("ioc") ||
+        order.reason?.toLowerCase().includes("ioc") ||
+        ["CUT", "TAKE_PROFIT", "CUT_LOSS", "EXIT", "SNIPE_BUY", "SNIPE_SELL"].includes(order.action || "")
+      );
+
+      if (isIoc) {
+        if (!order.isIoc) {
+          order.isIoc = true;
+          changed = true;
+        }
+
+        if (order.slippagePct === undefined) {
+          order.slippagePct = defaultSlippage;
+          changed = true;
+        }
+
+        if (order.targetPrice === undefined) {
+          const fullText = `${order.levelDesc || ""} ${order.reason || ""}`;
+          const targetMatch = fullText.match(/Target:\s*\$?([\d.]+)/i);
+          if (targetMatch && targetMatch[1]) {
+            order.targetPrice = parseFloat(targetMatch[1]);
+            changed = true;
+          } else if (order.price && order.price > 0) {
+            order.targetPrice = order.price;
+            changed = true;
+          }
+        }
+
+        if (order.limitPrice === undefined && order.targetPrice !== undefined) {
+          const slip = (order.slippagePct ?? defaultSlippage) / 100;
+          const tick = 0.0001;
+          const isBuy = order.side === "BUY" || (order.action || "").includes("BUY");
+          if (isBuy) {
+            const rawLimit = order.targetPrice * (1 + slip);
+            order.limitPrice = Math.round(rawLimit / tick) * tick;
+          } else {
+            const rawLimit = order.targetPrice * (1 - slip);
+            order.limitPrice = Math.round(rawLimit / tick) * tick;
+          }
+          changed = true;
+        }
+
+        if (changed) {
+          reconciledIocCount++;
+        }
+      }
+    }
+
+    if (reconciledIocCount > 0 || reconciledGasCount > 0) {
+      this.log(`🔄 [reconcile] Restored ${reconciledIocCount} historical IOC orders & ${reconciledGasCount} gas compensation records in database`);
+      this.scheduleFlush();
+    }
+
+    return { reconciledIocCount, reconciledGasCount };
+  }
+
+  /**
    * Synchronizes OPEN records in db.orders with the authoritative set of active orderIds from the exchange.
    */
   public reconcileOpenOrdersWithExchange(liveOrderIds: Set<string>, activeSymbol?: string): number {
@@ -1074,6 +1175,11 @@ export class BotDatabase {
         if (targetPrice !== undefined) existingFilled.targetPrice = targetPrice;
         if (slippagePct !== undefined) existingFilled.slippagePct = slippagePct;
         if (limitPrice !== undefined) existingFilled.limitPrice = limitPrice;
+        if (eventData.gasCompBase !== undefined) existingFilled.gasCompBase = Number(eventData.gasCompBase);
+        if (eventData.gasCompSomi !== undefined) existingFilled.gasCompSomi = Number(eventData.gasCompSomi);
+        if (eventData.gasLossQuote !== undefined) existingFilled.gasLossQuote = Number(eventData.gasLossQuote);
+        if (eventData.gasLossUsdso !== undefined) existingFilled.gasLossUsdso = Number(eventData.gasLossUsdso);
+        if (eventData.netQty !== undefined) existingFilled.netQty = Number(eventData.netQty);
         return existingFilled;
       }
 
@@ -1246,6 +1352,11 @@ export class BotDatabase {
       if (targetPrice !== undefined) record.targetPrice = targetPrice;
       if (slippagePct !== undefined) record.slippagePct = slippagePct;
       if (limitPrice !== undefined) record.limitPrice = limitPrice;
+      if (eventData.gasCompBase !== undefined) record.gasCompBase = Number(eventData.gasCompBase);
+      if (eventData.gasCompSomi !== undefined) record.gasCompSomi = Number(eventData.gasCompSomi);
+      if (eventData.gasLossQuote !== undefined) record.gasLossQuote = Number(eventData.gasLossQuote);
+      if (eventData.gasLossUsdso !== undefined) record.gasLossUsdso = Number(eventData.gasLossUsdso);
+      if (eventData.netQty !== undefined) record.netQty = Number(eventData.netQty);
       if (!record.symbol && (eventData.symbol || this.data.settings?.symbol)) {
         record.symbol = eventData.symbol || this.data.settings?.symbol;
       }
