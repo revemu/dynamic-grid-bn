@@ -124,6 +124,10 @@ export interface UnifiedOrderRecord {
   pnlUsdso?: number;
   reason?: string;
   dryRun?: boolean;
+  isIoc?: boolean;
+  targetPrice?: number;          // Target price before slippage (e.g. Trendline, Level price)
+  slippagePct?: number;          // Configured slippage percentage at time of order
+  limitPrice?: number;           // Limit price sent to exchange (with slippage protection)
 
   // Gas Tracking & Immediate Buy Compensation
   gasCompBase?: number;
@@ -980,6 +984,17 @@ export class BotDatabase {
       : "USDSO";
     const targetQuote = eventData.quoteAsset || this.data.state?.quoteAsset || defaultQuote;
 
+    const isIoc = Boolean(
+      eventData.isIoc ||
+      eventData.maker === false ||
+      eventData.levelDesc?.startsWith("IOC") ||
+      eventData.levelDesc?.includes("[IOC") ||
+      eventData.reason?.includes("IOC")
+    );
+    const targetPrice = eventData.targetPrice !== undefined ? Number(eventData.targetPrice) : undefined;
+    const slippagePct = eventData.slippagePct !== undefined ? Number(eventData.slippagePct) : undefined;
+    const limitPrice = eventData.limitPrice !== undefined ? Number(eventData.limitPrice) : undefined;
+
     let record: UnifiedOrderRecord;
 
     if (action === "CREATE_BUY" || action === "CREATE_SELL") {
@@ -1055,6 +1070,10 @@ export class BotDatabase {
         if (!existingFilled.symbol && targetSymbol) existingFilled.symbol = targetSymbol;
         if (!existingFilled.baseAsset && targetBase) existingFilled.baseAsset = targetBase;
         if (!existingFilled.quoteAsset && targetQuote) existingFilled.quoteAsset = targetQuote;
+        if (isIoc) existingFilled.isIoc = true;
+        if (targetPrice !== undefined) existingFilled.targetPrice = targetPrice;
+        if (slippagePct !== undefined) existingFilled.slippagePct = slippagePct;
+        if (limitPrice !== undefined) existingFilled.limitPrice = limitPrice;
         return existingFilled;
       }
 
@@ -1135,6 +1154,10 @@ export class BotDatabase {
         if (!existing.symbol && targetSymbol) existing.symbol = targetSymbol;
         if (!existing.baseAsset && targetBase) existing.baseAsset = targetBase;
         if (!existing.quoteAsset && targetQuote) existing.quoteAsset = targetQuote;
+        if (isIoc) existing.isIoc = true;
+        if (targetPrice !== undefined) existing.targetPrice = targetPrice;
+        if (slippagePct !== undefined) existing.slippagePct = slippagePct;
+        if (limitPrice !== undefined) existing.limitPrice = limitPrice;
         return existing;
       }
       record = {
@@ -1219,6 +1242,10 @@ export class BotDatabase {
     }
 
     if (record) {
+      if (isIoc) record.isIoc = true;
+      if (targetPrice !== undefined) record.targetPrice = targetPrice;
+      if (slippagePct !== undefined) record.slippagePct = slippagePct;
+      if (limitPrice !== undefined) record.limitPrice = limitPrice;
       if (!record.symbol && (eventData.symbol || this.data.settings?.symbol)) {
         record.symbol = eventData.symbol || this.data.settings?.symbol;
       }

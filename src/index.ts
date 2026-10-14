@@ -255,15 +255,26 @@ async function main(): Promise<void> {
       const prevTf = prevConfig.dowTimeframe;
       const prevSymbol = prevConfig.symbol;
 
-      const res = grid.updateRuntimeSettings(s);
-
       const targetExchangeName = (s.exchange || prevConfig.exchange || "binance").toLowerCase();
-      const exchangeChanged = s.exchange && targetExchangeName !== (prevConfig.exchange || "binance").toLowerCase();
+      const exchangeChanged = Boolean(s.exchange && targetExchangeName !== (prevConfig.exchange || "binance").toLowerCase());
       const privateKeyChanged = s.dreamdexPrivateKey && s.dreamdexPrivateKey !== "******";
 
       const normPrevSymbol = (prevSymbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
       const normNextSymbol = (s.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
       const symbolChanged = Boolean(normNextSymbol && normNextSymbol !== normPrevSymbol);
+
+      // Lock Trading Pair & Exchange switch when bot holds an active position
+      const isHoldingPosition = grid.baseHeld() > (symbolInfo?.minQty ?? 0.0001) || grid.getLots().length > 0;
+      if ((symbolChanged || exchangeChanged) && isHoldingPosition) {
+        const heldAmount = grid.baseHeld();
+        const lotCount = grid.getLots().length;
+        const baseName = symbolInfo?.baseAsset || "tokens";
+        const errMsg = `Cannot switch trading pair or exchange while holding active position (${heldAmount.toFixed(4)} ${baseName} held across ${lotCount} lot(s)). Please exit or close position first.`;
+        log(`⛔ [PAIR SWITCH BLOCKED] ${errMsg}`);
+        throw new Error(errMsg);
+      }
+
+      const res = grid.updateRuntimeSettings(s);
 
       // 1. Handle Exchange Adapter switch or credentials update dynamically
       if (exchangeChanged || (targetExchangeName === "dreamdex" && privateKeyChanged)) {

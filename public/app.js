@@ -165,6 +165,7 @@
   let pendingTick = null;
   let activeBaseAsset = "BASE";
   let activeQuoteAsset = "USDT";
+  let isHoldingActivePosition = false;
   const ordersByCandleTime = new Map();
   const elChartOrderTooltip = document.getElementById("chartOrderTooltip");
 
@@ -1430,6 +1431,51 @@
     let totalBase = 0;
     lots.forEach((lot) => totalBase += (lot.qty || 0));
 
+    // 🔒 Lock Trading Pair & Exchange controls when holding active position
+    isHoldingActivePosition = (Array.isArray(lots) && lots.length > 0) ||
+      (totalBase > 0.0001) ||
+      (typeof data.baseHeld === "number" && data.baseHeld > 0.0001) ||
+      (holdPct > 0);
+
+    const elTopSymbolSelect = document.getElementById("topSymbolSelect");
+    const elCfgSymbol = document.getElementById("cfg_symbol");
+    const elCfgExchange = document.getElementById("cfg_exchange");
+    if (elTopSymbolSelect) {
+      if (isHoldingActivePosition) {
+        elTopSymbolSelect.disabled = true;
+        elTopSymbolSelect.style.cursor = "not-allowed";
+        elTopSymbolSelect.style.opacity = "0.6";
+        elTopSymbolSelect.title = "🔒 ปิดการเปลี่ยนคู่เทรดชั่วคราวเนื่องจากบอทกำลังถือ Position อยู่ (กรุณา Take Profit หรือ Cut Loss ให้หมดก่อนสลับคู่เหรียญ)";
+      } else {
+        elTopSymbolSelect.disabled = false;
+        elTopSymbolSelect.style.cursor = "pointer";
+        elTopSymbolSelect.style.opacity = "1";
+        elTopSymbolSelect.title = "Change Trading Pair";
+      }
+    }
+    if (elCfgSymbol) {
+      if (isHoldingActivePosition) {
+        elCfgSymbol.disabled = true;
+        elCfgSymbol.style.cursor = "not-allowed";
+        elCfgSymbol.title = "🔒 บอทกำลังถือ Position อยู่ ไม่สามารถสลับเหรียญได้";
+      } else {
+        elCfgSymbol.disabled = false;
+        elCfgSymbol.style.cursor = "pointer";
+        elCfgSymbol.title = "";
+      }
+    }
+    if (elCfgExchange) {
+      if (isHoldingActivePosition) {
+        elCfgExchange.disabled = true;
+        elCfgExchange.style.cursor = "not-allowed";
+        elCfgExchange.title = "🔒 บอทกำลังถือ Position อยู่ ไม่สามารถสลับกระดานเทรดได้";
+      } else {
+        elCfgExchange.disabled = false;
+        elCfgExchange.style.cursor = "pointer";
+        elCfgExchange.title = "";
+      }
+    }
+
     // 0. Binance Account Balance Updates
     activeBaseAsset = data.baseAsset || activeBaseAsset || "BASE";
     activeQuoteAsset = data.quoteAsset || activeQuoteAsset || "USDT";
@@ -2344,18 +2390,19 @@
 
     let badgeClass = "act-neutral";
     let badgeText = order.action || "ORDER";
+    const isIocOrder = Boolean(order.isIoc || order.maker === false || order.levelDesc?.includes("IOC") || order.reason?.includes("IOC"));
     if (order.action === "BUY" || order.action === "BUY_FILL" || order.action === "SNIPE_BUY") {
       badgeClass = "act-buy";
-      badgeText = "BUY FILL";
+      badgeText = isIocOrder ? "IOC BUY" : "BUY FILL";
     } else if (order.action === "SELL" || order.action === "SELL_FILL" || order.action === "TAKE_PROFIT" || order.action === "SNIPE_SELL") {
       badgeClass = "act-sell";
-      badgeText = "SELL FILL";
+      badgeText = isIocOrder ? (order.action === "TAKE_PROFIT" ? "IOC TP" : "IOC SELL") : "SELL FILL";
     } else if (order.action === "CUT") {
       badgeClass = "act-cut";
-      badgeText = "CUT LOSS";
+      badgeText = isIocOrder ? "IOC CUT" : "CUT LOSS";
     } else if (order.action === "EXIT") {
       badgeClass = "act-buy";
-      badgeText = "FULL EXIT";
+      badgeText = isIocOrder ? "IOC EXIT" : "FULL EXIT";
     } else if (order.action === "CREATE_BUY") {
       badgeClass = "act-create-buy";
       badgeText = "+BUY LIMIT";
@@ -2449,6 +2496,11 @@
     const isNumericOrderId = order.orderId && /^\d+$/.test(String(order.orderId)) && !String(order.orderId).startsWith("0x");
     const orderIdStr = isNumericOrderId ? ` #${order.orderId}` : "";
 
+    // IOC Telemetry badge: display Target, Slippage %, Limit Price sent, and Final Fill Price
+    const iocBadge = (order.targetPrice !== undefined || order.limitPrice !== undefined)
+      ? `<span class="act-ioc-badge" style="padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); margin-left: 2px;" title="IOC Order Telemetry:&#10;🎯 Target: $${order.targetPrice !== undefined ? Number(order.targetPrice).toFixed(6) : 'N/A'}&#10;📉 Slippage: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : '0.2'}%&#10;🛑 Limit Sent: $${order.limitPrice !== undefined ? Number(order.limitPrice).toFixed(6) : 'N/A'}&#10;⚡ Final Executed: $${Number(order.price || 0).toFixed(6)}">🎯 Target: $${Number(order.targetPrice || order.price).toFixed(4)} | Slip: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : "0.2"}% (Sent: $${Number(order.limitPrice || order.price).toFixed(4)}) ➔ Fill: $${Number(order.price || 0).toFixed(4)}</span>`
+      : "";
+
     // Compact Tx badge: display compact ...3e27 with full hash tooltip
     const txBadge = order.txHash
       ? `<a href="https://explorer.somnia.network/tx/${order.txHash}" target="_blank" rel="noopener noreferrer" class="act-tx-link" title="Somnia Tx: ${order.txHash}">⛓️ ...${order.txHash.slice(-4)}</a>`
@@ -2470,6 +2522,7 @@
         <span class="act-price">$${(order.price || 0).toFixed(6)}</span>
         <span style="color: #94a3b8; font-size: 10.5px;">(${notionalStr}${order.qty ? Number(order.qty).toFixed(4) : ""} ${activeBaseAsset}${orderIdStr})</span>
         <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">${targetStr}${subDesc}${expStr}${reasonStr}</span>
+        ${iocBadge}
         ${txBadge}
         ${gasBadge}
         ${gasCompBadge}
@@ -3373,6 +3426,17 @@
   const elTopSymbolSelect = document.getElementById("topSymbolSelect");
   if (elTopSymbolSelect) {
     elTopSymbolSelect.addEventListener("change", async (e) => {
+      if (isHoldingActivePosition) {
+        showToast({
+          title: "PAIR SWITCH BLOCKED",
+          desc: "บอทกำลังถือ Position อยู่ ไม่สามารถสลับคู่เหรียญได้ (กรุณา Take Profit หรือ Cut Loss ก่อน)",
+          action: "ALERT",
+        });
+        const navPill = document.getElementById("navSymbolBadge");
+        if (navPill) elTopSymbolSelect.value = navPill.textContent.replace(/[\/\s]/g, "");
+        return;
+      }
+
       let newSym = e.target.value;
       if (!newSym) return;
 
@@ -3403,11 +3467,14 @@
           const cfgSym = document.getElementById("cfg_symbol");
           if (cfgSym) cfgSym.value = newSym;
         } else {
+          const errData = await res.json().catch(() => ({}));
           showToast({
             title: "SYMBOL ERROR",
-            desc: `Failed to switch pair to ${newSym}`,
+            desc: errData.error || `Failed to switch pair to ${newSym}`,
             action: "ALERT",
           });
+          const navPill = document.getElementById("navSymbolBadge");
+          if (navPill) elTopSymbolSelect.value = navPill.textContent.replace(/[\/\s]/g, "");
         }
       } catch (err) {
         console.error("Failed to switch symbol:", err);
@@ -3894,9 +3961,15 @@
         const timeDate = new Date(timeVal);
         const timeStr = `${timeDate.toLocaleDateString()} ${timeDate.toLocaleTimeString()}`;
 
+        const baseSymbol = o.baseAsset || (o.symbol ? o.symbol.split(/[:\-_]/)[0] : activeBaseAsset) || "BASE";
         const priceStr = `$${Number(o.price || 0).toFixed(5)}`;
-        const qtyStr = `${Number(o.quantity || o.qty || 0).toFixed(4)} SOMI`;
+        const qtyStr = `${Number(o.quantity || o.qty || 0).toFixed(4)} ${baseSymbol}`;
         const notionalStr = `$${(Number(o.notionalUsdso) || Number(o.price || 0) * Number(o.quantity || o.qty || 0)).toFixed(2)}`;
+
+        const hasIoc = Boolean(o.isIoc || o.targetPrice !== undefined || o.limitPrice !== undefined);
+        const iocSubText = (o.targetPrice !== undefined || o.limitPrice !== undefined)
+          ? `<div style="font-size: 10px; color: #38bdf8; font-weight: normal; margin-top: 2px;" title="IOC Telemetry:&#10;Target: $${o.targetPrice}&#10;Slippage: ${o.slippagePct ?? 0.2}%&#10;Limit Sent: $${o.limitPrice}&#10;Executed Fill: $${o.price}">🎯 T: $${Number(o.targetPrice || o.price).toFixed(4)} (Slip ${o.slippagePct ?? 0.2}%)</div>`
+          : (hasIoc ? `<div style="font-size: 10px; color: #38bdf8; font-weight: normal; margin-top: 2px;">⚡ IOC</div>` : "");
 
         let pnlStr = "-";
         if (o.pnlUsdso !== undefined && o.pnlUsdso !== null) {
@@ -3915,7 +3988,7 @@
         <tr data-trade-id="${rowId}">
           <td style="color: #94a3b8; font-size: 11px;">${timeStr}</td>
           <td><span class="tm-badge ${badgeClass}">${actionLabel}</span></td>
-          <td style="text-align: right; color: #fff; font-weight: 600;">${priceStr}</td>
+          <td style="text-align: right; color: #fff; font-weight: 600;">${priceStr}${iocSubText}</td>
           <td style="text-align: right; color: #bae6fd;">${qtyStr}</td>
           <td style="text-align: right; color: #cbd5e1;">${notionalStr}</td>
           <td style="text-align: right;">${pnlStr}</td>

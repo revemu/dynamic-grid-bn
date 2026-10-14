@@ -3306,8 +3306,11 @@ export class DynamicGrid {
     logPrefix?: string;
     dryRun: boolean;
     isIoc?: boolean;
+    targetPrice?: number;
+    slippagePct?: number;
+    limitPrice?: number;
   }): void {
-    const { price, qty, levelDesc, orderId, txHash, logPrefix = "", dryRun, isIoc = false } = opts;
+    const { price, qty, levelDesc, orderId, txHash, logPrefix = "", dryRun, isIoc = false, targetPrice, slippagePct, limitPrice } = opts;
     const fillNotional = price * qty;
     const now = Date.now();
 
@@ -3369,8 +3372,11 @@ export class DynamicGrid {
       ? ` | ⛽ Gas Compensated: ${compBase.toFixed(4)} ${this.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet gas reserve`
       : "";
     const fillLabel = isIoc ? "IOC BUY FILLED" : "MAKER BUY FILLED";
+    const iocLog = (isIoc && (targetPrice !== undefined || limitPrice !== undefined))
+      ? ` [Target: $${(targetPrice ?? price).toFixed(6)} | Slip: ${(slippagePct ?? 0.2).toFixed(2)}% | Limit: $${(limitPrice ?? price).toFixed(6)}]`
+      : "";
     this.log(
-      `⚡ ${logPrefix}${fillLabel}: ${qty.toFixed(4)} ${this.baseAsset} ($${fillNotional.toFixed(2)} ${this.quoteAsset}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""}${feeLog}${gasCompLog}`,
+      `⚡ ${logPrefix}${fillLabel}: ${qty.toFixed(4)} ${this.baseAsset} ($${fillNotional.toFixed(2)} ${this.quoteAsset}) @ $${price.toFixed(6)} • ${levelDesc}${iocLog}${orderId ? ` #${orderId}` : ""}${feeLog}${gasCompLog}`,
     );
     this.emit({
       type: "order",
@@ -3395,6 +3401,10 @@ export class DynamicGrid {
         time: now,
         dryRun,
         maker: !isIoc,
+        isIoc,
+        targetPrice,
+        slippagePct,
+        limitPrice,
       },
     });
   }
@@ -5280,11 +5290,13 @@ export class DynamicGrid {
     }
 
     if (this.cfg.dryRun) {
+      const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
+      const dryLimitPrice = roundToTick(targetPrice * (1 - slippagePctVal / 100), this.tickSize || 0.0001);
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(executeQty, effectivePrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `[dry-run] ⚡ ${actionLabel}: Sold ${executeQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}`,
+        `[dry-run] ⚡ ${actionLabel}: Sold ${executeQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${dryLimitPrice.toFixed(6)} • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}`,
       );
       this.emit({
         type: "order",
@@ -5304,6 +5316,9 @@ export class DynamicGrid {
           dryRun: true,
           maker: false,
           isIoc: true,
+          targetPrice,
+          slippagePct: slippagePctVal,
+          limitPrice: dryLimitPrice,
         },
       });
       this.saveState();
@@ -5332,7 +5347,8 @@ export class DynamicGrid {
       // Enforce Single Floor Cap anchored to targetPrice (Sell Level):
       // limitPrice must NEVER fall below targetPrice * (1 - slippagePct), and must stay above avg entry
       const avgEntry = this.getAvgEntryPrice();
-      const slippagePct = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+      const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
+      const slippagePct = slippagePctVal / 100;
       const minAllowedBySlippage = targetPrice * (1 - slippagePct);
       const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : minAllowedBySlippage;
       const basePrice = (execPrice > 0) ? execPrice : targetPrice;
@@ -5365,22 +5381,26 @@ export class DynamicGrid {
       }
 
       const actualQty = Math.min(finalQty, filledQty > 0 ? filledQty : finalQty);
+      const fillPrice = (typeof res.cummulativeQuoteQty === "number" && res.cummulativeQuoteQty > 0 && typeof res.executedQty === "number" && res.executedQty > 0)
+        ? (res.cummulativeQuoteQty / res.executedQty)
+        : (typeof res.price === "number" && res.price > 0 ? res.price : effectivePrice);
+
       const oldTradePnl = this.tradeRealizedPnl;
-      this.closeLots(actualQty, effectivePrice);
+      this.closeLots(actualQty, fillPrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
 
       this.log(
-        `⚡ ON-CHAIN ${actionLabel}: Sold ${actualQty.toFixed(4)} ${this.baseAsset} @ $${effectivePrice.toFixed(6)} (Target: $${targetPrice.toFixed(6)}) • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} (tx: ${res.txHash})`,
+        `⚡ ON-CHAIN ${actionLabel}: Sold ${actualQty.toFixed(4)} ${this.baseAsset} @ $${fillPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.emit({
         type: "order",
         data: {
           action: "SELL_FILL",
-          price: effectivePrice,
+          price: fillPrice,
           qty: actualQty,
-          notional: actualQty * effectivePrice,
-          notionalQuote: actualQty * effectivePrice,
-          notionalUsdso: actualQty * effectivePrice,
+          notional: actualQty * fillPrice,
+          notionalQuote: actualQty * fillPrice,
+          notionalUsdso: actualQty * fillPrice,
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
@@ -5392,6 +5412,9 @@ export class DynamicGrid {
           orderId: orderIdStr,
           maker: false,
           isIoc: true,
+          targetPrice,
+          slippagePct: slippagePctVal,
+          limitPrice,
         },
       });
       if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
@@ -5438,6 +5461,8 @@ export class DynamicGrid {
       const rawBuyQty = notionalQuote / effectivePrice;
       const buyQty = roundToStep(rawBuyQty, this.stepSize || 0.0001, this.qtyPrecision);
       if (buyQty < this.minQty) return false;
+      const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
+      const dryLimitPrice = roundToTick(targetPrice * (1 + slippagePctVal / 100), this.tickSize || 0.0001);
       this.processBuyFill({
         price: effectivePrice,
         qty: buyQty,
@@ -5445,6 +5470,9 @@ export class DynamicGrid {
         logPrefix: "[dry-run] ",
         dryRun: true,
         isIoc: true,
+        targetPrice,
+        slippagePct: slippagePctVal,
+        limitPrice: dryLimitPrice,
       });
       this.saveState();
       this.emitTelemetryTick();
@@ -5466,7 +5494,8 @@ export class DynamicGrid {
       // In CLOB IOC buy: enforce Single Ceiling Cap anchored to targetPrice (Buy Level)
       // Allow slippage up to iocSlippagePct so on-chain CLOB sweeps resting asks without 0xc04ad919 revert,
       // but strictly NEVER pays above targetPrice * (1 + slippagePct)!
-      const slippagePct = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+      const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
+      const slippagePct = slippagePctVal / 100;
       const maxAllowedPrice = targetPrice * (1 + slippagePct);
       const basePrice = (execPrice > 0) ? execPrice : targetPrice;
       let limitPrice = Math.min(maxAllowedPrice, Math.max(targetPrice, basePrice * (1 + slippagePct)));
@@ -5511,15 +5540,22 @@ export class DynamicGrid {
       }
 
       const actualQty = Math.min(finalQty, filledQty > 0 ? filledQty : finalQty);
+      const fillPrice = (typeof res.cummulativeQuoteQty === "number" && res.cummulativeQuoteQty > 0 && typeof res.executedQty === "number" && res.executedQty > 0)
+        ? (res.cummulativeQuoteQty / res.executedQty)
+        : (typeof res.price === "number" && res.price > 0 ? res.price : effectivePrice);
+
       this.processBuyFill({
-        price: effectivePrice,
+        price: fillPrice,
         qty: actualQty,
         levelDesc: actionLabel,
         orderId: orderIdStr,
         txHash: res?.txHash,
-        logPrefix: "⚡ ",
+        logPrefix: "ON-CHAIN ",
         dryRun: false,
         isIoc: true,
+        targetPrice,
+        slippagePct: slippagePctVal,
+        limitPrice,
       });
       if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
         this.trackTxGas(res.txHash, actionLabel);
@@ -5538,6 +5574,8 @@ export class DynamicGrid {
 
   private async sellAll(price: number, action: "SELL" | "CUT", anchorRefPrice?: number): Promise<void> {
     const actionLabel = action === "CUT" ? "CUT LOSS (SELL ALL)" : "100% FULL EXIT (TAKE PROFIT)";
+    const targetPrice = (anchorRefPrice && anchorRefPrice > 0) ? anchorRefPrice : price;
+    const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
 
     // 1. Always cancel ALL resting open orders first so base asset is unlocked from limit sells and no buys occur
     if (this.openOrders.length > 0) {
@@ -5553,11 +5591,12 @@ export class DynamicGrid {
     const now = Date.now();
 
     if (this.cfg.dryRun) {
+      const dryLimitPrice = roundToTick(targetPrice * (1 - slippagePctVal / 100), this.tickSize || 0.0001);
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(held, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `[dry-run] 🚨 ${actionLabel}: ${held.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
+        `[dry-run] 🚨 ${actionLabel}: ${held.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${dryLimitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
       );
       this.emit({
         type: "order",
@@ -5577,6 +5616,9 @@ export class DynamicGrid {
           dryRun: true,
           maker: false,
           isIoc: true,
+          targetPrice,
+          slippagePct: slippagePctVal,
+          limitPrice: dryLimitPrice,
         },
       });
       this.saveState();
@@ -5637,11 +5679,11 @@ export class DynamicGrid {
           } catch {}
         }
         const avgEntry = this.getAvgEntryPrice();
-        const slippagePct = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+        const slippagePct = slippagePctVal / 100;
         if (action === "SELL") {
           // Single Floor Cap: If anchorRefPrice (e.g. Trendline) is provided, limit price can NEVER fall below anchor * (1 - slippagePct),
           // guaranteeing total slippage from trendline is strictly <= iocSlippagePct!
-          const anchor = (anchorRefPrice && anchorRefPrice > 0) ? anchorRefPrice : price;
+          const anchor = targetPrice;
           const minAllowedBySlippage = anchor * (1 - slippagePct);
           const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : minAllowedBySlippage;
           limitPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
@@ -5681,12 +5723,15 @@ export class DynamicGrid {
       }
 
       const actualQty = Math.min(executeQty, filledQty > 0 ? filledQty : executeQty);
-      const actualPrice = limitPrice;
+      const actualPrice = (typeof res.cummulativeQuoteQty === "number" && res.cummulativeQuoteQty > 0 && typeof res.executedQty === "number" && res.executedQty > 0)
+        ? (res.cummulativeQuoteQty / res.executedQty)
+        : (typeof res.price === "number" && res.price > 0 ? res.price : limitPrice);
+
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(actualQty, actualPrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${actualPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
+        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${actualPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.emit({
         type: "order",
@@ -5708,6 +5753,9 @@ export class DynamicGrid {
           orderId: orderIdStr,
           maker: false,
           isIoc: true,
+          targetPrice,
+          slippagePct: slippagePctVal,
+          limitPrice,
         },
       });
       if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
@@ -5781,7 +5829,7 @@ export class DynamicGrid {
     }
   }
 
-  private baseHeld(): number {
+  public baseHeld(): number {
     return this.lots.reduce((s, l) => s + l.qty, 0);
   }
 
