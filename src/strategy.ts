@@ -148,6 +148,10 @@ export class DynamicGrid {
   private walletAddress = "";
   public walletBaseBalance = 0;
   public walletQuoteBalance = 0;
+  public walletBaseLocked = 0;
+  public walletQuoteLocked = 0;
+  public walletBaseTotal = 0;
+  public walletQuoteTotal = 0;
   public get walletSomiBalance(): number { return this.walletBaseBalance; }
   public set walletSomiBalance(v: number) { this.walletBaseBalance = v; }
   public get walletUsdsoBalance(): number { return this.walletQuoteBalance; }
@@ -158,6 +162,19 @@ export class DynamicGrid {
   private set lastObservedSomiBalance(v: number) { this.lastObservedBaseBalance = v; }
   private get lastObservedUsdsoBalance(): number { return this.lastObservedQuoteBalance; }
   private set lastObservedUsdsoBalance(v: number) { this.lastObservedQuoteBalance = v; }
+
+  /**
+   * Helper to compute total portfolio equity (Quote value), combining free + locked balances
+   */
+  public getTotalPortfolioValueQuote(refP: number): number {
+    const totalBaseQty = this.walletBaseTotal > 0
+      ? this.walletBaseTotal
+      : (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0));
+    const totalQuoteVal = this.walletQuoteTotal > 0
+      ? this.walletQuoteTotal
+      : (this.walletQuoteBalance + this.openOrders.filter((o) => o.isBid).reduce((sum, o) => sum + (o.notionalQuote || (o.price * o.qty) || 0), 0));
+    return (totalBaseQty * refP) + totalQuoteVal;
+  }
 
   /** Real-time WebSocket Book Ticker cache */
   private wsBookTicker?: BookTickerData;
@@ -296,6 +313,7 @@ export class DynamicGrid {
     this.symbolInfo = info;
     this.symbol = info.symbol;
     this.cfg.symbol = info.symbol;
+    this.cfg.binanceSymbol = info.symbol.toLowerCase().replace(/[\/\-_:]/g, "");
     this.baseAsset = info.baseAsset;
     this.quoteAsset = info.quoteAsset;
     this.minQty = info.minQty;
@@ -589,6 +607,10 @@ export class DynamicGrid {
         const b = await this.binance.getAccountBalances(this.symbol);
         this.walletBaseBalance = b.baseFree;
         this.walletQuoteBalance = b.quoteFree;
+        this.walletBaseLocked = b.baseLocked ?? 0;
+        this.walletQuoteLocked = b.quoteLocked ?? 0;
+        this.walletBaseTotal = b.baseTotal ?? (b.baseFree + (b.baseLocked ?? 0));
+        this.walletQuoteTotal = b.quoteTotal ?? (b.quoteFree + (b.quoteLocked ?? 0));
         somiBal = b.allBalances?.SOMI?.free ?? (this.baseAsset === "SOMI" ? b.baseFree : 0);
         this.walletAddress = `${this.baseAsset}/${this.quoteAsset}`;
         this.lastObservedBaseBalance = this.walletBaseBalance;
@@ -1664,10 +1686,10 @@ export class DynamicGrid {
         walletQuoteBalance: this.walletQuoteBalance,
         walletSomiBalance: this.walletBaseBalance,
         walletUsdsoBalance: this.walletQuoteBalance,
-        walletBaseValueQuote: this.walletBaseBalance * mid,
-        walletTotalValueQuote: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
-        walletSomiValueUsdso: this.walletBaseBalance * mid,
-        walletTotalValueUsdso: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
+        walletBaseValueQuote: (this.walletBaseTotal > 0 ? this.walletBaseTotal : this.walletBaseBalance) * mid,
+        walletTotalValueQuote: this.getTotalPortfolioValueQuote(mid),
+        walletSomiValueUsdso: (this.walletBaseTotal > 0 ? this.walletBaseTotal : this.walletBaseBalance) * mid,
+        walletTotalValueUsdso: this.getTotalPortfolioValueQuote(mid),
         tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
         freeTradingBaseBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
         tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
@@ -1716,10 +1738,10 @@ export class DynamicGrid {
         walletQuoteBalance: this.walletQuoteBalance,
         walletSomiBalance: this.walletBaseBalance,
         walletUsdsoBalance: this.walletQuoteBalance,
-        walletBaseValueQuote: this.walletBaseBalance * mid,
-        walletTotalValueQuote: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
-        walletSomiValueUsdso: this.walletBaseBalance * mid,
-        walletTotalValueUsdso: (this.walletBaseBalance * mid) + this.walletQuoteBalance,
+        walletBaseValueQuote: (this.walletBaseTotal > 0 ? this.walletBaseTotal : this.walletBaseBalance) * mid,
+        walletTotalValueQuote: this.getTotalPortfolioValueQuote(mid),
+        walletSomiValueUsdso: (this.walletBaseTotal > 0 ? this.walletBaseTotal : this.walletBaseBalance) * mid,
+        walletTotalValueUsdso: this.getTotalPortfolioValueQuote(mid),
         tradingBaseBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
         freeTradingBaseBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
         tradingSomiBalance: Math.max(0, (this.walletBaseBalance + this.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0)) - this.getEffectiveGasReserveBase()),
@@ -2911,10 +2933,10 @@ export class DynamicGrid {
         freeTradingSomiBalance: Math.max(0, this.walletBaseBalance - this.getEffectiveGasReserveBase()),
         gasReserveSomi: this.getEffectiveGasReserveBase(),
         minGasReserveSomi: this.getEffectiveGasReserveSomi(),
-        walletBaseValueQuote: this.walletBaseBalance * refPrice,
-        walletTotalValueQuote: (this.walletBaseBalance * refPrice) + this.walletQuoteBalance,
-        walletSomiValueUsdso: this.walletBaseBalance * refPrice,
-        walletTotalValueUsdso: (this.walletBaseBalance * refPrice) + this.walletQuoteBalance,
+        walletBaseValueQuote: (this.walletBaseTotal > 0 ? this.walletBaseTotal : this.walletBaseBalance) * refPrice,
+        walletTotalValueQuote: this.getTotalPortfolioValueQuote(refPrice),
+        walletSomiValueUsdso: (this.walletBaseTotal > 0 ? this.walletBaseTotal : this.walletBaseBalance) * refPrice,
+        walletTotalValueUsdso: this.getTotalPortfolioValueQuote(refPrice),
         avgEntryPrice: avgEntry,
         unrealizedPnl,
         realizedPnl: this.realizedPnl,

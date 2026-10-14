@@ -436,21 +436,41 @@ export class BotDatabase {
 
     const inferBase = (o: UnifiedOrderRecord): string => {
       if (o.baseAsset) return o.baseAsset.toUpperCase();
+      if (o.symbol) {
+        const s = o.symbol.toUpperCase();
+        if (s.includes("WBTC") || s.includes("BTC")) return "WBTC";
+        if (s.includes("WETH") || s.includes("ETH")) return (this.data.settings?.exchange === "binance" ? "ETH" : "WETH");
+        if (s.includes("SOL")) return "SOL";
+        if (s.includes("SOMI")) return "SOMI";
+      }
       const p = Number(o.fillPrice || o.price || 0);
       if (p > 50_000) return "WBTC";
-      if (p > 500 && p <= 50_000) return "WETH";
+      if (p > 500 && p <= 50_000) return (this.data.settings?.exchange === "binance" ? "ETH" : "WETH");
+      if (p >= 50 && p <= 300) return "SOL";
       if (p > 0.01 && p < 2.0) return "SOMI";
       return "DEFAULT";
     };
 
     // 1. Align pnl, pnlQuote, and pnlUsdso if one is present, and backfill inferred baseAsset
     for (const o of this.data.orders) {
+      // Repair orders wrongly tagged as WETH:USDSO that were executed on Binance
+      const isBinanceOrderId = o.orderId && /^\d{8,}$/.test(o.orderId) && !o.orderId.startsWith("0x");
+      if (isBinanceOrderId && (o.symbol === "WETH:USDSO" || o.quoteAsset === "USDSO")) {
+        o.symbol = "ETHFDUSD";
+        o.baseAsset = "ETH";
+        o.quoteAsset = "FDUSD";
+        modified = true;
+      }
       if (!o.baseAsset) {
         const inferred = inferBase(o);
         if (inferred !== "DEFAULT") {
           o.baseAsset = inferred;
-          o.quoteAsset = o.quoteAsset || "USDSO";
-          o.symbol = o.symbol || `${inferred}:${o.quoteAsset}`;
+          const isBinance = this.data.settings?.exchange === "binance";
+          const defaultQuote = isBinance
+            ? (this.data.settings?.symbol?.includes("FDUSD") ? "FDUSD" : "USDT")
+            : "USDSO";
+          o.quoteAsset = o.quoteAsset || defaultQuote;
+          o.symbol = o.symbol || (isBinance ? `${inferred}${o.quoteAsset}` : `${inferred}:${o.quoteAsset}`);
           modified = true;
         }
       }
@@ -952,6 +972,14 @@ export class BotDatabase {
     const pnlVal = eventData.pnlQuote !== undefined ? eventData.pnlQuote : eventData.pnl !== undefined ? eventData.pnl : eventData.pnlUsdso;
     const orderId = eventData.orderId ? String(eventData.orderId) : (action.startsWith("CREATE_") ? `ord_${now}` : "");
 
+    const isBinance = this.data.settings?.exchange === "binance";
+    const targetSymbol = eventData.symbol || this.data.settings?.symbol;
+    const targetBase = eventData.baseAsset || this.data.state?.baseAsset;
+    const defaultQuote = isBinance
+      ? (targetSymbol?.includes("FDUSD") ? "FDUSD" : targetSymbol?.includes("USDT") ? "USDT" : "USDSO")
+      : "USDSO";
+    const targetQuote = eventData.quoteAsset || this.data.state?.quoteAsset || defaultQuote;
+
     let record: UnifiedOrderRecord;
 
     if (action === "CREATE_BUY" || action === "CREATE_SELL") {
@@ -966,6 +994,9 @@ export class BotDatabase {
         existing.notionalUsdso = notionalUsdso;
         existing.time = now;
         if (eventData.txHash) existing.txHash = eventData.txHash;
+        if (!existing.symbol && targetSymbol) existing.symbol = targetSymbol;
+        if (!existing.baseAsset && targetBase) existing.baseAsset = targetBase;
+        if (!existing.quoteAsset && targetQuote) existing.quoteAsset = targetQuote;
         return existing;
       }
       record = {
@@ -986,6 +1017,9 @@ export class BotDatabase {
         txHash: eventData.txHash,
         dryRun: eventData.dryRun,
         explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+        symbol: targetSymbol,
+        baseAsset: targetBase,
+        quoteAsset: targetQuote,
       };
       this.data.orders.unshift(record);
     } else if (action === "BUY_FILL" || action === "SELL_FILL") {
@@ -1018,6 +1052,9 @@ export class BotDatabase {
         }
         if (eventData.txHash && !existingFilled.txHash) existingFilled.txHash = eventData.txHash;
         if (eventData.txHash && !existingFilled.fillTxHash) existingFilled.fillTxHash = eventData.txHash;
+        if (!existingFilled.symbol && targetSymbol) existingFilled.symbol = targetSymbol;
+        if (!existingFilled.baseAsset && targetBase) existingFilled.baseAsset = targetBase;
+        if (!existingFilled.quoteAsset && targetQuote) existingFilled.quoteAsset = targetQuote;
         return existingFilled;
       }
 
@@ -1042,6 +1079,9 @@ export class BotDatabase {
         existing.pnlQuote = pnlVal;
         existing.pnlUsdso = pnlVal;
         if (eventData.txHash) existing.txHash = eventData.txHash;
+        if (!existing.symbol && targetSymbol) existing.symbol = targetSymbol;
+        if (!existing.baseAsset && targetBase) existing.baseAsset = targetBase;
+        if (!existing.quoteAsset && targetQuote) existing.quoteAsset = targetQuote;
         record = existing;
       } else {
         record = {
@@ -1066,6 +1106,9 @@ export class BotDatabase {
           txHash: eventData.txHash,
           dryRun: eventData.dryRun,
           explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+          symbol: targetSymbol,
+          baseAsset: targetBase,
+          quoteAsset: targetQuote,
         };
         this.data.orders.unshift(record);
       }
@@ -1089,6 +1132,9 @@ export class BotDatabase {
         existing.levelDesc = eventData.levelDesc || action;
         existing.reason = eventData.reason;
         if (eventData.txHash) existing.txHash = eventData.txHash;
+        if (!existing.symbol && targetSymbol) existing.symbol = targetSymbol;
+        if (!existing.baseAsset && targetBase) existing.baseAsset = targetBase;
+        if (!existing.quoteAsset && targetQuote) existing.quoteAsset = targetQuote;
         return existing;
       }
       record = {
@@ -1113,6 +1159,9 @@ export class BotDatabase {
         txHash: eventData.txHash,
         dryRun: eventData.dryRun,
         explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+        symbol: targetSymbol,
+        baseAsset: targetBase,
+        quoteAsset: targetQuote,
       };
       this.data.orders.unshift(record);
     } else {
@@ -1133,6 +1182,9 @@ export class BotDatabase {
           existing.action = action;
           existing.time = now;
           if (eventData.txHash) existing.txHash = eventData.txHash;
+          if (!existing.symbol && targetSymbol) existing.symbol = targetSymbol;
+          if (!existing.baseAsset && targetBase) existing.baseAsset = targetBase;
+          if (!existing.quoteAsset && targetQuote) existing.quoteAsset = targetQuote;
         }
         record = matches[0]!;
       } else {
@@ -1154,6 +1206,9 @@ export class BotDatabase {
           txHash: eventData.txHash,
           dryRun: eventData.dryRun,
           explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+          symbol: targetSymbol,
+          baseAsset: targetBase,
+          quoteAsset: targetQuote,
         };
         this.data.orders.unshift(record);
       }

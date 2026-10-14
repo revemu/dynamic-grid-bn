@@ -95,6 +95,16 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         3. ใน `loadState()`: เพิ่ม `else` branch ชัดเจน หากเหรียญใหม่ไม่มี `lockedChannel`, `waitingForHigherLow` หรือ `iocBracketSellCycle` ในฐานข้อมูล ให้รีเซ็ตเป็น `undefined` / `false` เสมอ ไม่ปล่อยให้ค่าเก่าค้าง
         4. ใน `src/index.ts`: ปรับลำดับการทำงานใน `symbolChanged` และ `exchangeChanged` ให้โหลด `await initFeeds(nextInfo.symbol)` ให้เสร็จก่อนเสมอ แล้วจึงส่ง `atrSource!` เข้า `grid.updateSymbolInfo(nextInfo, atrSource!)` หรือ `grid.updateExchangeClient(newExchange, nextInfo, atrSource!)`
         5. ล้างประวัติกราฟบนหน้าแดชบอร์ดด้วย `dashboard.resetState({ clearTrades: false })` และ `dashboard.setInitialCandles(...)` พร้อมเรียก `wakeSleep?.()` ปลุก Main Loop ให้รีคำนวณกรอบ Channel ของเหรียญใหม่ได้ทันที 100% โดยไม่ต้องรอจังหวะ Sleep เดิม
+   - **Portfolio Total Equity Protection & Locked Balance Accounting**:
+     - **สาเหตุของปัญหา**: ใน `strategy.ts` เดิมดึงเฉพาะยอด `baseFree` และ `quoteFree` จาก exchange แล้วคำนวณ `walletTotalValueQuote = (walletBaseBalance * price) + walletQuoteBalance` โดยตัดยอดที่ถูกล็อกอยู่ใน Open Orders ทิ้งทั้งหมด ทำให้เวลาที่บอทวาง Buy Order $50 × 2 ไม้ ($100 ถูกล็อกอยู่ใน Open Orders) ยอด Equity รวมบนแดชบอร์ดจะวูบลงเหลือแค่ $20.06 ทั้งที่มีทุนจริง $120+
+     - **การแก้ไข**:
+       1. ใน `strategy.ts` เพิ่มการจัดเก็บ `walletBaseLocked`, `walletQuoteLocked`, `walletBaseTotal`, `walletQuoteTotal` จาก `getAccountBalances` ใน `refreshWalletBalances()`
+       2. เพิ่ม Helper `getTotalPortfolioValueQuote(refP)` ซึ่งรวมทั้งยอด Free และยอด Locked ใน Open Orders ทั้งฝั่ง Base และ Quote ทำให้มูลค่าพอร์ตสมบูรณ์และถูกต้อง 100%
+   - **Dynamic `binanceSymbol` Synchronization & Cross-Exchange Trade Attribution**:
+     - **สาเหตุของปัญหา**: ใน `updateSymbolInfo(info)` เดิมตกการอัปเดต `this.cfg.binanceSymbol` ส่งผลให้เมื่อสลับคู่เทรดเป็น `SOLFDUSD` ค่า `binanceSymbol` ยังคงค้างเป็น `ethfdusd` และใน `src/db.ts` ฟังก์ชัน `backfillMissingSellPnl` มีการเดาเหรียญที่ราคา 2,500 เป็น `WETH:USDSO` เสมอแม้ว่าจะเป็นคำสั่งบน Binance CEX (Order ID เป็นตัวเลขของ Binance)
+     - **การแก้ไข**:
+       1. ใน `src/strategy.ts`: เพิ่ม `this.cfg.binanceSymbol = info.symbol.toLowerCase().replace(/[\/\-_:]/g, "");` ใน `updateSymbolInfo`
+       2. ใน `src/db.ts`: กำหนด `targetSymbol`, `targetBase`, `targetQuote` ให้รองรับ Quote ของ Binance CEX (`FDUSD` / `USDT`) และซ่อมแซม Order เดิมของ Binance ที่เคยถูกแท็กผิดเป็น `WETH:USDSO` ให้กลับมาเป็น `ETHFDUSD` อย่างถูกต้อง
    - **DreamDEX Strict Price & Quantity Tick Rounding (Elimination of `0xaf608abb` & `0x4f174b29` Reverts)**:
      - **สาเหตุของปัญหา `0xaf608abb` (InvalidPriceTick)**: บน DreamDEX สัญญา `SpotPool` มี require guard บังคับว่าราคาคำสั่งซื้อขายต้องหารลงตัวกับ `tickSize` พอดี (`price % tickSize == 0`) หากราคาที่ส่งไปมีทศนิยมเกินระดับขั้น (เช่น `0.20342` แต่ `tickSize` คือ `0.0001`) สัญญาจะ Revert ด้วย Custom Error `0xaf608abb` (`InvalidPriceTick(uint256 price, uint256 tickSize)`)
      - **สาเหตุของปัญหา `0x4f174b29` (InvalidQuantity)**: สัญญา `SpotPool` บน Somnia Mainnet สำหรับคู่ `SOMI:USDSO` กำหนด `lotSize_ = 0.01 SOMI` (1e16 wei) และ `minQuantity_ = 1.0 SOMI` (1e18 wei) เมื่อคำสั่งมีทศนิยมเกิน 2 ตำแหน่ง (เช่น 395.004 SOMI) จะละเมิดเงื่อนไข `quantity % lotSize == 0` ทำให้ Revert ด้วย `0x4f174b29`
