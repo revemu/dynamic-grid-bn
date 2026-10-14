@@ -148,6 +148,7 @@ export interface ChannelOptions {
   narrowChannelThresholdPct?: number;   // narrow channel threshold % (default 1.2%)
   narrowChannelBuyBufferPct?: number;   // buffer % above floor for buy edge (default 0.05%)
   narrowChannelSellBufferPct?: number;  // buffer % below ceiling for sell edge (default 0.05%)
+  useOnlyClosedCandles?: boolean;       // calculate structure and channel bounds strictly on closed candles
 }
 
 /**
@@ -1132,9 +1133,10 @@ export class DowStructureEngine {
     let candidatePeak: CandidatePoint | undefined;
     let candidateValley: CandidatePoint | undefined;
 
-    const price = currentPrice ?? fallbackPrice;
-    const n = this.candles.length;
-    const lastCandle = n > 0 ? this.candles[n - 1] : undefined;
+    const candles = options?.useOnlyClosedCandles ? this.getClosedCandles() : this.candles;
+    const n = candles.length;
+    const lastCandle = n > 0 ? candles[n - 1] : undefined;
+    const price = (options?.useOnlyClosedCandles && lastCandle) ? (currentPrice ?? lastCandle.close) : (currentPrice ?? fallbackPrice);
     const k = Math.max(2, this.pivotWindow || 3);
     const mode = options?.mode ?? "DOW_SWINGS";
     const useTrueWick = options?.useTrueWick ?? this.useTrueWick ?? true;
@@ -1169,7 +1171,7 @@ export class DowStructureEngine {
     if (n >= k + 1) {
       const startCandidateIdx = Math.max(k, n - 1 - k);
       for (let idx = startCandidateIdx; idx < n; idx++) {
-        const c = this.candles[idx];
+        const c = candles[idx];
         if (!c) continue;
 
         // Number of fully closed candles formed strictly after idx (candle n - 1 is currently open/live)
@@ -1179,7 +1181,7 @@ export class DowStructureEngine {
 
         let isCandHigh = true;
         for (let j = idx - k; j < idx; j++) {
-          const prev = this.candles[j];
+          const prev = candles[j];
           if (prev && getEffectiveHigh(prev, useTrueWick, this.wickThresholdPct) > candEffHigh) {
             isCandHigh = false;
             break;
@@ -1187,7 +1189,7 @@ export class DowStructureEngine {
         }
         if (isCandHigh) {
           for (let j = idx + 1; j <= Math.min(n - 2, idx + k); j++) {
-            const next = this.candles[j];
+            const next = candles[j];
             if (next && getEffectiveHigh(next, useTrueWick, this.wickThresholdPct) > candEffHigh) {
               isCandHigh = false;
               break;
@@ -1211,7 +1213,7 @@ export class DowStructureEngine {
 
         let isCandLow = true;
         for (let j = idx - k; j < idx; j++) {
-          const prev = this.candles[j];
+          const prev = candles[j];
           if (prev && getEffectiveLow(prev, useTrueWick, this.wickThresholdPct) < candEffLow) {
             isCandLow = false;
             break;
@@ -1219,7 +1221,7 @@ export class DowStructureEngine {
         }
         if (isCandLow) {
           for (let j = idx + 1; j <= Math.min(n - 2, idx + k); j++) {
-            const next = this.candles[j];
+            const next = candles[j];
             if (next && getEffectiveLow(next, useTrueWick, this.wickThresholdPct) < candEffLow) {
               isCandLow = false;
               break;
@@ -1522,7 +1524,7 @@ export class DowStructureEngine {
     } else {
       // DONCHIAN_ATR mode
       const lookback = Math.min(n, options?.donchianLookback ?? 20);
-      const donchianCandles = this.candles.slice(Math.max(0, n - lookback));
+      const donchianCandles = candles.slice(Math.max(0, n - lookback));
       const allLows = donchianCandles.map((c) => (useTrueWick ? c.low : getEffectiveLow(c, false))).filter(Number.isFinite);
       const allHighs = donchianCandles.map((c) => (useTrueWick ? c.high : getEffectiveHigh(c, false))).filter(Number.isFinite);
 

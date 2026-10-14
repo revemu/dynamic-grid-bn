@@ -319,6 +319,10 @@ async function main(): Promise<void> {
           macroFeed?.onCandle((candle, isClosed) => {
             macroDowEngine.addCandle(candle);
             dashboard.addCandle(candle, isClosed);
+            if (isClosed) {
+              grid.onCandleClosed(candle);
+              wakeSleep?.();
+            }
           });
           macroFeed?.start();
           tradingFeed?.start();
@@ -341,6 +345,10 @@ async function main(): Promise<void> {
           macroFeed?.onCandle((candle, isClosed) => {
             macroDowEngine.addCandle(candle);
             dashboard.addCandle(candle, isClosed);
+            if (isClosed) {
+              grid.onCandleClosed(candle);
+              wakeSleep?.();
+            }
           });
           macroFeed?.start();
           tradingFeed?.start();
@@ -407,6 +415,10 @@ async function main(): Promise<void> {
     macroFeed.onCandle((candle, isClosed) => {
       macroDowEngine.addCandle(candle);
       dashboard.addCandle(candle, isClosed);
+      if (isClosed) {
+        grid.onCandleClosed(candle);
+        wakeSleep?.();
+      }
     });
     macroFeed.start();
   }

@@ -27,7 +27,7 @@ import type { IExchangeClient, ExchangeSymbolInfo } from "./exchange/types.js";
 import { ORDER_TYPE, shiftBps, spreadBps, createStatusLogger } from "./utils.js";
 import type { Config } from "./config.js";
 import type { AtrSource } from "./types.js";
-import type { DowStructureEngine, DowStructure } from "./market-structure.js";
+import type { DowStructureEngine, DowStructure, GridZone, Candle } from "./market-structure.js";
 import { BotDatabase, getDatabase, type StrategyStateRecord, type TradeRecord, type OrderActivityRecord, type GasLogRecord, type LockedChannel } from "./db.js";
 
 export interface Lot {
@@ -109,6 +109,20 @@ export class DynamicGrid {
     buyLevels: number[];
     sellLevels: number[];
   };
+  private confirmedChannel?: {
+    candleTime: number;
+    lowerBound: number;
+    upperBound: number;
+    centerPrice: number;
+    cutLossBound: number;
+    rawFloorPrice: number;
+    buyLevels: number[];
+    sellLevels: number[];
+    dow?: DowStructure;
+    gridZone?: GridZone;
+    calculatedAt: number;
+  };
+  private pendingConfirmedChannelUpdate = false;
   private lockedChannel?: LockedChannel;
   private lastActivePeakTime?: number;
   private lastActivePeakPrice?: number;
@@ -302,6 +316,8 @@ export class DynamicGrid {
     this.lastRefPrice = undefined;
     this.wsBookTicker = undefined;
     this.lastDynamicBounds = undefined;
+    this.confirmedChannel = undefined;
+    this.pendingConfirmedChannelUpdate = true;
     this.lockedChannel = undefined;
     this.waitingForHigherLow = false;
     this.breakdownFloorPrice = undefined;
@@ -324,6 +340,14 @@ export class DynamicGrid {
     this.minNotional = info.minNotional;
     this.loadState();
     this.log(`🔄 [strategy] Updated trading pair to ${this.symbol} (${this.baseAsset}/${this.quoteAsset})`);
+  }
+
+  /**
+   * Handle confirmed candle close from WebSocket Kline stream.
+   * Prompts recalculation of confirmed channel bounds when adjustChannelOnClosedOnly is enabled.
+   */
+  public onCandleClosed(candle: Candle): void {
+    this.pendingConfirmedChannelUpdate = true;
   }
 
   /**
@@ -469,6 +493,7 @@ export class DynamicGrid {
       narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct ?? 0.05,
       narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct ?? 0.05,
       lockChannelInPosition: this.cfg.lockChannelInPosition !== false,
+      adjustChannelOnClosedOnly: this.cfg.adjustChannelOnClosedOnly !== false,
       srLookbackCandles: this.cfg.srLookbackCandles ?? 300,
       initialCandleCount: this.cfg.initialCandleCount ?? 300,
       maxCandleCount: this.cfg.maxCandleCount ?? 600,
@@ -581,6 +606,26 @@ export class DynamicGrid {
     }
     if (newSettings.narrowChannelSellBufferPct !== undefined) {
       this.cfg.narrowChannelSellBufferPct = Math.max(0, Number(newSettings.narrowChannelSellBufferPct));
+    }
+    if (newSettings.adjustChannelOnClosedOnly !== undefined) {
+      this.cfg.adjustChannelOnClosedOnly = Boolean(newSettings.adjustChannelOnClosedOnly);
+    }
+    if (
+      newSettings.adjustChannelOnClosedOnly !== undefined ||
+      newSettings.channelMode !== undefined ||
+      newSettings.minChannelWidthPct !== undefined ||
+      newSettings.maxChannelWidthPct !== undefined ||
+      newSettings.floorBufferPct !== undefined ||
+      newSettings.srLookbackCandles !== undefined ||
+      newSettings.useTrueWick !== undefined ||
+      newSettings.wickThresholdPct !== undefined ||
+      newSettings.enableNarrowChannelCollapse !== undefined ||
+      newSettings.narrowChannelThresholdPct !== undefined ||
+      newSettings.narrowChannelBuyBufferPct !== undefined ||
+      newSettings.narrowChannelSellBufferPct !== undefined
+    ) {
+      this.confirmedChannel = undefined;
+      this.pendingConfirmedChannelUpdate = true;
     }
     this.syncDowEngineSettings();
     const configToPersist = {
@@ -1135,6 +1180,8 @@ export class DynamicGrid {
   }
 
   public reloadState(): void {
+    this.confirmedChannel = undefined;
+    this.pendingConfirmedChannelUpdate = true;
     this.loadState();
   }
 
@@ -1521,6 +1568,8 @@ export class DynamicGrid {
     this.stuckSince = undefined;
     this.lockedChannel = undefined;
     this.lastDynamicBounds = undefined;
+    this.confirmedChannel = undefined;
+    this.pendingConfirmedChannelUpdate = true;
     this.db.saveLockedChannel(this.getSymbolKey(), undefined);
 
     // 4. Reset PnL & Gas if requested
@@ -1862,42 +1911,98 @@ export class DynamicGrid {
     }
 
     // Market structure channel: 0% Floor, 50% Center, 100% Ceiling (Calculated from Binance price)
-    const dow: DowStructure | undefined = this.dowEngine?.getStructure(refPrice, undefined, {
-      mode: this.cfg.channelMode,
-      minChannelWidthPct: this.cfg.minChannelWidthPct,
-      maxChannelWidthPct: this.cfg.maxChannelWidthPct,
-      atrMinMultiplier: this.cfg.atrMinMultiplier,
-      atrMaxMultiplier: this.cfg.atrMaxMultiplier,
-      donchianLookback: this.cfg.donchianLookback,
-      floorBufferPct: this.cfg.floorBufferPct,
-      atrPct: this.atrSource.atrPct?.(),
-      useTrueWick: this.cfg.useTrueWick,
-      wickThresholdPct: this.cfg.wickThresholdPct,
-      srLookbackCandles: this.cfg.srLookbackCandles,
-      enableNarrowChannelCollapse: this.cfg.enableNarrowChannelCollapse,
-      narrowChannelThresholdPct: this.cfg.narrowChannelThresholdPct,
-      narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct,
-      narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct,
-    });
-    const gridZone = dow?.gridZone;
+    const adjustOnClosedOnly = this.cfg.adjustChannelOnClosedOnly !== false;
+    const lastClosedCandle = this.dowEngine?.getLastClosedCandle();
+    const lastClosedTime = lastClosedCandle?.time ?? 0;
 
+    const needChannelRecalc =
+      !adjustOnClosedOnly ||
+      !this.confirmedChannel ||
+      this.pendingConfirmedChannelUpdate ||
+      (lastClosedTime > 0 && this.confirmedChannel.candleTime !== lastClosedTime);
+
+    let dow: DowStructure | undefined;
+    let gridZone: GridZone | undefined;
     const currentFloorBufferPct = this.cfg.floorBufferPct ?? 0.0;
+    let lowerBound: number;
+    let upperBound: number;
+    let centerPrice: number;
+    let cutLossBound: number;
+    let rawFloorPrice: number;
+    let buyLevels: number[];
+    let sellLevels: number[];
 
-    let lowerBound = dow?.bottomBound ?? refPrice * 0.98;
-    let upperBound = dow?.upperBound ?? refPrice * 1.02;
-    let centerPrice = dow?.centerPrice ?? (lowerBound + upperBound) / 2;
-    const rawSpan = Math.max(0.000001, upperBound - lowerBound);
+    if (needChannelRecalc) {
+      const calculationPrice = (adjustOnClosedOnly && lastClosedCandle) ? lastClosedCandle.close : refPrice;
 
-    let cutLossBound = dow?.cutLossBound ?? (lowerBound - (currentFloorBufferPct / 100) * lowerBound);
-    let rawFloorPrice = dow?.activeValley?.price ?? lowerBound;
+      dow = this.dowEngine?.getStructure(calculationPrice, undefined, {
+        mode: this.cfg.channelMode,
+        minChannelWidthPct: this.cfg.minChannelWidthPct,
+        maxChannelWidthPct: this.cfg.maxChannelWidthPct,
+        atrMinMultiplier: this.cfg.atrMinMultiplier,
+        atrMaxMultiplier: this.cfg.atrMaxMultiplier,
+        donchianLookback: this.cfg.donchianLookback,
+        floorBufferPct: this.cfg.floorBufferPct,
+        atrPct: this.atrSource.atrPct?.(),
+        useTrueWick: this.cfg.useTrueWick,
+        wickThresholdPct: this.cfg.wickThresholdPct,
+        srLookbackCandles: this.cfg.srLookbackCandles,
+        enableNarrowChannelCollapse: this.cfg.enableNarrowChannelCollapse,
+        narrowChannelThresholdPct: this.cfg.narrowChannelThresholdPct,
+        narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct,
+        narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct,
+        useOnlyClosedCandles: adjustOnClosedOnly,
+      });
+      gridZone = dow?.gridZone;
 
-    let buyLevels: number[] = gridZone?.buyLevels && gridZone.buyLevels.length > 0
-      ? gridZone.buyLevels
-      : [lowerBound + rawSpan * 0.40, lowerBound + rawSpan * 0.30, lowerBound + rawSpan * 0.20, lowerBound + rawSpan * 0.10];
+      lowerBound = dow?.bottomBound ?? calculationPrice * 0.98;
+      upperBound = dow?.upperBound ?? calculationPrice * 1.02;
+      centerPrice = dow?.centerPrice ?? (lowerBound + upperBound) / 2;
+      const rawSpan = Math.max(0.000001, upperBound - lowerBound);
 
-    let sellLevels: number[] = gridZone?.sellLevels && gridZone.sellLevels.length > 0
-      ? gridZone.sellLevels
-      : [lowerBound + rawSpan * 0.60, lowerBound + rawSpan * 0.70, lowerBound + rawSpan * 0.80, lowerBound + rawSpan * 0.90];
+      cutLossBound = dow?.cutLossBound ?? (lowerBound - (currentFloorBufferPct / 100) * lowerBound);
+      rawFloorPrice = dow?.activeValley?.price ?? lowerBound;
+
+      buyLevels = gridZone?.buyLevels && gridZone.buyLevels.length > 0
+        ? [...gridZone.buyLevels]
+        : [lowerBound + rawSpan * 0.40, lowerBound + rawSpan * 0.30, lowerBound + rawSpan * 0.20, lowerBound + rawSpan * 0.10];
+
+      sellLevels = gridZone?.sellLevels && gridZone.sellLevels.length > 0
+        ? [...gridZone.sellLevels]
+        : [lowerBound + rawSpan * 0.60, lowerBound + rawSpan * 0.70, lowerBound + rawSpan * 0.80, lowerBound + rawSpan * 0.90];
+
+      if (adjustOnClosedOnly && lastClosedTime > 0) {
+        if (this.confirmedChannel && this.confirmedChannel.candleTime !== lastClosedTime) {
+          this.log(
+            `📊 [CONFIRMED CHANNEL] Candle closed @ $${calculationPrice.toFixed(6)} — Adjusted channel bounds: [$${lowerBound.toFixed(6)} .. $${upperBound.toFixed(6)}] (Center: $${centerPrice.toFixed(6)})`,
+          );
+        }
+        this.confirmedChannel = {
+          candleTime: lastClosedTime,
+          lowerBound,
+          upperBound,
+          centerPrice,
+          cutLossBound,
+          rawFloorPrice,
+          buyLevels: [...buyLevels],
+          sellLevels: [...sellLevels],
+          dow,
+          gridZone,
+          calculatedAt: Date.now(),
+        };
+        this.pendingConfirmedChannelUpdate = false;
+      }
+    } else {
+      dow = this.confirmedChannel!.dow;
+      gridZone = this.confirmedChannel!.gridZone;
+      lowerBound = this.confirmedChannel!.lowerBound;
+      upperBound = this.confirmedChannel!.upperBound;
+      centerPrice = this.confirmedChannel!.centerPrice;
+      cutLossBound = this.confirmedChannel!.cutLossBound;
+      rawFloorPrice = this.confirmedChannel!.rawFloorPrice;
+      buyLevels = [...this.confirmedChannel!.buyLevels];
+      sellLevels = [...this.confirmedChannel!.sellLevels];
+    }
 
     // ── Position Dust Cleanup ──────────────────────────────────────────
     const totalHeldBase = this.baseHeld();

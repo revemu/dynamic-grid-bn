@@ -856,6 +856,17 @@
               </label>
             </div>
 
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">Adjust Channel on Confirmed Candles Only (ปรับกรอบเฉพาะแท่งเทียนที่ยืนยันแล้ว)</span>
+                <span class="switch-desc">เปิดใช้งาน (ON): ล็อคกรอบราคา Floor/Ceiling และเส้นกริดให้นิ่งสนิท ไม่ส่ายตามราคาย่อย และปรับกรอบเฉพาะเมื่อแท่งเทียนปิดสมบูรณ์เท่านั้น | ปิด (OFF): ปรับกรอบตามราคา Real-time ทุก Tick</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_adjustChannelOnClosedOnly" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
             <div class="form-group">
               <label for="cfg_minChannelShiftPct">
                 Min Channel Shift Sensitivity (%)

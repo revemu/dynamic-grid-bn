@@ -82,6 +82,21 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
    - **Real On-Chain ERC-20 Balances & Allowance**: ดึงยอดเงิน USDso และ Base token (WETH, WBTC, USDC.e) ผ่าน ERC-20 `balanceOf` บน Somnia RPC จริง โดยไม่ฮาร์ดโค้ด `quoteFree: 0` พร้อมระบบ `ensureAllowance` ตรวจสอบและ approve อัตโนมัติก่อนวางออเดอร์
    - **Credentials Masking Protection (`******`)**: ฟรอนต์เอนด์และแบ็กเอนด์แยกแยะระหว่างค่า Masking (`******`) กับ Private Key จริงอย่างเข้มงวด โดยจะไม่ส่งหรือเผลอ parse ข้อความ `******` เป็น private key เข้า `viem` อีกต่อไป ป้องกันปัญหา `invalid private key, expected hex or 32 bytes` ขณะบันทึกการตั้งค่า
    - **True Select Dropdown for Trading Pair in Settings Modal**: เปลี่ยนช่องกรอกคู่เทรดในหน้าต่าง Settings จาก input text เป็น `<select id="cfg_symbol" class="form-select">` เต็มรูปแบบ กดเลือกรายการเหรียญ (`WBTC:USDso`, `WETH:USDso`, `SOMI:USDso`, `USDC.e:USDso`) ได้ทันทีโดยไม่ต้องพิมพ์เอง
+   - **Confirmed Candles Only Channel Bounds Architecture (`adjustChannelOnClosedOnly`)**:
+     - **สาเหตุของปัญหากรอบราคาขยับขึ้นลงตลอดเวลา**:
+       1. ใน `src/strategy.ts` เมธอด `step()` ทำงานเป็น Main Loop ทุก 1 วินาที (Tick) และส่งราคา Real-time ล่าสุด (`refPrice`) เข้า `dowEngine.getStructure(refPrice)` ตลอดเวลา
+       2. แท่งเทียนแท่งล่าสุดที่กำลังก่อตัวอยู่ (Unclosed/Live Candle) มีการอัปเดต High/Low/Close ตามราคาทุก Tick ทำให้สวิงและระยะ `minChannelWidthPct` (ซึ่งคิดเป็น % จากราคาปัจจุบัน) ขยับตามราคาไปเรื่อยๆ
+       3. เมื่อไม่ได้ถือ Position (100% Cash) ระบบจะไม่เปิดใช้ Hysteresis ส่งผลให้กรอบราคา (Floor, Ceiling, Center) และเส้นกริด Buy/Sell Levels ส่ายขึ้นลงตามความผันผวนย่อย (Noise) ในแท่งเทียนตลอดเวลา
+     - **การแก้ไขและสถาปัตยกรรมใหม่**:
+       1. **เพิ่มการตั้งค่า `adjustChannelOnClosedOnly` (ค่าเริ่มต้น: `true`)**:
+          - รองรับทั้งใน `src/config.ts`, `data/settings.db.json` และมี Toggle Switch ในหน้าต่าง Settings Modal บนเว็บแดชบอร์ด
+       2. **คำนวณและปรับกรอบเฉพาะแท่งเทียนที่ยืนยันแล้ว (Confirmed Candle Close)**:
+          - ใน `src/market-structure.ts`: เพิ่มออปชัน `useOnlyClosedCandles?: boolean` ให้กับ `getStructure` เพื่อให้การค้นหา Swings, Donchian High/Low, และโครงสร้าง Dow Theory คำนวณจากแท่งเทียนที่ปิดสมบูรณ์แล้วเท่านั้น (`getClosedCandles()`) และอ้างอิงราคาปิดของแท่งเทียนที่ยืนยันแล้ว
+          - ใน `src/strategy.ts`: เก็บ State `confirmedChannel` แคชระดับกรอบราคาไว้ระหว่างแท่งเทียน และรีคำนวณเฉพาะเมื่อแท่งเทียนปิดสมบูรณ์ (`lastClosedTime !== this.confirmedChannel.candleTime`) หรือเมื่อมีการสลับเหรียญ/เปลี่ยนการตั้งค่า
+          - ใน `src/index.ts`: เมื่อ WebSocket Kline Feed ส่งสัญญาณ `isClosed === true` จะเรียก `grid.onCandleClosed(candle)` และปลุก `wakeSleep?.()` ให้บอทปรับกรอบทันทีในระดับ Milliseconds
+       3. **ความเสถียรในการเทรด**:
+          - ระหว่างแท่งเทียนที่ยังไม่ปิด: กรอบราคา (Floor, Ceiling, Buy Levels 1-4, Sell Targets 1-4) นิ่งสนิท 100% ไม่เลื่อนหนีไปมา
+          - การส่งคำสั่งและการจับคู่ (Buy/Sell/Cut Loss/Take Profit): ราคายังคงวิ่งแบบ Real-time ตรวจจับการแตะระดับราคาเป้าหมายได้อย่างแม่นยำ
    - **Instant Pair Switching & Cross-Symbol Feed Isolation (`symbolChanged` & `exchangeChanged`):**
       - **สาเหตุของปัญหากรอบราคาเพี้ยน ($103.15 .. $2510.83):**
         1. เมื่อสลับคู่เหรียญ (เช่น จาก `ETHFDUSD` เป็น `SOLFDUSD`) ใน `src/index.ts` เดิมเรียก `grid.updateSymbolInfo(nextInfo)` โดยที่ `grid.atrSource` ถูกประกาศเป็น `readonly` และไม่มีการส่งต่อ `atrSource` ใหม่เข้าไป

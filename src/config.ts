@@ -172,6 +172,8 @@ export const defaultStrategyConfig = {
   maxChannelWidthPct: 6.0,
   /** When true, freezes/locks channel bounds while holding inventory position to avoid shifting sell targets. */
   lockChannelInPosition: true,
+  /** When true, recalculates and shifts channel bounds only when a candle closes (confirmed candle), preventing jitter during live ticks. */
+  adjustChannelOnClosedOnly: true,
   /** Min channel width multiplier of ATR for DOW_ATR_CLAMP (default 2.5x ATR). */
   atrMinMultiplier: 2.5,
   /** Max channel width multiplier of ATR for DOW_ATR_CLAMP (default 5.0x ATR). */
@@ -265,6 +267,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.timezone !== undefined) merged.timezone = String(saved.timezone);
       if (saved.dashboardPort !== undefined) merged.dashboardPort = Number(saved.dashboardPort);
       if (saved.enableNarrowChannelCollapse !== undefined) merged.enableNarrowChannelCollapse = Boolean(saved.enableNarrowChannelCollapse);
+      if (saved.adjustChannelOnClosedOnly !== undefined) merged.adjustChannelOnClosedOnly = Boolean(saved.adjustChannelOnClosedOnly);
       if (saved.narrowChannelThresholdPct !== undefined) merged.narrowChannelThresholdPct = Number(saved.narrowChannelThresholdPct);
       if (saved.narrowChannelBuyBufferPct !== undefined) merged.narrowChannelBuyBufferPct = Number(saved.narrowChannelBuyBufferPct);
       if (saved.narrowChannelSellBufferPct !== undefined) merged.narrowChannelSellBufferPct = Number(saved.narrowChannelSellBufferPct);
