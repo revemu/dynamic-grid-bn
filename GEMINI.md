@@ -407,6 +407,18 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
                      1. ในบล็อกคำนวณกรอบเริ่มต้น (`mode !== "DONCHIAN_ATR"`): เมื่อ `price < curFloor` ให้ค้นหาเหวที่ยืนยันแล้วในโครงสร้าง (`canonicalLows`) ที่อยู่ต่ำกว่าราคาปัจจุบัน (`l.price < price`) แล้วเลือกเหวที่ใกล้ราคาที่สุดลงไป (เช่น $2,527.41) มาเป็น Floor ทันที หากไม่มีเหวที่ต่ำกว่าราคานี้แล้วจึงค่อยขยายตาม `minSpanFromPct`
                      2. ในบล็อก `isDropBreakdown`: ปรับให้ค้นหาเหวที่ยืนยันแล้วด้านล่าง (`lowerConfirmedValleys`) ก่อนเสมอ และเมื่อเกิดการสร้างแท่งคอนเฟิร์มเป็น New Swing Low ใหม่จริง จึงค่อยปรับขยับ Floor ลงมารับจุดใหม่ตามทฤษฎี Dow Theory
 
+                14. **Post-Dump Recovery Base Decoupling, Ceiling Pull-Down Fix on HH & Symmetrical Higher Low (HL) Floor Lifting (`src/market-structure.ts`):**
+                    - **สาเหตุ & ปัญหาเดิม:**
+                      1. **`baseValley` ยึดติด Flash Dump โบราณ:** เมื่อเกิดการทุบ (Flash Crash เช่น BNB รูดลง $726.58) โดยที่ยอดสูงสุดของ Lookback 192 แท่ง (`macroPeak` เช่น $759.00) เกิดขึ้น*ก่อน*การทุบ ตรรกะ `activeWaveBaseIndex = macroLow.index` จะล็อคเข้าที่จุดต่ำสุด $726.58 เสมอ และวนลูปหา `minLow` ทำให้ `baseValley` ได้ $726.58 ค้างเติ่ง แม้ว่าตลาดจะฟื้นตัวและสร้างฐานใหม่ที่ $738.55 มานานกว่า 24 ชั่วโมงแล้วก็ตาม
+                      2. **Ceiling ถูกดึงลงมาชิดราคาผิดปกติจาก `Boolean(waveCycle.lastLh)`:** ในบล็อกปรับลดกรอบบน มีเงื่อนไข `Boolean(waveCycle.lastLh)` ซึ่งแทบจะเป็นจริงเสมอในประวัติ 192 แท่ง ส่งผลให้เมื่อราคาทำ Higher High (HH $747.43) กรอบบนกลับถูกดึงรูดลงมาครอบที่ LH เก่า ($743.89) ทำให้ราคาชนเพดาน 99.4% ตลอดเวลา
+                      3. **ขาดตรรกะยกฐานตาม Higher Low (HL) อย่างสมมาตร:** ในโค้ดเดิมมีเฉพาะการปรับกรอบบนลดลงตาม LH หรือยกขึ้นตาม HH และปรับกรอบล่างลดลงตาม LL แต่ไม่มีตรรกะยก Floor ขึ้นตาม Higher Low (HL) เมื่อตลาดฟื้นตัวทำคลื่นขาขึ้น (`HH + HL ยกตัว`)
+                      4. **การขยายกรอบตาม `minSpanFromPct` รูดทะลุกลับไปหา Flash Crash:** เมื่อความกว้างสวิงปัจจุบันแคบกว่า `minChannelWidthPct` ลูป `curCeil - curFloor < minSpanFromPct` จะหยิบสวิงถัดไปในอดีตทันที ซึ่งเนื่องจากจังหวะดีดตัวเป็น V-shape ไม่มีสวิงคั่นกลาง ระบบจึงกระโดดข้ามลงไปหยิบ $726.58 (ระยะห่างเกินความจำเป็นถึงเกือบ 3 เท่า)
+                    - **การแก้ไขในระบบ:**
+                      1. **Post-Dump Recovery Wave Base Recognition:** เมื่อ `macroPeak.index <= macroLow.index` ให้ตรวจจับคลื่นฟื้นตัวหลังการทุบ (`postLowHighs` และ `postLowLows`) หากมีการตั้งฐานหลังจุดทุบแล้ว ให้กำหนด `activeWaveBaseIndex` เป็นจุดต่ำสุดของคลื่นฟื้นตัวหลังการทุบ (เช่น $738.55) ปลดล็อคไม่ให้ยึดติดกับ Flash Dump $726.58
+                      2. **Ceiling Pull-Down Protection on HH:** เพิ่ม Guard `!isLatestHighHh` และตัด `Boolean(waveCycle.lastLh)` ออก เพื่อไม่ให้เพดานถูกดึงลงมา หากรอบปัจจุบันยืนยันการทำ Higher High (HH)
+                      3. **Symmetrical Higher Low (HL) Floor Lifting Rule:** เพิ่มกฎ Dow Theory สมมาตรกับฝั่ง LH โดยเมื่อราคายกฐานทำ Higher Low (HL) ยืนยันแล้วในรอบขาขึ้น/ฟื้นตัว ให้ระบบค้นหาเหว HL ที่ยืนยันแล้วที่อยู่ต่ำกว่าราคาปัจจุบัน และรักษาระยะห่างจาก `upperBound >= minSpan` และปรับยก `bottomBound` (Floor) ขึ้นมาเกาะฐาน HL นั้นทันที
+                      4. **Shortfall Overshoot Cap (1.5x):** ในลูปขยายกรอบตาม `minSpanFromPct` จำกัดระยะการหยิบสวิงในอดีตไม่ให้เกิน 1.5x ของระยะที่ขาดจริง (`lDist <= needed * 1.5`) ป้องกันไม่ให้รูดตกหล่นไปหาสวิง Flash Crash โบราณ แต่ให้ใช้วิธีขยายกรอบเติมเต็มระยะ shortfall อย่างราบรื่น
+
 4. **Asset Precision & Terminology**:
    - **Base Asset**: เหรียญหลักที่เทรด (เช่น BTC, ETH, SOL, BNB, SOMI)
    - **Quote Asset**: สินทรัพย์ที่ใช้ซื้อ/ประเมินมูลค่า (เช่น USDT, USDso)

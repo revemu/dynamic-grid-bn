@@ -1285,7 +1285,18 @@ export class DowStructureEngine {
           activeWaveBaseIndex = lowestLaunchpad.index;
         }
       } else {
-        activeWaveBaseIndex = macroLow.index;
+        // macroPeak เกิดก่อน macroLow: ตลาดทุบลงมาทำ macroLow แล้ว และอาจมีการฟื้นตัวก่อตัวคลื่นใหม่
+        // ค้นหายอด High และเหว Low ที่เกิดขึ้นหลัง macroLow เพื่อดูว่ามีคลื่นฟื้นตัว/Consolidation เกิดขึ้นแล้วหรือไม่
+        const postLowHighs = canonicalHighs.filter((h) => h.index > macroLow.index);
+        const postLowLows = canonicalLows.filter((l) => l.index > macroLow.index);
+        if (postLowHighs.length > 0 && postLowLows.length > 0) {
+          // มีเหวที่เกิดขึ้นหลังจุดทุบ macroLow แล้ว (คลื่นฟื้นตัวได้สร้างฐานใหม่)
+          // ยึดเหวต่ำสุดของคลื่นฟื้นตัวหลังการทุบ เป็น activeWaveBaseIndex แทนที่จะดึง macroLow เดิม
+          const lowestPostLow = postLowLows.reduce((min, l) => (l.price < min.price ? l : min), postLowLows[0]!);
+          activeWaveBaseIndex = lowestPostLow.index;
+        } else {
+          activeWaveBaseIndex = macroLow.index;
+        }
       }
     } else if (macroLow) {
       activeWaveBaseIndex = macroLow.index;
@@ -1446,19 +1457,18 @@ export class DowStructureEngine {
           const nextH = hIdx < higherConfirmedHighs.length ? higherConfirmedHighs[hIdx]!.price : undefined;
           const nextL = lIdx < lowerConfirmedLows.length ? lowerConfirmedLows[lIdx]!.price : undefined;
 
+          const needed = minSpanFromPct - (curCeil - curFloor);
           const hDist = nextH !== undefined ? nextH - curCeil : Infinity;
           const lDist = nextL !== undefined ? curFloor - nextL : Infinity;
 
           // ให้ความสำคัญกับการขยาย Floor ก่อนเพื่อรักษายอด LH/แนวต้านปัจจุบัน
-          if (lDist <= hDist && nextL !== undefined) {
+          // แต่ไม่กระโดดข้ามสวิงที่ลึกเกิน 1.5x ของระยะที่ขาด (needed) เพื่อป้องกันการรูดตกหล่นไปหา Flash Crash ในอดีต
+          if (lDist <= hDist && nextL !== undefined && lDist <= needed * 1.5) {
             curFloor = nextL;
             lIdx++;
-          } else if (nextH !== undefined) {
+          } else if (nextH !== undefined && hDist <= needed * 1.5) {
             curCeil = nextH;
             hIdx++;
-          } else if (nextL !== undefined) {
-            curFloor = nextL;
-            lIdx++;
           } else {
             break;
           }
@@ -1549,13 +1559,14 @@ export class DowStructureEngine {
 
       // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้"):
       // และเมื่อเปิดโหมดปรับกรอบ ให้หายอดที่ใกล้เคียงกับความกว้างต่ำสุด (minChannelWidthPct) มากที่สุด
-      if (upperBound > bottomBound + minSpan) {
+      // ป้องกันการดึงเพดานลงมาหากยอดล่าสุดยืนยันเป็น Higher High (HH)
+      if (upperBound > bottomBound + minSpan && !isLatestHighHh) {
         const candidateLhs = (activeCycleHighs.length > 0 ? activeCycleHighs : (postPeakHighs.length > 0 ? postPeakHighs : canonicalHighs))
           .filter((h) => (h.dowLabel === "LH" || (lastCanonicalHigh && h.price < (canonicalHighs[0]?.price ?? Infinity))) && h.price > price)
           .filter((h) => h.price - bottomBound >= minSpan && h.price - bottomBound <= maxSpan)
           .sort((a, b) => a.price - b.price); // เรียงจากยอดต่ำไปยอดสูง เพื่อหายอดที่ใกล้เคียงกับความกว้างขั้นต่ำ (minSpan) ที่สุด
 
-        if (candidateLhs.length > 0 && (isLatestHighLh || waveCycle.currentLeg?.direction === "DOWN" || Boolean(waveCycle.lastLh) || upperBound - bottomBound > maxSpan)) {
+        if (candidateLhs.length > 0 && (isLatestHighLh || (waveCycle.currentLeg?.direction === "DOWN" && !isLatestHighHh) || upperBound - bottomBound > maxSpan)) {
           const targetLh = candidateLhs[0]!;
           if (targetLh.price < upperBound) {
             upperBound = targetLh.price;
@@ -1576,6 +1587,31 @@ export class DowStructureEngine {
       bottomBound = lastCanonicalLow.price;
       activeValley = lastCanonicalLow;
       clampStatus = "NATURAL_SWING";
+    }
+
+    // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Higher Low (HL) ยกฐานขึ้นมาในรอบขาขึ้น/ฟื้นตัว กรอบล่างสามารถปรับยกตัวขึ้นตามฐาน HL ได้"):
+    // และเมื่อเปิดโหมดปรับกรอบ ให้หาเหว HL ที่ใกล้เคียงกับความกว้างต่ำสุด (minChannelWidthPct) มากที่สุด
+    const isLatestLowHl = lastCanonicalLow?.dowLabel === "HL";
+    if (isLatestLowHl && lastCanonicalLow && bottomBound < lastCanonicalLow.price && upperBound - lastCanonicalLow.price >= minSpan) {
+      bottomBound = lastCanonicalLow.price;
+      activeValley = lastCanonicalLow;
+      clampStatus = "NATURAL_SWING";
+    }
+
+    if (upperBound > bottomBound + minSpan && !isLatestLowLl) {
+      const candidateHls = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
+        .filter((l) => (l.dowLabel === "HL" || l.price > bottomBound) && l.price < price)
+        .filter((l) => upperBound - l.price >= minSpan && upperBound - l.price <= maxSpan)
+        .sort((a, b) => b.price - a.price); // เรียงจากเหวสูงไปเหวต่ำ เพื่อหาเหวที่ใกล้เคียงกับความกว้างขั้นต่ำ (minSpan) ที่สุด
+
+      if (candidateHls.length > 0 && (isLatestLowHl || (waveCycle.currentLeg?.direction === "UP" && !isLatestLowLl) || upperBound - bottomBound > maxSpan)) {
+        const targetHl = candidateHls[0]!;
+        if (targetHl.price > bottomBound) {
+          bottomBound = targetHl.price;
+          activeValley = targetHl;
+          clampStatus = "NATURAL_SWING";
+        }
+      }
     }
 
     const lastLowPoint = this.swingLows[this.swingLows.length - 1];
