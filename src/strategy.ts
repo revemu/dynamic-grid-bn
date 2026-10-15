@@ -2070,36 +2070,32 @@ export class DynamicGrid {
         }
       }
 
-      // 🎯 Adaptive Ceiling Shield (Downside Profit Capture):
-      // If market swings created a new lower Real Ceiling (liveRealCeil < lockedUpperBound)
-      // BUT this new ceiling is STILL PROFITABLE above average entry price (>= avgEntry * 1.005),
-      // allow locked ceiling and sell targets to adjust down to meet the market and secure profit!
+      // If locked ceiling was previously compressed to or below current liveRealCeil,
+      // restore it to the macro swing peak to maintain original locked channel & real S/R ceil visibility
       const liveRealCeil = dow?.gridZone?.upperBound ?? dow?.upperBound;
+      const macroPeak = dow?.activePeak?.price ?? (dow?.swingHighs?.length ? Math.max(...dow.swingHighs.map((s) => s.price)) : 0);
       if (
+        macroPeak > 0 &&
         liveRealCeil !== undefined &&
         liveRealCeil > 0 &&
-        avgEntry > 0 &&
-        liveRealCeil < this.lastDynamicBounds.upperBound &&
-        liveRealCeil >= avgEntry * 1.005 &&
-        liveRealCeil > this.lastDynamicBounds.lowerBound * 1.005 &&
-        (this.lastDynamicBounds.upperBound - liveRealCeil) / this.lastDynamicBounds.upperBound >= 0.002
+        this.lastDynamicBounds.upperBound <= liveRealCeil * 1.002 &&
+        macroPeak > this.lastDynamicBounds.upperBound * 1.01
       ) {
-        const currentFloor = this.lastDynamicBounds.lowerBound;
-        const newCeiling = liveRealCeil;
-        const profitMarginPct = ((newCeiling - avgEntry) / avgEntry) * 100;
+        const restoredCeil = macroPeak;
         this.log(
-          `🎯 [LOCKED CHANNEL REAL CEIL ADAPT] Real ceiling moved down from $${this.lastDynamicBounds.upperBound.toFixed(6)} to $${newCeiling.toFixed(6)} with +${profitMarginPct.toFixed(2)}% profit above Avg Entry ($${avgEntry.toFixed(6)}) — lowering locked ceiling & sell targets to capture market rally!`,
+          `🔄 [RESTORE LOCKED CEIL] Restoring locked ceiling from $${this.lastDynamicBounds.upperBound.toFixed(6)} back to macro peak $${restoredCeil.toFixed(6)} (Real Ceil: $${liveRealCeil.toFixed(6)}) to preserve real channel structure`,
         );
-        this.lastDynamicBounds.upperBound = newCeiling;
-        this.lastDynamicBounds.centerPrice = (currentFloor + newCeiling) / 2;
-        const dSpan = newCeiling - currentFloor;
+        this.lastDynamicBounds.upperBound = restoredCeil;
+        const currentFloor = this.lastDynamicBounds.lowerBound;
+        this.lastDynamicBounds.centerPrice = (currentFloor + restoredCeil) / 2;
+        const dSpan = restoredCeil - currentFloor;
         const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
         const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
         const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
         const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
         const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
         this.lastDynamicBounds.sellLevels = isNarrowChannel
-          ? [newCeiling * (1 - sellBufferFrac)]
+          ? [restoredCeil * (1 - sellBufferFrac)]
           : [
               currentFloor + dSpan * 0.60,
               currentFloor + dSpan * 0.70,

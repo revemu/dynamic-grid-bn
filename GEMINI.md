@@ -115,24 +115,19 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - **การแก้ไข**:
         1. **Backend Protection (`src/index.ts`)**: ใน `onUpdateSettings` เพิ่ม Guard ตรวจสอบ `if ((symbolChanged || exchangeChanged) && isHoldingPosition)` โดยตรวจทั้ง `grid.baseHeld() > minQty` และ `grid.getLots().length > 0` หากบอทกำลังถือ Position อยู่ จะโยน Error ปฏิเสธการสลับเหรียญหรือกระดานทันที พร้อมแจ้งเตือนจำนวนเหรียญและ Lots ที่ต้องเคลียร์ก่อน
         2. **Frontend UI Lock (`public/app.js`)**: ในฟังก์ชัน `updateTick` เมื่อพบว่าบอทมี Position (`lots.length > 0` หรือ `baseHeld > 0` หรือ `holdPct > 0`) จะตั้งค่า `disabled = true`, `cursor = not-allowed`, `opacity = 0.6` ให้กับ `#topSymbolSelect`, `#cfg_symbol`, และ `#cfg_exchange` พร้อม Tooltip: `🔒 ปิดการเปลี่ยนคู่เทรดชั่วคราวเนื่องจากบอทกำลังถือ Position อยู่` และใน Event Listener ของ `#topSymbolSelect` จะตรวจสอบ Guard และแสดง Toast Alert ปฏิเสธทันที
-   - **Adaptive Ceiling Shield & Real Ceiling Take Profit Architecture (`liveRealCeil` & Downside Profit Capture)**:
+   - **Preserved Locked Channel & Direct Real Ceiling Take Profit Architecture (`liveRealCeil` Take Profit)**:
       - **สาเหตุของปัญหา**:
         1. เมื่อบอทเข้าถือ Position (`isHoldingPosition = true`) ระบบจะเปิดใช้งาน `lockChannelInPosition` (Strict Freeze 100%) เพื่อป้องกันไม่ให้กรอบเลื่อนลงมาจนเทขายขาดทุน
-        2. อย่างไรก็ตาม ในตลาดจริง เมื่อโครงสร้าง Dow Theory หรือกรอบ Donchian ของแท่งเทียนจริงสร้างสวิงใหม่และเลื่อนแนวต้านจริงลงมา (`Real S/R Ceil` ต่ำลง เช่น จาก $0.2132 -> $0.2088)
-        3. ระดับขายของบอท (`Sell Target 1..4`) ยังคงถูกแช่แข็งค้างอยู่ที่กรอบเดิมด้านบน ($0.209760 .. $0.213200)
-        4. เมื่อราคาดีดกลับขึ้นไปทำสวิงสูงสุดใหม่ (`HH`) แตะที่แนวต้านจริงของตลาดพอดี ($0.208800) ซึ่งจุดนั้น **สูงกว่าต้นทุนเฉลี่ย (มีกำไรจริง +1.41%)** บอทกลับไม่ได้ขายทำกำไร เพราะ:
-           - ระดับขาย Sell Target 1 ($0.209760) ยังลอยฟ้าอยู่สูงกว่าแนวต้านจริงของตลาด
-           - ฟังก์ชัน `Take Profit At Upper Bound` ตรวจสอบเฉพาะ `upperBound` ของกรอบเดิมที่ล็อคไว้ ไม่ได้ตรวจสอบ `liveRealCeil`
-           - เมื่อราคาแตะแนวต้านจริงแล้วชนไม่ผ่าน ราคาก็วกกลับลงมาจนพอร์ตที่เคยบวกกลายเป็นขาดทุนติดลบ
-      - **การแก้ไขและสถาปัตยกรรมใหม่**:
-        1. **Adaptive Ceiling Shield (`src/strategy.ts`)**:
-           - อนุญาตให้ `upperBound` และ `sellLevels` ของ Locked Channel ปรับตัวลงมาตาม `liveRealCeil` (`dow?.gridZone?.upperBound ?? dow?.upperBound`) ได้ทันที
-           - **Profit Guard ป้องกันการขาดทุนเด็ดขาด**: การปรับลดเพดานลงจะทำงานก็ต่อเมื่อ `liveRealCeil >= avgEntry * 1.005` (ต้องสูงกว่าต้นทุนเฉลี่ยอย่างน้อย +0.50% ขึ้นไปเท่านั้น) และสูงกว่าขอบล่าง `lowerBound`
-           - เมื่อเพดานปรับลง ระดับ `sellLevels` (Sell Target 1..4) จะถูกคำนวณใหม่ลงมาประกบกับแนวต้านจริงของตลาด ทำให้คำสั่งขาย Maker/IOC วางรอในจุดที่ตลาดจริงวิ่งไปชนได้จริง
-           - ขอบล่าง `lowerBound` ยังคงถูกล็อคป้องกันอย่างเหนียวแน่น ไม่เลื่อนลงตามราคา ป้องกันการ Cut Loss ผิดจังหวะ
-        2. **Real Ceiling Take Profit (`src/strategy.ts`)**:
+        2. ในตลาดจริง เมื่อโครงสร้าง Dow Theory หรือกรอบ Donchian ของแท่งเทียนจริงสร้างสวิงใหม่และเลื่อนแนวต้านจริงลงมา (`Real S/R Ceil` ต่ำลง เช่น จาก $0.2132 -> $0.2088)
+        3. หากไประบบดึง `Locked Ceil` ยุบลงมาทับ `Real Ceil` จะทำให้กรอบหลักยุบตัวแคบลง และเส้นประ `🎯 Real S/R Ceil` กับข้อความ `• Real Ceil` ใน Header จะหายไปจากหน้าจอทันทีเนื่องจากราคาซ้ำกับ Locked Ceil
+      - **การแก้ไขและสถาปัตยกรรมที่ถูกต้อง**:
+        1. **Preserved Locked Channel Structure (`src/strategy.ts`)**:
+           - คงระดับ `Locked Ceil` (เช่น $0.2132) และ `Locked Floor` (เช่น $0.2046) ไว้อย่างมั่นคง เพื่อรักษาโครงสร้างของกรอบเดิมและความกว้างของ Channel ไม่ให้ยุบตัว
+           - เส้นประ **`🎯 Real S/R Ceil: $0.2088`** และข้อความใน Header จะยังคงแสดงผลแยกจาก Locked Ceil อย่างชัดเจน 100%
+           - มีระบบ Auto-restore ตรวจจับหาก Locked Ceil เคยถูกยุบตัวลงไป จะกู้คืนกลับไปยัง Macro Peak เดิมให้โดยอัตโนมัติ
+        2. **Direct Real Ceiling Take Profit (`src/strategy.ts`)**:
            - ในฟังก์ชัน `Take Profit at Upper Bound`: เพิ่มการตรวจสอบ `isLiveRealCeilReached = refPrice >= liveCalculatedCeil || bestBid >= liveCalculatedCeil`
-           - เมื่อราคาตลาดวิ่งชนหรือทะลุ `liveCalculatedCeil` และราคานั้นได้กำไร (`isProfitableExit === true`): ระบบจะสั่ง **100% Take Profit Exit** ทันที เพื่อเก็บกำไรเข้ากระเป๋าและปลดล็อคเริ่มรอบใหม่ทันที ไม่ปล่อยให้ราคาวนกลับมาขาดทุน
+           - เมื่อราคาตลาดวิ่งชนหรือทะลุ `liveCalculatedCeil` ($0.2088) และราคานั้นได้กำไร (`isProfitableExit === true`): ระบบจะสั่ง **100% Take Profit Exit** ทันที เพื่อเก็บกำไรเข้ากระเป๋าและปลดล็อครอบทันที ไม่ปล่อยให้ราคาชนแนวต้านจริงแล้วทุบกลับลงมาขาดทุน โดยไม่ต้องไปดึงกรอบหลักให้ยุบตัวลงมาทับ
    - **Comprehensive IOC Order Execution Telemetry & Trade Logging**:
       - **ความต้องการ**: ผู้ใช้ต้องการทราบอย่างชัดเจนใน Trade Matches / Trade Log ว่าเมื่อบอทส่งคำสั่งแบบ IOC: (1) ส่งที่ราคาอ้างอิง/เป้าหมาย (Target/Anchor) เท่าไหร่, (2) ตั้งค่า Slippage Protection ไว้กี่ %, (3) ส่งราคา Limit Price เข้า Exchange จริงเท่าไหร่, และ (4) ท้ายสุดได้ราคา Match จริง (Executed Fill Price) เท่าไหร่
       - **การแก้ไข**:
