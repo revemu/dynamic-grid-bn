@@ -96,6 +96,7 @@ export class DynamicGrid {
   private breakdownTime?: number;
   private breakdownCandleTimes = new Set<number>();
   private lastCutLossTime?: number;
+  private bufferBreakStartTime?: number;
   private postCutSingleTrancheOnly = false;
   private sellOrdersActive = true;
   private sellZoneTransitionCandleTime?: number;
@@ -324,6 +325,7 @@ export class DynamicGrid {
     this.breakdownLowPrice = undefined;
     this.breakdownTime = undefined;
     this.iocBracketSellCycle = undefined;
+    this.bufferBreakStartTime = undefined;
     this.orderCooldowns.clear();
 
     this.symbolInfo = info;
@@ -2252,7 +2254,7 @@ export class DynamicGrid {
 
 
     const isChannelReady = dow?.gridZone !== undefined && lowerBound > 0 && upperBound > lowerBound;
-    const isBelowFloor = isChannelReady && (refPrice < cutLossBound || (this.waitingForHigherLow && this.breakdownFloorPrice !== undefined && refPrice < this.breakdownFloorPrice));
+    const isBelowFloor = isChannelReady && (refPrice < lowerBound || (this.waitingForHigherLow && this.breakdownFloorPrice !== undefined && refPrice < this.breakdownFloorPrice));
     const isAboveCeiling = isChannelReady && refPrice >= upperBound;
 
     // ── Broken Floor Tracking & Recovery via:
@@ -2351,9 +2353,21 @@ export class DynamicGrid {
     const offloadOnly = this.realizedPnl <= -this.cfg.maxSessionLossUsdso;
 
     // ── 0% LOWER BOUND: CUT LOSS / STOP LOSS ─────────────────────────────────
-    // Cut loss ONLY when the Binance reference price breaks below the Cut-Loss Buffer!
-    // SAFETY: Wait for confirmed candle period(s) below buffer before executing Cut Loss (default 1 candle).
-    const requiredCutLossCandles = this.cfg.cutLossConfirmCandles ?? 1;
+    // DUAL-SPEED CUT LOSS:
+    // 1. Floor Breakdown: 1 confirmed CLOSED candle whose BODY (close) is below Channel Floor (lowerBound).
+    // 2. Buffer Breakdown: Price below Cut-Loss Buffer (cutLossBound) continuously for > 1 minute (60s) -> Immediate Fast Cut!
+
+    const isBelowBuffer = isChannelReady && refPrice < cutLossBound;
+    if (isBelowBuffer) {
+      if (!this.bufferBreakStartTime) {
+        this.bufferBreakStartTime = Date.now();
+      }
+    } else {
+      this.bufferBreakStartTime = undefined;
+    }
+
+    const bufferBreakElapsedMs = this.bufferBreakStartTime ? (Date.now() - this.bufferBreakStartTime) : 0;
+    const isFastBufferCut = isBelowBuffer && bufferBreakElapsedMs >= 60_000;
 
     if (
       this.cfg.cutLossAtLowerBound &&
@@ -2361,23 +2375,25 @@ export class DynamicGrid {
     ) {
       const isInitialBreakdown = !this.waitingForHigherLow;
       this.waitingForHigherLow = true;
-      this.breakdownFloorPrice = this.breakdownFloorPrice ?? cutLossBound;
+      this.breakdownFloorPrice = this.breakdownFloorPrice ?? lowerBound;
       this.breakdownTime = this.breakdownTime ?? Math.floor(Date.now() / 1000);
       this.breakdownLowPrice = this.breakdownLowPrice !== undefined ? Math.min(this.breakdownLowPrice, refPrice) : refPrice;
 
-      // Track confirmed CLOSED candle bars whose CLOSE price is strictly below Cut-Loss Buffer
-      // Intra-bar wicks (unclosed live candles) DO NOT count towards cut-loss confirmation.
+      // Track confirmed CLOSED candle bars whose CLOSE price (body) is strictly below Channel Floor (lowerBound)
       const closedCandles = this.dowEngine?.getClosedCandles() ?? [];
       let confirmedCandlesCount = 0;
       this.breakdownCandleTimes.clear();
       for (let i = closedCandles.length - 1; i >= 0; i--) {
-        if (closedCandles[i].close < cutLossBound) {
+        if (closedCandles[i].close < lowerBound) {
           confirmedCandlesCount++;
           this.breakdownCandleTimes.add(closedCandles[i].time);
         } else {
-          break; // unbroken streak of closed candles below buffer
+          break; // unbroken streak of closed candles below floor
         }
       }
+
+      const isFloorCandleCut = confirmedCandlesCount >= 1;
+      const shouldExecuteCut = isFastBufferCut || isFloorCandleCut;
 
       if (!this.isPaused && this.lots.length > 0) {
         const dexBid = bestBid ?? effectiveMid;
@@ -2390,24 +2406,36 @@ export class DynamicGrid {
 
         if (isBidTooDepressed) {
           this.status(
-            `⚠️ CUT LOSS PAUSED: Price broken below Cut-Loss Buffer ($${refPrice.toFixed(6)} < $${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) but DEX Bid $${dexBid.toFixed(6)} is discounted ${bidDiscountPct.toFixed(2)}% below Binance (Limit: ${maxAllowedBidDiscount.toFixed(1)}%) — Holding off fire-sale dump until DEX Bid liquidity normalizes.`,
+            `⚠️ CUT LOSS PAUSED: Price broken below floor/buffer ($${refPrice.toFixed(6)} | Floor: $${lowerBound.toFixed(6)} | Buffer: $${cutLossBound.toFixed(6)}) but DEX Bid $${dexBid.toFixed(6)} is discounted ${bidDiscountPct.toFixed(2)}% below Binance (Limit: ${maxAllowedBidDiscount.toFixed(1)}%) — Holding off fire-sale dump until DEX Bid liquidity normalizes.`,
           );
-        } else if (confirmedCandlesCount < requiredCutLossCandles) {
-          this.status(
-            `⏳ CUT LOSS PENDING CONFIRMATION: Price $${refPrice.toFixed(6)} broke below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — waiting for ${requiredCutLossCandles} confirmed CLOSED candle(s) (Current: ${confirmedCandlesCount}/${requiredCutLossCandles} closed bar${requiredCutLossCandles > 1 ? "s" : ""} with close < buffer)`,
-          );
+        } else if (!shouldExecuteCut) {
+          if (isBelowBuffer) {
+            const remSec = Math.max(0, Math.ceil((60_000 - bufferBreakElapsedMs) / 1000));
+            this.status(
+              `⏳ FAST CUT PENDING (BUFFER BREAK): Price $${refPrice.toFixed(6)} < Buffer $${cutLossBound.toFixed(6)} — below buffer for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s (${remSec}s remaining until Emergency Fast Cut)`,
+            );
+          } else {
+            this.status(
+              `⏳ FLOOR BREAK PENDING (1 CANDLE): Price $${refPrice.toFixed(6)} < Floor $${lowerBound.toFixed(6)} — waiting for 1 confirmed CLOSED candle with body < Floor (Current: ${confirmedCandlesCount}/1 closed bar)`,
+            );
+          }
         } else {
           const lastClosed = closedCandles[closedCandles.length - 1];
           const lastClosedStr = lastClosed ? `Last Closed Bar: $${lastClosed.close.toFixed(6)} | ` : "";
           const exitActionDesc = this.openOrders.length > 0 ? "cancelling resting orders & executing clean exit" : "executing clean exit";
+          const triggerReason = isFastBufferCut
+            ? `EMERGENCY FAST CUT (>1 MIN BELOW BUFFER): Price $${refPrice.toFixed(6)} stayed below Buffer $${cutLossBound.toFixed(6)} for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s (>60s)`
+            : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`;
+
           this.log(
-            `🚨 CUT LOSS TRIGGERED (${requiredCutLossCandles} CLOSED CANDLE${requiredCutLossCandles > 1 ? "S" : ""} CONFIRMED): ${lastClosedStr}Binance Price $${refPrice.toFixed(6)} (DEX Bid: $${dexBid.toFixed(6)} | Dislocation: ${bidDiscountPct >= 0 ? `-${bidDiscountPct.toFixed(2)}%` : `+${Math.abs(bidDiscountPct).toFixed(2)}%`}) confirmed ${confirmedCandlesCount} closed bar(s) below Cut-Loss Buffer ($${cutLossBound.toFixed(6)} | 0% Floor: $${lowerBound.toFixed(6)}) — ${exitActionDesc}`,
+            `🚨 CUT LOSS TRIGGERED (${triggerReason}): DEX Bid $${dexBid.toFixed(6)} — ${exitActionDesc}`,
           );
           if (this.openOrders.length > 0) {
             await this.cancelAllRestingOrders();
           }
           await this.sellAll(dexBid, "CUT");
           this.lastCutLossTime = Date.now();
+          this.bufferBreakStartTime = undefined;
           this.postCutSingleTrancheOnly = true;
           this.iocBracketSellCycle = undefined;
           this.stuckSince = undefined;
@@ -2421,7 +2449,8 @@ export class DynamicGrid {
         this.saveState();
       }
     } else {
-      // If price is back above floor, reset candle confirmation counter
+      // If price is back above floor, reset confirmation counters and buffer timer
+      this.bufferBreakStartTime = undefined;
       if (!this.waitingForHigherLow && this.breakdownCandleTimes.size > 0) {
         this.breakdownCandleTimes.clear();
       }

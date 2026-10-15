@@ -214,6 +214,20 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         3. **Asynchronous Batched Marker Rebuild (`public/app.js`)**:
            - ใน `addOrderActivity` ปิดการเรียก `rebuildOrderMarkers()` และปิดการรัน `document.querySelector` ขณะทำการโหลดชุดเริ่มต้น (`isLiveUpdate === false`)
            - รัน `rebuildOrderMarkers()` เพียงครั้งเดียวตอนท้ายเมื่อประมวลผลข้อมูลชุดเริ่มต้นเสร็จสมบูรณ์ ทำให้หน้าเว็บและกราฟแสดงผลเร็วขึ้นทันทีในระดับ Milliseconds เท่ากับ DreamDEX
+   - **Dual-Speed Cut Loss Architecture (1 Closed Candle Below Floor & Fast 1-Min Below Buffer)**:
+      - **สาเหตุและความต้องการ**:
+        1. หากใช้เงื่อนไขปิดแท่งเทียน 15 นาทีเพียงอย่างเดียว เมื่อเกิดเหตุการณ์ทุบราคารุนแรง (Flash Dump) ที่ราคาดิ่งหลุดทะลุแนวรับบัฟเฟอร์อย่างรวดเร็ว การรอแท่ง 15 นาทีปิดแท่งอาจทำให้พอร์ตเสียหายหนักจากการถูกลากลงเหวลึก
+        2. ในทางกลับกัน หากราคาเพียงแค่ทิ้งไส้เทียน (Wick) ลงไปแตะใต้กรอบล่างชั่วคราวแล้วเด้งกลับขึ้นมา การคัททันทีจะทำให้เสียของและโดน Whipsaw
+        3. ผู้ใช้กำหนดความต้องการชัดเจน: **"แก้เรื่อง cut loss ให้ ยืนยัน 1 แท่ง ถ้าหลุดกรอบล่าง นับเนื้อเทียน แต่ถ้าหลุดเส้น buffer เนื้อเทียน เกิน 1 นาทีให้คัททันที"**
+      - **การพัฒนาและสถาปัตยกรรมใหม่ (`src/strategy.ts`)**:
+        1. **Floor Breakdown Protection (1 Confirmed Closed Candle Body)**:
+           - เมื่อราคาหลุดต่ำกว่ากรอบล่าง (`refPrice < lowerBound`): บอทจะหยุดตั้งซื้อทันที (`waitingForHigherLow = true`) เพื่อไม่ให้เข้าไปรับมีด
+           - ตรวจสอบประวัติแท่งเทียนที่ปิดสมบูรณ์ (`closedCandles`): หากมีแท่งเทียนปิดโดยมีราคาปิด (เนื้อเทียน) ต่ำกว่ากรอบล่าง (`close < lowerBound`) ครบ 1 แท่ง (`confirmedCandlesCount >= 1`) ➔ ระบบจะสั่ง **Cut Loss ทันที**
+        2. **Emergency Fast Cut Loss (> 1 Minute Below Buffer Line)**:
+           - ติดตามราคาเทียบกับเส้นบัฟเฟอร์ฉุกเฉิน (`cutLossBound = lowerBound - bufferAmount`):
+           - หากราคาหลุดต่ำกว่าเส้นบัฟเฟอร์ (`refPrice < cutLossBound`): เริ่มนับเวลาถอยหลัง 60 วินาที (`this.bufferBreakStartTime`) พร้อมแสดงสถานะ Countdown บนแดชบอร์ด
+           - หากราคาแช่อยู่ใต้เส้นบัฟเฟอร์ต่อเนื่องเกิน 1 นาที (`bufferBreakElapsedMs >= 60,000`): ระบบจะสั่ง **Emergency Fast Cut Loss ทันที** โดยไม่ต้องรอแท่ง 15 นาทีปิดแท่ง ตัดการขาดทุนได้อย่างรวดเร็วที่สุด
+           - หากราคาดีดกลับขึ้นมาเหนือเส้นบัฟเฟอร์ภายใน 60 วินาที: ตัวจับเวลาจะถูกรีเซ็ตเป็น `undefined` โดยไม่คัท
    - **Comprehensive IOC Order Execution Telemetry & Trade Logging**:
       - **ความต้องการ**: ผู้ใช้ต้องการทราบอย่างชัดเจนใน Trade Matches / Trade Log ว่าเมื่อบอทส่งคำสั่งแบบ IOC: (1) ส่งที่ราคาอ้างอิง/เป้าหมาย (Target/Anchor) เท่าไหร่, (2) ตั้งค่า Slippage Protection ไว้กี่ %, (3) ส่งราคา Limit Price เข้า Exchange จริงเท่าไหร่, และ (4) ท้ายสุดได้ราคา Match จริง (Executed Fill Price) เท่าไหร่
       - **การแก้ไข**:
