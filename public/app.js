@@ -2425,6 +2425,41 @@
     }
   });
 
+  function formatActivityTime(timestamp) {
+    if (!timestamp) return { display: "", full: "" };
+    const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return { display: "", full: "" };
+
+    const now = Date.now();
+    const diffMs = now - d.getTime();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const seconds = String(d.getSeconds()).padStart(2, "0");
+    const fullDateTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+    // If less than 12 hours ago (and not in the future > 1 min):
+    if (diffMs >= -60000 && diffMs < 12 * 3600 * 1000) {
+      const diffSec = Math.max(0, Math.floor(diffMs / 1000));
+      if (diffSec < 45) return { display: "just now", full: fullDateTime };
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return { display: `${diffMin}m ago`, full: fullDateTime };
+      const diffHours = Math.floor(diffMin / 60);
+      const remMin = diffMin % 60;
+      return {
+        display: remMin > 0 ? `${diffHours}h ${remMin}m ago` : `${diffHours}h ago`,
+        full: fullDateTime,
+      };
+    }
+
+    // 12 hours or older: display Day/Month/Year Hour:Minute e.g. "15/10/26 13:53"
+    const shortYear = String(year).slice(-2);
+    const display = `${day}/${month}/${shortYear} ${hours}:${minutes}`;
+    return { display, full: fullDateTime };
+  }
+
   function createActivityElement(order) {
     const div = document.createElement("div");
     div.className = "activity-item";
@@ -2477,7 +2512,7 @@
         ? `<span class="act-pnl-badge ${Number(pnlVal) >= 0 ? "act-pnl-positive" : "act-pnl-negative"}" style="padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 10px; background: ${Number(pnlVal) >= 0 ? "rgba(34, 197, 94, 0.15)" : "rgba(239, 68, 68, 0.15)"}; color: ${Number(pnlVal) >= 0 ? "#4ade80" : "#f87171"}; border: 1px solid ${Number(pnlVal) >= 0 ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)"}; margin-left: 4px;" title="Realized PnL: ${Number(pnlVal) >= 0 ? "+$" : "-$"}${Math.abs(Number(pnlVal)).toFixed(4)}">${Number(pnlVal) >= 0 ? "+$" : "-$"}${Math.abs(Number(pnlVal)) >= 0.1 ? Math.abs(Number(pnlVal)).toFixed(2) : Math.abs(Number(pnlVal)).toFixed(4)}</span>`
         : "";
 
-    const timeStr = new Date(order.time || Date.now()).toLocaleTimeString();
+    const timeInfo = formatActivityTime(order.time || Date.now());
     const notionalStr = order.notionalUsdso ? `$${order.notionalUsdso.toFixed(2)} • ` : "";
     const targetStr = order.targetPct !== undefined ? `Target: ${order.targetPct}%` : "";
 
@@ -2559,6 +2594,7 @@
     if (order.id) div.setAttribute("data-order-id", String(order.id));
     if (order.orderId) div.setAttribute("data-clob-id", String(order.orderId));
     if (order.txHash) div.setAttribute("data-txhash", String(order.txHash));
+    if (order.action) div.setAttribute("data-action", String(order.action));
 
     div.innerHTML = `
       <div class="act-left">
@@ -2574,7 +2610,7 @@
       </div>
       <div class="act-time">
         ${order.id ? `<button class="feed-item-edit-btn" data-trade-id="${order.id}" title="แก้ไขหรือลบรายการนี้">✏️</button>` : ""}
-        <span>${timeStr}</span>
+        <span title="${timeInfo.full}" data-timestamp="${order.time || Date.now()}">${timeInfo.display}</span>
       </div>
     `;
     return div;
@@ -2602,42 +2638,75 @@
       showTradeToast(order);
     }
 
-    // Guard against duplicate DOM elements in activity feed (only needed during live updates)
     const strId = order.id ? String(order.id) : (order.orderId ? String(order.orderId) : (order.txHash ? String(order.txHash) : ""));
-    if (isLiveUpdate && strId) {
-      const existingInDom = document.querySelector(`.activity-item[data-order-id="${strId}"], .activity-item[data-clob-id="${strId}"], .activity-item[data-txhash="${strId}"]`);
-      if (existingInDom) {
-        return;
-      }
-    }
+    const actionKey = order.action ? String(order.action) : "";
 
     // 1. Insert into Trade Matches Feed
     if (isTradeFill && elTradesFeed) {
-      const emptyFeed = elTradesFeed.querySelector(".empty-feed");
-      if (emptyFeed) emptyFeed.remove();
-      elTradesFeed.insertBefore(createActivityElement(order), elTradesFeed.firstChild);
-      tradesCount++;
-      if (elTradesCount) elTradesCount.textContent = tradesCount;
+      let alreadyInTrades = false;
+      if (isLiveUpdate && strId) {
+        const query = order.id
+          ? `.activity-item[data-order-id="${strId}"]`
+          : `.activity-item[data-clob-id="${strId}"][data-action="${actionKey}"], .activity-item[data-txhash="${strId}"][data-action="${actionKey}"]`;
+        alreadyInTrades = !!elTradesFeed.querySelector(query);
+      }
+      if (!alreadyInTrades) {
+        const emptyFeed = elTradesFeed.querySelector(".empty-feed");
+        if (emptyFeed) emptyFeed.remove();
+        elTradesFeed.insertBefore(createActivityElement(order), elTradesFeed.firstChild);
+        tradesCount++;
+        if (elTradesCount) elTradesCount.textContent = tradesCount;
+      }
     }
 
     // 2. Insert into On-Chain Lifecycle Feed
     if (isOnChainAction && elOnchainFeed) {
-      const emptyFeed = elOnchainFeed.querySelector(".empty-feed");
-      if (emptyFeed) emptyFeed.remove();
-      elOnchainFeed.insertBefore(createActivityElement(order), elOnchainFeed.firstChild);
-      onchainCount++;
-      if (elOnchainCount) elOnchainCount.textContent = onchainCount;
+      let alreadyInOnchain = false;
+      if (isLiveUpdate && strId) {
+        const query = `.activity-item[data-clob-id="${strId}"][data-action="${actionKey}"], .activity-item[data-txhash="${strId}"][data-action="${actionKey}"], .activity-item[data-order-id="${strId}"]`;
+        alreadyInOnchain = !!elOnchainFeed.querySelector(query);
+      }
+      if (!alreadyInOnchain) {
+        const emptyFeed = elOnchainFeed.querySelector(".empty-feed");
+        if (emptyFeed) emptyFeed.remove();
+        elOnchainFeed.insertBefore(createActivityElement(order), elOnchainFeed.firstChild);
+        onchainCount++;
+        if (elOnchainCount) elOnchainCount.textContent = onchainCount;
+      }
     }
 
     // 3. Insert into Combined All Feed
     if (elAllFeed) {
-      const emptyFeed = elAllFeed.querySelector(".empty-feed");
-      if (emptyFeed) emptyFeed.remove();
-      elAllFeed.insertBefore(createActivityElement(order), elAllFeed.firstChild);
-      allCount++;
-      if (elOrdersCount) elOrdersCount.textContent = allCount;
+      let alreadyInAll = false;
+      if (isLiveUpdate && strId) {
+        const query = `.activity-item[data-clob-id="${strId}"][data-action="${actionKey}"], .activity-item[data-txhash="${strId}"][data-action="${actionKey}"], .activity-item[data-order-id="${strId}"]`;
+        alreadyInAll = !!elAllFeed.querySelector(query);
+      }
+      if (!alreadyInAll) {
+        const emptyFeed = elAllFeed.querySelector(".empty-feed");
+        if (emptyFeed) emptyFeed.remove();
+        elAllFeed.insertBefore(createActivityElement(order), elAllFeed.firstChild);
+        allCount++;
+        if (elOrdersCount) elOrdersCount.textContent = allCount;
+      }
     }
   }
+
+  // Periodic ticker to refresh relative timestamps (e.g. "5m ago" -> "6m ago") every 30s
+  setInterval(() => {
+    document.querySelectorAll(".act-time span[data-timestamp]").forEach((el) => {
+      const ts = Number(el.getAttribute("data-timestamp"));
+      if (ts) {
+        const res = formatActivityTime(ts);
+        if (el.textContent !== res.display) {
+          el.textContent = res.display;
+        }
+        if (el.title !== res.full) {
+          el.title = res.full;
+        }
+      }
+    });
+  }, 30000);
 
   // ── SSE Connection & Dynamic Host Resolution ──────────────────────────────
   const API_BASE = (window.location.protocol === "file:" || window.location.port === "5500" || !window.location.port)

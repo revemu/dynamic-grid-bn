@@ -1181,6 +1181,17 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
   9. **Zero-Discount Trendline Sell & Tightened DEX Bid Gap Guard (0% Haircut)**:
      - ใน `src/strategy.ts` (`sellAll`): ยกเลิกการหักส่วนลด Slippage buffer 0.50% ใต้ Best Bid สำหรับคำสั่งขายทำกำไร (`action === "SELL"`) โดยปรับเป็น **`limitPrice = price` (0% Discount)** ขายที่ราคาเต็ม Best Bid หรือราคาเป้าหมายโดยตรง ป้องกันการเสียกำไร 0.5% โดยไม่จำเป็น
      - ใน `src/strategy.ts` (Block 2a - Trendline IOC Sell): ปรับลดเกณฑ์ยอมรับช่องว่างระหว่างราคาเส้นกดเทรนด์ไลน์กับ Best Bid บนกระดานจากเดิม `1.5%` ลงเหลือ **`0.35%`** สูงสุด เพื่อป้องกันไม่ให้บอทโยนขายใส่ Bid ที่ถ่างต่ำกว่าราคาตลาด และเข้าสู่สถานะ Standby รอรอบิดบน DEX ขยับตามราคาจริงเสมอ
+   10. **Real-Time Trade Matches Feed & Scoped Duplicate Guard (Zero F5 Refresh Required)**:
+      - **สาเหตุของปัญหา**: เดิมใน `public/app.js` ฟังก์ชัน `addOrderActivity` มี Duplicate Guard ระดับทั้งหน้า (`document.querySelector`) ซึ่งเมื่อคำสั่ง Maker Limit Sell ถูกวาง จะสร้าง Element `CREATE_SELL` พร้อม `data-clob-id="orderId"` ในแท็บ All Feed ไว้ก่อน เมื่อคำสั่งนั้นแมตช์สำเร็จในตลาดจริง (`SELL_FILL`) ระบบส่งอีเวนต์เข้ามาด้วย `orderId` เดิม ทำให้ Guard ตัวนี้ตรวจพบ `CREATE_SELL` และสั่ง `return` ตัดจบทั้งฟังก์ชันทันที ส่งผลให้มาร์กเกอร์สีแดง `S` บนกราฟขึ้น แต่แถว Trade Matches ไม่ถูกแทรก ต้องกด Refresh (F5) ถึงจะโผล่ขึ้นมา
+      - **การแก้ไข**:
+        - ใน `public/app.js`: ใส่ `data-action="${order.action}"` ในทุก Element และยกเลิก Guard ที่ตัดจบทั้งฟังก์ชัน เปลี่ยนเป็นการตรวจจับความซ้ำซ้อนแบบแยกตามคอนเทนเนอร์ (Container-scoped Duplicate Check) เฉพาะในแท็บนั้นๆ ทำให้เมื่อมี `SELL_FILL` หรือ `BUY_FILL` เข้ามา จะถูกแทรกขึ้นบนสุดของแท็บ Trade Matches ทันทีแบบ Real-time พร้อมอัปเดตตัวนับ `tradesCount` ทันที 100%
+        - ใน `src/strategy.ts`: เพิ่ม `status: "FILLED"` ใน Payload ของ `processSellFill`, `processBuyFill`, `sellTrancheIOC`, และ `sellAll` ให้ชัดเจนทุกเลเยอร์
+   11. **Smart Activity Timestamps (< 12h Relative "ago" & >= 12h DD/MM/YY Full Date)**:
+      - ใน `public/app.js`: เพิ่มฟังก์ชัน `formatActivityTime(timestamp)`:
+        - **หากไม่เกิน 12 ชั่วโมง (< 12 ชม.)**: แสดงผลเป็น Relative Time เช่น `just now`, `5m ago`, `2h 15m ago` เพื่อให้ดูง่ายและรู้ว่าเพิ่งเกิดขึ้นเมื่อไร
+        - **หากเกิน 12 ชั่วโมง (>= 12 ชม.) หรือข้ามวัน**: แสดงผลเป็น วัน/เดือน/ปี พร้อมเวลา เช่น `15/10/26 13:53`
+        - **Tooltip (Hover)**: ใส่ `title` แสดงวันเวลาเต็มรูปแบบ `YYYY-MM-DD HH:mm:ss` เสมอเมื่อนำเมาส์ไปชี้
+        - **Auto-Ticker**: เพิ่ม `setInterval` ตรวจสอบและอัปเดตข้อความ Relative Time ทุกๆ 30 วินาทีอัตโนมัติ
 
 ---
 

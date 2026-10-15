@@ -3591,6 +3591,7 @@ export class DynamicGrid {
       type: "order",
       data: {
         action: "BUY_FILL",
+        status: "FILLED",
         price,
         qty,
         netQty,
@@ -3646,6 +3647,7 @@ export class DynamicGrid {
       type: "order",
       data: {
         action: "SELL_FILL",
+        status: "FILLED",
         price,
         qty,
         notional: fillNotional,
@@ -5581,6 +5583,7 @@ export class DynamicGrid {
         type: "order",
         data: {
           action: "SELL_FILL",
+          status: "FILLED",
           price: effectivePrice,
           qty: executeQty,
           notional: executeQty * effectivePrice,
@@ -5675,6 +5678,7 @@ export class DynamicGrid {
         type: "order",
         data: {
           action: "SELL_FILL",
+          status: "FILLED",
           price: fillPrice,
           qty: actualQty,
           notional: actualQty * fillPrice,
@@ -5881,6 +5885,7 @@ export class DynamicGrid {
         type: "order",
         data: {
           action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
+          status: "FILLED",
           price,
           qty: held,
           notional: held * price,
@@ -6016,6 +6021,7 @@ export class DynamicGrid {
         type: "order",
         data: {
           action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
+          status: "FILLED",
           price: actualPrice,
           qty: actualQty,
           notional: actualQty * actualPrice,
