@@ -222,7 +222,7 @@ export class DashboardServer {
       res.end(
         JSON.stringify({
           candles: this.candles,
-          orders: this.recentOrders,
+          orders: this.recentOrders.slice(0, 150),
           latestTick: this.latestTick,
         }),
       );

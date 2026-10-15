@@ -220,6 +220,7 @@ export class BotDatabase {
     this.cleanupDuplicateExitFills();
     this.cleanupDuplicateTxRecords();
     this.cleanupStaleOpenOrders();
+    this.cleanupBinanceCancelledOrders();
     this.reconcileManualTradesPnl();
     this.reconcileHistoricalIocAndGasOrders();
   }
@@ -705,6 +706,35 @@ export class BotDatabase {
 
     if (cleaned > 0) {
       this.log(`🧹 [cleanup] Marked ${cleaned} stale OPEN order(s) in database as CANCELLED`);
+      this.flushSync();
+    }
+  }
+
+  /**
+   * Prunes cancelled orders that do not have on-chain gas expenditure (e.g. Binance CEX cancelled orders).
+   */
+  public cleanupBinanceCancelledOrders(): void {
+    if (!this.data || !Array.isArray(this.data.orders) || this.data.orders.length === 0) return;
+    const isBinance = this.data.settings?.exchange === "binance";
+    const beforeLen = this.data.orders.length;
+    this.data.orders = this.data.orders.filter((o) => {
+      const isCancelled = o.status === "CANCELLED" || o.action === "CANCEL_BUY" || o.action === "CANCEL_SELL";
+      if (!isCancelled) return true;
+      const hasGas = Boolean(
+        o.gasFeeSomi ||
+        o.gasFeeUsdso ||
+        o.gasFeeBase ||
+        o.gasFeeQuote ||
+        (o.txHash && typeof o.txHash === "string" && o.txHash.startsWith("0x"))
+      );
+      if (isBinance || !hasGas) {
+        return false; // Prune cancelled order without gas expenditure
+      }
+      return true;
+    });
+
+    if (this.data.orders.length !== beforeLen) {
+      this.log(`🧹 [cleanup] Purged ${beforeLen - this.data.orders.length} cancelled order(s) without gas fees (CEX cleanup)`);
       this.flushSync();
     }
   }
@@ -1303,6 +1333,11 @@ export class BotDatabase {
             : (eventData.dryRun || !o.orderId) && o.side === side && Math.abs(o.price - price) / price <= 0.001),
       );
       if (matches.length > 0) {
+        if (isBinance) {
+          // On Binance CEX, remove cancelled open order directly to prevent accumulating thousands of records
+          this.data.orders = this.data.orders.filter((o) => !matches.includes(o));
+          return matches[0]!;
+        }
         for (const existing of matches) {
           existing.status = "CANCELLED";
           existing.cancelTime = now;
@@ -1317,6 +1352,19 @@ export class BotDatabase {
         }
         record = matches[0]!;
       } else {
+        if (isBinance) {
+          // On Binance, do not store cancelled order records without gas fees
+          return {
+            id: `canc_${now}`,
+            orderId,
+            side,
+            price,
+            qty,
+            status: "CANCELLED",
+            action: action || (side === "SELL" ? "CANCEL_SELL" : "CANCEL_BUY"),
+            time: now,
+          } as any;
+        }
         record = {
           id: `canc_${now}_${Math.random().toString(36).slice(2, 7)}`,
           orderId,

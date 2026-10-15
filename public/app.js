@@ -2592,7 +2592,9 @@
       );
       if (!exists) {
         rawOrders.push(order);
-        rebuildOrderMarkers();
+        if (isLiveUpdate) {
+          rebuildOrderMarkers();
+        }
       }
     }
 
@@ -2600,9 +2602,9 @@
       showTradeToast(order);
     }
 
-    // Guard against duplicate DOM elements in activity feed
+    // Guard against duplicate DOM elements in activity feed (only needed during live updates)
     const strId = order.id ? String(order.id) : (order.orderId ? String(order.orderId) : (order.txHash ? String(order.txHash) : ""));
-    if (strId) {
+    if (isLiveUpdate && strId) {
       const existingInDom = document.querySelector(`.activity-item[data-order-id="${strId}"], .activity-item[data-clob-id="${strId}"], .activity-item[data-txhash="${strId}"]`);
       if (existingInDom) {
         return;
@@ -2858,6 +2860,7 @@
           }
 
           initialEvents.forEach((o) => addOrderActivity(o, false));
+          rebuildOrderMarkers();
 
           // If there are no trade fills yet, automatically activate "On-Chain" or "All" tab so user immediately sees activity
           if (tradesCount === 0 && (onchainCount > 0 || allCount > 0)) {
