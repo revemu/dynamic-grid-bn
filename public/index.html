@@ -578,6 +578,28 @@
 
             <div class="form-group switch-group">
               <div class="switch-label-group">
+                <span class="switch-title">Cut Loss at Buffer Only (คัทลอสเฉพาะหลุดเส้น Buffer)</span>
+                <span class="switch-desc">เมื่อเปิดใช้งาน บอทจะคัทลอสเฉพาะเมื่อราคาหลุดเส้น Buffer เท่านั้น (หากหลุดกรอบล่าง Floor จะเพียงหยุดซื้อเพิ่มชั่วคราวแต่ไม่คัทลอส)</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_cutLossOnBufferOnly" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_cutLossBufferDelaySeconds">
+                Buffer Cut Delay (ระยะเวลารอเมื่อหลุด Buffer)
+                <span class="help-tip" title="จำนวนวินาทีที่ราคายืนยันใต้เส้น Buffer ก่อนสั่งขายคัทลอส (ตั้ง 0 = คัททันทีแบบ Real-time, ค่าแนะนำ 60s เพื่อป้องกันไส้เทียนกระชาก)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_cutLossBufferDelaySeconds" step="5" min="0" max="600" />
+                <span class="unit">วินาที</span>
+              </div>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
                 <span class="switch-title">100% Ceiling Take Profit</span>
                 <span class="switch-desc">Automatically liquidate 100% of lots when price reaches Peak/Resistance Ceiling</span>
               </div>

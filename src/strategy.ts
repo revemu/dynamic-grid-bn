@@ -472,6 +472,8 @@ export class DynamicGrid {
       maxInventoryUsdso: this.cfg.maxInventoryQuote,
       floorBufferPct: this.cfg.floorBufferPct,
       cutLossAtLowerBound: this.cfg.cutLossAtLowerBound,
+      cutLossOnBufferOnly: this.cfg.cutLossOnBufferOnly !== false,
+      cutLossBufferDelaySeconds: this.cfg.cutLossBufferDelaySeconds ?? 60,
       takeProfitAtUpperBound: this.cfg.takeProfitAtUpperBound,
       dowTrendFilter: this.cfg.dowTrendFilter,
       trendlineFilter: this.cfg.trendlineFilter,
@@ -2354,8 +2356,12 @@ export class DynamicGrid {
 
     // ── 0% LOWER BOUND: CUT LOSS / STOP LOSS ─────────────────────────────────
     // DUAL-SPEED CUT LOSS:
-    // 1. Floor Breakdown: 1 confirmed CLOSED candle whose BODY (close) is below Channel Floor (lowerBound).
-    // 2. Buffer Breakdown: Price below Cut-Loss Buffer (cutLossBound) continuously for > 1 minute (60s) -> Immediate Fast Cut!
+    // 1. Buffer Breakdown: Price below Cut-Loss Buffer (cutLossBound).
+    //    - If cutLossBufferDelaySeconds <= 0: Instant real-time cut loss on buffer break!
+    //    - If cutLossBufferDelaySeconds > 0: Cut loss if price stays below buffer for >= delaySeconds (default 60s) OR 1 confirmed closed candle below buffer.
+    // 2. Floor Breakdown (Optional / Configurable via cutLossOnBufferOnly):
+    //    - When cutLossOnBufferOnly is true (default): Breaking below Floor (lowerBound) pauses buys (waitingForHigherLow = true), but NEVER executes cut loss.
+    //    - When cutLossOnBufferOnly is false: 1 confirmed closed candle whose body (close) is below Channel Floor also triggers cut loss.
 
     const isBelowBuffer = isChannelReady && refPrice < cutLossBound;
     if (isBelowBuffer) {
@@ -2366,8 +2372,15 @@ export class DynamicGrid {
       this.bufferBreakStartTime = undefined;
     }
 
+    const bufferDelayMs = Math.max(0, (this.cfg.cutLossBufferDelaySeconds ?? 60) * 1000);
     const bufferBreakElapsedMs = this.bufferBreakStartTime ? (Date.now() - this.bufferBreakStartTime) : 0;
-    const isFastBufferCut = isBelowBuffer && bufferBreakElapsedMs >= 60_000;
+
+    // Track confirmed CLOSED candles
+    const closedCandles = this.dowEngine?.getClosedCandles() ?? [];
+    const latestClosedCandle = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : lastClosedCandle;
+    const isBufferCandleClosed = Boolean(latestClosedCandle && latestClosedCandle.close < cutLossBound);
+
+    const isFastBufferCut = isBelowBuffer && (bufferDelayMs <= 0 || bufferBreakElapsedMs >= bufferDelayMs || isBufferCandleClosed);
 
     if (
       this.cfg.cutLossAtLowerBound &&
@@ -2380,7 +2393,6 @@ export class DynamicGrid {
       this.breakdownLowPrice = this.breakdownLowPrice !== undefined ? Math.min(this.breakdownLowPrice, refPrice) : refPrice;
 
       // Track confirmed CLOSED candle bars whose CLOSE price (body) is strictly below Channel Floor (lowerBound)
-      const closedCandles = this.dowEngine?.getClosedCandles() ?? [];
       let confirmedCandlesCount = 0;
       this.breakdownCandleTimes.clear();
       for (let i = closedCandles.length - 1; i >= 0; i--) {
@@ -2392,7 +2404,8 @@ export class DynamicGrid {
         }
       }
 
-      const isFloorCandleCut = confirmedCandlesCount >= 1;
+      const cutLossOnBufferOnly = this.cfg.cutLossOnBufferOnly !== false;
+      const isFloorCandleCut = !cutLossOnBufferOnly && (confirmedCandlesCount >= (this.cfg.cutLossConfirmCandles ?? 1));
       const shouldExecuteCut = isFastBufferCut || isFloorCandleCut;
 
       if (!this.isPaused && this.lots.length > 0) {
@@ -2410,9 +2423,13 @@ export class DynamicGrid {
           );
         } else if (!shouldExecuteCut) {
           if (isBelowBuffer) {
-            const remSec = Math.max(0, Math.ceil((60_000 - bufferBreakElapsedMs) / 1000));
+            const remSec = Math.max(0, Math.ceil((bufferDelayMs - bufferBreakElapsedMs) / 1000));
             this.status(
               `⏳ FAST CUT PENDING (BUFFER BREAK): Price $${refPrice.toFixed(6)} < Buffer $${cutLossBound.toFixed(6)} — below buffer for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s (${remSec}s remaining until Emergency Fast Cut)`,
+            );
+          } else if (cutLossOnBufferOnly) {
+            this.status(
+              `⏳ BELOW FLOOR (BUY PAUSED): Price $${refPrice.toFixed(6)} < Floor $${lowerBound.toFixed(6)} (Above Buffer $${cutLossBound.toFixed(6)}) — holding lots, buy paused until reclaim or buffer break`,
             );
           } else {
             this.status(
@@ -2420,11 +2437,14 @@ export class DynamicGrid {
             );
           }
         } else {
-          const lastClosed = closedCandles[closedCandles.length - 1];
-          const lastClosedStr = lastClosed ? `Last Closed Bar: $${lastClosed.close.toFixed(6)} | ` : "";
+          const lastClosedStr = lastClosedCandle ? `Last Closed Bar: $${lastClosedCandle.close.toFixed(6)} | ` : "";
           const exitActionDesc = this.openOrders.length > 0 ? "cancelling resting orders & executing clean exit" : "executing clean exit";
           const triggerReason = isFastBufferCut
-            ? `EMERGENCY FAST CUT (>1 MIN BELOW BUFFER): Price $${refPrice.toFixed(6)} stayed below Buffer $${cutLossBound.toFixed(6)} for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s (>60s)`
+            ? (bufferDelayMs <= 0
+                ? `INSTANT CUT ON BUFFER BREAK: Price $${refPrice.toFixed(6)} < Buffer $${cutLossBound.toFixed(6)}`
+                : (isBufferCandleClosed
+                    ? `CLOSED CANDLE CONFIRMED BELOW BUFFER: ${lastClosedStr}Price $${refPrice.toFixed(6)} < Buffer $${cutLossBound.toFixed(6)}`
+                    : `EMERGENCY FAST CUT (> ${Math.round(bufferDelayMs / 1000)}s BELOW BUFFER): Price $${refPrice.toFixed(6)} stayed below Buffer $${cutLossBound.toFixed(6)} for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s`))
             : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`;
 
           this.log(

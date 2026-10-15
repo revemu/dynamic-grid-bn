@@ -3161,6 +3161,8 @@
       setVal("cfg_cutLossMaxBidDiscountPct", data.cutLossMaxBidDiscountPct);
       setVal("cfg_orderExpireHours", data.orderExpireHours);
       setCheck("cfg_cutLossAtLowerBound", data.cutLossAtLowerBound);
+      setCheck("cfg_cutLossOnBufferOnly", data.cutLossOnBufferOnly !== false);
+      setVal("cfg_cutLossBufferDelaySeconds", data.cutLossBufferDelaySeconds ?? 60);
       setCheck("cfg_takeProfitAtUpperBound", data.takeProfitAtUpperBound);
       setVal("cfg_timezone", data.timezone || "Asia/Bangkok");
       setVal("cfg_dowTimeframe", data.dowTimeframe || "15m");
@@ -3277,6 +3279,8 @@
       cutLossMaxBidDiscountPct: parseFloat(document.getElementById("cfg_cutLossMaxBidDiscountPct").value),
       orderExpireHours: document.getElementById("cfg_orderExpireHours") ? parseFloat(document.getElementById("cfg_orderExpireHours").value) || 24 : 24,
       cutLossAtLowerBound: document.getElementById("cfg_cutLossAtLowerBound").checked,
+      cutLossOnBufferOnly: document.getElementById("cfg_cutLossOnBufferOnly") ? document.getElementById("cfg_cutLossOnBufferOnly").checked : true,
+      cutLossBufferDelaySeconds: document.getElementById("cfg_cutLossBufferDelaySeconds") ? parseFloat(document.getElementById("cfg_cutLossBufferDelaySeconds").value) || 0 : 60,
       takeProfitAtUpperBound: document.getElementById("cfg_takeProfitAtUpperBound").checked,
       timezone: document.getElementById("cfg_timezone").value || "Asia/Bangkok",
       dowTimeframe: document.getElementById("cfg_dowTimeframe").value || "15m",

@@ -146,6 +146,10 @@ export const defaultStrategyConfig = {
   cutLossAtLowerBound: true,
   /** Number of confirmed candle periods below floor buffer required before executing cut loss (default 1). */
   cutLossConfirmCandles: 1,
+  /** When true, cut loss triggers strictly when breaking below the buffer line (cutLossBound), not on floor breakdown. */
+  cutLossOnBufferOnly: true,
+  /** Required continuous elapsed time (seconds) below cutLossBound before executing fast cut (default 60s, 0 = instant real-time). */
+  cutLossBufferDelaySeconds: 60,
   /** Automatically sell 100% of all inventory when price reaches Upper Bound (100% Ceiling). */
   takeProfitAtUpperBound: true,
   /** When true, if market price exceeds a grid sell level's target price, executes an immediate IOC sell. */
@@ -270,6 +274,8 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.dashboardPort !== undefined) merged.dashboardPort = Number(saved.dashboardPort);
       if (saved.enableNarrowChannelCollapse !== undefined) merged.enableNarrowChannelCollapse = Boolean(saved.enableNarrowChannelCollapse);
       if (saved.adjustChannelOnClosedOnly !== undefined) merged.adjustChannelOnClosedOnly = Boolean(saved.adjustChannelOnClosedOnly);
+      if (saved.cutLossOnBufferOnly !== undefined) merged.cutLossOnBufferOnly = Boolean(saved.cutLossOnBufferOnly);
+      if (saved.cutLossBufferDelaySeconds !== undefined) merged.cutLossBufferDelaySeconds = Number(saved.cutLossBufferDelaySeconds);
       if (saved.narrowChannelThresholdPct !== undefined) merged.narrowChannelThresholdPct = Number(saved.narrowChannelThresholdPct);
       if (saved.narrowChannelBuyBufferPct !== undefined) merged.narrowChannelBuyBufferPct = Number(saved.narrowChannelBuyBufferPct);
       if (saved.narrowChannelSellBufferPct !== undefined) merged.narrowChannelSellBufferPct = Number(saved.narrowChannelSellBufferPct);
