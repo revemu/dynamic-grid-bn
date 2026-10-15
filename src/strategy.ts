@@ -1680,7 +1680,7 @@ export class DynamicGrid {
     }
 
     const prevHeld = held;
-    await this.sellAll(execPrice, "SELL");
+    await this.sellAll(execPrice, "MANUAL");
 
     // Automatically pause bot to prevent immediate re-accumulation
     this.isPaused = true;
@@ -5855,10 +5855,12 @@ export class DynamicGrid {
     }
   }
 
-  private async sellAll(price: number, action: "SELL" | "CUT", anchorRefPrice?: number): Promise<void> {
-    const actionLabel = action === "CUT" ? "CUT LOSS (SELL ALL)" : "100% FULL EXIT (TAKE PROFIT)";
+  private async sellAll(price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number): Promise<void> {
+    const actionLabel = action === "CUT"
+      ? "CUT LOSS (SELL ALL)"
+      : (action === "MANUAL" ? "MANUAL SELL ALL (EMERGENCY EXIT)" : "100% FULL EXIT (TAKE PROFIT)");
     const targetPrice = (anchorRefPrice && anchorRefPrice > 0) ? anchorRefPrice : price;
-    const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
+    const slippagePctVal = this.cfg.iocSlippagePct ?? 0.35;
 
     // 1. Always cancel ALL resting open orders first so base asset is unlocked from limit sells and no buys occur
     if (this.openOrders.length > 0) {
@@ -5884,7 +5886,7 @@ export class DynamicGrid {
       this.emit({
         type: "order",
         data: {
-          action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
+          action: action === "CUT" ? "CUT" : (action === "MANUAL" ? "EXIT" : "TAKE_PROFIT"),
           status: "FILLED",
           price,
           qty: held,
@@ -5969,10 +5971,11 @@ export class DynamicGrid {
           // guaranteeing total slippage from trendline is strictly <= iocSlippagePct!
           const anchor = targetPrice;
           const minAllowedBySlippage = anchor * (1 - slippagePct);
-          const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : minAllowedBySlippage;
+          const isStrictProfitRequired = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT";
+          const minProfitablePrice = (isStrictProfitRequired && avgEntry > 0) ? avgEntry * 1.0005 : minAllowedBySlippage;
           limitPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
         } else {
-          // Cut Loss: Allow matching down to max bid discount to guarantee immediate execution
+          // Cut Loss or Manual Exit: Allow matching down to max bid discount to guarantee immediate execution
           limitPrice = price * (1 - slippagePct);
         }
         limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
@@ -6020,7 +6023,7 @@ export class DynamicGrid {
       this.emit({
         type: "order",
         data: {
-          action: action === "CUT" ? "CUT" : "TAKE_PROFIT",
+          action: action === "CUT" ? "CUT" : (action === "MANUAL" ? "EXIT" : "TAKE_PROFIT"),
           status: "FILLED",
           price: actualPrice,
           qty: actualQty,

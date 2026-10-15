@@ -1190,8 +1190,12 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - ใน `public/app.js`: เพิ่มฟังก์ชัน `formatActivityTime(timestamp)`:
         - **หากไม่เกิน 12 ชั่วโมง (< 12 ชม.)**: แสดงผลเป็น Relative Time เช่น `just now`, `5m ago`, `2h 15m ago` เพื่อให้ดูง่ายและรู้ว่าเพิ่งเกิดขึ้นเมื่อไร
         - **หากเกิน 12 ชั่วโมง (>= 12 ชม.) หรือข้ามวัน**: แสดงผลเป็น วัน/เดือน/ปี พร้อมเวลา เช่น `15/10/26 13:53`
-        - **Tooltip (Hover)**: ใส่ `title` แสดงวันเวลาเต็มรูปแบบ `YYYY-MM-DD HH:mm:ss` เสมอเมื่อนำเมาส์ไปชี้
-        - **Auto-Ticker**: เพิ่ม `setInterval` ตรวจสอบและอัปเดตข้อความ Relative Time ทุกๆ 30 วินาทีอัตโนมัติ
+   12. **DreamDEX Emergency Sell All & Manual Liquidation Fix (Zero Revert 0xc04ad919)**:
+      - **สาเหตุของปัญหา**: เมื่อผู้ใช้กดปุ่ม Emergency "Sell All" บนหน้าเว็บ ฟังก์ชัน `sellAllUser()` เดิมส่งคำสั่งด้วย `action = "SELL"` ซึ่งใน `sellAll()` มีตรรกะบังคับ `minProfitablePrice = avgEntry * 1.0005` (เช่น $0.206000) หากพอร์ตอยู่ในสถานะติดลบ (เช่น Best Bid ตลาดอยู่ที่ $0.202600 แต่ต้นทุนเฉลี่ย $0.205889) บอทจะยิงคำสั่งขายประเภท IOC (Immediate-Or-Cancel) ที่ราคา $0.206000 ทำให้ไม่มี Bid ใน Orderbook รองรับ ส่งผลให้ Smart Contract บน Somnia Revert `0xc04ad919` (`OrderUnmatched`) ทันที
+      - **การแก้ไข**:
+        - ใน `src/strategy.ts`: ปรับปรุง `sellAllUser()` ให้ส่งการทำงานเป็น `action = "MANUAL"` (Manual Liquidation / Emergency Exit)
+        - ใน `sellAll()`: เพิ่มการรองรับ `action = "MANUAL"` โดยให้คำนวณราคาขาย `limitPrice` อิงตาม Best Bid พร้อม Slippage buffer (`price * (1 - slippagePct)`) ไม่ถูกบังคับด้วย `minProfitablePrice` ทำให้คำสั่ง IOC สามารถกวาดจับคู่กับสภาพคล่อง Best Bid ในตลาดได้ทันที 100% โดยไม่ Revert
+        - สำหรับคำสั่งขายทำกำไรอัตโนมัติ (`action === "SELL"`): จะตรวจสอบเงื่อนไข `minProfitablePrice` เฉพาะเมื่อเปิดใช้โหมด `sellProfitMode === "PORTFOLIO_AVG_PROFIT"` เท่านั้น หากอยู่ในโหมดเริ่มต้น `GRID_CASHFLOW` จะอนุญาตให้ปิดไม้เพื่อกู้คืน Cash Flow ได้ตามการตั้งค่า
 
 ---
 
