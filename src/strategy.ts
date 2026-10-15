@@ -2070,32 +2070,25 @@ export class DynamicGrid {
         }
       }
 
-      // If locked ceiling was previously compressed to or below current liveRealCeil,
-      // restore it to the macro swing peak to maintain original locked channel & real S/R ceil visibility
-      const liveRealCeil = dow?.gridZone?.upperBound ?? dow?.upperBound;
-      const macroPeak = dow?.activePeak?.price ?? (dow?.swingHighs?.length ? Math.max(...dow.swingHighs.map((s) => s.price)) : 0);
-      if (
-        macroPeak > 0 &&
-        liveRealCeil !== undefined &&
-        liveRealCeil > 0 &&
-        this.lastDynamicBounds.upperBound <= liveRealCeil * 1.002 &&
-        macroPeak > this.lastDynamicBounds.upperBound * 1.01
-      ) {
-        const restoredCeil = macroPeak;
+      // Enforce max channel width ceiling on locked channel so it never exceeds maxChannelWidthPct
+      const maxChannelWidthPct = this.cfg.maxChannelWidthPct ?? 5.0;
+      const currentFloor = this.lastDynamicBounds.lowerBound;
+      const maxAllowedSpan = currentFloor * (maxChannelWidthPct / 100);
+      if (currentFloor > 0 && this.lastDynamicBounds.upperBound - currentFloor > maxAllowedSpan) {
+        const clampedCeiling = currentFloor + maxAllowedSpan;
         this.log(
-          `🔄 [RESTORE LOCKED CEIL] Restoring locked ceiling from $${this.lastDynamicBounds.upperBound.toFixed(6)} back to macro peak $${restoredCeil.toFixed(6)} (Real Ceil: $${liveRealCeil.toFixed(6)}) to preserve real channel structure`,
+          `🔒 [LOCKED CHANNEL MAX CLAMP] Clamping locked ceiling from $${this.lastDynamicBounds.upperBound.toFixed(6)} down to $${clampedCeiling.toFixed(6)} (Max width: ${maxChannelWidthPct}%)`,
         );
-        this.lastDynamicBounds.upperBound = restoredCeil;
-        const currentFloor = this.lastDynamicBounds.lowerBound;
-        this.lastDynamicBounds.centerPrice = (currentFloor + restoredCeil) / 2;
-        const dSpan = restoredCeil - currentFloor;
+        this.lastDynamicBounds.upperBound = clampedCeiling;
+        this.lastDynamicBounds.centerPrice = (currentFloor + clampedCeiling) / 2;
+        const dSpan = clampedCeiling - currentFloor;
         const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
         const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
         const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
         const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
         const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
         this.lastDynamicBounds.sellLevels = isNarrowChannel
-          ? [restoredCeil * (1 - sellBufferFrac)]
+          ? [clampedCeiling * (1 - sellBufferFrac)]
           : [
               currentFloor + dSpan * 0.60,
               currentFloor + dSpan * 0.70,
@@ -4031,38 +4024,49 @@ export class DynamicGrid {
             (o) => o.isBid && (o.levelDesc === effectiveLevelNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
           );
 
+          // Calculate remaining capacity for this specific order, accounting for all OTHER open buy orders
+          const otherOpenBuysQuote = this.openOrders
+            .filter((o) => o.isBid && o !== currentOpenBuyAtLvl)
+            .reduce((sum, o) => sum + ((o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty)), 0);
+          const remainingCapacityForOrder = Math.max(0, currentAvailableCapacity - otherOpenBuysQuote);
+          const targetOrderQuote = Math.min(trancheQuote, remainingCapacityForOrder);
+
           if (currentOpenBuyAtLvl) {
-            // Preserve resting buy order! Only re-align price if channel shifted significantly OR if rebalancing to equal 4-level tranche
+            // Preserve resting buy order! Only re-align price if channel shifted significantly OR if rebalancing to equal tranche
             const priceDiffRatio = Math.abs(currentOpenBuyAtLvl.price - lvlPrice) / lvlPrice;
             const priceTolerance = priceTol;
             const currentOrderNotional = currentOpenBuyAtLvl.notionalQuote !== undefined ? currentOpenBuyAtLvl.notionalQuote : currentOpenBuyAtLvl.notionalUsdso;
-            const notionalDiffRatio = Math.abs(currentOrderNotional - trancheQuote) / Math.max(0.01, trancheQuote);
-            const totalOpenBuysQuote = this.openOrders
-              .filter((o) => o.isBid)
-              .reduce((sum, o) => sum + ((o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty)), 0);
+            const totalOpenBuysQuote = otherOpenBuysQuote + currentOrderNotional;
             const isTotalExposureExceeded = totalOpenBuysQuote > currentAvailableCapacity * 1.05;
-            const isCex = this.binance.exchangeName === "binance";
-            // Rebalance tranche if explicitly requested (sell/buy filled, startup, resume) OR if total buy exposure exceeds remaining budget OR on CEX if deviation is large (>10%)
+
+            // Maximum budget physically possible with available wallet balance
+            const maxPossibleBudget = this.cfg.dryRun
+              ? targetOrderQuote
+              : Math.min(targetOrderQuote, Math.max(0, this.walletQuoteBalance) + currentOrderNotional);
+
+            const effectiveDiff = Math.abs(currentOrderNotional - maxPossibleBudget);
+            const effectiveDiffRatio = effectiveDiff / Math.max(0.01, maxPossibleBudget);
+            const canResize = effectiveDiff >= Math.max(minOrderNotional * 0.5, 2.0);
+
+            // Rebalance tranche ONLY if:
+            // 1. Total buy exposure exceeded remaining capacity (risk management)
+            // 2. Explicit rebalance requested after fills/startup (doBuyRebalance) AND order differs from achievable budget
+            // 3. Significant deviation from achievable budget AND sufficient wallet/capacity delta to resize without churning
             const needsResize = (
-              doBuyRebalance ||
               isTotalExposureExceeded ||
-              (isCex && notionalDiffRatio > 0.10) ||
-              (notionalDiffRatio > 0.15 && openBuys.length < numBuyLevels)
-            ) && notionalDiffRatio > 0.05;
+              (doBuyRebalance && effectiveDiffRatio > 0.05 && canResize) ||
+              (effectiveDiffRatio > 0.15 && canResize)
+            ) && effectiveDiffRatio > 0.05;
 
             if (priceDiffRatio > priceTolerance || needsResize) {
               const reason = priceDiffRatio > priceTolerance
                 ? `Channel shifted: aligning buy price ($${currentOpenBuyAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
                 : isTotalExposureExceeded
-                ? `Total buy exposure exceeded remaining capacity: adjusting order ($${currentOrderNotional.toFixed(2)} -> $${trancheQuote.toFixed(2)})`
-                : `Rebalancing buy quantity to match grid tranche ($${currentOrderNotional.toFixed(2)} -> $${trancheQuote.toFixed(2)})`;
+                ? `Total buy exposure exceeded remaining capacity: adjusting order ($${currentOrderNotional.toFixed(2)} -> $${maxPossibleBudget.toFixed(2)})`
+                : `Rebalancing buy quantity to match grid tranche ($${currentOrderNotional.toFixed(2)} -> $${maxPossibleBudget.toFixed(2)})`;
               await this.cancelOrderInternal(currentOpenBuyAtLvl, reason);
               this.openOrders = this.openOrders.filter((o) => o !== currentOpenBuyAtLvl);
 
-              // Equal tranche sizing for replaced order (strictly capped by currentAvailableCapacity)
-              const maxPossibleBudget = this.cfg.dryRun
-                ? Math.min(trancheQuote, currentAvailableCapacity)
-                : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance + currentOrderNotional);
               const effectiveBuyQty = maxPossibleBudget / lvlPrice;
               if (effectiveBuyQty >= this.minQty && maxPossibleBudget >= minOrderNotional) {
                 await this.placeRestingOrder(
@@ -4096,10 +4100,10 @@ export class DynamicGrid {
           // On DreamDEX: ถ้า currentBestAsk <= lvlPrice มีสภาพคล่องฝั่ง Ask ที่ราคาเท่ากับหรือถูกกว่า Buy Level
           // สามารถเข้าซื้อ (IOC Fill) คว้าสภาพคล่องไม้ Buy Level นั้นได้ทันที ไม่ต้องรอราคาแท่งเทียน
           const isDexAskAtOrBelowLevel = !isCexExchange && currentBestAsk > 0 && currentBestAsk <= lvlPrice;
-          if (isDexAskAtOrBelowLevel && canBuy && trancheQuote > 0) {
+          if (isDexAskAtOrBelowLevel && canBuy && targetOrderQuote > 0) {
             const availableBudget = this.cfg.dryRun
-              ? Math.min(trancheQuote, currentAvailableCapacity)
-              : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance);
+              ? targetOrderQuote
+              : Math.min(targetOrderQuote, this.walletQuoteBalance);
             const desiredBuyQty = availableBudget / currentBestAsk;
             if (desiredBuyQty >= this.minQty && availableBudget >= minOrderNotional) {
               const actionLabel = effectiveLevelNames[i] || `Buy Level ${i + 1}`;
@@ -4112,11 +4116,11 @@ export class DynamicGrid {
           }
 
           const isEligibleForNewOrder = lvlPrice < maxAllowedBuyPrice && canBuy;
-          if (isEligibleForNewOrder && trancheQuote > 0) {
-            // Place new equal tranche buy order (strictly capped by currentAvailableCapacity)
+          if (isEligibleForNewOrder && targetOrderQuote > 0) {
+            // Place new equal tranche buy order (strictly capped by remainingCapacityForOrder and available wallet balance)
             const availableBudget = this.cfg.dryRun
-              ? Math.min(trancheQuote, currentAvailableCapacity)
-              : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance);
+              ? targetOrderQuote
+              : Math.min(targetOrderQuote, this.walletQuoteBalance);
             const desiredBuyQty = availableBudget / lvlPrice;
             if (desiredBuyQty >= this.minQty && availableBudget >= minOrderNotional) {
               await this.placeRestingOrder(

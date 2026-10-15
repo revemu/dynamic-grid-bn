@@ -128,7 +128,26 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         2. **Direct Real Ceiling Take Profit (`src/strategy.ts`)**:
            - ในฟังก์ชัน `Take Profit at Upper Bound`: เพิ่มการตรวจสอบ `isLiveRealCeilReached = refPrice >= liveCalculatedCeil || bestBid >= liveCalculatedCeil`
            - เมื่อราคาตลาดวิ่งชนหรือทะลุ `liveCalculatedCeil` ($0.2088) และราคานั้นได้กำไร (`isProfitableExit === true`): ระบบจะสั่ง **100% Take Profit Exit** ทันที เพื่อเก็บกำไรเข้ากระเป๋าและปลดล็อครอบทันที ไม่ปล่อยให้ราคาชนแนวต้านจริงแล้วทุบกลับลงมาขาดทุน โดยไม่ต้องไปดึงกรอบหลักให้ยุบตัวลงมาทับ
-   - **Strict Total Committed Capital & Buy Allocation Guard (Elimination of Over-allocation & Churn Loops)**:
+       - **Proximity-Guarded Channel Bounds & Anti-Churning Buy Allocation Architecture**:
+      - **สาเหตุของปัญหากรอบบนทะลุไปไกล ($108.03 vs $105.38) และบอทตั้งซื้อวนซ้ำ (Churn Loop)**:
+        1. **Unrestricted Swing Leap ใน `src/market-structure.ts`**: เมื่อความกว้าง Channel ขาดระยะจาก `minSpan` เล็กน้อย (เช่น ขาดเพียง $0.003) โค้ดเดิมค้นหา `canonicalHighs` ที่ `price > upperBound` โดยไม่มีการจำกัดระยะ (Proximity check) ทำให้กระโดดข้ามสวิงย่อยในปัจจุบันขึ้นไปเกาะยอดโบราณ ($108.03) ส่งผลให้เพดานดีดตัวกว้างเกินจริง
+        2. **Locked Ceiling Inflation ใน `src/strategy.ts`**: โค้ดเดิมดึง `macroPeak` ขึ้นไปคืนค่าให้ `lockedChannel.upperBound` ส่งผลให้กรอบบนที่ถูกล็อกถูกดันขึ้นไปที่ $108.03 อย่างถาวร และทำให้เส้น Real S/R Ceil หายไปจากหน้าจอ
+        3. **Real Ceil Hiding Glitch ใน `public/app.js`**: เมื่อราคาคำนวณจริงเท่ากับหรือใกล้เคียงกับกรอบบน (`<= 0.001`) โค้ดเดิมซ่อนข้อความ `• Real Ceil` และลบเส้นประ `🎯 Real S/R Ceil` ออกจากชาร์ต ทำให้ผู้ใช้ไม่เห็นแนวต้านจริง
+        4. **Infinite Cancel/Place Churn Loop ในการคำนวณ Buy Capacity**: เมื่อผู้ใช้มีงบ $100 ซื้อไปแล้ว $70.35 เหลืองบ $29.65 แต่เงินสด FDUSD ในกระเป๋าจริงมีเพียง $20.09 บอทตั้งซื้อได้ $20.03 พอส่งคำสั่งแล้ว Tick ถัดไประบบเปรียบเทียบ $20.03 กับทฤษฎี $29.65 พบว่าเบี่ยงเบน > 10% จึงสั่ง Cancel และตั้งใหม่ซ้ำๆ ทุกวินาที อีกทั้งการคำนวณงบต่อไม้ไม่ได้หักลบยอดออเดอร์ซื้ออื่นที่ค้างอยู่บนกระดาน ทำให้สัดส่วนซื้อรวมอาจเกินงบ $100 ที่กำหนดไว้
+      - **การแก้ไขและสถาปัตยกรรมใหม่**:
+        1. **Proximity-Guarded Channel Expansion & Max Span Cap (`src/market-structure.ts`)**:
+           - เพิ่ม Tolerance Threshold 95% (`upperBound - bottomBound < minSpan * 0.95`) ป้องกันการดีดกรอบเมื่อขาดเพียงเศษทศนิยม
+           - หากจำเป็นต้องขยายกรอบ จะตรวจสอบสวิงใกล้เคียงในระยะ `needed * 1.5` เท่านั้น และให้ความสำคัญกับการขยาย Floor ลงไปก่อนเพื่อรักษาแนวต้านปัจจุบัน
+           - เพิ่ม Hard Guarantee บังคับให้ความกว้างของ Channel ไม่มีทางเกิน `maxSpan` (`upperBound - bottomBound <= maxSpan`)
+        2. **Removal of Macro Peak Inflation & Enforce Max Span Clamp on Locked Channel (`src/strategy.ts`)**:
+           - ลบตรรกะการดันเพดานกลับไปหา `macroPeak` ออก และเพิ่ม Max Span Clamp ให้กับ `this.lastDynamicBounds.upperBound` เพื่อจำกัดความกว้างกรอบไม่ให้เกิน `maxChannelWidthPct` (5%)
+        3. **Real S/R Ceil Always-Visible Display (`public/app.js`)**:
+           - ปลดเงื่อนไขซ่อนเส้นออก ทำให้ข้อความ `• Real Ceil` ใน Header และเส้นประสีชมพู `🎯 Real S/R Ceil` บนชาร์ตแสดงผลตลอดเวลาขณะที่กรอบถูกล็อก เพื่อให้ผู้ใช้เห็นแนวต้านจริงของโครงสร้างราคาเสมอ
+        4. **Airtight Capacity Accounting & Anti-Churning Order Rebalancing (`src/strategy.ts`)**:
+           - ในการคำนวณงบซื้อของแต่ละไม้ จะนำยอดออเดอร์ซื้ออื่นๆ ที่ค้างอยู่บนกระดาน (`otherOpenBuysQuote`) มาหักลบออกจาก `currentAvailableCapacity` ก่อนเสมอ ทำให้ยอดรวมของพอร์ต (เหรียญที่ถือ + ออเดอร์ซื้อทั้งหมด) ไม่มีทางเกิน `maxInventoryQuote` ($100) อย่างเด็ดขาด
+           - ตรวจสอบ `maxPossibleBudget` อ้างอิงจากเงินสดจริงในกระเป๋า (`walletQuoteBalance + currentOrderNotional`) หากออเดอร์บนกระดานใช้เงินสดสูงสุดเท่าที่ทำได้แล้ว จะไม่สั่ง Cancel มาตั้งใหม่เด็ดขาด
+           - กำหนด Guard `canResize` ต้องมีความต่างของงบอย่างน้อย $\ge \max(\text{minNotional} \times 0.5, \$2.00)$ และปิดการ Churn ทุก Tick บน CEX ตัดปัญหา Cancel/Replace Loop บน Binance โดยสิ้นเชิง
+- **Strict Total Committed Capital & Buy Allocation Guard (Elimination of Over-allocation & Churn Loops)**:
       - **สาเหตุของปัญหา**:
         1. เมื่อบอทเข้าซื้อสะสมจนพอร์ตในมือเติบโตขึ้น (เช่น ซื้อแล้ว $70.35 จากงบ $100) โควตาเงินสดคงเหลือจริงสำหรับวางซื้อคือ `$29.65` ($100 - $70.35)
         2. ระดับ `Buy Level 3` (เป้าหมายสะสม 75%) ถูกพอร์ตสะสมผ่านไปแล้ว 70% ทำให้ `Buy Level 3` หลุดจาก `eligibleBuyIndices`

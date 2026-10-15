@@ -1684,15 +1684,45 @@ export class DowStructureEngine {
       }
     }
 
-    // 🔒 Zero Floating Math Guarantee:
-    // If the channel is still narrower than minSpan, expand to confirmed swings (canonicalHighs / canonicalLows)
-    // NEVER synthesize floating lines with +/- shortfall math!
-    if (upperBound - bottomBound < minSpan) {
-      const higherHigh = canonicalHighs.filter((h) => h.price > upperBound).sort((a, b) => a.price - b.price)[0];
+    // 🔒 Proximity-Guarded Channel Expansion:
+    // If the channel is narrower than minSpan (with 95% tolerance threshold), expand prudently
+    // Prioritize expanding bottomBound first to preserve recent LH/resistance, and do NOT leap to distant macro peaks!
+    if (upperBound - bottomBound < minSpan * 0.95) {
+      const needed = minSpan - (upperBound - bottomBound);
       const lowerLow = canonicalLows.filter((l) => l.price < bottomBound).sort((a, b) => b.price - a.price)[0];
-      if (higherHigh) upperBound = higherHigh.price;
-      if (lowerLow) bottomBound = lowerLow.price;
+      const higherHigh = canonicalHighs
+        .filter((h) => h.price > upperBound && (h.price - bottomBound) <= maxSpan)
+        .sort((a, b) => a.price - b.price)[0];
+
+      const lDist = lowerLow !== undefined ? bottomBound - lowerLow.price : Infinity;
+      const hDist = higherHigh !== undefined ? higherHigh.price - upperBound : Infinity;
+
+      // Prefer expanding floor downward if nearby low exists within 1.5x needed
+      if (lowerLow && lDist <= needed * 1.5) {
+        bottomBound = lowerLow.price;
+      } else if (higherHigh && hDist <= needed * 1.5) {
+        upperBound = higherHigh.price;
+      } else {
+        // If no nearby swings exist, expand floor downward to satisfy minSpan without blowing out ceiling
+        if (bottomBound - needed > 0 && price <= upperBound) {
+          bottomBound -= needed;
+        } else {
+          const half = needed / 2;
+          upperBound = Math.min(bottomBound + maxSpan, upperBound + half);
+          bottomBound = Math.max(0.000001, bottomBound - half);
+        }
+      }
       clampStatus = "CLAMPED_MIN";
+    }
+
+    // 🔒 Hard Guarantee: Channel span MUST NEVER exceed maxSpan!
+    if (upperBound - bottomBound > maxSpan) {
+      if (price < (upperBound + bottomBound) / 2) {
+        upperBound = bottomBound + maxSpan;
+      } else {
+        bottomBound = Math.max(0.000001, upperBound - maxSpan);
+      }
+      clampStatus = "CLAMPED_MAX";
     }
 
     const lastHigh = this.swingHighs[this.swingHighs.length - 1];

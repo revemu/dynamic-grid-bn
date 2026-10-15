@@ -1330,7 +1330,7 @@
           : `Natural Swing (${widthPct.toFixed(1)}%)`;
 
     if (data.isChannelLocked) {
-      const realCeilStr = data.liveCalculatedUpperBound && Math.abs(data.liveCalculatedUpperBound - data.upperBound) / data.upperBound > 0.001
+      const realCeilStr = data.liveCalculatedUpperBound
         ? ` • Real Ceil: $${data.liveCalculatedUpperBound.toFixed(4)}`
         : "";
       const realFloorStr = data.liveCalculatedBottomBound && Math.abs(data.liveCalculatedBottomBound - data.bottomBound) / data.bottomBound > 0.001
@@ -1691,8 +1691,7 @@
       // 1.1 Real Current Calculated Resistance Bound (Dashed Fuchsia / Magenta Line)
       if (
         data.isChannelLocked &&
-        data.liveCalculatedUpperBound &&
-        Math.abs(data.liveCalculatedUpperBound - data.upperBound) / data.upperBound > 0.001
+        data.liveCalculatedUpperBound
       ) {
         lineLiveCalculatedUpperBound = setPriceLine(lineLiveCalculatedUpperBound, {
           price: data.liveCalculatedUpperBound,
