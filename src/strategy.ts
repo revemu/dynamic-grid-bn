@@ -2070,6 +2070,52 @@ export class DynamicGrid {
         }
       }
 
+      // 🎯 Adaptive Ceiling Shield (Downside Profit Capture):
+      // If market swings created a new lower Real Ceiling (liveRealCeil < lockedUpperBound)
+      // BUT this new ceiling is STILL PROFITABLE above average entry price (>= avgEntry * 1.005),
+      // allow locked ceiling and sell targets to adjust down to meet the market and secure profit!
+      const liveRealCeil = dow?.gridZone?.upperBound ?? dow?.upperBound;
+      if (
+        liveRealCeil !== undefined &&
+        liveRealCeil > 0 &&
+        avgEntry > 0 &&
+        liveRealCeil < this.lastDynamicBounds.upperBound &&
+        liveRealCeil >= avgEntry * 1.005 &&
+        liveRealCeil > this.lastDynamicBounds.lowerBound * 1.005 &&
+        (this.lastDynamicBounds.upperBound - liveRealCeil) / this.lastDynamicBounds.upperBound >= 0.002
+      ) {
+        const currentFloor = this.lastDynamicBounds.lowerBound;
+        const newCeiling = liveRealCeil;
+        const profitMarginPct = ((newCeiling - avgEntry) / avgEntry) * 100;
+        this.log(
+          `🎯 [LOCKED CHANNEL REAL CEIL ADAPT] Real ceiling moved down from $${this.lastDynamicBounds.upperBound.toFixed(6)} to $${newCeiling.toFixed(6)} with +${profitMarginPct.toFixed(2)}% profit above Avg Entry ($${avgEntry.toFixed(6)}) — lowering locked ceiling & sell targets to capture market rally!`,
+        );
+        this.lastDynamicBounds.upperBound = newCeiling;
+        this.lastDynamicBounds.centerPrice = (currentFloor + newCeiling) / 2;
+        const dSpan = newCeiling - currentFloor;
+        const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
+        const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
+        const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
+        const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
+        const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
+        this.lastDynamicBounds.sellLevels = isNarrowChannel
+          ? [newCeiling * (1 - sellBufferFrac)]
+          : [
+              currentFloor + dSpan * 0.60,
+              currentFloor + dSpan * 0.70,
+              currentFloor + dSpan * 0.80,
+              currentFloor + dSpan * 0.90,
+            ];
+        this.lastDynamicBounds.buyLevels = isNarrowChannel
+          ? [currentFloor * (1 + buyBufferFrac)]
+          : [
+              currentFloor + dSpan * 0.40,
+              currentFloor + dSpan * 0.30,
+              currentFloor + dSpan * 0.20,
+              currentFloor + dSpan * 0.10,
+            ];
+      }
+
       lowerBound = this.lastDynamicBounds.lowerBound;
       upperBound = this.lastDynamicBounds.upperBound;
       centerPrice = this.lastDynamicBounds.centerPrice;
@@ -2410,11 +2456,18 @@ export class DynamicGrid {
       ? activeSellTargetsForTp[activeSellTargetsForTp.length - 1]!
       : upperBound;
 
+    const liveCalculatedCeil = dow?.gridZone?.upperBound ?? dow?.upperBound;
+    const isLiveRealCeilReached = liveCalculatedCeil !== undefined && liveCalculatedCeil > 0 && (
+      refPrice >= liveCalculatedCeil ||
+      (bestBid !== undefined && bestBid >= liveCalculatedCeil)
+    );
+
     const realCeilingReached =
       isAboveCeiling ||
       refPrice >= upperBound ||
       (bestBid !== undefined && bestBid >= upperBound) ||
-      (tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget);
+      (tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget) ||
+      (isLiveRealCeilReached && isProfitableExit);
 
     if (
       !this.isPaused &&
@@ -2432,8 +2485,13 @@ export class DynamicGrid {
         );
       } else {
         const exitPrice = tpExecBid;
+        const reachedTargetPrice = Math.min(
+          upperBound,
+          liveCalculatedCeil && isLiveRealCeilReached ? liveCalculatedCeil : upperBound,
+          highestActiveSellTarget,
+        );
         this.log(
-          `🎯 100% TAKE PROFIT: Price $${refPrice.toFixed(6)} (Bid: $${exitPrice.toFixed(6)}) reached Upper Bound / Active Target ($${Math.min(upperBound, highestActiveSellTarget).toFixed(6)}) with +${(((exitPrice - avgEntryPrice) / (avgEntryPrice || exitPrice)) * 100).toFixed(2)}% profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
+          `🎯 100% TAKE PROFIT: Price $${refPrice.toFixed(6)} (Bid: $${exitPrice.toFixed(6)}) reached Upper Bound / Real Ceil ($${reachedTargetPrice.toFixed(6)}) with +${(((exitPrice - avgEntryPrice) / (avgEntryPrice || exitPrice)) * 100).toFixed(2)}% profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
         );
         await this.cancelAllRestingOrders();
         await this.sellAll(exitPrice, "SELL");
