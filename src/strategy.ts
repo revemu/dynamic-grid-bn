@@ -3012,7 +3012,9 @@ export class DynamicGrid {
           code: "MAKER_SELL_RESTING",
           title: `💎 ${openSells.length} Sells Resting`,
           reason: openSells.map((o) => `$${o.price.toFixed(4)}`).join(", "),
-          nextTrigger: `Fills on upside rally >$${sellTrigger.toFixed(4)}`,
+          nextTrigger: openSells.length === 1
+            ? `Resting Limit Sell placed @ $${openSells[0].price.toFixed(4)}`
+            : `${openSells.length} Resting Limit Sells placed`,
           severity: "success",
         };
       } else if (isTlSellTrigger && this.baseHeld() > 0) {

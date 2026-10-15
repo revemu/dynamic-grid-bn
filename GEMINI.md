@@ -183,6 +183,23 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
            - ใน `syncRestingOrders()`: เมื่อ `hasResistanceOverride` ทำงาน บอทจะส่ง Maker Limit Sell ไปดักรอที่ `effectiveResistancePrice` ทันที โดยติดป้าย `Sell Real Ceil Exit` หรือ `Sell TL Exit` ตามแหล่งที่มาของราคาที่ต่ำกว่า
            - ยกเลิก (Cancel) ออเดอร์ขายปกติทั้งหมดที่ตั้งราคาไว้สูงกว่าหรือเท่ากับ `effectiveResistancePrice` เพื่อไม่ให้ค้างขวางทาง
            - ใน Immediate Trigger & Block 2a (Resistance IOC Exit): เมื่อราคาตลาดวิ่งขึ้นมาแตะหรือทะลุ `effectiveResistancePrice` ระบบจะยิง Market/IOC Sell ออกไปทันที ปิดรอบทำกำไรได้รวดเร็วที่สุด
+   - **Clean Minimalist Chart & Dynamic Open Order Price Lines Architecture**:
+      - **สาเหตุและความต้องการ**:
+        1. ป้ายกำกับบนชาร์ตเดิม (Locked Ceil, Real S/R Ceil, Locked Floor, Real S/R Floor) ใช้กล่องข้อความทึบยาว ยื่นเข้ามาในพื้นที่กราฟด้านซ้ายถึง 120-150px ทำให้บดบังเนื้อเทียนและไส้เทียนของแท่งเทียนที่กำลังก่อตัวอยู่
+        2. ออเดอร์ซื้อขายจริงที่ตั้งรอจับคู่อยู่บน Exchange (Open Maker Orders) ไม่มีเส้นราคาแสดงบนชาร์ต ทำให้ผู้ใช้มองไม่เห็นว่ามีคำสั่งวางอยู่ที่ใด
+        3. ในตาราง Grid Channel Meter ด้านขวา คำสั่งขายแบบ Real Ceil Exit ไม่ได้ถูกจับคู่กับแถวบันได ทำให้ดูเหมือนไม่มีคำสั่งขายวางอยู่
+      - **การพัฒนาและสถาปัตยกรรมใหม่**:
+        1. **Clean Unobstructed Chart Canvas (`public/app.js`)**:
+           - นำกล่องข้อความทึบออกจากเส้นกรอบในชาร์ต (`title: ""`) โดยคงเส้นและแถบสีระบุราคาที่แกนขวาสุด (Axis) ไว้อย่างชัดเจน 100% ทำให้พื้นที่แท่งเทียนโล่ง สะอาดตา ไม่ถูกป้ายข้อความบดบัง
+        2. **Dynamic Open Order Price Lines**:
+           - เพิ่ม `openOrderPriceLines` วาดเส้นประแสดงระดับราคาออเดอร์จริงที่กำลังรอจับคู่อยู่บนกระดาน:
+             - 🔴 เส้นประสีแดง (`#ef4444`) สำหรับ Limit Sell Orders
+             - 🟢 เส้นประสีเขียว (`#22c55e`) สำหรับ Limit Buy Orders
+           - ไม่ใส่กล่องข้อความทึบในพื้นที่กราฟ มีเพียงเส้นประบางๆ และแท็กสีระบุราคาที่แกนขวาสุด ทำให้มองเห็นตำแหน่งออเดอร์ชัดเจนโดยไม่บังแท่งเทียน
+        3. **Enhanced Ladder Order Matching & Badging**:
+           - ในตาราง Grid Channel Meter ด้านขวา เพิ่มการรองรับคำสั่งประเภท `Real Ceil Exit` ให้จับคู่กับระดับขายที่ใกล้เคียง พร้อมแสดงป้ายเคลื่อนไหว `🎯 SELL CEIL` และราคาชัดเจน
+        4. **Unambiguous Action State Telemetry (`src/strategy.ts`)**:
+           - ปรับปรุงข้อความสถานะด้านบนขวาให้ระบุชัดเจน เช่น `Resting Limit Sell placed @ $...` แทนคำว่า `Fills on upside rally...` เพื่อไม่ให้เกิดความสับสน
    - **Comprehensive IOC Order Execution Telemetry & Trade Logging**:
       - **ความต้องการ**: ผู้ใช้ต้องการทราบอย่างชัดเจนใน Trade Matches / Trade Log ว่าเมื่อบอทส่งคำสั่งแบบ IOC: (1) ส่งที่ราคาอ้างอิง/เป้าหมาย (Target/Anchor) เท่าไหร่, (2) ตั้งค่า Slippage Protection ไว้กี่ %, (3) ส่งราคา Limit Price เข้า Exchange จริงเท่าไหร่, และ (4) ท้ายสุดได้ราคา Match จริง (Executed Fill Price) เท่าไหร่
       - **การแก้ไข**:

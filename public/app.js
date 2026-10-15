@@ -591,6 +591,7 @@
   let lineBuyTrigger = null;
   let lineSellTrigger = null;
   let gridZoneLevelLines = [];
+  let openOrderPriceLines = [];
 
   function initChart() {
     if (chart && candleSeries) return;
@@ -1050,7 +1051,8 @@
       });
 
       // 1. Try matching by levelDesc
-      const isTlExitOrder = desc.includes("tl exit") || desc.includes("trendline");
+      const isRealCeilOrder = desc.includes("real ceil");
+      const isTlExitOrder = desc.includes("tl exit") || desc.includes("trendline") || isRealCeilOrder;
       if (desc.includes("buy level 1") || desc.includes("40%")) matchedStep = candidateSteps.find((s) => s.pct === 40);
       else if (desc.includes("buy level 2") || desc.includes("30%")) matchedStep = candidateSteps.find((s) => s.pct === 30);
       else if (desc.includes("buy level 3") || desc.includes("20%")) matchedStep = candidateSteps.find((s) => s.pct === 20);
@@ -1060,7 +1062,7 @@
       else if (desc.includes("sell target 3") || desc.includes("80%")) matchedStep = candidateSteps.find((s) => s.pct === 80);
       else if (desc.includes("sell target 4") || desc.includes("90%")) matchedStep = candidateSteps.find((s) => s.pct === 90);
       else if (isTlExitOrder) {
-        // Find candidate sell step closest to the trendline exit order price
+        // Find candidate sell step closest to the resistance/trendline exit order price
         let bestTlStep = null;
         let minTlDiff = Infinity;
         candidateSteps.forEach((step) => {
@@ -1106,14 +1108,17 @@
         if (actionEl) {
           const notionalVal = order.notionalUsdso || (order.price * (order.qty || 0));
           const notional = notionalVal > 0 ? `$${notionalVal.toFixed(2)}` : "";
-          const sideTag = isTlExitOrder ? "📉 SELL TL" : (isBid ? "BUY" : "SELL");
+          const sideTag = isRealCeilOrder ? "🎯 SELL CEIL" : (isTlExitOrder ? "📉 SELL TL" : (isBid ? "BUY" : "SELL"));
           const tagClass = isBid ? "buy-order-tag" : "sell-order-tag";
           let expPill = "";
           if (order.expireTime) {
             const remH = Math.max(0, Math.round((order.expireTime - Date.now()) / 3600000));
             expPill = remH > 0 ? `<span style="opacity:0.8; font-size:7.5px; margin-left:3px; font-weight:600;">⏳${remH}h</span>` : "";
           }
-          actionEl.innerHTML = `<span class="step-order-tag ${tagClass}" title="Trendline Exit Limit Order @ $${order.price.toFixed(6)}"><span class="order-pulse-dot"></span> ${sideTag} ${notional}${expPill}</span>`;
+          const orderTitle = isRealCeilOrder
+            ? `Real Ceiling Exit Limit Order @ $${order.price.toFixed(6)}`
+            : (isTlExitOrder ? `Trendline Exit Limit Order @ $${order.price.toFixed(6)}` : `Limit Order @ $${order.price.toFixed(6)}`);
+          actionEl.innerHTML = `<span class="step-order-tag ${tagClass}" title="${orderTitle}"><span class="order-pulse-dot"></span> ${sideTag} ${notional}${expPill}</span>`;
         }
       }
     });
@@ -1684,7 +1689,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Solid,
           axisLabelVisible: true,
-          title: data.isChannelLocked ? "🔒 Locked Ceil" : "",
+          title: "",
         });
       }
 
@@ -1699,7 +1704,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
-          title: "🎯 Real S/R Ceil",
+          title: "",
         });
       } else if (lineLiveCalculatedUpperBound) {
         try { candleSeries.removePriceLine(lineLiveCalculatedUpperBound); } catch (_) {}
@@ -1718,7 +1723,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
-          title: "🎯 Real S/R Floor",
+          title: "",
         });
       } else if (lineLiveCalculatedBottomBound) {
         try { candleSeries.removePriceLine(lineLiveCalculatedBottomBound); } catch (_) {}
@@ -1745,7 +1750,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Solid,
           axisLabelVisible: true,
-          title: data.isChannelLocked ? "🔒 Locked Floor" : "",
+          title: "",
         });
       }
 
@@ -1853,6 +1858,43 @@
         try { candleSeries.removePriceLine(lineSellTrigger); } catch (_) { }
         lineSellTrigger = null;
       }
+
+      // ── Open Order Lines: Active resting Limit Orders on Exchange ───────────
+      const rawOpenOrders = Array.isArray(data.openOrders) ? data.openOrders : [];
+      const validOrders = rawOpenOrders.filter((o) => o && Number.isFinite(o.price) && o.price > 0);
+
+      while (openOrderPriceLines.length < validOrders.length) {
+        const l = candleSeries.createPriceLine({
+          price: validOrders[openOrderPriceLines.length]?.price || 0,
+          color: "rgba(255, 255, 255, 0.4)",
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "",
+        });
+        if (l) openOrderPriceLines.push(l);
+        else break;
+      }
+      while (openOrderPriceLines.length > validOrders.length) {
+        const excess = openOrderPriceLines.pop();
+        if (excess) {
+          try { candleSeries.removePriceLine(excess); } catch (_) {}
+        }
+      }
+
+      validOrders.forEach((order, idx) => {
+        const line = openOrderPriceLines[idx];
+        if (!line) return;
+        const isBid = Boolean(order.isBid);
+        line.applyOptions({
+          price: order.price,
+          color: isBid ? "#22c55e" : "#ef4444",
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "", // Clean: thin dashed line, no blocking boxes on candles!
+        });
+      });
     }
 
     // ── Trendline Series: Downtrend Resistance & Uptrend Support ─────────────
