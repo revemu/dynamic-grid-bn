@@ -1312,7 +1312,10 @@ export class DowStructureEngine {
       }
     }
 
-    const activeCycleHighs = canonicalHighs.filter((h) => h.index >= activeWaveBaseIndex);
+    const cycleHighsStartIndex = (macroPeak && macroLow && macroPeak.index < macroLow.index)
+      ? macroLow.index
+      : activeWaveBaseIndex;
+    const activeCycleHighs = canonicalHighs.filter((h) => h.index >= cycleHighsStartIndex);
     const activeCycleLows = canonicalLows.filter((l) => l.index >= activeWaveBaseIndex);
 
     let baseValley: SwingPoint | undefined;
@@ -1328,8 +1331,6 @@ export class DowStructureEngine {
       baseValley = minLow;
     } else if (canonicalLows.length > 0) {
       baseValley = canonicalLows.reduce((min, l) => (l.price < min.price ? l : min), canonicalLows[0]!);
-    } else if (confirmedLows.length > 0) {
-      baseValley = confirmedLows[confirmedLows.length - 1];
     }
 
     activeValley = baseValley;
@@ -1339,7 +1340,6 @@ export class DowStructureEngine {
     const highsInActiveWave = canonicalHighs.filter((s) => s.index >= waveStartIndex);
 
     // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้" / "ถ้าทำ HH ปรับขึ้นตามยอดใหม่"):
-    // ในคลื่นปัจจุบัน ยึดสวิงยอดล่าสุด (LH หรือ HH) ของรอบปัจจุบันเป็น activePeak โดยไม่กระโดดไปหา Major Peak โบราณ
     const lastCanonicalHigh = activeCycleHighs.length > 0
       ? activeCycleHighs[activeCycleHighs.length - 1]
       : (canonicalHighs.length > 0 ? canonicalHighs[canonicalHighs.length - 1] : undefined);
@@ -1347,39 +1347,33 @@ export class DowStructureEngine {
       ? activeCycleLows[activeCycleLows.length - 1]
       : (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined);
 
+    const isLatestHighHh = Boolean(
+      lastCanonicalHigh &&
+      (lastCanonicalHigh.dowLabel === "HH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price >= activeCycleHighs[activeCycleHighs.length - 2]!.price))
+    );
     const isLatestHighLh = Boolean(
       lastCanonicalHigh &&
       (lastCanonicalHigh.dowLabel === "LH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price < activeCycleHighs[activeCycleHighs.length - 2]!.price)) &&
       price <= lastCanonicalHigh.price * 1.0005
     );
-    const isLatestHighHh = Boolean(
-      lastCanonicalHigh &&
-      (lastCanonicalHigh.dowLabel === "HH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price >= activeCycleHighs[activeCycleHighs.length - 2]!.price))
-    );
 
     const highsPool = activeCycleHighs.length > 0 ? activeCycleHighs : highsInActiveWave;
 
-    if (isLatestHighLh && lastCanonicalHigh) {
-      activePeak = lastCanonicalHigh;
-    } else if (isLatestHighHh && lastCanonicalHigh) {
-      activePeak = lastCanonicalHigh;
-    } else if (lastCanonicalHigh && price <= lastCanonicalHigh.price * 1.001) {
-      // สวิงยอดล่าสุดของคลื่นปัจจุบันที่ราคาอยู่ต่ำกว่า ให้ถือเป็นแนวต้าน (activePeak) ทันที
-      activePeak = lastCanonicalHigh;
-    } else if (highsPool.length > 0) {
+    // 🔒 Pure Dow Theory Rule:
+    // Anchor activePeak to the highest confirmed structural swing peak (maxHigh) of the active cycle!
+    // NEVER collapse activePeak down to an unconfirmed candle or a minor lower pullback swing.
+    // MUST strictly come from canonicalHighs (swings with confirmed alternating Dow wave and badges).
+    if (highsPool.length > 0) {
       let maxHigh = highsPool[0]!;
       for (const h of highsPool) {
         if (h.price > maxHigh.price) maxHigh = h;
       }
       activePeak = maxHigh;
     } else if (canonicalHighs.length > 0) {
-      activePeak = canonicalHighs[canonicalHighs.length - 1];
-    } else if (confirmedHighs.length > 0) {
-      activePeak = confirmedHighs[confirmedHighs.length - 1];
+      activePeak = canonicalHighs.reduce((max, h) => (h.price > max.price ? h : max), canonicalHighs[0]!);
     }
 
-    // 🔒 ไม่ override activePeak ด้วย Major Peak ในอดีต
-    // ยึดยอดสวิงของคลื่นปัจจุบัน (activePeak) เป็นแนวต้าน (activeCeilingPoint) โดยตรง
+    // 🔒 ยึดยอดสวิงสูงสุดที่ยืนยันแล้วของคลื่นปัจจุบัน (activePeak) เป็นแนวต้าน (activeCeilingPoint) โดยตรง
     const activeCeilingPoint = activePeak;
 
     let clampStatus: GridZone["clampStatus"] = "NATURAL_SWING";

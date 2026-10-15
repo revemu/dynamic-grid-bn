@@ -1195,7 +1195,16 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - **การแก้ไข**:
         - ใน `src/strategy.ts`: ปรับปรุง `sellAllUser()` ให้ส่งการทำงานเป็น `action = "MANUAL"` (Manual Liquidation / Emergency Exit)
         - ใน `sellAll()`: เพิ่มการรองรับ `action = "MANUAL"` โดยให้คำนวณราคาขาย `limitPrice` อิงตาม Best Bid พร้อม Slippage buffer (`price * (1 - slippagePct)`) ไม่ถูกบังคับด้วย `minProfitablePrice` ทำให้คำสั่ง IOC สามารถกวาดจับคู่กับสภาพคล่อง Best Bid ในตลาดได้ทันที 100% โดยไม่ Revert
-        - สำหรับคำสั่งขายทำกำไรอัตโนมัติ (`action === "SELL"`): จะตรวจสอบเงื่อนไข `minProfitablePrice` เฉพาะเมื่อเปิดใช้โหมด `sellProfitMode === "PORTFOLIO_AVG_PROFIT"` เท่านั้น หากอยู่ในโหมดเริ่มต้น `GRID_CASHFLOW` จะอนุญาตให้ปิดไม้เพื่อกู้คืน Cash Flow ได้ตามการตั้งค่า
+    13. **Strict Confirmed Dow Swings & Canonical Max Peak Ceiling Architecture ("แต่มันไม่ใช่ ยอด หรือ เหวที่ยืนยันนะ เห็นเป็นแค่แท่งเทียนนี่")**:
+       - **สาเหตุของปัญหา**:
+         1. บอทแสดงกรอบบน Ceiling (100%) อยู่ที่ระดับ `$0.199580` ซึ่งเป็นเพียง "แท่งเทียนธรรมดา" (ไม่ใช่ยอดสวิงที่ยืนยัน ไม่มีเส้นหยัก ZigZag สีฟ้า และไม่มีป้าย Dow Theory `HH`/`LH`) ขณะที่ยอดสวิงจริงของรอบคลื่นฟื้นตัวอยู่ที่ `$0.2022` (ตรงป้าย `[CUT]`) และยอดคลื่นใหญ่ก่อนหน้าอยู่ที่ `$0.2088` (ป้าย `[HH]`)
+         2. ใน `src/market-structure.ts`: โค้ดเดิมมีเงื่อนไขบังคับให้ `activePeak = lastCanonicalHigh` ทันทีในทุกกรณีเมื่อมียอดสวิงล่าสุด ทำให้ยอดสวิงสูงสุดของรอบคลื่น (`maxHigh` ที่เป็นยอดแท้จริงของรอบคลื่น) กลายเป็น Dead Code ที่ไม่มีวันถูกเรียกใช้ และเมื่อไม่มี canonical high ในรอบคลื่น โค้ดยัง fallback ไปดึงเอาแท่งเทียนทั่วไปใน `confirmedHighs` (3-bar local pivot ดิบ) มาเป็นเพดาน
+         3. เมื่อตลาดทุบทำ `macroLow` ($0.189800) และฟื้นตัวขึ้นไป หากเกิดเหวย่อย (postLowLows) ตรรกะเดิมดันเลื่อน `activeWaveBaseIndex` ข้ามไปเริ่มที่เหวย่อยนั้น ทำให้ยอด High สวิงหลักก่อนหน้า ($0.2022) หลุดออกจาก Pool คำนวณ
+       - **การแก้ไข**:
+         1. **Strict Canonical Swings Only**: เพดาน (Ceiling) และพื้น (Floor) ต้องล็อคกับจุดสวิงที่ยืนยันตามรอบคลื่น Dow Theory (`canonicalHighs` และ `canonicalLows` ที่มีเส้นคลื่น ZigZag และป้ายกำกับ) เท่านั้น 100% ตัดการ fallback ไปหาแท่งเทียนดิบ (`confirmedHighs` / `confirmedLows`) ออกทั้งหมด
+         2. **Lock Max Confirmed Peak of Active Wave (`maxHigh`)**: กำหนดให้ `activePeak` ยึดยอดสวิงสูงสุดที่ยืนยันแล้วในรอบคลื่นปัจจุบัน (`maxHigh` ใน `highsPool`) เสมอ เพดานจึงล็อคเกาะกับยอดต้านสวิงหลักแท้จริงของคลื่น (เช่น **`$0.2022`**) ไม่ถูกแท่งเทียนย่อยหรือสวิงเตี้ยๆ บีบเพดานยุบตัวลงมากลางอากาศ
+         3. **Preserve Post-MacroLow Swings (`cycleHighsStartIndex`)**: ในกรณีคลื่นฟื้นตัวหลัง `macroLow` ($0.189800) กำหนดให้ `cycleHighsStartIndex = macroLow.index` ครอบคลุมยอดสวิงทั้งหมดที่เกิดขึ้นนับตั้งแต่จุดต่ำสุดเป็นต้นมา ทำให้ยอดสวิงหลัก ($0.2022) อยู่ใน Pool คำนวณเสมอ
+         4. **Lower High Step-Down Guard**: การปรับลดเพดานตาม Lower High (LH) ให้เป็นหน้าที่ของ Dow Theory Clamping Step (บรรทัด 1565) ที่มีเงื่อนไขตรวจสอบความกว้าง `minSpan` และ `maxSpan` อย่างรัดกุมตามเดิม
 
 ---
 
