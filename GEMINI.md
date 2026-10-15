@@ -128,6 +128,21 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         2. **Direct Real Ceiling Take Profit (`src/strategy.ts`)**:
            - ในฟังก์ชัน `Take Profit at Upper Bound`: เพิ่มการตรวจสอบ `isLiveRealCeilReached = refPrice >= liveCalculatedCeil || bestBid >= liveCalculatedCeil`
            - เมื่อราคาตลาดวิ่งชนหรือทะลุ `liveCalculatedCeil` ($0.2088) และราคานั้นได้กำไร (`isProfitableExit === true`): ระบบจะสั่ง **100% Take Profit Exit** ทันที เพื่อเก็บกำไรเข้ากระเป๋าและปลดล็อครอบทันที ไม่ปล่อยให้ราคาชนแนวต้านจริงแล้วทุบกลับลงมาขาดทุน โดยไม่ต้องไปดึงกรอบหลักให้ยุบตัวลงมาทับ
+   - **Strict Total Committed Capital & Buy Allocation Guard (Elimination of Over-allocation & Churn Loops)**:
+      - **สาเหตุของปัญหา**:
+        1. เมื่อบอทเข้าซื้อสะสมจนพอร์ตในมือเติบโตขึ้น (เช่น ซื้อแล้ว $70.35 จากงบ $100) โควตาเงินสดคงเหลือจริงสำหรับวางซื้อคือ `$29.65` ($100 - $70.35)
+        2. ระดับ `Buy Level 3` (เป้าหมายสะสม 75%) ถูกพอร์ตสะสมผ่านไปแล้ว 70% ทำให้ `Buy Level 3` หลุดจาก `eligibleBuyIndices`
+        3. อย่างไรก็ตาม โค้ดลูปเดิมไม่ได้สั่ง Cancel ออเดอร์ซื้อที่ค้างอยู่บนกระดานของระดับที่หลุดโควตาไปแล้ว ทำให้ออเดอร์ Buy Level 3 เดิม ($29.92) ยังคงคาอยู่บนกระดานและล็อกเงินสด FDUSD ไว้
+        4. ส่งผลให้ยอดออเดอร์รอซื้อรวมกลายเป็น $29.92 (Level 3) + $20.83 (Level 4) = **$50.75** เมื่อรวมกับของในมือ $70.35 พอร์ตจึงทะลุเป็น **$121.10** (เกินงบ $100)
+        5. นอกจากนี้ เมื่อบอทพยายามปรับขนาดไม้ Level 4 ให้เท่ากับงบที่เหลือ ($29.65) แต่เงินสดในกระเป๋าเหลือเพียง $20.09 (เพราะอีก $29.92 ติดล็อกอยู่ใน Level 3) บอทจึงถูกบังคับลดไซส์เหลือ $20.03 พอส่ง $20.03 ไป ใน Tick ถัดไประบบตรวจพบว่าไม่ตรงกับเป้า $29.65 จึง Cancel และพยายามส่งใหม่ เกิดเป็น **Infinite Cancel/Place Churn Loop ทุก 500ms** บน Binance
+      - **การแก้ไขและสถาปัตยกรรมใหม่**:
+        1. **Ineligible Level Cancel Guard (`src/strategy.ts`)**:
+           - ในทุกๆ Tick ตรวจสอบออเดอร์ซื้อทั้งหมด หากพบว่ามีออเดอร์ใดอยู่ในระดับที่ไม่ได้อยู่ใน `eligibleBuyIndices` อีกต่อไป (เช่น พอร์ตสะสมจนเกินเป้าโควตาของ Level นั้นแล้ว) ระบบจะสั่ง **Cancel ทันที** เพื่อปลดล็อกเงินสดกลับเข้ากระเป๋า
+        2. **Buy Rebalance on Buy Fills (`processBuyFill`)**:
+           - เพิ่ม `this.needsBuyRebalance = true;` ทุกครั้งที่เกิด Buy Fill เพื่อให้ระบบสั่งรีบาลานซ์และปรับขนาดออเดอร์ซื้อที่เหลือให้พอดีกับงบคงเหลือทันทีใน Tick ถัดไป
+        3. **Strict Total Buy Exposure Cap Guard**:
+           - บังคับใช้กฎ Invariant: $\text{Total Open Buys} \le \text{currentAvailableCapacity} = \max(0, \text{maxInventoryQuote} - \text{currentHeldQuote})$
+           - ทุกคำสั่งซื้อใหม่และการปรับขนาด จะถูก Cap ด้วย `currentAvailableCapacity` เสมอ ทำให้ผลรวมของเหรียญที่ถืออยู่ + ยอดรอซื้อทั้งหมดไม่มีทางเกิน `maxInventoryQuote` ($100) อย่างเด็ดขาด และตัดปัญหา Churn Loop ให้หมดไป 100%
    - **Comprehensive IOC Order Execution Telemetry & Trade Logging**:
       - **ความต้องการ**: ผู้ใช้ต้องการทราบอย่างชัดเจนใน Trade Matches / Trade Log ว่าเมื่อบอทส่งคำสั่งแบบ IOC: (1) ส่งที่ราคาอ้างอิง/เป้าหมาย (Target/Anchor) เท่าไหร่, (2) ตั้งค่า Slippage Protection ไว้กี่ %, (3) ส่งราคา Limit Price เข้า Exchange จริงเท่าไหร่, และ (4) ท้ายสุดได้ราคา Match จริง (Executed Fill Price) เท่าไหร่
       - **การแก้ไข**:

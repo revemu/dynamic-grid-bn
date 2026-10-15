@@ -3539,6 +3539,7 @@ export class DynamicGrid {
     const netQty = roundToStep(rawNetQty, this.stepSize || 0.0001, 4);
     this.lots.push({ price, qty: netQty, time: now });
     this.needsSellRebalance = true;
+    this.needsBuyRebalance = true;
     // Reset IOC Bracket Sell Cycle whenever a buy order fills to re-partition lots with new baseline
     this.iocBracketSellCycle = undefined;
 
@@ -3921,6 +3922,25 @@ export class DynamicGrid {
           }
         }
 
+        // ── Ineligible Level Cancel Guard (Strict Budget & Level Allocation) ──
+        // Cancel resting buy orders on levels that are NO LONGER in eligibleBuyIndices
+        // (e.g. portfolio holding already exceeded level target fraction, or trendline filter active)
+        const ineligibleOpenBuys = openBuys.filter((o) => {
+          const lvlIdx = effectiveLevelNames.indexOf(o.levelDesc || "");
+          return lvlIdx >= 0 && !eligibleBuyIndices.includes(lvlIdx);
+        });
+        if (ineligibleOpenBuys.length > 0) {
+          for (const o of ineligibleOpenBuys) {
+            const ordNotional = (o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty);
+            await this.cancelOrderInternal(
+              o,
+              `Level allocation target fulfilled (${o.levelDesc}) — releasing locked budget ($${ordNotional.toFixed(2)}) for remaining eligible levels`,
+            );
+          }
+          this.openOrders = this.openOrders.filter((o) => !ineligibleOpenBuys.includes(o));
+          this.saveState();
+        }
+
         for (let i = 0; i < effectiveBuyLevels.length; i++) {
           const lvlPrice = effectiveBuyLevels[i];
           if (!lvlPrice) continue;
@@ -3937,6 +3957,22 @@ export class DynamicGrid {
                 `User disabled Buy Level ${i + 1} — cancelling resting order`,
               );
               this.openOrders = this.openOrders.filter((o) => o !== existingDisabledBuy);
+              this.saveState();
+            }
+            continue;
+          }
+
+          // If this level is not in eligibleBuyIndices (e.g. holding fraction exceeded level quota), cancel existing order and skip
+          if (!eligibleBuyIndices.includes(i)) {
+            const currentIneligibleBuy = this.openOrders.find(
+              (o) => o.isBid && (o.levelDesc === effectiveLevelNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
+            );
+            if (currentIneligibleBuy) {
+              await this.cancelOrderInternal(
+                currentIneligibleBuy,
+                `Buy level ${i + 1} quota already fulfilled by current holding (${(currentHoldFraction * 100).toFixed(1)}%) — cancelling`,
+              );
+              this.openOrders = this.openOrders.filter((o) => o !== currentIneligibleBuy);
               this.saveState();
             }
             continue;
@@ -4001,22 +4037,34 @@ export class DynamicGrid {
             const priceTolerance = priceTol;
             const currentOrderNotional = currentOpenBuyAtLvl.notionalQuote !== undefined ? currentOpenBuyAtLvl.notionalQuote : currentOpenBuyAtLvl.notionalUsdso;
             const notionalDiffRatio = Math.abs(currentOrderNotional - trancheQuote) / Math.max(0.01, trancheQuote);
-            // Rebalance tranche if explicitly requested (sell filled, startup, resume) OR if deviation is large (>15%) when orders are incomplete
-            const needsResize = (doBuyRebalance || (notionalDiffRatio > 0.15 && openBuys.length < numBuyLevels)) && notionalDiffRatio > 0.05;
+            const totalOpenBuysQuote = this.openOrders
+              .filter((o) => o.isBid)
+              .reduce((sum, o) => sum + ((o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty)), 0);
+            const isTotalExposureExceeded = totalOpenBuysQuote > currentAvailableCapacity * 1.05;
+            const isCex = this.binance.exchangeName === "binance";
+            // Rebalance tranche if explicitly requested (sell/buy filled, startup, resume) OR if total buy exposure exceeds remaining budget OR on CEX if deviation is large (>10%)
+            const needsResize = (
+              doBuyRebalance ||
+              isTotalExposureExceeded ||
+              (isCex && notionalDiffRatio > 0.10) ||
+              (notionalDiffRatio > 0.15 && openBuys.length < numBuyLevels)
+            ) && notionalDiffRatio > 0.05;
 
             if (priceDiffRatio > priceTolerance || needsResize) {
               const reason = priceDiffRatio > priceTolerance
                 ? `Channel shifted: aligning buy price ($${currentOpenBuyAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
+                : isTotalExposureExceeded
+                ? `Total buy exposure exceeded remaining capacity: adjusting order ($${currentOrderNotional.toFixed(2)} -> $${trancheQuote.toFixed(2)})`
                 : `Rebalancing buy quantity to match grid tranche ($${currentOrderNotional.toFixed(2)} -> $${trancheQuote.toFixed(2)})`;
               await this.cancelOrderInternal(currentOpenBuyAtLvl, reason);
               this.openOrders = this.openOrders.filter((o) => o !== currentOpenBuyAtLvl);
 
-              // Equal tranche sizing for replaced order
+              // Equal tranche sizing for replaced order (strictly capped by currentAvailableCapacity)
               const maxPossibleBudget = this.cfg.dryRun
-                ? trancheQuote
-                : Math.min(trancheQuote, this.walletQuoteBalance + currentOrderNotional);
+                ? Math.min(trancheQuote, currentAvailableCapacity)
+                : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance + currentOrderNotional);
               const effectiveBuyQty = maxPossibleBudget / lvlPrice;
-              if (effectiveBuyQty >= this.minQty) {
+              if (effectiveBuyQty >= this.minQty && maxPossibleBudget >= minOrderNotional) {
                 await this.placeRestingOrder(
                   true,
                   lvlPrice,
@@ -4040,7 +4088,6 @@ export class DynamicGrid {
           // If current portfolio holding already satisfies or exceeds this level's target fraction,
           // do NOT re-place a buy order at this level while holding that inventory!
           // (Only allow subsequent lower levels, or wait until inventory is sold).
-          const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
           const levelTargetFraction = buyTargets[i] ?? ((i + 1) / numBuyLevels);
           if (currentHoldFraction >= (levelTargetFraction - 0.05) && i < effectiveBuyLevels.length - 1) {
             continue;
@@ -4051,7 +4098,7 @@ export class DynamicGrid {
           const isDexAskAtOrBelowLevel = !isCexExchange && currentBestAsk > 0 && currentBestAsk <= lvlPrice;
           if (isDexAskAtOrBelowLevel && canBuy && trancheQuote > 0) {
             const availableBudget = this.cfg.dryRun
-              ? trancheQuote
+              ? Math.min(trancheQuote, currentAvailableCapacity)
               : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance);
             const desiredBuyQty = availableBudget / currentBestAsk;
             if (desiredBuyQty >= this.minQty && availableBudget >= minOrderNotional) {
@@ -4066,12 +4113,12 @@ export class DynamicGrid {
 
           const isEligibleForNewOrder = lvlPrice < maxAllowedBuyPrice && canBuy;
           if (isEligibleForNewOrder && trancheQuote > 0) {
-            // Place new equal tranche buy order (proportional 4-level average of remaining capacity)
+            // Place new equal tranche buy order (strictly capped by currentAvailableCapacity)
             const availableBudget = this.cfg.dryRun
-              ? trancheQuote
+              ? Math.min(trancheQuote, currentAvailableCapacity)
               : Math.min(trancheQuote, currentAvailableCapacity, this.walletQuoteBalance);
             const desiredBuyQty = availableBudget / lvlPrice;
-            if (desiredBuyQty >= this.minQty) {
+            if (desiredBuyQty >= this.minQty && availableBudget >= minOrderNotional) {
               await this.placeRestingOrder(
                 true,
                 lvlPrice,
