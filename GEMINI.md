@@ -162,6 +162,27 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         3. **Strict Total Buy Exposure Cap Guard**:
            - บังคับใช้กฎ Invariant: $\text{Total Open Buys} \le \text{currentAvailableCapacity} = \max(0, \text{maxInventoryQuote} - \text{currentHeldQuote})$
            - ทุกคำสั่งซื้อใหม่และการปรับขนาด จะถูก Cap ด้วย `currentAvailableCapacity` เสมอ ทำให้ผลรวมของเหรียญที่ถืออยู่ + ยอดรอซื้อทั้งหมดไม่มีทางเกิน `maxInventoryQuote` ($100) อย่างเด็ดขาด และตัดปัญหา Churn Loop ให้หมดไป 100%
+   - **Dual Resistance Selling Architecture (`enableSellAtRealCeiling` & `min(TL, Real Ceil)` Overrides)**:
+      - **สาเหตุและความต้องการ**:
+        1. เมื่อบอทล็อกกรอบ (`lockChannelInPosition`) เพื่อป้องกันไม่ให้กรอบหลักขยับลงมาทับต้นทุน แต่โครงสร้างราคาจริง (Dow Theory / Donchian Highs) ได้ปรับตัวลงมาและสร้างแนวต้านจริง (`Real S/R Ceil`) ที่ต่ำกว่าเพดานเดิม (เช่น Locked Ceil อยู่ที่ $108.03 แต่ Real S/R Ceil ลดลงมาอยู่ที่ $105.38)
+        2. หากเปิดใช้เพียงการขายใต้เส้นกด Trendline Resistance (`enableSellBelowTrendResistance`) บอทจะวางขายที่ $105.76 (ใต้ TL) ซึ่งสูงกว่าแนวต้านจริง $105.38 ทำให้พลาดโอกาสขายทำกำไรที่แนวต้านจริง
+        3. ผู้ใช้ระบุหลักการอย่างชัดเจน: **"ไม่ใช่ locked คือ locked เพิ่ม option ให้ขายที่กรอบจริง เมื่อทำงานคู่กับการขายใต้ trendline ก็เลือกเอาราคาที่ต่ำกว่า"** (ห้ามแก้ Locked Channel เพราะ locked ต้อง locked แต่ให้เพิ่มออปชันขายที่กรอบจริง และเมื่อทำงานคู่กับ trendline ให้เลือกราคาที่ต่ำกว่าเสมอ min(tlPrice, liveRealCeil))
+      - **การพัฒนาและสถาปัตยกรรมใหม่**:
+        1. **Config & UI Switch (`enableSellAtRealCeiling`)**:
+           - เพิ่ม `enableSellAtRealCeiling: true` (ค่าเริ่มต้น: `true`) ใน `src/config.ts`, `data/settings.db.json`
+           - เพิ่ม Toggle Switch ในหน้าต่าง Settings Modal บนเว็บแดชบอร์ด (`public/index.html` และ `public/app.js`)
+        2. **Dual Resistance Price Selection (`src/strategy.ts`)**:
+           - ตรวจสอบทั้ง Trendline Resistance (`isTlActiveForTrigger`) และ Real Ceiling (`isRealCeilActiveForTrigger` เมื่อ `enableSellAtRealCeiling` เปิดใช้งาน, มี `liveRealCeil < upperBound`, และได้กำไรเหนือต้นทุนเฉลี่ย)
+           - กำหนดราคาแนวต้านประสาน:
+             $\text{effectiveResistancePrice} = \begin{cases}
+               \min(\text{tlPrice}, \text{liveRealCeil}) & \text{ถ้าทั้งสองเงื่อนไขทำงาน} \\
+               \text{tlPrice} & \text{ถ้ามีเฉพาะ Trendline} \\
+               \text{liveRealCeil} & \text{ถ้ามีเฉพาะ Real Ceiling}
+             \end{cases}$
+        3. **Synchronized Resting Limit & IOC Exit**:
+           - ใน `syncRestingOrders()`: เมื่อ `hasResistanceOverride` ทำงาน บอทจะส่ง Maker Limit Sell ไปดักรอที่ `effectiveResistancePrice` ทันที โดยติดป้าย `Sell Real Ceil Exit` หรือ `Sell TL Exit` ตามแหล่งที่มาของราคาที่ต่ำกว่า
+           - ยกเลิก (Cancel) ออเดอร์ขายปกติทั้งหมดที่ตั้งราคาไว้สูงกว่าหรือเท่ากับ `effectiveResistancePrice` เพื่อไม่ให้ค้างขวางทาง
+           - ใน Immediate Trigger & Block 2a (Resistance IOC Exit): เมื่อราคาตลาดวิ่งขึ้นมาแตะหรือทะลุ `effectiveResistancePrice` ระบบจะยิง Market/IOC Sell ออกไปทันที ปิดรอบทำกำไรได้รวดเร็วที่สุด
    - **Comprehensive IOC Order Execution Telemetry & Trade Logging**:
       - **ความต้องการ**: ผู้ใช้ต้องการทราบอย่างชัดเจนใน Trade Matches / Trade Log ว่าเมื่อบอทส่งคำสั่งแบบ IOC: (1) ส่งที่ราคาอ้างอิง/เป้าหมาย (Target/Anchor) เท่าไหร่, (2) ตั้งค่า Slippage Protection ไว้กี่ %, (3) ส่งราคา Limit Price เข้า Exchange จริงเท่าไหร่, และ (4) ท้ายสุดได้ราคา Match จริง (Executed Fill Price) เท่าไหร่
       - **การแก้ไข**:

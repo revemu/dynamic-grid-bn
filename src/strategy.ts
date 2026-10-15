@@ -480,6 +480,7 @@ export class DynamicGrid {
       iocSlippagePct: this.cfg.iocSlippagePct ?? 0.35,
       enableBuyAboveTrendSupport: this.cfg.enableBuyAboveTrendSupport !== false,
       enableSellBelowTrendResistance: this.cfg.enableSellBelowTrendResistance !== false,
+      enableSellAtRealCeiling: this.cfg.enableSellAtRealCeiling !== false,
       sellProfitMode: this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"),
       requireProfitAboveAvgEntry: this.cfg.requireProfitAboveAvgEntry === true,
       enableLaggardSnipe: this.cfg.enableLaggardSnipe,
@@ -2446,6 +2447,7 @@ export class DynamicGrid {
       : upperBound;
 
     const liveCalculatedCeil = dow?.gridZone?.upperBound ?? dow?.upperBound;
+    const liveRealCeil = liveCalculatedCeil;
     const isLiveRealCeilReached = liveCalculatedCeil !== undefined && liveCalculatedCeil > 0 && (
       refPrice >= liveCalculatedCeil ||
       (bestBid !== undefined && bestBid >= liveCalculatedCeil)
@@ -2701,22 +2703,23 @@ export class DynamicGrid {
       dow?.uptrendBreakdownConfirmed)
     );
 
-    // ── Trendline Sell Trigger Override ──────────────────────────────────────
+    // ── Trendline / Real Ceil Sell Trigger Override ───────────────────────────
     let isTlSellTrigger = false;
     let tlSellPrice: number | undefined;
-    if (
-      (this.cfg.enableSellBelowTrendResistance !== false) &&
-      downtrendLine &&
-      !downtrendLine.isBroken &&
-      !dow?.downtrendBreakoutConfirmed &&
-      downtrendLine.currentLinePrice > refPrice
-    ) {
-      const tlPrice = downtrendLine.currentLinePrice;
-      const levelsUnderTL = sellLevels.filter((lvl) => lvl < tlPrice);
-      if (levelsUnderTL.length === 0 || tlPrice < sellTrigger) {
-        sellTrigger = tlPrice;
+    const isTlActiveForTrigger = (this.cfg.enableSellBelowTrendResistance !== false) &&
+      Boolean(downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed && downtrendLine.currentLinePrice > refPrice);
+    const isRealCeilActiveForTrigger = (this.cfg.enableSellAtRealCeiling !== false) &&
+      Boolean(liveCalculatedCeil && liveCalculatedCeil > refPrice && liveCalculatedCeil < upperBound);
+
+    if (isTlActiveForTrigger || isRealCeilActiveForTrigger) {
+      const tlPrice = (isTlActiveForTrigger && downtrendLine) ? downtrendLine.currentLinePrice : Infinity;
+      const rcPrice = (isRealCeilActiveForTrigger && liveCalculatedCeil) ? liveCalculatedCeil : Infinity;
+      const effectiveResPrice = Math.min(tlPrice, rcPrice);
+      const levelsUnderRes = sellLevels.filter((lvl) => lvl < effectiveResPrice);
+      if (levelsUnderRes.length === 0 || effectiveResPrice < sellTrigger) {
+        sellTrigger = effectiveResPrice;
         isTlSellTrigger = true;
-        tlSellPrice = tlPrice;
+        tlSellPrice = effectiveResPrice;
       }
     }
 
@@ -3295,21 +3298,27 @@ export class DynamicGrid {
       return;
     }
 
-    // ── 2a. Trendline IOC Exit: If price tests or touches the active unbroken downtrend trendline, sell immediately ──
-    // ราคาปัจจุบันทดสอบหรือชนเส้นกดที่ยังไม่เบรค → ขาย IOC ทันทีที่ราคา trendline แทนการรอ resting order
-    // หากเส้นกดถูกเบรคแล้ว (isBroken หรือ breakoutConfirmed) จะปล่อยให้ระบบเทรดตาม Grid Ladder ตามปกติ
-    if ((this.cfg.enableSellBelowTrendResistance !== false) && downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed) {
-      const tlPrice = downtrendLine.currentLinePrice;
-      const tlState = downtrendLine.brokenCandleCount > 0
+    // ── 2a. Resistance IOC Exit: If price tests or touches the active resistance (Trendline or Real S/R Ceil), sell immediately ──
+    const isTlActiveForIoc = (this.cfg.enableSellBelowTrendResistance !== false) && Boolean(downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed);
+    const isRealCeilActiveForIoc = (this.cfg.enableSellAtRealCeiling !== false) && liveRealCeil !== undefined && liveRealCeil > 0 && liveRealCeil < upperBound;
+
+    if (isTlActiveForIoc || isRealCeilActiveForIoc) {
+      const tlPrice = (isTlActiveForIoc && downtrendLine) ? downtrendLine.currentLinePrice : Infinity;
+      const rcPrice = (isRealCeilActiveForIoc && liveRealCeil) ? liveRealCeil : Infinity;
+      const effectiveResPrice = Math.min(tlPrice, rcPrice);
+      const isUsingRealCeil = isRealCeilActiveForIoc && liveRealCeil !== undefined && effectiveResPrice === liveRealCeil;
+      const resDisplayName = isUsingRealCeil ? "Real S/R Ceil" : "Trendline";
+      const tlState = downtrendLine && (downtrendLine.brokenCandleCount ?? 0) > 0
         ? `Break 1/2 bars ⏳`
         : "Active 🔴";
+
       // Debug log every ~30s (avoid spamming every tick)
-      const debugCooldownKey = "tl_debug_log";
+      const debugCooldownKey = "res_debug_log";
       const lastDebug = this.orderCooldowns.get(debugCooldownKey) ?? 0;
       if (Date.now() - lastDebug > 30_000) {
         this.orderCooldowns.set(debugCooldownKey, Date.now());
         this.log(
-          `📉 [TL DEBUG] TL @ $${tlPrice.toFixed(6)} | State: ${tlState} | Price: $${refPrice.toFixed(6)} | ${refPrice > tlPrice ? "ABOVE TL → IOC candidate" : "Below TL → resting orders below TL"}`,
+          `📉 [RES DEBUG] ${resDisplayName} @ $${effectiveResPrice.toFixed(6)} | Price: $${refPrice.toFixed(6)} | ${refPrice > effectiveResPrice ? `ABOVE ${resDisplayName} → IOC candidate` : `Below ${resDisplayName} → resting orders below resistance`}`,
         );
       }
 
@@ -3319,31 +3328,31 @@ export class DynamicGrid {
         const avgEntry = this.getAvgEntryPrice();
         // Align max allowed discount strictly to user-configured IOC Slippage Tolerance (default 0.2%)
         const maxAllowedDiscountPct = this.cfg.iocSlippagePct ?? 0.2;
-        const bidDiffPct = (effectiveBestBid && tlPrice > 0) ? ((tlPrice - effectiveBestBid) / tlPrice) * 100 : 0;
-        const isBidCloseEnough = effectiveBestBid !== undefined && (effectiveBestBid >= tlPrice || bidDiffPct <= maxAllowedDiscountPct);
+        const bidDiffPct = (effectiveBestBid && effectiveResPrice > 0) ? ((effectiveResPrice - effectiveBestBid) / effectiveResPrice) * 100 : 0;
+        const isBidCloseEnough = effectiveBestBid !== undefined && (effectiveBestBid >= effectiveResPrice || bidDiffPct <= maxAllowedDiscountPct);
         const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
 
-        // Dual Trigger: EITHER CEX refPrice reaches/exceeds TL, OR on-chain Best Bid reaches touching distance of TL with profit!
-        const isTriggered = (refPrice >= tlPrice) || (effectiveBestBid !== undefined && isBidCloseEnough && isProfitableAtBid);
+        // Dual Trigger: EITHER CEX refPrice reaches/exceeds resistance, OR on-chain Best Bid reaches touching distance of resistance with profit!
+        const isTriggered = (refPrice >= effectiveResPrice) || (effectiveBestBid !== undefined && isBidCloseEnough && isProfitableAtBid);
         if (isTriggered) {
-          const iocCooldownKey = `tl_ioc_sell`;
+          const iocCooldownKey = `res_ioc_sell`;
           const lastIocTime = this.orderCooldowns.get(iocCooldownKey) ?? 0;
           const iocCooldownMs = 30_000; // 30-second cooldown to prevent rapid re-triggers
 
           if (effectiveBestBid && !isBidCloseEnough) {
-            // Bid is too depressed compared to TL price -> hold off to avoid heavy slippage
-            if (Date.now() - (this.orderCooldowns.get("tl_ioc_bid_warn") ?? 0) > 30_000) {
-              this.orderCooldowns.set("tl_ioc_bid_warn", Date.now());
+            // Bid is too depressed compared to resistance price -> hold off to avoid heavy slippage
+            if (Date.now() - (this.orderCooldowns.get("res_ioc_bid_warn") ?? 0) > 30_000) {
+              this.orderCooldowns.set("res_ioc_bid_warn", Date.now());
               this.log(
-                `⏳ [TL IOC STANDBY] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} but DEX Best Bid $${effectiveBestBid.toFixed(6)} is discounted ${bidDiffPct.toFixed(2)}% > max ${maxAllowedDiscountPct.toFixed(2)}% — waiting for bid liquidity`,
+                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} > ${resDisplayName} $${effectiveResPrice.toFixed(6)} but DEX Best Bid $${effectiveBestBid.toFixed(6)} is discounted ${bidDiffPct.toFixed(2)}% > max ${maxAllowedDiscountPct.toFixed(2)}% — waiting for bid liquidity`,
               );
             }
           } else if (effectiveBestBid && !isProfitableAtBid) {
             // Best bid would result in a loss below avg entry -> hold off
-            if (Date.now() - (this.orderCooldowns.get("tl_ioc_loss_warn") ?? 0) > 30_000) {
-              this.orderCooldowns.set("tl_ioc_loss_warn", Date.now());
+            if (Date.now() - (this.orderCooldowns.get("res_ioc_loss_warn") ?? 0) > 30_000) {
+              this.orderCooldowns.set("res_ioc_loss_warn", Date.now());
               this.log(
-                `⏳ [TL IOC STANDBY] Price $${refPrice.toFixed(6)} > TL $${tlPrice.toFixed(6)} but Best Bid $${effectiveBestBid.toFixed(6)} is below Avg Entry $${avgEntry.toFixed(6)} — holding for profit`,
+                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} > ${resDisplayName} $${effectiveResPrice.toFixed(6)} but Best Bid $${effectiveBestBid.toFixed(6)} is below Avg Entry $${avgEntry.toFixed(6)} — holding for profit`,
               );
             }
           } else if (Date.now() - lastIocTime > iocCooldownMs) {
@@ -3351,15 +3360,15 @@ export class DynamicGrid {
             // If bestBid is available and profitable, sell at bestBid directly so IOC matches immediately on-chain!
             const sellExecPrice = (effectiveBestBid && effectiveBestBid > 0 && isProfitableAtBid)
               ? effectiveBestBid
-              : tlPrice;
+              : effectiveResPrice;
 
             this.log(
-              `📉 [TL IOC] Triggered (refPrice: $${refPrice.toFixed(6)}, Best Bid: $${(effectiveBestBid || 0).toFixed(6)} vs TL: $${tlPrice.toFixed(6)}) (${tlState}) — executing IOC sell at ${sellExecPrice === effectiveBestBid ? `Best Bid $${sellExecPrice.toFixed(6)}` : `TL Price $${sellExecPrice.toFixed(6)}`} for all ${this.baseHeld().toFixed(4)} ${this.baseAsset} (Avg Entry: $${avgEntry.toFixed(6)})`,
+              `📉 [RES IOC] Triggered (refPrice: $${refPrice.toFixed(6)}, Best Bid: $${(effectiveBestBid || 0).toFixed(6)} vs ${resDisplayName}: $${effectiveResPrice.toFixed(6)}) — executing IOC sell at ${sellExecPrice === effectiveBestBid ? `Best Bid $${sellExecPrice.toFixed(6)}` : `${resDisplayName} Price $${sellExecPrice.toFixed(6)}`} for all ${this.baseHeld().toFixed(4)} ${this.baseAsset} (Avg Entry: $${avgEntry.toFixed(6)})`,
             );
             if (this.openOrders.length > 0) {
-              await this.cancelAllRestingOrders(undefined, "Trendline IOC sell: cancelling resting orders before IOC execution");
+              await this.cancelAllRestingOrders(undefined, `${resDisplayName} IOC sell: cancelling resting orders before IOC execution`);
             }
-            await this.sellAll(sellExecPrice, "SELL", tlPrice);
+            await this.sellAll(sellExecPrice, "SELL", effectiveResPrice);
           }
         }
       }
@@ -3441,6 +3450,7 @@ export class DynamicGrid {
         downtrendLine ?? undefined,
         uptrendLine ?? undefined,
         uptrendBroken,
+        liveRealCeil,
       );
     }
 
@@ -3693,6 +3703,7 @@ export class DynamicGrid {
     activeDowntrendLine?: import("./market-structure.js").TrendLine,
     activeUptrendLine?: import("./market-structure.js").TrendLine,
     uptrendBroken?: boolean,
+    liveRealCeil?: number,
   ): Promise<void> {
     const currentHeldQuote = this.baseHeld() * refPrice;
     const currentHeldUsdso = currentHeldQuote;
@@ -4245,29 +4256,38 @@ export class DynamicGrid {
         this.saveState();
       }
 
-      // ── Downtrend Trendline Sell Override ──────────────────────────────────────
-      // When an active descending trendline (เส้นกด) is present (not broken), only sell at targets that are
-      // BELOW the trendline. If no target is below the trendline, wait for IOC sell at TL price.
-      // NOTE: In IOC_BRACKET mode, we never place resting maker orders at the trendline — we let IOC triggers execute instead.
+      // ── Resistance Sell Override (Downtrend Trendline & Real Frame S/R Ceil) ──
+      // When an active descending trendline OR real frame ceiling is lower than locked ceiling:
+      // Choose the LOWER price between Trendline and Real S/R Ceil: min(TL, Real Ceil)
       const isIocMode = this.cfg.orderExecutionMode === "IOC_BRACKET";
-      if ((this.cfg.enableSellBelowTrendResistance !== false) && activeDowntrendLine && !activeDowntrendLine.isBroken) {
-        const tlPrice = activeDowntrendLine.currentLinePrice;
-        // All standard sell names that should be cancelled when trendline override is active
-        const allSellNames = [...sellNames, "Sell TL Exit (Trendline)"];
+      const isTlActive = (this.cfg.enableSellBelowTrendResistance !== false) && Boolean(activeDowntrendLine && !activeDowntrendLine.isBroken);
+      const isRealCeilActive = (this.cfg.enableSellAtRealCeiling !== false) && liveRealCeil !== undefined && liveRealCeil > 0;
+      const hasResistanceOverride = isTlActive || (isRealCeilActive && liveRealCeil < upperBound);
 
-        // Determine which standard sell levels are below the trendline
-        const levelsUnderTL = sellLevels.filter((lvl, idx) => lvl < tlPrice && enabledSells[idx]);
+      if (hasResistanceOverride) {
+        const tlPrice = (isTlActive && activeDowntrendLine) ? activeDowntrendLine.currentLinePrice : Infinity;
+        const rcPrice = (isRealCeilActive && liveRealCeil) ? liveRealCeil : Infinity;
+        const effectiveResistancePrice = Math.min(tlPrice, rcPrice);
+        const isUsingRealCeil = isRealCeilActive && liveRealCeil !== undefined && effectiveResistancePrice === liveRealCeil;
+        const resSellName = isUsingRealCeil ? "Sell Real Ceil Exit" : "Sell TL Exit (Trendline)";
+        const resDisplayName = isUsingRealCeil ? "Real S/R Ceil" : "Trendline";
+
+        // All standard sell names that should be cancelled when resistance override is active
+        const allSellNames = [...sellNames, "Sell TL Exit (Trendline)", "Sell Real Ceil Exit"];
+
+        // Determine which standard sell levels are below the effective resistance
+        const levelsUnderTL = sellLevels.filter((lvl, idx) => lvl < effectiveResistancePrice && enabledSells[idx]);
 
         if (levelsUnderTL.length === 0) {
           if (isIocMode) {
-            // In IOC_BRACKET mode: do NOT place resting orders at the trendline.
-            // Cancel any leftover resting TL sell orders and standard sell orders, then wait for IOC trigger.
+            // In IOC_BRACKET mode: do NOT place resting orders at the resistance.
+            // Cancel any leftover resting TL/RC sell orders and standard sell orders, then wait for IOC trigger.
             const leftoverSells = this.openOrders.filter(
               (o) => !o.isBid && o.levelDesc && allSellNames.includes(o.levelDesc),
             );
             if (leftoverSells.length > 0) {
               for (const o of leftoverSells) {
-                await this.cancelOrderInternal(o, "IOC mode active: cancelling resting sell at trendline — waiting for IOC trigger");
+                await this.cancelOrderInternal(o, `IOC mode active: cancelling resting sell at ${resDisplayName} — waiting for IOC trigger`);
               }
               this.openOrders = this.openOrders.filter((o) => !leftoverSells.includes(o));
               this.saveState();
@@ -4275,21 +4295,23 @@ export class DynamicGrid {
             return;
           }
 
-          // No standard sell target is below the trendline (MAKER_LIMIT mode).
-          // Place or maintain a resting Maker Limit Sell order at the trendline price for 100% exit.
-          // When the trendline price shifts, automatically cancel and replace the order at the new TL price.
-          const tlSellName = "Sell TL Exit (Trendline)";
-          // Match existing TL sell by exact levelDesc OR by proximity to trendline price OR generic Binance order when no grid targets exist
+          // No standard sell target is below resistance (MAKER_LIMIT mode).
+          // Place or maintain a resting Maker Limit Sell order at the resistance price for 100% exit.
+          // When the resistance price shifts, automatically cancel and replace the order at the new price.
+          const tlSellName = resSellName;
+          // Match existing TL/RC sell by exact levelDesc OR by proximity to resistance price OR generic Binance order when no grid targets exist
           let existingTlSell = this.openOrders.find((o) => !o.isBid && (
-            o.levelDesc === tlSellName ||
+            o.levelDesc === resSellName ||
+            o.levelDesc === "Sell TL Exit (Trendline)" ||
+            o.levelDesc === "Sell Real Ceil Exit" ||
             (o.levelDesc && o.levelDesc.startsWith("SELL Order #") && o.price >= refPrice * 0.999) ||
-            Math.abs(o.price - tlPrice) / tlPrice <= 0.005
+            Math.abs(o.price - effectiveResistancePrice) / effectiveResistancePrice <= 0.005
           ));
 
           if (existingTlSell && existingTlSell.levelDesc !== tlSellName) {
             existingTlSell.levelDesc = tlSellName;
             existingTlSell.targetFraction = 0.0;
-            this.log(`🔗 [TL SELL] Re-linked resting SELL order #${existingTlSell.onChainOrderId || existingTlSell.id} @ $${existingTlSell.price.toFixed(6)} to ${tlSellName}`);
+            this.log(`🔗 [RES SELL] Re-linked resting SELL order #${existingTlSell.onChainOrderId || existingTlSell.id} @ $${existingTlSell.price.toFixed(6)} to ${tlSellName}`);
           }
 
           // Cancel any standard grid sell orders that might still be resting
@@ -4298,22 +4320,22 @@ export class DynamicGrid {
           );
           if (staleStandardSells.length > 0) {
             for (const o of staleStandardSells) {
-              await this.cancelOrderInternal(o, "Trendline override: cancelling standard grid sells — switching to TL sell");
+              await this.cancelOrderInternal(o, `${resDisplayName} override: cancelling standard grid sells — switching to ${resDisplayName} sell`);
             }
             this.openOrders = this.openOrders.filter((o) => !staleStandardSells.includes(o));
             this.saveState();
           }
 
-          // Set resting sell price slightly below trendline by ~0.08% to ensure front-running and reliable maker fill
-          const frontRunRatio = 0.0008; // 0.08% below trendline
-          const rawTargetSellPrice = tlPrice * (1 - frontRunRatio);
+          // Set resting sell price slightly below resistance to ensure front-running and reliable maker fill
+          const frontRunRatio = isUsingRealCeil ? 0.0003 : 0.0008; // 0.03% below Real Ceil, 0.08% below slope TL
+          const rawTargetSellPrice = effectiveResistancePrice * (1 - frontRunRatio);
           const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, rawTargetSellPrice), this.tickSize || 0.0001);
 
           const mode = this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
           const avgEntry = this.getAvgEntryPrice();
           const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * 1.001;
 
-          // Only place resting sell if price is comfortably below the trendline (not in immediate IOC execution range)
+          // Only place resting sell if price is comfortably below resistance (not in immediate IOC execution range)
           const isNearTL = refPrice >= effectiveTlSellPrice * 0.9995;
 
           if (isProfitOk && !isNearTL && held >= this.minQty) {
@@ -4323,14 +4345,14 @@ export class DynamicGrid {
 
             if (targetSellQty >= this.minQty && orderNotional >= minOrderNotional) {
               if (existingTlSell) {
-                // If trendline price has drifted beyond tolerance (e.g. >0.1%), update the order to match the new TL price!
+                // If resistance price has drifted beyond tolerance (e.g. >0.1%), update the order to match the new price!
                 const tlPriceDiffRatio = Math.abs(existingTlSell.price - effectiveTlSellPrice) / effectiveTlSellPrice;
                 const qtyDiffRatio = Math.abs(existingTlSell.qty - targetSellQty) / targetSellQty;
 
                 if (tlPriceDiffRatio > 0.001 || qtyDiffRatio > 0.05) {
                   await this.cancelOrderInternal(
                     existingTlSell,
-                    `Trendline slope updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`,
+                    `${resDisplayName} price updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`,
                   );
                   this.openOrders = this.openOrders.filter((o) => o !== existingTlSell);
                   this.saveState();
@@ -4345,7 +4367,7 @@ export class DynamicGrid {
                   );
                 }
               } else {
-                // Place new resting sell order right slightly below the trendline price
+                // Place new resting sell order right slightly below the resistance price
                 await this.placeRestingOrder(
                   false,
                   effectiveTlSellPrice,
@@ -4357,35 +4379,36 @@ export class DynamicGrid {
               }
             }
           } else if (isNearTL && existingTlSell) {
-            // Price reached within immediate touch distance of TL: cancel resting order so block 2a can execute IOC sell cleanly
-            await this.cancelOrderInternal(existingTlSell, "Price touching trendline: cancelling resting sell for immediate IOC exit");
+            // Price reached within immediate touch distance: cancel resting order so IOC exit can execute cleanly
+            await this.cancelOrderInternal(existingTlSell, `Price touching ${resDisplayName}: cancelling resting sell for immediate IOC exit`);
             this.openOrders = this.openOrders.filter((o) => o !== existingTlSell);
             this.saveState();
           }
         } else {
-          // Some sell levels are below the trendline.
+          // Some sell levels are below resistance.
           // IMPORTANT: ALL inventory must be covered by sell orders.
-          // The LAST eligible level below TL is treated as a full-exit level (targetFraction = 0),
+          // The LAST eligible level below resistance is treated as a full-exit level (targetFraction = 0),
           // so the remaining inventory not sold by earlier tranches is fully captured there.
-          const tlSellName = "Sell TL Exit (Trendline)";
-          const tlExitOrders = this.openOrders.filter((o) => !o.isBid && o.levelDesc === tlSellName);
+          const tlExitOrders = this.openOrders.filter(
+            (o) => !o.isBid && o.levelDesc && (o.levelDesc === "Sell TL Exit (Trendline)" || o.levelDesc === "Sell Real Ceil Exit"),
+          );
           if (tlExitOrders.length > 0) {
             for (const o of tlExitOrders) {
-              await this.cancelOrderInternal(o, "Trendline override: valid targets below TL now exist — reverting to grid levels");
+              await this.cancelOrderInternal(o, `${resDisplayName} override: valid targets below resistance now exist — reverting to grid levels`);
             }
             this.openOrders = this.openOrders.filter((o) => !tlExitOrders.includes(o));
             this.saveState();
           }
 
-          // Cancel sell orders that sit AT or ABOVE the trendline (price >= TL)
+          // Cancel sell orders that sit AT or ABOVE resistance (price >= effectiveResistancePrice)
           const suppressedSells = this.openOrders.filter(
-            (o) => !o.isBid && o.levelDesc && sellNames.includes(o.levelDesc) && o.price >= tlPrice,
+            (o) => !o.isBid && o.levelDesc && sellNames.includes(o.levelDesc) && o.price >= effectiveResistancePrice,
           );
           if (suppressedSells.length > 0) {
             for (const o of suppressedSells) {
               await this.cancelOrderInternal(
                 o,
-                `Trendline suppressed: sell @ $${o.price.toFixed(6)} >= TL $${tlPrice.toFixed(6)}`,
+                `${resDisplayName} suppressed: sell @ $${o.price.toFixed(6)} >= ${resDisplayName} $${effectiveResistancePrice.toFixed(6)}`,
               );
             }
             this.openOrders = this.openOrders.filter((o) => !suppressedSells.includes(o));
@@ -4399,10 +4422,10 @@ export class DynamicGrid {
             minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * 1.001);
           }
 
-          // Identify eligible levels (strictly below TL and strictly above minAllowedSellPrice)
+          // Identify eligible levels (strictly below resistance and strictly above minAllowedSellPrice)
           const eligibleIndices = sellLevels
             .map((lvl, idx) => ({ lvl, idx }))
-            .filter(({ lvl, idx }) => lvl < tlPrice && lvl > minAllowedSellPrice && enabledSells[idx])
+            .filter(({ lvl, idx }) => lvl < effectiveResistancePrice && lvl > minAllowedSellPrice && enabledSells[idx])
             .map(({ idx }) => idx);
 
           const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
@@ -4422,7 +4445,7 @@ export class DynamicGrid {
           const numActive = activeSellIndices.length > 0 ? activeSellIndices.length : 1;
           const trancheQty = held / numActive;
 
-          // Check if any active levels below TL are missing an open sell order
+          // Check if any active levels below resistance are missing an open sell order
           const hasMissingEligibleSellOrders = activeSellIndices.some((idx) => {
             const lvlPrice = sellLevels[idx];
             return !this.openOrders.some(
@@ -4446,8 +4469,8 @@ export class DynamicGrid {
             if (!lvlPrice) continue;
             if (!enabledSells[i]) continue;
 
-            // Skip levels that are at or above the trendline
-            if (lvlPrice >= tlPrice) {
+            // Skip levels that are at or above resistance
+            if (lvlPrice >= effectiveResistancePrice) {
               continue;
             }
 

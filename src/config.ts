@@ -115,6 +115,8 @@ export const defaultStrategyConfig = {
   enableBuyAboveTrendSupport: false,
   /** When true, only places sell orders strictly below descending Trendline Resistance. */
   enableSellBelowTrendResistance: false,
+  /** When true, enables selling at the real frame (Real S/R Ceil) when it adjusts down, choosing the lower price between trendline and real ceiling. Default true. */
+  enableSellAtRealCeiling: true,
   /** When true, only maintains/places buy orders when price is at or below Sell Level 1 (<= 60%). Default true. */
   enableBuyBelowSellLevel1: true,
   /** When true, only maintains/places sell orders when price is at or above Buy Level 1 (>= 40%). Default true. */
