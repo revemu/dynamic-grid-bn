@@ -1528,7 +1528,8 @@
 
     // 3. Top KPI: Unrealized Profit
     const upnl = data.unrealizedPnl || 0;
-    const upnlPct = invUsd > 0 ? (upnl / invUsd) * 100 : 0;
+    const costBasis = (data.avgEntryPrice && data.avgEntryPrice > 0 && totalBase > 0) ? (totalBase * data.avgEntryPrice) : invUsd;
+    const upnlPct = costBasis > 0 ? (upnl / costBasis) * 100 : (invUsd > 0 ? (upnl / invUsd) * 100 : 0);
     const upnlStr = (upnl >= 0 ? "+$" : "-$") + Math.abs(upnl).toFixed(2);
     const upnlPctStr = (upnl >= 0 ? "+" : "") + upnlPct.toFixed(2) + "%";
 

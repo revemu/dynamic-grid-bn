@@ -1250,6 +1250,14 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
          3. **Preserve Post-MacroLow Swings (`cycleHighsStartIndex`)**: ในกรณีคลื่นฟื้นตัวหลัง `macroLow` ($0.189800) กำหนดให้ `cycleHighsStartIndex = macroLow.index` ครอบคลุมยอดสวิงทั้งหมดที่เกิดขึ้นนับตั้งแต่จุดต่ำสุดเป็นต้นมา ทำให้ยอดสวิงหลัก ($0.2022) อยู่ใน Pool คำนวณเสมอ
          4. **Lower High Step-Down Guard**: การปรับลดเพดานตาม Lower High (LH) ให้เป็นหน้าที่ของ Dow Theory Clamping Step (บรรทัด 1565) ที่มีเงื่อนไขตรวจสอบความกว้าง `minSpan` และ `maxSpan` อย่างรัดกุมตามเดิม
 
+    14. **Mark-to-Bid Liquidation Valuation for Unrealized PnL (Zero Phantom Profit)**:
+       - **สาเหตุของปัญหา**: ค่า Unrealized PnL เดิมใน step() และ emitTelemetryTick() ถูกคำนวณจาก efPrice (CEX Last Trade) หรือ mid (กึ่งกลาง Bid/Ask) ด้วยสูตร (refPrice - avgEntry) * baseHeld ซึ่งสำหรับฝั่งซื้อถือเหรียญ (Long Position) หากต้องการขายทำกำไรหรือคัทลอสจริง จะต้องขายใส่ฝั่ง Best Bid เสมอ การใช้ราคา Mid หรือ CEX ทำให้มี Spread หรือราคา Ask ปนอยู่ ตัวเลข PnL บนแดชบอร์ดจึงดูเขียวมากกว่าความเป็นจริง (หลอกตา)
+       - **การแก้ไข**:
+         - ใน src/strategy.ts: เพิ่มตัวแปร State lastBestBid และ lastBestAsk บันทึกราคา BBO ทุกครั้งจาก WebSocket Feed หรือ REST Top of Book
+         - ใน src/strategy.ts (step() & emitTelemetryTick()): เปลี่ยนสูตรคำนวณ Unrealized PnL และมูลค่า Inventory / Wallet Base Total เป็น **Mark-to-Bid Liquidation Price** (aluationBid = currentBestBid > 0 ? currentBestBid : refPrice):
+           \text{unrealizedPnl} = (\text{valuationBid} - \text{avgEntry}) \times \text{baseHeld}
+         - ใน public/app.js: คำนวณ % Unrealized PnL โดยเทียบกับ Cost Basis แท้จริง ((upnl / costBasis) * 100) ทำให้ตัวเลข PnL และเปอร์เซ็นต์บนหน้าจอสะท้อนกำไรขาดทุนแท้จริงที่จะได้รับทันทีหากกด Sell All
+
 ---
 
 ## 5. Coding Standards & Maintenance Rules
