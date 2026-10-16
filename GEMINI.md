@@ -113,6 +113,25 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        4. **การประสานระบบรอตั้งฐาน (`isDowntrendDropActive` & `downtrendDropLow`) ให้สัมพันธ์กับกรอบราคาปัจจุบัน (`src/market-structure.ts` & `src/strategy.ts`)**:
           - แยกแยะการย่อตัวเข้าโซนซื้อในกรอบ (`price >= bottomBound` เมื่อยอดคลื่นเป็น `HH`) ออกจากกรณีหลุดฐานกรอบจริง (`price < bottomBound` หรือ `LH + LL` กดตัว) ป้องกันไม่ให้สวิงย่อยกลางกรอบ (เช่น `$0.2015`) มาบล็อกคำสั่งซื้อที่ `Buy Level 3` / `Buy Level 4`
           - คำนวณ `downtrendDropLow` โดยอ้างอิงจากยอดของกรอบปัจจุบัน (`activePeak`) แทน `macroPeak` ข้ามวัน ป้องกันไม่ให้ไปดึงราคาต่ำสุดในอดีต (เช่น `$0.1898`) มาแสดงในข้อความ `รอสร้างฐาน HL > $...`
+   - **Strict IOC Buy & Sell Level Execution & Slippage Elimination Architecture (`src/strategy.ts`):**
+     - **สาเหตุของปัญหา**:
+       1. **IOC Buy ชิงซื้อก่อนราคาลงมาถึงเป้า และส่งราคาซื้อสูงกว่า Buy Level**:
+          - ใน `executeIocBracketGrid`: โค้ดเดิมยอมให้ Trigger ซื้อล่วงหน้าตั้งแต่ `currentBestAsk <= lvlPrice * (1 + buySlippage)` หรือ `tlPrice * 1.0025` แม้ว่าราคา Ask และ `refPrice` จะยังไม่ย่อตัวลงมาถึงระดับเส้นซื้อจริง
+          - ใน `buyTrancheIOC`: โค้ดเดิมอนุญาตให้บวก Slippage เหนือ `targetPrice` ด้วยสูตร `maxAllowedPrice = targetPrice * (1 + slippagePct)` ทำให้ส่ง Limit Buy ที่ราคาแพงกว่า Level (เช่น Buy Level 3 อยู่ที่ `$0.199716` แต่ส่งซื้อและ Fill ที่ `$0.2000`)
+       2. **IOC Sell ชิงขายก่อนราคาขึ้นถึงเป้า และหัก Slippage ลงมาขายต่ำกว่า Sell Target**:
+          - ใน `executeIocBracketGrid` และ `syncRestingOrders`: โค้ดเดิมยอมให้ Trigger ขายทำกำไรเมื่อ `currentBestBid >= lvlPrice * (1 - sellSlippage)` หรือ `lvlPrice * 0.998` แม้ว่า Bid จะยังอยู่ต่ำกว่า Sell Target
+          - ใน `sellTrancheIOC` และ `sellAll` (เมื่อ `action === "SELL"`): โค้ดเดิมคำนวณ `minAllowedBySlippage = targetPrice * (1 - slippagePct)` ทำให้บอทส่งคำสั่งขายที่ราคาต่ำกว่าเป้าหมาย (เช่น เป้า `$0.1979` แต่ส่งขายและ Match ที่ `$0.1976`)
+          - ใน `Resistance IOC Exit` และ `100% Take Profit`: ยอมให้ยิงคำสั่งขายเมื่อ `refPrice` ชนเป้า แม้ว่าราคา `Best Bid` จริงบนกระดานจะยังขึ้นมาไม่ถึงแนวต้านหรือเพดานเป้าหมาย
+     - **การแก้ไขและสถาปัตยกรรมใหม่ (`src/strategy.ts`):**
+       1. **Strict IOC Buy Trigger & Hard Price Ceiling**:
+          - ใน `executeIocBracketGrid`: บังคับให้ **`currentBestAsk > 0 && currentBestAsk <= lvlPrice && refPrice <= lvlPrice`** อย่างเด็ดขาด (และ `currentBestAsk <= tlPrice && refPrice <= tlPrice` สำหรับ Trendline Support Buy) ถ้าราคา Ask ยังไม่ลงมาแตะหรือต่ำกว่าเส้นจริง บอทจะไม่รีบยิงซื้อ
+          - ใน `buyTrancheIOC`: กำหนด `maxAllowedPrice = targetPrice` อย่างเด็ดขาด โดย Limit Price จะไม่มีทางสูงกว่า `targetPrice` (`Math.min(targetPrice, basePrice * (1 + slippagePct))`)
+       2. **Strict IOC Sell Trigger & Hard Price Floor**:
+          - ใน `executeIocBracketGrid` และ `syncRestingOrders`: บังคับให้ **`currentBestBid > 0 && currentBestBid >= lvlPrice && refPrice >= lvlPrice`** Bid ต้องขึ้นมาแตะหรือสูงกว่าเส้นเป้าหมายจริงๆ เท่านั้น
+          - ใน `Resistance IOC Exit` และ `100% Take Profit`: บังคับให้ `effectiveBestBid >= effectiveResPrice` และ `tpExecBid >= reachedTargetPrice` พร้อมส่ง `reachedTargetPrice` เป็น Anchor Price เสมอ
+          - ใน `sellTrancheIOC` และ `sellAll` (เฉพาะ `action === "SELL"`): กำหนด `minAllowedPrice = Math.max(minProfitablePrice, targetPrice)` อย่างเด็ดขาด โดย Limit Price จะไม่มีทางต่ำกว่า `targetPrice` (`Math.max(minAllowedPrice, basePrice * (1 - slippagePct))`)
+       3. **Safeguard Protection for Emergency Exits**:
+          - ระบบยังคงอนุญาตให้ใช้ Slippage สำหรับกรณีฉุกเฉิน `action === "CUT"` (Cut Loss) และ `"MANUAL"` (Manual Exit) เพื่อรับประกันว่าจะสามารถระบายเหรียญตัดขาดทุนหนีตายได้ทันท่วงที 100%
    - **Instant Pair Switching & Cross-Symbol Feed Isolation (`symbolChanged` & `exchangeChanged`):**
       - **สาเหตุของปัญหากรอบราคาเพี้ยน ($103.15 .. $2510.83):**
         1. เมื่อสลับคู่เหรียญ (เช่น จาก `ETHFDUSD` เป็น `SOLFDUSD`) ใน `src/index.ts` เดิมเรียก `grid.updateSymbolInfo(nextInfo)` โดยที่ `grid.atrSource` ถูกประกาศเป็น `readonly` และไม่มีการส่งต่อ `atrSource` ใหม่เข้าไป
