@@ -406,8 +406,9 @@ export class DynamicGrid {
     // 🔒 Exit / IOC Order De-duplication:
     // If this order was already processed synchronously by sellAll / sellTrancheIOC / buyTrancheIOC,
     // do not create a duplicate fill record!
-    if (this.handledExitOrderIds.has(idStr)) {
-      this.log(`⚡ [WS EXEC] Order #${idStr} was already handled synchronously (${status}) — skipping duplicate fill processing`);
+    const clientOrderId = report.clientOrderId ? String(report.clientOrderId) : "";
+    if (this.handledExitOrderIds.has(idStr) || (clientOrderId && this.handledExitOrderIds.has(clientOrderId))) {
+      this.log(`⚡ [WS EXEC] Order #${idStr} (${clientOrderId}) was already handled synchronously (${status}) — skipping duplicate fill processing`);
       return;
     }
 
@@ -2522,18 +2523,27 @@ export class DynamicGrid {
       (bestBid !== undefined && bestBid >= liveCalculatedCeil)
     );
 
-    const reachedTargetPrice = Math.min(
-      upperBound,
-      liveCalculatedCeil && isLiveRealCeilReached ? liveCalculatedCeil : upperBound,
-      highestActiveSellTarget,
-    );
+    const isIocMode = this.cfg.orderExecutionMode === "IOC_BRACKET";
+    const reachedTargetPrice = isIocMode
+      ? Math.min(
+          upperBound,
+          liveCalculatedCeil && isLiveRealCeilReached ? liveCalculatedCeil : upperBound,
+          highestActiveSellTarget,
+        )
+      : Math.min(
+          upperBound,
+          liveCalculatedCeil && isLiveRealCeilReached ? liveCalculatedCeil : upperBound,
+        );
     const isBidAtTarget = tpExecBid >= reachedTargetPrice;
 
+    // In MAKER_LIMIT mode: Grid sell targets (Sell Targets 1..4) are strictly handled by resting MAKER limit orders!
+    // Never hijack intra-channel grid sell targets with IOC sellAll in Maker mode.
+    // Full Take Profit via sellAll is ONLY for reaching true Upper Bound / Ceiling or when running in IOC_BRACKET mode.
     const realCeilingReached =
       isAboveCeiling ||
       refPrice >= upperBound ||
       (bestBid !== undefined && bestBid >= upperBound) ||
-      (tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget) ||
+      (isIocMode && tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget) ||
       (isLiveRealCeilReached && isProfitableExit);
 
     if (
@@ -4526,7 +4536,17 @@ export class DynamicGrid {
           // Identify eligible levels (strictly below resistance and strictly above minAllowedSellPrice)
           const eligibleIndices = sellLevels
             .map((lvl, idx) => ({ lvl, idx }))
-            .filter(({ lvl, idx }) => lvl < effectiveResistancePrice && lvl > minAllowedSellPrice && enabledSells[idx])
+            .filter(({ lvl, idx }) => {
+              if (!enabledSells[idx]) return false;
+              if (lvl >= effectiveResistancePrice) return false;
+              // An existing resting sell order at this level is ALWAYS eligible — NEVER cancel when price reaches it!
+              const hasExistingOrder = this.openOrders.some(
+                (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
+              );
+              if (hasExistingOrder) return true;
+              // For placing NEW orders, price must be strictly above minAllowedSellPrice
+              return lvl > minAllowedSellPrice;
+            })
             .map(({ idx }) => idx);
 
           const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
@@ -6076,12 +6096,16 @@ export class DynamicGrid {
         limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
       }
 
+      const exitClientOrderId = `exit_${Date.now()}`;
+      this.handledExitOrderIds.set(exitClientOrderId, Date.now());
+
       const res = await this.binance.placeOrder({
         symbol: this.symbol,
         side: "SELL",
         type: "IOC",
         price: limitPrice,
         qty: executeQty,
+        clientOrderId: exitClientOrderId,
       });
       const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
       if (orderIdStr) {
@@ -6101,6 +6125,14 @@ export class DynamicGrid {
         );
         await this.refreshWalletBalances();
         this.saveState();
+        return;
+      }
+
+      // If WebSocket already processed the executionReport and closed the lots, avoid duplicate closing/emission
+      if (this.baseHeld() < this.minQty) {
+        this.log(`⚡ [EXIT SYNC] Position was already closed by WebSocket execution report — skipping duplicate fill processing`);
+        this.saveState();
+        this.emitTelemetryTick();
         return;
       }
 

@@ -1284,6 +1284,16 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
           4. **Auto-Cancellation & Self-Healing**: เมื่อบอทรันรอบถัดไป Ineligible Level Cancel Guard จะตรวจพบไม้ซื้อที่ Buy Level 3 และสั่งยกเลิกทันที พร้อมปรับขนาดไม้ Buy Level 4 กลับเป็น $50 เต็มจำนวนตามสัดส่วนเดิม
           5. **UI Target Allocation**: ปรับ `Grid Channel Meter` ใน `public/app.js` ให้อ้างอิง `targetHoldingPct` จาก Strategy Telemetry โดยตรง แสดงผลเป้าหมายสัดส่วนพอร์ตตรงตามความเป็นจริง
 
+     17. **Strict MAKER_LIMIT Mode Integrity & Anti-Hijack Guard (No IOC at Grid Sell Targets)**:
+        - **สาเหตุของปัญหา**:
+          1. ใน `src/strategy.ts` (`syncRestingOrders`): เงื่อนไขกรอง `eligibleIndices` ของฝั่งขายเดิมมี `lvl > minAllowedSellPrice` (โดย `minAllowedSellPrice = bestBid`) เมื่อราคาขึ้นมาถึง Sell Target 1 พอดี ทำให้ `lvl > minAllowedSellPrice` กลายเป็นเท็จ ส่งผลให้ออร์เดอร์ Maker ที่ตั้งรอไว้ถูก Cancel ทิ้งเสี้ยววินาทีก่อนจะ Match
+          2. ใน `src/strategy.ts` (`step()`): เงื่อนไข `realCeilingReached` เดิมมี `tpExecBid >= highestActiveSellTarget` เมื่อผู้ใช้เปิดขายเป้าเดียว (Sell Target 1) เลเวลนี้จึงกลายเป็น `highestActiveSellTarget` ส่งผลให้ฟังก์ชัน Take Profit เพดานบนแทรกแซงด้วยการเรียก `sellAll()` ซึ่งส่งคำสั่งแบบ IOC (Taker) ออกไปกวาดขายในตลาดแทนที่จะรอให้ออร์เดอร์ Maker แมตช์ตามปกติ
+          3. คำสั่ง IOC ถูกส่งไป Binance และแมตช์ทันที เกิด Race Condition ระหว่าง WebSocket `executionReport` กับ REST response ของ `sellAll` ทำให้หน้าจอขึ้นเบิ้ล 2 การ์ด (การ์ดล่าง Maker Fill +$0.55 และการ์ดบน IOC TP +$0.0000) สำหรับออร์เดอร์เดียวกัน (#5585189244)
+        - **การแก้ไขและสถาปัตยกรรมใหม่**:
+          1. **Preserve Resting Sell Orders on Touch**: ใน `syncRestingOrders` หากมีออร์เดอร์ Maker วางรออยู่ที่เลเวลนั้นอยู่แล้ว (`hasExistingOrder`) ให้คงสถานะ Eligible เสมอ ห้ามแคนเซิลทิ้งเด็ดขาด เพื่อรอให้จับคู่ใน Orderbook
+          2. **Strict Maker Limit at Grid Targets**: ใน `step()` กำหนดให้ `highestActiveSellTarget` ทริกเกอร์ IOC ได้เฉพาะเมื่อรันในโหมด `IOC_BRACKET` เท่านั้น ในโหมด `MAKER_LIMIT` ทุกระดับ Sell Targets จะต้องถูกจับคู่ด้วย Maker Limit Orders 100% (กินสิทธิ์ 0% Fee และบันทึก Reconcile สถานะตามจริง) โดยจะอนุญาตให้ใช้ `sellAll` (IOC) เฉพาะกรณีราคาหลุดเหวล่าง (Cut Loss), กดปุ่มฉุกเฉินด้วยมือ (Manual), หรือราคาทะลุเพดานกรอบบนสุดจริง (`refPrice >= upperBound`)
+          3. **De-duplication via clientOrderId & Held Balance**: กำหนด `exitClientOrderId` ล่วงหน้าก่อนส่ง `placeOrder` และตรวจสอบใน `sellAll` หาก WebSocket ปิด Lot ไปแล้ว จะไม่บันทึกหรือยิงอีเวนต์ซ้ำซ้อน
+
 ---
 
 ## 5. Coding Standards & Maintenance Rules
