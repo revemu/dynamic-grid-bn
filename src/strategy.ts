@@ -4549,7 +4549,8 @@ export class DynamicGrid {
 
             // ── IOC Sell when market price has reached or exceeded this sell target under TL ──
             if (!currentOpenSellAtLvl) {
-              const isPriceExceeded = currentBestBid > 0 && currentBestBid >= lvlPrice && refPrice >= lvlPrice;
+              const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+              const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= lvlPrice * (1 - sellSlippage)) || (refPrice >= lvlPrice && currentBestBid >= lvlPrice * (1 - sellSlippage));
               if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
                 const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
                 const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
@@ -4798,7 +4799,8 @@ export class DynamicGrid {
 
         // ── IOC Sell when market price has reached or exceeded this sell target ──
         if (!currentOpenSellAtLvl) {
-          const isPriceExceeded = currentBestBid > 0 && currentBestBid >= originalLvlPrice && refPrice >= originalLvlPrice;
+          const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+          const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= originalLvlPrice * (1 - sellSlippage)) || (refPrice >= originalLvlPrice && currentBestBid >= originalLvlPrice * (1 - sellSlippage));
           if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
             const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
             const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
@@ -5478,10 +5480,12 @@ export class DynamicGrid {
       }
 
       // 3. Find candidate sell steps that have been reached by market bid but NOT yet sold in this cycle
+      const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
       let matchedStep: SellStep | undefined;
       for (const step of activeSteps) {
         const lvlPrice = sellLevels[step.levelIndex];
-        if (lvlPrice !== undefined && currentBestBid > 0 && currentBestBid >= lvlPrice && refPrice >= lvlPrice) {
+        const minAllowedBid = lvlPrice !== undefined ? lvlPrice * (1 - sellSlippage) : undefined;
+        if (lvlPrice !== undefined && minAllowedBid !== undefined && (currentBestBid >= minAllowedBid || refPrice >= lvlPrice)) {
           if (!cycle.soldStepNums.has(step.stepNum)) {
             matchedStep = step;
             // Pick the lowest unsold reached step (ladder upwards)
@@ -5588,7 +5592,7 @@ export class DynamicGrid {
 
     if (this.cfg.dryRun) {
       const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
-      const dryLimitPrice = roundToTick(Math.max(targetPrice, effectivePrice * (1 - slippagePctVal / 100)), this.tickSize || 0.0001);
+      const dryLimitPrice = roundToTick(targetPrice * (1 - slippagePctVal / 100), this.tickSize || 0.0001);
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(executeQty, effectivePrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
@@ -5642,12 +5646,13 @@ export class DynamicGrid {
 
     try {
       // In CLOB IOC sell: targetPrice acts as trigger price and anchor.
-      // Strict floor: limitPrice must NEVER fall below targetPrice, and must stay above avg entry
+      // Grid tranche sell allows setting below level down to targetPrice * (1 - slippagePct), while guarding against selling below avg entry
       const avgEntry = this.getAvgEntryPrice();
       const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
       const slippagePct = slippagePctVal / 100;
-      const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : targetPrice;
-      const minAllowedPrice = Math.max(minProfitablePrice, targetPrice);
+      const minAllowedBySlippage = targetPrice * (1 - slippagePct);
+      const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : minAllowedBySlippage;
+      const minAllowedPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
       const basePrice = (execPrice > 0) ? execPrice : targetPrice;
       let limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct));
       limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);

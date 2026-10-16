@@ -126,10 +126,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        1. **Strict IOC Buy Trigger & Hard Price Ceiling**:
           - ใน `executeIocBracketGrid`: บังคับให้ **`currentBestAsk > 0 && currentBestAsk <= lvlPrice && refPrice <= lvlPrice`** อย่างเด็ดขาด (และ `currentBestAsk <= tlPrice && refPrice <= tlPrice` สำหรับ Trendline Support Buy) ถ้าราคา Ask ยังไม่ลงมาแตะหรือต่ำกว่าเส้นจริง บอทจะไม่รีบยิงซื้อ
           - ใน `buyTrancheIOC`: กำหนด `maxAllowedPrice = targetPrice` อย่างเด็ดขาด โดย Limit Price จะไม่มีทางสูงกว่า `targetPrice` (`Math.min(targetPrice, basePrice * (1 + slippagePct))`)
-       2. **Strict IOC Sell Trigger & Hard Price Floor**:
-          - ใน `executeIocBracketGrid` และ `syncRestingOrders`: บังคับให้ **`currentBestBid > 0 && currentBestBid >= lvlPrice && refPrice >= lvlPrice`** Bid ต้องขึ้นมาแตะหรือสูงกว่าเส้นเป้าหมายจริงๆ เท่านั้น
-          - ใน `Resistance IOC Exit` และ `100% Take Profit`: บังคับให้ `effectiveBestBid >= effectiveResPrice` และ `tpExecBid >= reachedTargetPrice` พร้อมส่ง `reachedTargetPrice` เป็น Anchor Price เสมอ
-          - ใน `sellTrancheIOC` และ `sellAll` (เฉพาะ `action === "SELL"`): กำหนด `minAllowedPrice = Math.max(minProfitablePrice, targetPrice)` อย่างเด็ดขาด โดย Limit Price จะไม่มีทางต่ำกว่า `targetPrice` (`Math.max(minAllowedPrice, basePrice * (1 - slippagePct))`)
+       2. **IOC Sell Execution Policy (Grid Tranche vs Sell All)**:
+          - **การขายแบบแบ่งไม้ตามกริด (`sellTrancheIOC`, `executeIocBracketGrid` & `syncRestingOrders`)**: ยอมให้ส่งราคาขายต่ำกว่าเส้นเป้าหมายลงมาได้ตาม Slippage (`targetPrice * (1 - slippagePct)`) และ Trigger เมื่อ `currentBestBid >= lvlPrice * (1 - sellSlippage) || refPrice >= lvlPrice` เพื่อให้จับคู่กับ Bid ใน Orderbook ได้ทันที ไม่หลุด Match โดยยังคงคุ้มครองไม่ให้ขายต่ำกว่าทุนเฉลี่ย (`minProfitablePrice = avgEntry * 1.0005`)
+          - **การขายรวดเดียวทั้งหมด (Sell All เช่น 100% Take Profit & Resistance Exit)**: ล็อกพื้นราคาเด็ดขาด (`limitPrice >= targetPrice`) ห้ามส่งขายต่ำกว่าราคาเป้าหมาย (`reachedTargetPrice` / `effectiveResPrice`) เด็ดขาด และ Trigger ต้องรอจนกว่า Best Bid จะขึ้นมาแตะถึงระดับเป้าหมายจริง (`tpExecBid >= reachedTargetPrice`)
        3. **Safeguard Protection for Emergency Exits**:
           - ระบบยังคงอนุญาตให้ใช้ Slippage สำหรับกรณีฉุกเฉิน `action === "CUT"` (Cut Loss) และ `"MANUAL"` (Manual Exit) เพื่อรับประกันว่าจะสามารถระบายเหรียญตัดขาดทุนหนีตายได้ทันท่วงที 100%
    - **Instant Pair Switching & Cross-Symbol Feed Isolation (`symbolChanged` & `exchangeChanged`):**
