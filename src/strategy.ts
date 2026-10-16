@@ -830,9 +830,17 @@ export class DynamicGrid {
                   const buyNames = isSingleBuy
                     ? [`Buy Edge Floor (+${buyBufPct.toFixed(2)}%)`]
                     : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
-                  const buyTargets = isSingleBuy
-                    ? [1.0]
-                    : [0.25, 0.50, 0.75, 1.0];
+                  const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
+                  const activeBuyCount = enabledBuys.filter(Boolean).length || 4;
+                  let activeBuyRank = 0;
+                  const buyTargets = currentBounds.buyLevels.map((_, i) => {
+                    if (isSingleBuy) return 1.0;
+                    if (enabledBuys[i]) {
+                      activeBuyRank++;
+                      return activeBuyRank / activeBuyCount;
+                    }
+                    return 1.0;
+                  });
                   let bestBuyIdx = -1;
                   let minBuyDiff = Infinity;
                   for (let i = 0; i < currentBounds.buyLevels.length; i++) {
@@ -3833,9 +3841,22 @@ export class DynamicGrid {
         effectiveLevelNames[0] = `Buy TL Support ($${activeUptrendLine.currentLinePrice.toFixed(4)})`;
       }
 
-      const buyTargets = isSingleBuyLevel
-        ? [1.0]
-        : [0.25, 0.50, 0.75, 1.0];
+      // Count total active buy levels considering enabledBuys and potential trendline support at idx 0
+      const activeBuyCount = effectiveBuyLevels.reduce((cnt, _, idx) => {
+        const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
+        return isEnabled ? cnt + 1 : cnt;
+      }, 0) || 4;
+
+      let activeRank = 0;
+      const buyTargets = effectiveBuyLevels.map((_, idx) => {
+        if (isSingleBuyLevel) return 1.0;
+        const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
+        if (isEnabled) {
+          activeRank++;
+          return activeRank / activeBuyCount;
+        }
+        return 1.0;
+      });
 
       // Clean up stale resting buy orders or correct mislabeled levelDesc to closest buyLevel
       const remainingStaleBuys: OpenOrder[] = [];
@@ -3895,9 +3916,17 @@ export class DynamicGrid {
           // Check if disabled by user (allow idx === 0 if it is the active Uptrend Support Line entry)
           const isLevelEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
           if (!isLevelEnabled) return false;
-          // Holding Fraction Guard
-          const lvlTargetFraction = buyTargets[idx] ?? ((idx + 1) / (effectiveBuyLevels.length || 4));
-          if (currentHoldFraction >= (lvlTargetFraction - 0.05) && idx < effectiveBuyLevels.length - 1) {
+          // Holding Fraction Guard: If held fraction already reached or exceeded this level's target fraction, don't repeat
+          const lvlTargetFraction = buyTargets[idx] ?? 1.0;
+          const isLastActiveLevel = lvlTargetFraction >= 0.999;
+          if (isLastActiveLevel ? (currentHoldFraction >= 0.95) : (currentHoldFraction >= lvlTargetFraction - 0.05)) {
+            return false;
+          }
+          // Open Lot Proximity Guard: If we already hold an open lot bought near this price level, do NOT re-buy it!
+          const hasExistingLotNearPrice = this.lots.some(
+            (l) => Math.abs(l.price - lvl) / lvl <= 0.0025,
+          );
+          if (hasExistingLotNearPrice) {
             return false;
           }
           // Downtrend Trendline filter
@@ -3914,8 +3943,9 @@ export class DynamicGrid {
 
       const numBuyLevels = effectiveBuyLevels.length || 4;
       const numEligibleBuyLevels = eligibleBuyIndices.length > 0 ? eligibleBuyIndices.length : numBuyLevels;
-      // Dynamic equal tranche sizing across remaining eligible levels (no static / 4 dilution!)
-      let rawTrancheQuote = numEligibleBuyLevels > 0 ? (currentAvailableCapacity / numEligibleBuyLevels) : 0;
+      // Fixed portfolio proportion tranche sizing: Each level represents maxInv / activeBuyCount
+      const baseTrancheQuote = isSingleBuyLevel ? maxInv : (activeBuyCount > 0 ? (maxInv / activeBuyCount) : 0);
+      let rawTrancheQuote = baseTrancheQuote;
       // If dividing evenly drops below minNotional ($5.00), consolidate capacity to satisfy exchange minNotional
       if (rawTrancheQuote < minOrderNotional && currentAvailableCapacity >= minOrderNotional) {
         rawTrancheQuote = Math.min(currentAvailableCapacity, minOrderNotional);
@@ -4169,8 +4199,13 @@ export class DynamicGrid {
           // If current portfolio holding already satisfies or exceeds this level's target fraction,
           // do NOT re-place a buy order at this level while holding that inventory!
           // (Only allow subsequent lower levels, or wait until inventory is sold).
-          const levelTargetFraction = buyTargets[i] ?? ((i + 1) / numBuyLevels);
-          if (currentHoldFraction >= (levelTargetFraction - 0.05) && i < effectiveBuyLevels.length - 1) {
+          const levelTargetFraction = buyTargets[i] ?? 1.0;
+          const isLastActive = levelTargetFraction >= 0.999;
+          if (isLastActive ? (currentHoldFraction >= 0.95) : (currentHoldFraction >= levelTargetFraction - 0.05)) {
+            continue;
+          }
+          // Open Lot Proximity Guard: skip if a lot near this price is already held
+          if (this.lots.some((l) => Math.abs(l.price - lvlPrice) / lvlPrice <= 0.0025)) {
             continue;
           }
 

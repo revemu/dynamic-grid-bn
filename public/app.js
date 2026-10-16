@@ -1228,7 +1228,13 @@
     if (activeStep) activeStep.classList.add("active-ladder-step");
     if (elLadderCurrentLevel) elLadderCurrentLevel.textContent = levelName;
     if (elLadderTargetAlloc) {
-      elLadderTargetAlloc.textContent = targetText;
+      if (typeof data.targetHoldingPct === "number" && typeof data.targetInventoryQuote === "number") {
+        const allocQuoteStr = `$${data.targetInventoryQuote.toFixed(0)}`;
+        const fracNote = (data.targetHoldingPct === 0 && pos < 50) ? " (Waiting Dip)" : (data.targetHoldingPct === 100 ? " (Max Inv)" : "");
+        elLadderTargetAlloc.textContent = `Target ${data.targetHoldingPct}% (${allocQuoteStr})${fracNote}`;
+      } else {
+        elLadderTargetAlloc.textContent = targetText;
+      }
       elLadderTargetAlloc.className = `sum-val ${colorClass}`;
     }
     if (elLadderZoneBadge) {

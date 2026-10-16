@@ -1272,6 +1272,18 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
              - เพิ่ม action `"EXIT"` ลงใน Whitelist ของ Order Fills ใน `calculateTradeRounds()` เพื่อไม่ให้ตกหล่นไม้ที่เกิดจากการตัดขาย/ออกฉุกเฉิน
           3. **ผลลัพธ์**: ข้อมูลรอบการเทรด 32 รอบ (22 Wins / 10 Losses) และ PnL รวม +$2.67 ได้รับการกู้คืนครบถ้วนสมบูรณ์ 100% โดยอัตโนมัติ
 
+     16. **Dynamic Grid Tranche Sizing & Proportional Level Quota Guards (Strict 50/50 & Tranche Isolation)**:
+        - **สาเหตุของปัญหา**:
+          1. ใน `src/strategy.ts` (`syncRestingOrders`): ค่า `buyTargets` ถูก Hardcode ไว้เป็น `[0.25, 0.50, 0.75, 1.00]` เสมอ โดยไม่สนใจว่าผู้ใช้เปิดใช้งานกี่เลเวล เมื่อผู้ใช้เปิดใช้งานเพียง 2 ไม้ (เช่น Buy Level 3 และ Buy Level 4) ค่าเป้าหมายพอร์ตของ Level 3 กลับถูกตั้งไว้ที่ 75% แทนที่จะเป็น 50%
+          2. เมื่อไม้แรกซื้อสำเร็จที่ Buy Level 3 เป็นเงิน $50 (ถือครอง 50% ของงบ $100) ระบบตรวจพบว่า `50% < 75%` จึงเข้าใจผิดว่า Buy Level 3 ยังไม่เต็มโควตา และนับเป็นไม้ที่ต้องวางซื้อต่อไป
+          3. สูตรคำนวณขนาดไม้ `rawTrancheQuote = currentAvailableCapacity / numEligibleBuyLevels` เมื่อเหลืองบ $50 และเห็นว่ามี 2 ไม้ที่ Eligible จึงนำ $50 มาหาร 2 เหลือไม้ละ $25 ส่งผลให้บอทไปแคนเซิลไม้ Buy Level 4 เดิม ($50) แล้วลดขนาดเหลือ $25 พร้อมทั้งวางคำสั่งซื้อใหม่ที่ Buy Level 3 ซ้ำอีก $25 ที่ราคาเดิม ทั้งๆ ที่เพิ่งซื้อไปและยังไม่ได้ขาย ทำให้เสียสัดส่วนพอร์ตกลายเป็น ถือ 50% + รอซื้อ Level 3 25% + รอซื้อ Level 4 25%
+        - **การแก้ไขและสถาปัตยกรรมใหม่**:
+          1. **Dynamic Buy Targets (`buyTargets`)**: คำนวณเป้าหมายสัดส่วนพอร์ตแบบไดนามิกตามลำดับของเลเวลที่เปิดใช้งานจริง (`activeBuyCount`) เช่น หากเปิด 2 ไม้ (Level 3 & 4): Level 3 = 50% (1/2), Level 4 = 100% (2/2) ทำให้เมื่อ Level 3 ซื้อสำเร็จและถือครองครบ 50% จะถูกตัดออกจาก Eligible ไม้ซื้อทันที
+          2. **Fixed Portfolio Proportion Tranche Sizing (`baseTrancheQuote`)**: ล็อกขนาดไม้ตามสัดส่วนพอร์ตถาวร `baseTrancheQuote = maxInv / activeBuyCount` (เปิด 2 ไม้ = ไม้ละ $50 เสมอ) และแต่ละออร์เดอร์อิงจาก `Math.min(baseTrancheQuote, remainingCapacityForOrder)` ไม่นำเงินคงเหลือมาหารย่อยจนเสียสัดส่วน
+          3. **Open Lot Proximity Guard**: เพิ่มการตรวจสอบใน `this.lots` หากมี Lot ที่ซื้อมาในระดับราคาของเลเวลนั้นอยู่แล้ว (ภายใน 0.25%) จะถือว่าเลเวลนั้นถูกเติมเต็มแล้ว ห้ามวางคำสั่งซื้อที่ระดับราคานั้นซ้ำเด็ดขาด
+          4. **Auto-Cancellation & Self-Healing**: เมื่อบอทรันรอบถัดไป Ineligible Level Cancel Guard จะตรวจพบไม้ซื้อที่ Buy Level 3 และสั่งยกเลิกทันที พร้อมปรับขนาดไม้ Buy Level 4 กลับเป็น $50 เต็มจำนวนตามสัดส่วนเดิม
+          5. **UI Target Allocation**: ปรับ `Grid Channel Meter` ใน `public/app.js` ให้อ้างอิง `targetHoldingPct` จาก Strategy Telemetry โดยตรง แสดงผลเป้าหมายสัดส่วนพอร์ตตรงตามความเป็นจริง
+
 ---
 
 ## 5. Coding Standards & Maintenance Rules
