@@ -104,15 +104,17 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
        3. เมื่อขอบล่างค้างอยู่ที่เหวเก่า (`$0.193200`) ทำให้ระยะห่างถึงยอด `🚀 HH` ล่าสุด (`~$0.2060`) เกิน `maxChannelWidthPct` ระบบจึงเข้าใจผิดและกดขอบบน (`upperBound`) ลงไปเกาะยอด `HH` เก่าในอดีต (`$0.204167`) ที่เกิดก่อนหน้า `activePeak` และถูกทะลุทำลายโครงสร้างไปแล้ว
      - **การแก้ไขและสถาปัตยกรรมใหม่ (`src/market-structure.ts`)**:
        1. **นิยามสวิงยืนยันที่ยังไม่ถูกทำลาย (`isUnbrokenValley` / `isUnbrokenPeak`)**:
-          - เหวที่ยืนยันแล้ว (`v`) ถือว่ายังไม่ถูกทำลาย หากไม่มีเหวยืนยันในอนาคต (`later.index > v.index`) ที่ทำราคาต่ำกว่า `v.price`
-          - ยอดที่ยืนยันแล้ว (`p`) ถือว่ายังไม่ถูกทำลาย หากไม่มียอดยืนยันในอนาคต (`later.index > p.index`) ที่ทำราคาสูงกว่า `p.price`
-       2. **การยึดขอบล่างกับเหวยืนยันล่าสุดใต้ราคา (`validWidthValleys` & `candidateValleys`)**:
-          - ค้นหาเหวยืนยันที่ยังไม่ถูกทำลายและอยู่ต่ำกว่าราคาปัจจุบัน (`l.price <= price`) เรียงจากเหวที่ใกล้ราคาที่สุดลงไป ซึ่งให้ความกว้างกรอบอยู่ในเกณฑ์ `[minSpan, maxSpan]` โดยไม่นำ `!isLatestLowLl` มาบล็อกการยกฐานขึ้นหา `⭐ HL`
-       3. **การยึดขอบบนกับยอดยืนยันปัจจุบัน (`activePeak` & Post-Peak `LH` Only)**:
-          - ยึดยอดสูงสุดของคลื่นปัจจุบัน (`activePeak`) เป็นเพดานหลัก และห้ามดึงเพดานลงไปเกาะยอดเก่าที่เกิดก่อน `activePeak` (`h.index < activePeak.index`) โดยเด็ดขาด การปรับลดเพดานลงทำได้เฉพาะเมื่อเกิดยอด `LH` ที่ยืนยันแล้วหลังจาก `activePeak` เท่านั้น
-       4. **การประสานระบบรอตั้งฐาน (`isDowntrendDropActive` & `downtrendDropLow`) ให้สัมพันธ์กับกรอบราคาปัจจุบัน (`src/market-structure.ts` & `src/strategy.ts`)**:
-          - แยกแยะการย่อตัวเข้าโซนซื้อในกรอบ (`price >= bottomBound` เมื่อยอดคลื่นเป็น `HH`) ออกจากกรณีหลุดฐานกรอบจริง (`price < bottomBound` หรือ `LH + LL` กดตัว) ป้องกันไม่ให้สวิงย่อยกลางกรอบ (เช่น `$0.2015`) มาบล็อกคำสั่งซื้อที่ `Buy Level 3` / `Buy Level 4`
-          - คำนวณ `downtrendDropLow` โดยอ้างอิงจากยอดของกรอบปัจจุบัน (`activePeak`) แทน `macroPeak` ข้ามวัน ป้องกันไม่ให้ไปดึงราคาต่ำสุดในอดีต (เช่น `$0.1898`) มาแสดงในข้อความ `รอสร้างฐาน HL > $...`
+          - เหวที่ยืนยันแล้ว (`v`) ถือว่ายังไม่ถูกทำลาย หากไม่มีเหวยืนยันในอนาคต (`later.index > v.index`), ไม่มี `candidateValley` (`candidateValley.time > v.time`) และไม่มีแท่งเทียนถัดมา (`c.time > v.time`) ที่ทำจุดต่ำสุด (`getEffectiveLow`) ต่ำกว่า `v.price` (ป้องกันไม่ให้บอทยกฐานกรอบขึ้นไปเกาะเหวที่เพิ่งถูกแท่งเทียนทุบทะลุลงไปแล้วแต่ยังรอปิดครบ 3 แท่ง)
+          - ยอดที่ยืนยันแล้ว (`p`) ถือว่ายังไม่ถูกทำลาย หากไม่มียอดยืนยันในอนาคต, ไม่มี `candidatePeak` และไม่มีแท่งเทียนถัดมาที่ทำจุดสูงสุด (`getEffectiveHigh`) สูงกว่า `p.price`
+       2. **การยึดขอบล่างกับเหวยืนยันล่าสุดใต้ราคา (`validWidthValleys`, `validLows` & `candidateValleys`)**:
+          - ค้นหาเหวยืนยันที่ยังไม่ถูกทำลาย (`isUnbrokenValley`) และอยู่ต่ำกว่าราคาปัจจุบัน (`l.price <= price`) เรียงจากเหวที่ใกล้ราคาที่สุดลงไป ซึ่งให้ความกว้างกรอบอยู่ในเกณฑ์ `[minSpan, maxSpan]` โดยบังคับเช็ค `isUnbrokenValley` ในทุกขั้นตอนของการเลือกแนวรับ (`lowerValleys`, `lowerConfirmedLows`, `validLows`, `lowerConfirmedValleys`, `lowerLow`)
+       3. **การยึดขอบบนกับยอดยืนยันปัจจุบัน (`activePeak` & Post-Peak Unbroken Lower Highs)**:
+          - ยึดยอดสูงสุดของคลื่นปัจจุบัน (`activePeak`) เป็นเพดานหลัก และห้ามดึงเพดานลงไปเกาะยอดเก่าที่เกิดก่อน `activePeak` (`h.index < activePeak.index`) โดยเด็ดขาด
+          - การปรับลดเพดานลงทำได้เมื่อเกิดยอดที่ยืนยันแล้วหลังจาก `activePeak` (`h.index > activePeak.index`) ซึ่งมีราคาต่ำกว่า `activePeak` (`h.price < activePeak.price`) และยังไม่ถูกทำลาย (`isUnbrokenPeak`) แม้ว่าก่อนหน้านั้นจะมีสวิงย่อยเล็กๆ ทำให้ป้าย `dowLabel` เป็น `HH` เทียบสวิงย่อยก็ตาม
+       4. **การประสานระบบรอตั้งฐาน (`isDowntrendDropActive`, `downtrendDropLow`, `checkForHigherLow` & `breakdownTime`) ให้สัมพันธ์กับจุดต่ำสุดจริง (`src/market-structure.ts` & `src/strategy.ts`)**:
+          - เมื่อราคาทำจุดต่ำสุดใหม่ระหว่างรอตั้งฐาน (`refPrice < this.breakdownLowPrice`) จะอัปเดต `this.breakdownTime` เป็นเวลาของจุดต่ำสุดใหม่เสมอ
+          - ใน `checkForHigherLow`: ค้นหาเวลาจริงของแท่งเทียนที่ทำจุดต่ำสุดของการทุบ (`effectiveSinceTime`) และบังคับว่าสวิงที่จะมายืนยัน `Higher Low (HL)` ต้องเกิดขึ้นหลัง `effectiveSinceTime` และยังไม่ถูกแท่งเทียนถัดมาทุบหลุด (`isSwingLowUnbroken`) ป้องกันไม่ให้บอทนำสวิง `LL` ก่อนการทุบมาปลดล็อก `waitingForHigherLow` หรือ `downtrendDropPaused` ก่อนเวลาอันควร
+          - แยกแยะการย่อตัวเข้าโซนซื้อในกรอบ (`price >= bottomBound` เมื่อยอดคลื่นเป็น `HH`) ออกจากกรณีหลุดฐานกรอบจริง (`price < bottomBound` หรือ `LH + LL` กดตัว) และคำนวณ `downtrendDropLow` โดยอ้างอิงจากยอดของกรอบปัจจุบัน (`activePeak`)
    - **Strict IOC Buy & Sell Level Execution & Slippage Elimination Architecture (`src/strategy.ts`):**
      - **สาเหตุของปัญหา**:
        1. **IOC Buy ชิงซื้อก่อนราคาลงมาถึงเป้า และส่งราคาซื้อสูงกว่า Buy Level**:

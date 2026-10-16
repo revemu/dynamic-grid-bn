@@ -319,11 +319,33 @@ export class DowStructureEngine {
       return { confirmed: false, reason: "No confirmed swing lows in memory" };
     }
 
-    // 1. Check annotated structural wave swings (if the wave cycle already labeled a confirmed "HL" after the lowest dump)
+    // Find the actual timestamp of the lowest dump trough in candles so a pre-dump swing is never mistaken for a post-dump HL
+    let effectiveSinceTime = sinceTime;
+    for (const c of this.candles) {
+      const effLow = getEffectiveLow(c, this.useTrueWick, this.wickThresholdPct);
+      if (c.time >= sinceTime - 3600 && (c.low <= lowestDumpPrice * 1.0005 || effLow <= lowestDumpPrice * 1.0005)) {
+        if (c.time > effectiveSinceTime) {
+          effectiveSinceTime = c.time;
+        }
+      }
+    }
+
+    // Helper: A swing low is only valid as a Higher Low if no subsequent candle has broken below it
+    const isSwingLowUnbroken = (s: SwingPoint): boolean =>
+      !this.candles.some(
+        (c) => c.time > s.time && getEffectiveLow(c, this.useTrueWick, this.wickThresholdPct) < s.price,
+      );
+
+    // 1. Check annotated structural wave swings (if the wave cycle already labeled a confirmed unbroken "HL" after the lowest dump)
     const wave = this.calculateWaveCycles();
     if (wave && wave.annotatedSwings.length > 0) {
       const postDumpSwings = wave.annotatedSwings.filter(
-        (s) => s.type === "LOW" && s.price > lowestDumpPrice * 1.0005 && (s.time >= sinceTime - 1800 || s.dowLabel === "HL")
+        (s) =>
+          s.type === "LOW" &&
+          s.dowLabel === "HL" &&
+          s.time >= effectiveSinceTime &&
+          s.price > lowestDumpPrice * 1.0005 &&
+          isSwingLowUnbroken(s),
       );
       if (postDumpSwings.length > 0) {
         const lastHl = postDumpSwings[postDumpSwings.length - 1]!;
@@ -337,27 +359,13 @@ export class DowStructureEngine {
       }
     }
 
-    // 2. Check confirmed swing lows formed at or after the breakdown (with 30-minute leeway)
-    const recentConfirmedLows = this.swingLows.filter((s) => s.time >= sinceTime - 1800);
+    // 2. Check confirmed unbroken swing lows formed strictly at/after the dump trough
+    const recentConfirmedLows = this.swingLows.filter(
+      (s) => s.time >= effectiveSinceTime && isSwingLowUnbroken(s),
+    );
 
     if (recentConfirmedLows.length === 0) {
-      const lastLow = this.swingLows[this.swingLows.length - 1];
-      const prevLow = this.swingLows.length >= 2 ? this.swingLows[this.swingLows.length - 2] : undefined;
-
-      if (lastLow) {
-        const isHigherThanDump = lastLow.price > lowestDumpPrice * 1.0005;
-        const isHigherThanPrev = prevLow ? lastLow.price > prevLow.price : false;
-        const isPriceAboveLow = currentPrice ? currentPrice >= lastLow.price : true;
-
-        if (isHigherThanDump && (isHigherThanPrev || lastLow.price >= referenceFloor) && isPriceAboveLow) {
-          return {
-            confirmed: true,
-            higherLow: lastLow,
-            reason: `Confirmed Swing Low at $${lastLow.price.toFixed(6)} > lowest dump $${lowestDumpPrice.toFixed(6)}`,
-          };
-        }
-      }
-      return { confirmed: false, reason: "Waiting for confirmed swing low pivot" };
+      return { confirmed: false, reason: "Waiting for confirmed unbroken swing low pivot after dump trough" };
     }
 
     for (let i = recentConfirmedLows.length - 1; i >= 0; i--) {
@@ -1319,13 +1327,17 @@ export class DowStructureEngine {
     const activeCycleLows = canonicalLows.filter((l) => l.index >= activeWaveBaseIndex);
 
     let baseValley: SwingPoint | undefined;
-    // Helper: A confirmed valley is unbroken if no subsequent confirmed valley dropped below it
+    // Helper: A confirmed valley is unbroken if no subsequent confirmed valley, candidate valley, or subsequent candle dropped below it
     const isUnbrokenValley = (v: SwingPoint, pool: SwingPoint[]) =>
-      !pool.some((later) => later.index > v.index && later.price < v.price);
+      !pool.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
+      !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price) &&
+      !candles.some((c) => c.time > v.time && getEffectiveLow(c, useTrueWick, this.wickThresholdPct) < v.price);
 
-    // Helper: A confirmed peak is unbroken if no subsequent confirmed peak rose above it
+    // Helper: A confirmed peak is unbroken if no subsequent confirmed peak, candidate peak, or subsequent candle rose above it
     const isUnbrokenPeak = (p: SwingPoint, pool: SwingPoint[]) =>
-      !pool.some((later) => later.index > p.index && later.price > p.price);
+      !pool.some((later) => (later.index > p.index || later.time > p.time) && later.price > p.price) &&
+      !(candidatePeak && candidatePeak.time > p.time && candidatePeak.price > p.price) &&
+      !candles.some((c) => c.time > p.time && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > p.price);
 
     const lowsPool = activeCycleLows.length > 0 ? activeCycleLows : canonicalLows;
     const unbrokenLowsBelowPrice = lowsPool
@@ -1430,10 +1442,10 @@ export class DowStructureEngine {
         curFloor = baseValley?.price ?? (macroLow ? macroLow.price : price * (1 - minPct / 2));
       }
 
-      // เมื่อราคาหลุดต่ำกว่า curFloor ให้มองหาเหว/แนวรับที่ยืนยันแล้วที่อยู่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน
+      // เมื่อราคาหลุดต่ำกว่า curFloor ให้มองหาเหว/แนวรับที่ยืนยันแล้วที่ยังไม่ถูกทำลายและอยู่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน
       if (price < curFloor) {
         const lowerValleys = canonicalLows
-          .filter((l) => l.price < price && curCeil - l.price <= maxSpanFromPct)
+          .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows) && curCeil - l.price <= maxSpanFromPct)
           .sort((a, b) => b.price - a.price); // เรียงจากเหวที่ใกล้ราคาที่สุดลงไป
         if (lowerValleys.length > 0) {
           const minSpanLower = lowerValleys.find((l) => curCeil - l.price >= minSpanFromPct);
@@ -1467,7 +1479,7 @@ export class DowStructureEngine {
           .filter((h) => h.price > curCeil && isUnbrokenPeak(h, canonicalHighs))
           .sort((a, b) => a.price - b.price); // เรียงจากต่ำไปสูง
         const lowerConfirmedLows = canonicalLows
-          .filter((l) => l.price < curFloor)
+          .filter((l) => l.price < curFloor && isUnbrokenValley(l, canonicalLows))
           .sort((a, b) => b.price - a.price); // เรียงจากสูงไปต่ำ
 
         let hIdx = 0;
@@ -1495,10 +1507,10 @@ export class DowStructureEngine {
         }
 
         // หากสวิงยืนยันหมดแล้วแต่ความกว้างยังไม่ถึง minSpanFromPct
-        // ให้ขยาย Floor ลงไปเพื่อเติมเต็ม minChannelWidthPct โดยไม่กระโดดไปดึง Major Peak โบราณ
+        // ให้ขยาย Floor ลงไปเพื่อเติมเต็ม minChannelWidthPct โดยไม่ยกเพดานขึ้นเหนือยอดต้านจริง
         if (curCeil - curFloor < minSpanFromPct) {
           const needed = minSpanFromPct - (curCeil - curFloor);
-          if (curFloor - needed > 0 && price <= curCeil) {
+          if (curFloor - needed > 0) {
             curFloor -= needed;
           } else {
             const half = needed / 2;
@@ -1516,11 +1528,17 @@ export class DowStructureEngine {
       anchorSide = "NONE";
 
       // Enforce max channel width if natural wave swing is unusually wide:
-      // 1) First try raising bottomBound to a newer confirmed valley below price so we preserve the true activePeak!
+      // 1) First try raising bottomBound to a newer unbroken confirmed valley below price so we preserve the true activePeak!
       // 2) Only step down upperBound if there is a confirmed unbroken Lower High (LH) formed AFTER activePeak!
       if (upperBound - bottomBound > maxSpanFromPct) {
         const validLows = canonicalLows
-          .filter((l) => l.price < price && upperBound - l.price >= minSpanFromPct && upperBound - l.price <= maxSpanFromPct)
+          .filter(
+            (l) =>
+              l.price < price &&
+              isUnbrokenValley(l, canonicalLows) &&
+              upperBound - l.price >= minSpanFromPct &&
+              upperBound - l.price <= maxSpanFromPct,
+          )
           .sort((a, b) => b.price - a.price); // เหวที่ใกล้ราคาปัจจุบันที่สุด
 
         const postPeakUnbrokenHighs = canonicalHighs
@@ -1534,6 +1552,14 @@ export class DowStructureEngine {
         } else if (postPeakUnbrokenHighs.length > 0) {
           upperBound = postPeakUnbrokenHighs[0]!.price;
           activePeak = postPeakUnbrokenHighs[0]!;
+        } else if (
+          candidateValley &&
+          candidateValley.price <= price &&
+          upperBound - candidateValley.price >= minSpanFromPct &&
+          upperBound - candidateValley.price <= maxSpanFromPct
+        ) {
+          bottomBound = candidateValley.price;
+          activeValley = candidateValley;
         }
         clampStatus = "CLAMPED_MAX";
       }
@@ -1568,8 +1594,12 @@ export class DowStructureEngine {
     // 🔒 Dow Theory overrides: Ensure Ceiling snaps to HH and steps down ONLY on confirmed LH formed AFTER activePeak
     if (true) {
       // 🔒 Dow Theory Rule ("ถ้ายังไม่ทำ LH ไม่ควรปรับลดกรอบบนลงมา"):
-      const isLatestHighHh = lastCanonicalHigh?.dowLabel === "HH";
-      if (isLatestHighHh && lastCanonicalHigh && upperBound < lastCanonicalHigh.price) {
+      const isLatestHighTrueHh = Boolean(
+        lastCanonicalHigh &&
+        lastCanonicalHigh.dowLabel === "HH" &&
+        (!activePeak || lastCanonicalHigh.price >= activePeak.price)
+      );
+      if (isLatestHighTrueHh && lastCanonicalHigh && upperBound < lastCanonicalHigh.price) {
         upperBound = lastCanonicalHigh.price;
         activePeak = lastCanonicalHigh;
         clampStatus = "NATURAL_SWING";
@@ -1578,14 +1608,20 @@ export class DowStructureEngine {
       // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้"):
       // เฉพาะยอด LH ที่เกิดขึ้นหลังจาก activePeak (h.index > activePeak.index) และยังไม่ถูกทำลายเท่านั้น!
       // ห้ามดึงยอดเก่าที่เกิดก่อนหน้า activePeak (ซึ่งถูกทะลุไปแล้วตอนทำ HH) มาเป็นเพดานโดยเด็ดขาด
-      if (upperBound > bottomBound + minSpan && !isLatestHighHh) {
+      if (upperBound > bottomBound + minSpan && !isLatestHighTrueHh) {
         const peakIdx = activePeak?.index ?? -1;
+        const peakPrice = activePeak?.price ?? upperBound;
         const candidateLhs = canonicalHighs
-          .filter((h) => h.index > peakIdx && h.dowLabel === "LH" && isUnbrokenPeak(h, canonicalHighs) && h.price > price)
+          .filter((h) => h.index > peakIdx && h.price < peakPrice && isUnbrokenPeak(h, canonicalHighs) && h.price > price)
           .filter((h) => h.price - bottomBound >= minSpan && h.price - bottomBound <= maxSpan)
           .sort((a, b) => a.price - b.price);
 
-        if (candidateLhs.length > 0 && (isLatestHighLh || upperBound - bottomBound > maxSpan)) {
+        const hasPostPeakLowerHigh = Boolean(
+          isLatestHighLh ||
+          (lastCanonicalHigh && activePeak && lastCanonicalHigh.index > activePeak.index && lastCanonicalHigh.price < activePeak.price)
+        );
+
+        if (candidateLhs.length > 0 && (hasPostPeakLowerHigh || upperBound - bottomBound > maxSpan)) {
           const targetLh = candidateLhs[0]!;
           if (targetLh.price < upperBound) {
             upperBound = targetLh.price;
@@ -1593,9 +1629,10 @@ export class DowStructureEngine {
             clampStatus = "NATURAL_SWING";
           }
         } else if (
-          isLatestHighLh &&
+          hasPostPeakLowerHigh &&
           lastCanonicalHigh &&
           (!activePeak || lastCanonicalHigh.index >= activePeak.index) &&
+          isUnbrokenPeak(lastCanonicalHigh, canonicalHighs) &&
           upperBound > lastCanonicalHigh.price &&
           lastCanonicalHigh.price - bottomBound >= minSpan
         ) {
@@ -1608,7 +1645,13 @@ export class DowStructureEngine {
 
     // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Lower Low (LL) หรือทะลุหลุดกรอบเดิมลงไป กรอบล่างต้องปรับลดลงมารับ New Low"):
     const isLatestLowLl = lastCanonicalLow?.dowLabel === "LL";
-    if (isLatestLowLl && lastCanonicalLow && lastCanonicalLow.price <= price && bottomBound > lastCanonicalLow.price) {
+    if (
+      isLatestLowLl &&
+      lastCanonicalLow &&
+      isUnbrokenValley(lastCanonicalLow, canonicalLows) &&
+      lastCanonicalLow.price <= price &&
+      bottomBound > lastCanonicalLow.price
+    ) {
       bottomBound = lastCanonicalLow.price;
       activeValley = lastCanonicalLow;
       clampStatus = "NATURAL_SWING";
@@ -1639,7 +1682,7 @@ export class DowStructureEngine {
     if (isDropBreakdown && price < bottomBound) {
       // เมื่อราคาหลุดต่ำกว่า Floor เดิมในช่วงทุบ ให้มองหาเหวที่ยืนยันแล้วที่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน (และต้องอยู่ในระยะ maxSpan)
       const lowerConfirmedValleys = canonicalLows
-        .filter((l) => l.price < price && upperBound - l.price <= maxSpan)
+        .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows) && upperBound - l.price <= maxSpan)
         .sort((a, b) => b.price - a.price);
 
       if (lowerConfirmedValleys.length > 0) {
@@ -1705,7 +1748,9 @@ export class DowStructureEngine {
     // Prioritize expanding bottomBound first to preserve recent LH/resistance, and do NOT leap to distant macro peaks!
     if (upperBound - bottomBound < minSpan * 0.95) {
       const needed = minSpan - (upperBound - bottomBound);
-      const lowerLow = canonicalLows.filter((l) => l.price < bottomBound).sort((a, b) => b.price - a.price)[0];
+      const lowerLow = canonicalLows
+        .filter((l) => l.price < bottomBound && isUnbrokenValley(l, canonicalLows))
+        .sort((a, b) => b.price - a.price)[0];
       const higherHigh = canonicalHighs
         .filter((h) => h.price > upperBound && isUnbrokenPeak(h, canonicalHighs) && (h.price - bottomBound) <= maxSpan)
         .sort((a, b) => a.price - b.price)[0];
@@ -1722,7 +1767,7 @@ export class DowStructureEngine {
         activePeak = higherHigh;
       } else {
         // If no nearby swings exist, expand floor downward to satisfy minSpan without blowing out ceiling
-        if (bottomBound - needed > 0 && price <= upperBound) {
+        if (bottomBound - needed > 0) {
           bottomBound -= needed;
         } else {
           const half = needed / 2;

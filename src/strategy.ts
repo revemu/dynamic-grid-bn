@@ -2289,6 +2289,7 @@ export class DynamicGrid {
     if (this.waitingForHigherLow) {
       if (this.breakdownLowPrice === undefined || refPrice < this.breakdownLowPrice) {
         this.breakdownLowPrice = refPrice;
+        this.breakdownTime = Math.floor(Date.now() / 1000);
         this.saveState();
       }
 
@@ -2754,10 +2755,21 @@ export class DynamicGrid {
       const dumpLow = dow?.downtrendDropLow ?? lowerBound;
       const lastLl = dow?.waveCycle?.lastLl;
       const lastHl = dow?.waveCycle?.lastHl;
-      const isHlAfterLl = Boolean(lastHl && lastLl && lastHl.index > lastLl.index && lastHl.price > dumpLow * 1.0005);
+      const dumpLowTime =
+        Math.max(
+          lastLl?.time ?? 0,
+          dow?.candidateValley && dow.candidateValley.price <= dumpLow * 1.0005 ? dow.candidateValley.time : 0,
+        ) || (Date.now() / 1000 - 3600);
+      const isHlAfterLl = Boolean(
+        lastHl &&
+        lastLl &&
+        lastHl.index > lastLl.index &&
+        lastHl.time >= dumpLowTime &&
+        lastHl.price > dumpLow * 1.0005,
+      );
 
       const hlCheck = this.dowEngine?.checkForHigherLow(
-        lastLl?.time ?? (Date.now() / 1000 - 3600),
+        dumpLowTime,
         lowerBound,
         dumpLow,
         refPrice,
