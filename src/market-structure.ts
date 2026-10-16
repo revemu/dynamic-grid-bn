@@ -1864,28 +1864,27 @@ export class DowStructureEngine {
     );
     // Active downtrend drop detection:
     // 1) Confirmed LH + LL wave sequence (รอบคลื่นกดตัว), OR
-    // 2) Real-time breakdown of previous valley (หลุดเหวเก่าทันที):
-    //    Triggers immediately when price or candle breaks below the previous confirmed swing low,
-    //    with tendency to form an LL, without waiting 3 bars for a lagging pivot confirmation!
-    const isBreakingBelowLastLow = Boolean(
-      lastLow &&
-      price < lastLow.price &&
-      (lastHigh ? lastHigh.price > lastLow.price : true)
-    );
-    const hasCandidateLl = Boolean(
-      candidateValley &&
-      lastLow &&
-      candidateValley.price < lastLow.price
+    // 2) Real-time breakdown below the active channel floor / confirmed support valley (หลุดฐานกรอบ):
+    //    NOTE: A normal pullback inside the channel (price >= bottomBound) when the wave peak is HH
+    //    must NOT be flagged as a breakdown, otherwise it blocks Buy Levels inside the channel!
+    const activeFloorPrice = activeValley?.price ?? bottomBound;
+    const isBreakingBelowChannelFloor = Boolean(
+      price < bottomBound ||
+      price < activeFloorPrice ||
+      (candidateValley && candidateValley.price < bottomBound)
     );
     const isConfirmedDowntrendWave = Boolean(
       (waveCycle.activeCycleSummary?.includes("LH + LL") || (lastCanonicalHigh?.dowLabel === "LH" && lastCanonicalLow?.dowLabel === "LL")) &&
       price < (activePeak?.price ?? upperBound)
     );
-    const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowLastLow || hasCandidateLl;
+    const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowChannelFloor;
 
-    const dropPostPeakLows = canonicalLows.filter((l) => macroPeak && l.index > macroPeak.index);
+    const dropAnchorPeak = activePeak ?? macroPeak;
+    const dropPostPeakLows = canonicalLows.filter((l) => dropAnchorPeak && l.index > dropAnchorPeak.index);
     const postPeakPrices = dropPostPeakLows.map((l) => l.price);
-    if (candidateValley) postPeakPrices.push(candidateValley.price);
+    if (candidateValley && (!dropAnchorPeak || candidateValley.index > dropAnchorPeak.index)) {
+      postPeakPrices.push(candidateValley.price);
+    }
     postPeakPrices.push(price);
     const downtrendDropLow = postPeakPrices.length > 0
       ? Math.min(...postPeakPrices)

@@ -110,6 +110,9 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
           - ค้นหาเหวยืนยันที่ยังไม่ถูกทำลายและอยู่ต่ำกว่าราคาปัจจุบัน (`l.price <= price`) เรียงจากเหวที่ใกล้ราคาที่สุดลงไป ซึ่งให้ความกว้างกรอบอยู่ในเกณฑ์ `[minSpan, maxSpan]` โดยไม่นำ `!isLatestLowLl` มาบล็อกการยกฐานขึ้นหา `⭐ HL`
        3. **การยึดขอบบนกับยอดยืนยันปัจจุบัน (`activePeak` & Post-Peak `LH` Only)**:
           - ยึดยอดสูงสุดของคลื่นปัจจุบัน (`activePeak`) เป็นเพดานหลัก และห้ามดึงเพดานลงไปเกาะยอดเก่าที่เกิดก่อน `activePeak` (`h.index < activePeak.index`) โดยเด็ดขาด การปรับลดเพดานลงทำได้เฉพาะเมื่อเกิดยอด `LH` ที่ยืนยันแล้วหลังจาก `activePeak` เท่านั้น
+       4. **การประสานระบบรอตั้งฐาน (`isDowntrendDropActive` & `downtrendDropLow`) ให้สัมพันธ์กับกรอบราคาปัจจุบัน (`src/market-structure.ts` & `src/strategy.ts`)**:
+          - แยกแยะการย่อตัวเข้าโซนซื้อในกรอบ (`price >= bottomBound` เมื่อยอดคลื่นเป็น `HH`) ออกจากกรณีหลุดฐานกรอบจริง (`price < bottomBound` หรือ `LH + LL` กดตัว) ป้องกันไม่ให้สวิงย่อยกลางกรอบ (เช่น `$0.2015`) มาบล็อกคำสั่งซื้อที่ `Buy Level 3` / `Buy Level 4`
+          - คำนวณ `downtrendDropLow` โดยอ้างอิงจากยอดของกรอบปัจจุบัน (`activePeak`) แทน `macroPeak` ข้ามวัน ป้องกันไม่ให้ไปดึงราคาต่ำสุดในอดีต (เช่น `$0.1898`) มาแสดงในข้อความ `รอสร้างฐาน HL > $...`
    - **Instant Pair Switching & Cross-Symbol Feed Isolation (`symbolChanged` & `exchangeChanged`):**
       - **สาเหตุของปัญหากรอบราคาเพี้ยน ($103.15 .. $2510.83):**
         1. เมื่อสลับคู่เหรียญ (เช่น จาก `ETHFDUSD` เป็น `SOLFDUSD`) ใน `src/index.ts` เดิมเรียก `grid.updateSymbolInfo(nextInfo)` โดยที่ `grid.atrSource` ถูกประกาศเป็น `readonly` และไม่มีการส่งต่อ `atrSource` ใหม่เข้าไป

@@ -2735,8 +2735,8 @@ export class DynamicGrid {
 
       if (!hlConfirmed && !tlBreakoutConfirmed) {
         downtrendDropPaused = true;
-        const previousLow = dow?.lastSwingLow?.price;
-        const lowDesc = previousLow && refPrice < previousLow ? `หลุดเหว $${previousLow.toFixed(6)}` : "ขาลง LH+LL";
+        const channelFloorRef = dow?.activeValley?.price ?? lowerBound;
+        const lowDesc = refPrice < channelFloorRef ? `หลุดฐานกรอบ $${channelFloorRef.toFixed(6)}` : "ขาลง LH+LL";
         downtrendDropReason = `[Paused: ${lowDesc} รอตั้งฐาน HL > $${dumpLow.toFixed(6)} หรือ Breakout]`;
       }
     }
@@ -2915,13 +2915,13 @@ export class DynamicGrid {
       }
     } else if (downtrendDropPaused) {
       const dumpLow = dow?.downtrendDropLow ?? lowerBound;
-      const previousLow = dow?.lastSwingLow?.price;
-      const isBreakdown = previousLow && refPrice < previousLow;
+      const channelFloorRef = dow?.activeValley?.price ?? lowerBound;
+      const isBreakdown = refPrice < channelFloorRef;
       botActionState = {
         code: "DOWNTREND_DROP_WAIT_BASE",
-        title: isBreakdown ? "🛡️ หลุดเหว รอตั้งฐาน HL" : "🛡️ ขาลง รอตั้งฐาน HL",
+        title: isBreakdown ? "🛡️ หลุดฐานกรอบ รอตั้งฐาน HL" : "🛡️ ขาลง รอตั้งฐาน HL",
         reason: isBreakdown
-          ? `แท่งเทียนหลุดเหวเก่า ($${previousLow.toFixed(4)}) • หยุดรับมีดชั่วคราว`
+          ? `แท่งเทียนหลุดฐานกรอบ ($${channelFloorRef.toFixed(4)}) • หยุดรับมีดชั่วคราว`
           : `รอบคลื่นขาลง (LH + LL กดตัว) • หยุดรับมีดชั่วคราว`,
         nextTrigger: `รอสร้างฐาน HL > $${dumpLow.toFixed(4)} หรือ Breakout เส้นกด`,
         severity: "warning",
