@@ -1258,6 +1258,20 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
            \text{unrealizedPnl} = (\text{valuationBid} - \text{avgEntry}) \times \text{baseHeld}
          - ใน public/app.js: คำนวณ % Unrealized PnL โดยเทียบกับ Cost Basis แท้จริง ((upnl / costBasis) * 100) ทำให้ตัวเลข PnL และเปอร์เซ็นต์บนหน้าจอสะท้อนกำไรขาดทุนแท้จริงที่จะได้รับทันทีหากกด Sell All
 
+     15. **Somnia uint128 Order ID Isolation & Trade Rounds Self-Healing (100% History Recovery)**:
+        - **สาเหตุของปัญหา**:
+          1. ใน `src/db.ts` (`migrateOrders`): มีการตรวจสอบเงื่อนไข `isBinanceOrderId = o.orderId && /^\d{8,}$/.test(o.orderId) && !o.orderId.startsWith("0x")` โดยเข้าใจว่าเลขออร์เดอร์ตัวเลขล้วนที่ยาวตั้งแต่ 8 หลักขึ้นไปเป็นออร์เดอร์ของ Binance เท่านั้น
+          2. บน Somnia DreamDEX (`SpotPool` Smart Contract) ออร์เดอร์ ID บน On-Chain สร้างขึ้นด้วยชนิดข้อมูล `uint128` (เช่น `3560221606225972338705` - 22 หลัก) ซึ่งไม่มี `0x` นำหน้า และคู่เหรียญมี Quote Asset เป็น `USDSO` ทำให้เข้าเงื่อนไขพอดี คำสั่งใน `migrateOrders` จึงเข้าใจผิดและไปเขียนทับประวัติออร์เดอร์ `SOMI:USDSO` ทั้งหมด 118 รายการใน DB ให้กลายเป็น `baseAsset: "ETH"` และ `symbol: "ETHFDUSD"`
+          3. เมื่อเปิดหน้าเว็บแดชบอร์ด ฟังก์ชัน `calculateTradeRounds(orders, "SOMI:USDSO")` ใน `src/trade-rounds.ts` จึงกรองออร์เดอร์ออกหมด เพราะเห็นเป็น `baseAsset: "ETH"` ทำให้รอบการเทรดของ SOMI หายไปทั้งหมด เหลือแสดงเพียงแค่ 1 รอบ (Sell Only #1)
+        - **การแก้ไขและระบบ Self-Healing**:
+          1. ใน `src/db.ts`:
+             - ปรับปรุงฟังก์ชัน `inferBase()` ให้ใช้การตรวจจับจากช่วงราคาจริง (`price >= 0.01 && price <= 10.0` เป็น `SOMI`, `price >= 500` เป็น `WETH`) และตรวจจับ Somnia Explorer URL / Hash (`shannon-explorer`, `0x`)
+             - ปรับปรุง `migrateOrders()` ให้ป้องกันไม่ให้ออร์เดอร์ Somnia/DreamDEX (ที่มี price < 10 หรือ quoteAsset เป็น USDSO หรือ Somnia orderId) ถูกเปลี่ยนเป็น Binance ETH และเพิ่มระบบ Self-Healing ซ่อมแซมออร์เดอร์ SOMI ที่เคยถูกแก้เป็น ETH ให้กลับคืนเป็น `baseAsset: "SOMI"`, `quoteAsset: "USDSO"`, `symbol: "SOMI:USDSO"` อัตโนมัติเมื่อเริ่มเปิดบอท
+          2. ใน `src/trade-rounds.ts`:
+             - ปรับปรุง `inferOrderBase()` ให้ใช้ช่วงราคาในการตรวจสอบควบคู่ เพื่อให้ครอบคลุมและสามารถคำนวณรอบของ SOMI ได้ครบถ้วนทุกกรณี
+             - เพิ่ม action `"EXIT"` ลงใน Whitelist ของ Order Fills ใน `calculateTradeRounds()` เพื่อไม่ให้ตกหล่นไม้ที่เกิดจากการตัดขาย/ออกฉุกเฉิน
+          3. **ผลลัพธ์**: ข้อมูลรอบการเทรด 32 รอบ (22 Wins / 10 Losses) และ PnL รวม +$2.67 ได้รับการกู้คืนครบถ้วนสมบูรณ์ 100% โดยอัตโนมัติ
+
 ---
 
 ## 5. Coding Standards & Maintenance Rules

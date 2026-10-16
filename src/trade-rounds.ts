@@ -119,11 +119,17 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     : undefined;
 
   const inferOrderBase = (o: UnifiedOrderRecord): string | undefined => {
-    if (o.baseAsset) return o.baseAsset.toUpperCase();
     const p = Number(o.fillPrice || o.price || 0);
+    const isSomnia = Boolean(
+      o.explorerUrl?.includes("somnia") ||
+      (o.txHash && o.txHash.startsWith("0x")) ||
+      (o.createTxHash && o.createTxHash.startsWith("0x")) ||
+      (o.fillTxHash && o.fillTxHash.startsWith("0x"))
+    );
     if (p > 50_000) return "WBTC";
-    if (p > 500 && p <= 50_000) return "WETH";
-    if (p > 0.01 && p < 2.0) return "SOMI";
+    if (p > 500 && p <= 50_000) return (isSomnia ? "WETH" : (o.symbol?.includes("ETHFDUSD") || o.baseAsset === "ETH" ? "ETH" : "WETH"));
+    if (p > 0.01 && p < 10.0) return "SOMI";
+    if (o.baseAsset) return o.baseAsset.toUpperCase();
     return undefined;
   };
 
@@ -132,7 +138,7 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     (o) => {
       const isFill =
         (o.status === "FILLED" ||
-          ["BUY_FILL", "SELL_FILL", "CUT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(o.action)) &&
+          ["BUY_FILL", "SELL_FILL", "CUT", "TAKE_PROFIT", "EXIT", "SNIPE_BUY", "SNIPE_SELL"].includes(o.action)) &&
         !o.action?.startsWith("CANCEL") &&
         o.status !== "CANCELLED";
       if (!isFill) return false;

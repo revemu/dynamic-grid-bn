@@ -442,27 +442,54 @@ export class BotDatabase {
     let modified = false;
 
     const inferBase = (o: UnifiedOrderRecord): string => {
-      if (o.baseAsset) return o.baseAsset.toUpperCase();
+      const p = Number(o.fillPrice || o.price || 0);
+      const isSomnia = Boolean(
+        o.explorerUrl?.includes("somnia") ||
+        (o.txHash && o.txHash.startsWith("0x")) ||
+        (o.createTxHash && o.createTxHash.startsWith("0x")) ||
+        (o.fillTxHash && o.fillTxHash.startsWith("0x"))
+      );
+      if (p > 50_000) return "WBTC";
+      if (p > 500 && p <= 50_000) return (isSomnia ? "WETH" : (this.data.settings?.exchange === "binance" ? "ETH" : "WETH"));
+      if (p >= 50 && p <= 300) return "SOL";
+      if (p > 0.01 && p < 10.0) return "SOMI";
+
       if (o.symbol) {
         const s = o.symbol.toUpperCase();
         if (s.includes("WBTC") || s.includes("BTC")) return "WBTC";
-        if (s.includes("WETH") || s.includes("ETH")) return (this.data.settings?.exchange === "binance" ? "ETH" : "WETH");
+        if (s.includes("WETH") || s.includes("ETH")) return (isSomnia ? "WETH" : (this.data.settings?.exchange === "binance" ? "ETH" : "WETH"));
         if (s.includes("SOL")) return "SOL";
         if (s.includes("SOMI")) return "SOMI";
       }
-      const p = Number(o.fillPrice || o.price || 0);
-      if (p > 50_000) return "WBTC";
-      if (p > 500 && p <= 50_000) return (this.data.settings?.exchange === "binance" ? "ETH" : "WETH");
-      if (p >= 50 && p <= 300) return "SOL";
-      if (p > 0.01 && p < 2.0) return "SOMI";
+
+      if (o.baseAsset) return o.baseAsset.toUpperCase();
       return "DEFAULT";
     };
 
     // 1. Align pnl, pnlQuote, and pnlUsdso if one is present, and backfill inferred baseAsset
     for (const o of this.data.orders) {
-      // Repair orders wrongly tagged as WETH:USDSO that were executed on Binance
-      const isBinanceOrderId = o.orderId && /^\d{8,}$/.test(o.orderId) && !o.orderId.startsWith("0x");
-      if (isBinanceOrderId && (o.symbol === "WETH:USDSO" || o.quoteAsset === "USDSO")) {
+      const p = Number(o.fillPrice || o.price || 0);
+      const isSomnia = Boolean(
+        o.explorerUrl?.includes("somnia") ||
+        (o.txHash && o.txHash.startsWith("0x")) ||
+        (o.createTxHash && o.createTxHash.startsWith("0x")) ||
+        (o.fillTxHash && o.fillTxHash.startsWith("0x")) ||
+        (p > 0.01 && p < 10.0)
+      );
+
+      // Self-Healing: Repair any SOMI orders that were mistakenly marked as ETH / ETHFDUSD
+      if (p > 0.01 && p < 10.0) {
+        if (o.baseAsset !== "SOMI" || o.symbol !== "SOMI:USDSO" || o.quoteAsset !== "USDSO") {
+          o.baseAsset = "SOMI";
+          o.quoteAsset = "USDSO";
+          o.symbol = "SOMI:USDSO";
+          modified = true;
+        }
+      }
+
+      // Repair orders wrongly tagged as WETH:USDSO that were actually executed on Binance (no Somnia tx/explorer, price in ETH range)
+      const isTrueBinanceOrder = !isSomnia && p > 500 && p <= 50_000 && Boolean(o.orderId && /^\d{8,}$/.test(o.orderId) && !o.orderId.startsWith("0x"));
+      if (isTrueBinanceOrder && (o.symbol === "WETH:USDSO" || o.quoteAsset === "USDSO")) {
         o.symbol = "ETHFDUSD";
         o.baseAsset = "ETH";
         o.quoteAsset = "FDUSD";
