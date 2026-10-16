@@ -106,7 +106,7 @@ export interface IExchangeClient {
   getAccountBalances(symbol: string): Promise<ExchangeAccountBalances>;
   getOpenOrders(symbol: string): Promise<ExchangeOpenOrder[]>;
   getOrder(symbol: string, orderId: string | number): Promise<ExchangeOpenOrder | ExchangeOrderResult>;
-  getTopOfBook(symbol: string): Promise<ExchangeTopOfBook | undefined>;
+  getTopOfBook(symbol: string, forceFresh?: boolean): Promise<ExchangeTopOfBook | undefined>;
   placeOrder(params: PlaceOrderParams): Promise<ExchangeOrderResult>;
   cancelOrder(symbol: string, orderId: string | number): Promise<any>;
   cancelAllOpenOrders(symbol: string): Promise<any>;

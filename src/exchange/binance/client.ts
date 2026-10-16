@@ -237,7 +237,7 @@ export class BinanceClient implements IExchangeClient {
   /**
    * Fetch best bid, ask, and mid price from Binance order book ticker.
    */
-  public async getTopOfBook(symbol: string): Promise<BinanceTopOfBook> {
+  public async getTopOfBook(symbol: string, _forceFresh?: boolean): Promise<BinanceTopOfBook> {
     const sym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
     const data = await this.publicRequest<{
       symbol: string;

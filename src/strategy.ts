@@ -1643,15 +1643,15 @@ export class DynamicGrid {
     let execPrice = 0;
     try {
       if (this.binance.exchangeName === "dreamdex") {
-        // Authoritative: Query DreamDEX indexer/pool directly (never use Binance WS ticker for DreamDEX!)
-        const top = await this.binance.getTopOfBook(this.symbol);
+        // Authoritative: Query DreamDEX indexer/pool directly with forceFresh=true to bypass 1.5s cache
+        const top = await this.binance.getTopOfBook(this.symbol, true);
         if (top?.bestBid && top.bestBid > 0) {
           execPrice = top.bestBid;
         }
       } else if (this.wsBookTicker && Date.now() - this.wsBookTicker.time < 10_000 && this.wsBookTicker.bestBid > 0) {
         execPrice = this.wsBookTicker.bestBid;
       } else {
-        const top = await this.binance.getTopOfBook(this.symbol);
+        const top = await this.binance.getTopOfBook(this.symbol, true);
         if (top?.bestBid && top.bestBid > 0) {
           execPrice = top.bestBid;
         }
@@ -5896,12 +5896,20 @@ export class DynamicGrid {
     const now = Date.now();
 
     if (this.cfg.dryRun) {
-      const dryLimitPrice = roundToTick(action === "SELL" ? Math.max(targetPrice, price * (1 - slippagePctVal / 100)) : targetPrice * (1 - slippagePctVal / 100), this.tickSize || 0.0001);
+      let dryLimitPrice: number;
+      if (action === "SELL") {
+        dryLimitPrice = roundToTick(Math.max(targetPrice, price * (1 - slippagePctVal / 100)), this.tickSize || 0.0001);
+      } else if (action === "MANUAL") {
+        dryLimitPrice = roundToTick(price, this.tickSize || 0.0001);
+      } else {
+        dryLimitPrice = roundToTick(targetPrice * (1 - slippagePctVal / 100), this.tickSize || 0.0001);
+      }
+      const effectiveSlipPct = action === "MANUAL" ? 0 : slippagePctVal;
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(held, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       this.log(
-        `[dry-run] 🚨 ${actionLabel}: ${held.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${dryLimitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
+        `[dry-run] 🚨 ${actionLabel}: ${held.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${dryLimitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
       );
       this.emit({
         type: "order",
@@ -5923,7 +5931,7 @@ export class DynamicGrid {
           maker: false,
           isIoc: true,
           targetPrice,
-          slippagePct: slippagePctVal,
+          slippagePct: effectiveSlipPct,
           limitPrice: dryLimitPrice,
         },
       });
@@ -5976,11 +5984,22 @@ export class DynamicGrid {
       // On DreamDEX CLOB / IOC bracket, strict limit price with 0 slippage causes Revert 0xc04ad919 if book depth shifts.
       let limitPrice = price;
       if (this.binance.exchangeName === "dreamdex" || this.cfg.orderExecutionMode === "IOC_BRACKET") {
+        let currentBestBid = 0;
         if (this.binance.exchangeName === "dreamdex") {
           try {
-            const top = await this.binance.getTopOfBook(this.symbol);
+            const top = await this.binance.getTopOfBook(this.symbol, action === "MANUAL");
             if (top?.bestBid && top.bestBid > 0) {
+              currentBestBid = top.bestBid;
               price = Math.min(price, top.bestBid);
+            }
+          } catch {}
+        } else if (this.wsBookTicker && Date.now() - this.wsBookTicker.time < 10_000 && this.wsBookTicker.bestBid > 0) {
+          currentBestBid = this.wsBookTicker.bestBid;
+        } else {
+          try {
+            const top = await this.binance.getTopOfBook(this.symbol, action === "MANUAL");
+            if (top?.bestBid && top.bestBid > 0) {
+              currentBestBid = top.bestBid;
             }
           } catch {}
         }
@@ -5993,8 +6012,17 @@ export class DynamicGrid {
           const minProfitablePrice = (isStrictProfitRequired && avgEntry > 0) ? avgEntry * 1.0005 : anchor;
           const minAllowedPrice = Math.max(minProfitablePrice, anchor);
           limitPrice = Math.max(minAllowedPrice, price * (1 - slippagePct));
+        } else if (action === "MANUAL") {
+          // Manual Sell All: If Best Bid is available in orderbook, send strictly at Best Bid (0% discount)
+          // No need to reduce/discount price beforehand. Only fallback to slippage if no valid Best Bid exists.
+          const effectiveBid = currentBestBid > 0 ? currentBestBid : (price > 0 ? price : 0);
+          if (effectiveBid > 0) {
+            limitPrice = effectiveBid;
+          } else {
+            limitPrice = (price > 0 ? price : targetPrice) * (1 - slippagePct);
+          }
         } else {
-          // Cut Loss or Manual Exit: Allow matching down to max bid discount to guarantee immediate execution
+          // Cut Loss: Allow matching down to max bid discount to guarantee immediate execution
           limitPrice = price * (1 - slippagePct);
         }
         limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
@@ -6036,8 +6064,9 @@ export class DynamicGrid {
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(actualQty, actualPrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
+      const effectiveSlipPct = (action === "MANUAL" && limitPrice >= targetPrice) ? 0 : slippagePctVal;
       this.log(
-        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${actualPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
+        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${actualPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.emit({
         type: "order",
@@ -6061,7 +6090,7 @@ export class DynamicGrid {
           maker: false,
           isIoc: true,
           targetPrice,
-          slippagePct: slippagePctVal,
+          slippagePct: effectiveSlipPct,
           limitPrice,
         },
       });

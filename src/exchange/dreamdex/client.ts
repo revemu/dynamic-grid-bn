@@ -412,12 +412,12 @@ export class DreamDexClient implements IExchangeClient {
 
   private topOfBookCache: Map<string, { data: ExchangeTopOfBook; fetchedAt: number }> = new Map();
 
-  public async getTopOfBook(symbol: string): Promise<ExchangeTopOfBook | undefined> {
+  public async getTopOfBook(symbol: string, forceFresh = false): Promise<ExchangeTopOfBook | undefined> {
     const market = this.resolveMarket(symbol);
     const now = Date.now();
     const cached = this.topOfBookCache.get(market.pool);
-    // Use 1.5s cache to avoid spamming GraphQL on fast polling
-    if (cached && now - cached.fetchedAt < 1500) {
+    // Use 1.5s cache to avoid spamming GraphQL on fast polling (unless forceFresh is requested)
+    if (!forceFresh && cached && now - cached.fetchedAt < 1500) {
       return cached.data;
     }
 
