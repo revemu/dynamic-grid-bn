@@ -1404,3 +1404,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - แสดง `Full-Fill Avg Entry (% ของกรอบ)`
        - แสดง `Inner Spread (Buy L1 -> Sell T1)`
        - แสดง `First Profit Distance (Avg -> T1)` พร้อมป้ายขนาดไม้ (`%` และ `$USDT`) ของแต่ละเลเวลซื้อ
+
+### 20. Dashboard v2.2 Redesign, Categorized 4-Tab Config Modal & Obsolete Config Cleanup (`data/settings.db.json`, `src/db.ts`, `src/config.ts`, `public/index.html`, `public/style.css`, `public/app.js`)
+- **สาเหตุและเป้าหมายการปรับปรุง**:
+  1. **หน้า Dashboard เดิมอัดข้อมูลซ้อนกัน**: การ์ด KPI ใบแรกอัดทั้ง Wallet และ Position ไว้ด้วยกัน, แถบปุ่มด้านบนเรียงติดกันยาวโดยไม่แบ่งกลุ่ม, ตาราง `Open Orders` และ `Holding Lots` ถูกซ่อนอยู่ใน Modal ลึก และบันไดกริด 13 ขั้นแสดง `Hold 20%, 40%, 60%, 80%, 100%` แบบตายตัวไม่เปลี่ยนตามโหมด `PYRAMID`
+  2. **หน้า Config กระจัดกระจายและมีค่าที่เลิกใช้แล้วค้างอยู่**: การตั้งค่าที่เกี่ยวข้องกันกระจายอยู่คนละแท็บ ไม่มีกรอบหมวดหมู่ย่อย แสดงพารามิเตอร์ทุกตัวพร้อมกันแม้จะปิดฟีเจอร์นั้นอยู่ และมีคีย์เก่าที่ไม่ได้ใช้งานแล้ว (`srMinTouchCount`, `srTouchTolerancePct`, `enableLaggardSnipe`, `enableLaggardGuard`, `laggardThresholdPct`, `maxInventoryUsdso`, `requireProfitAboveAvgEntry`, `tradingTimeframe`, `trendTimeframe`) ปะปนอยู่ใน `data/settings.db.json`
+- **สถาปัตยกรรมและการปรับปรุงใหม่**:
+  1. **Dashboard Layout v2.2 (`public/index.html`, `public/style.css`, `public/app.js`)**:
+     - **Top Bar 4-Cluster Layout**: แยกกลุ่มชัดเจนเป็น (1) Brand + Pair Selector + System Status Pills (`#connectionStatus`, `#dryRunBadge`, `#tickSpeedBadge`), (2) ควบคุมการทำงาน (`Pause`), (3) ประวัติและสรุปรอบ (`จัดการเทรด/ไม้`, `สรุปรอบเทรด`), (4) ฉุกเฉินและรีเซ็ต (`ยกเลิกออเดอร์`, `ขายออกทั้งหมด`, `รีเซ็ต`) และปุ่ม `ตั้งค่า (Config)`
+     - **4-Card KPI Strip (`kpi-four-grid`)**: แยกการ์ดออกเป็น 4 ใบเต็มความกว้าง: `💼 กระเป๋าเงิน (Spot Wallet)`, `📦 ของที่ถือ & ความจุ (Active Position)`, `💰 กำไร / ขาดทุน (Performance PnL)`, และ `📖 ราคาตลาด (Best Bid / Ask)`
+     - **Dynamic Pyramid / Equal Grid Channel Meter (`updateZoneLevelBars`)**: บันได 13 ขั้นคำนวณและแสดงสัดส่วน `Hold % (+$USDT)` ของแต่ละ Buy Level (`L1–L5`) และ Sell Target (`T1–T5`) แบบไดนามิกตามโหมด `PYRAMID` หรือ `EQUAL` และตามเลเวลที่เปิดใช้งานจริง
+     - **Right Sidebar 4-Tab Live Dock**: เพิ่มแท็บ `📖 ออเดอร์` (`#openOrdersFeed`) และ `📦 ไม้` (`#holdingLotsFeed`) ลงในแถบด้านขวาคู่กับ `⚡ เทรด` และ `ทั้งหมด` เพื่อให้ดูออเดอร์ Limit ที่วางรอและรายการไม้ที่ถืออยู่ได้ทันทีจากหน้าหลักโดยไม่ต้องเปิด Modal
+  2. **Categorized 4-Tab Settings Modal & Smart Conditional Visibility (`updateSettingsConditionalVisibility`)**:
+     - จัดระเบียบหน้าต่าง Settings ใหม่เป็น 4 หมวดหมู่ตามลำดับความคิด พร้อมการ์ดหมวดย่อย (`.cfg-section-card`):
+       - **Tab 1 (`🎯 1. กริด & การออกคำสั่ง`)**: งบประมาณ & รูปแบบคำสั่ง (`IOC_BRACKET` / `LIMIT_MAKER`), โหมดคิดกำไร (`GRID_CASHFLOW` / `PORTFOLIO_AVG_PROFIT`), กำไรสุทธิขั้นต่ำ (`minNetProfitPct`), ตารางตั้งค่าระดับกริด 5 ชั้น + โหมด `PYRAMID`/`EQUAL` + Live Grid Simulator, และเงื่อนไขโซนซื้อ/ขาย
+       - **Tab 2 (`📊 2. กรอบราคา & โครงสร้าง`)**: การคำนวณกรอบราคา (`channelMode`, `dowTimeframe`, `min/maxChannelWidthPct`, `adjustChannelOnClosedOnly`), การคัดกรองไส้เทียน (`useTrueWick` ซ่อน `wickThresholdPct` อัตโนมัติเมื่อเปิดใช้ปลายไส้เทียนจริง), ตัวกรองเทรนด์ (`dowTrendFilter`, `trendlineFilter`), และการบีบแคบ/สามเหลี่ยม (`enableNarrowChannelCollapse`, `enableTriangleSqueezeExit` ซ่อนพารามิเตอร์ย่อยอัตโนมัติเมื่อปิดสวิตช์)
+       - **Tab 3 (`🛡️ 3. ความเสี่ยง & Cut Loss`)**: การขายทำกำไรที่เพดาน (`takeProfitAtUpperBound`, `enableSellAtRealCeiling`, `enableLhDynamicEscape`), ระบบตัดขาดทุน (`cutLossAtLowerBound` และ `enableTwoStageCutLoss` ซ่อน/แสดงพารามิเตอร์ย่อยอัตโนมัติ), และเวลาถือครองสูงสุด (`stuckTimeoutMinutes`)
+       - **Tab 4 (`🔌 4. กระดานเทรด & ระบบ`)**: กระดานเทรด & คู่เหรียญ & Dry Run, API Keys / RPC ตามกระดานที่เลือก, และการตั้งค่าระบบ (`intervalMs`, `timezone`, `dashboardPort`, จำนวนแท่งเทียน)
+  3. **Obsolete Config Cleanup (`data/settings.db.json`, `src/db.ts`, `src/config.ts`)**:
+     - ลบคีย์ที่เลิกใช้และซ้ำซ้อนออกจาก `data/settings.db.json` และเพิ่ม `DEPRECATED_SETTINGS_KEYS` ใน `flushSettingsSync()` (`src/db.ts`) เพื่อป้องกันไม่ให้คีย์เก่าถูกเขียนกลับลงไฟล์อีก
+     - แปลง `tradingTimeframe`, `trendTimeframe`, และ `requireProfitAboveAvgEntry` ใน `src/config.ts` เป็น Computed Getter/Setter ที่อ้างอิงจาก `dowTimeframe` และ `sellProfitMode` โดยตรง

@@ -540,6 +540,12 @@ export class DynamicGrid {
       enabledSellTargets: Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true],
       buyLevelPcts: Array.isArray(this.cfg.buyLevelPcts) ? this.cfg.buyLevelPcts : [42, 32, 22, 12, 2],
       sellLevelPcts: Array.isArray(this.cfg.sellLevelPcts) ? this.cfg.sellLevelPcts : [52, 62, 72, 82, 92],
+      buySizingMode: this.cfg.buySizingMode ?? "PYRAMID",
+      buyLevelWeights: Array.isArray(this.cfg.buyLevelWeights) ? this.cfg.buyLevelWeights : [10, 15, 20, 25, 30],
+      minNetProfitPct: this.cfg.minNetProfitPct ?? 0.25,
+      enableLhDynamicEscape: this.cfg.enableLhDynamicEscape !== false,
+      enableTwoStageCutLoss: this.cfg.enableTwoStageCutLoss !== false,
+      cutLossStage2Multiplier: this.cfg.cutLossStage2Multiplier ?? 2.0,
     };
   }
 
@@ -3426,6 +3432,9 @@ export class DynamicGrid {
         enabledSellTargets: this.cfg.enabledSellTargets ?? [true, true, true, true, true],
         buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
         sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
+        buySizingMode: this.cfg.buySizingMode ?? "PYRAMID",
+        buyLevelWeights: this.cfg.buyLevelWeights ?? [10, 15, 20, 25, 30],
+        buyWeightFractions: this.getBuyLevelWeightFractions(),
         openOrders: this.openOrders.map((o) => ({
           id: o.id,
           onChainOrderId: o.onChainOrderId,

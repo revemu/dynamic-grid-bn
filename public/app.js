@@ -1018,23 +1018,52 @@
       elStepPriceFloor.title = `0% Grid Base (Structural Valley: $${floor.toFixed(6)})`;
     }
 
-    // 2. Define ladder steps with percentage targets
+    // 2. Define ladder steps with dynamic Pyramid / Equal percentage targets
     const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true, true];
     const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true, true];
+    const maxInv = data.maxInventoryQuote ?? data.maxInventoryUsdso ?? 40;
+
+    const rawBuyWeights = (data.buySizingMode === "EQUAL") ? [1, 1, 1, 1, 1] : [10, 15, 20, 25, 30];
+    const activeBuyWeightSum = rawBuyWeights.reduce((s, w, i) => (enabledBuys[i] !== false ? s + w : s), 0);
+    const buyFractions = (Array.isArray(data.buyWeightFractions) && data.buyWeightFractions.length >= 5)
+      ? data.buyWeightFractions
+      : rawBuyWeights.map((w, i) => (enabledBuys[i] !== false && activeBuyWeightSum > 0 ? w / activeBuyWeightSum : 0));
+
+    let cumBuyFrac = 0;
+    const buyCumPcts = [0, 0, 0, 0, 0];
+    const buyStepLabels = buyFractions.map((frac, i) => {
+      if (enabledBuys[i] === false) return "Disabled (OFF)";
+      cumBuyFrac += frac;
+      const cumPct = Math.round(cumBuyFrac * 100);
+      buyCumPcts[i] = cumPct;
+      const trancheDollar = (maxInv * frac).toFixed(0);
+      return `Hold ${cumPct}% (+$${trancheDollar})`;
+    });
+
+    const activeSellIndices = [0, 1, 2, 3, 4].filter((i) => enabledSells[i] !== false);
+    const totalActiveSells = activeSellIndices.length;
+    const sellHoldPcts = [80, 60, 40, 20, 0];
+    const sellStepLabels = [0, 1, 2, 3, 4].map((i) => {
+      if (enabledSells[i] === false) return "Disabled (OFF)";
+      const orderInActive = activeSellIndices.indexOf(i) + 1;
+      const remPct = totalActiveSells > 0 ? Math.max(0, Math.round((1 - orderInActive / totalActiveSells) * 100)) : 0;
+      sellHoldPcts[i] = remPct;
+      return remPct === 0 ? "Flat 0%" : `Hold ${remPct}%`;
+    });
 
     const ladderSteps = [
       { pct: 100, el: elStepCeil, priceEl: elStepPriceCeil, defaultAction: "Flat 0%", price: ceil, enabled: true },
-      { pct: sellPcts[4], el: elStepSell5, priceEl: elStepPriceSell5, defaultAction: "Hold 0%", price: floor + span * (sellPcts[4] / 100), enabled: enabledSells[4] !== false },
-      { pct: sellPcts[3], el: elStepSell4, priceEl: elStepPriceSell4, defaultAction: "Hold 20%", price: floor + span * (sellPcts[3] / 100), enabled: enabledSells[3] !== false },
-      { pct: sellPcts[2], el: elStepSell3, priceEl: elStepPriceSell3, defaultAction: "Hold 40%", price: floor + span * (sellPcts[2] / 100), enabled: enabledSells[2] !== false },
-      { pct: sellPcts[1], el: elStepSell2, priceEl: elStepPriceSell2, defaultAction: "Hold 60%", price: floor + span * (sellPcts[1] / 100), enabled: enabledSells[1] !== false },
-      { pct: sellPcts[0], el: elStepSell1, priceEl: elStepPriceSell1, defaultAction: "Hold 80%", price: floor + span * (sellPcts[0] / 100), enabled: enabledSells[0] !== false },
+      { pct: sellPcts[4], el: elStepSell5, priceEl: elStepPriceSell5, defaultAction: sellStepLabels[4], price: floor + span * (sellPcts[4] / 100), enabled: enabledSells[4] !== false },
+      { pct: sellPcts[3], el: elStepSell4, priceEl: elStepPriceSell4, defaultAction: sellStepLabels[3], price: floor + span * (sellPcts[3] / 100), enabled: enabledSells[3] !== false },
+      { pct: sellPcts[2], el: elStepSell3, priceEl: elStepPriceSell3, defaultAction: sellStepLabels[2], price: floor + span * (sellPcts[2] / 100), enabled: enabledSells[2] !== false },
+      { pct: sellPcts[1], el: elStepSell2, priceEl: elStepPriceSell2, defaultAction: sellStepLabels[1], price: floor + span * (sellPcts[1] / 100), enabled: enabledSells[1] !== false },
+      { pct: sellPcts[0], el: elStepSell1, priceEl: elStepPriceSell1, defaultAction: sellStepLabels[0], price: floor + span * (sellPcts[0] / 100), enabled: enabledSells[0] !== false },
       { pct: 50, el: elStepCenter, priceEl: elStepPriceCenter, defaultAction: "Midline", price: center, enabled: true },
-      { pct: buyPcts[0], el: elStepBuy1, priceEl: elStepPriceBuy1, defaultAction: "Hold 20%", price: floor + span * (buyPcts[0] / 100), enabled: enabledBuys[0] !== false },
-      { pct: buyPcts[1], el: elStepBuy2, priceEl: elStepPriceBuy2, defaultAction: "Hold 40%", price: floor + span * (buyPcts[1] / 100), enabled: enabledBuys[1] !== false },
-      { pct: buyPcts[2], el: elStepBuy3, priceEl: elStepPriceBuy3, defaultAction: "Hold 60%", price: floor + span * (buyPcts[2] / 100), enabled: enabledBuys[2] !== false },
-      { pct: buyPcts[3], el: elStepBuy4, priceEl: elStepPriceBuy4, defaultAction: "Hold 80%", price: floor + span * (buyPcts[3] / 100), enabled: enabledBuys[3] !== false },
-      { pct: buyPcts[4], el: elStepBuy5, priceEl: elStepPriceBuy5, defaultAction: "Hold 100%", price: floor + span * (buyPcts[4] / 100), enabled: enabledBuys[4] !== false },
+      { pct: buyPcts[0], el: elStepBuy1, priceEl: elStepPriceBuy1, defaultAction: buyStepLabels[0], price: floor + span * (buyPcts[0] / 100), enabled: enabledBuys[0] !== false },
+      { pct: buyPcts[1], el: elStepBuy2, priceEl: elStepPriceBuy2, defaultAction: buyStepLabels[1], price: floor + span * (buyPcts[1] / 100), enabled: enabledBuys[1] !== false },
+      { pct: buyPcts[2], el: elStepBuy3, priceEl: elStepPriceBuy3, defaultAction: buyStepLabels[2], price: floor + span * (buyPcts[2] / 100), enabled: enabledBuys[2] !== false },
+      { pct: buyPcts[3], el: elStepBuy4, priceEl: elStepPriceBuy4, defaultAction: buyStepLabels[3], price: floor + span * (buyPcts[3] / 100), enabled: enabledBuys[3] !== false },
+      { pct: buyPcts[4], el: elStepBuy5, priceEl: elStepPriceBuy5, defaultAction: buyStepLabels[4], price: floor + span * (buyPcts[4] / 100), enabled: enabledBuys[4] !== false },
       { pct: 0, el: elStepFloor, priceEl: elStepPriceFloor, defaultAction: "Cut Loss", price: floor, enabled: true },
     ];
 
@@ -1178,35 +1207,35 @@
     } else if (pos <= buyPcts[4]) {
       activeStep = elStepBuy5;
       levelName = `Buy Level 5 (${buyPcts[4]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 100% (Max Inventory)";
+      targetText = `Target ${buyCumPcts[4]}% (Max Inventory)`;
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
     } else if (pos <= buyPcts[3]) {
       activeStep = elStepBuy4;
       levelName = `Buy Level 4 (${buyPcts[3]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 80% (4/5 Capacity)";
+      targetText = `Target ${buyCumPcts[3]}% Capacity`;
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
     } else if (pos <= buyPcts[2]) {
       activeStep = elStepBuy3;
       levelName = `Buy Level 3 (${buyPcts[2]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 60% (3/5 Capacity)";
+      targetText = `Target ${buyCumPcts[2]}% Capacity`;
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
     } else if (pos <= buyPcts[1]) {
       activeStep = elStepBuy2;
       levelName = `Buy Level 2 (${buyPcts[1]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 40% (2/5 Capacity)";
+      targetText = `Target ${buyCumPcts[1]}% Capacity`;
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
     } else if (pos <= buyPcts[0]) {
       activeStep = elStepBuy1;
       levelName = `Buy Level 1 (${buyPcts[0]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 20% (1/5 Capacity)";
+      targetText = `Target ${buyCumPcts[0]}% Capacity`;
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
@@ -1227,35 +1256,35 @@
     } else if (pos <= ((sellPcts[0] + sellPcts[1]) / 2)) {
       activeStep = elStepSell1;
       levelName = `Sell Target 1 (${sellPcts[0]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Hold 80% (Exit 1/5)";
+      targetText = `Hold ${sellHoldPcts[0]}%`;
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
     } else if (pos <= ((sellPcts[1] + sellPcts[2]) / 2)) {
       activeStep = elStepSell2;
       levelName = `Sell Target 2 (${sellPcts[1]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Hold 60% (Exit 2/5)";
+      targetText = `Hold ${sellHoldPcts[1]}%`;
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
     } else if (pos <= ((sellPcts[2] + sellPcts[3]) / 2)) {
       activeStep = elStepSell3;
       levelName = `Sell Target 3 (${sellPcts[2]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Hold 40% (Exit 3/5)";
+      targetText = `Hold ${sellHoldPcts[2]}%`;
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
     } else if (pos <= ((sellPcts[3] + sellPcts[4]) / 2)) {
       activeStep = elStepSell4;
       levelName = `Sell Target 4 (${sellPcts[3]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Hold 20% (Exit 4/5)";
+      targetText = `Hold ${sellHoldPcts[3]}%`;
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
     } else if (pos < 99) {
       activeStep = elStepSell5;
       levelName = `Sell Target 5 (${sellPcts[4]}% | ${pos.toFixed(1)}%)`;
-      targetText = "Flat 0% (Final Target Exit)";
+      targetText = `Hold ${sellHoldPcts[4]}% (Final Target)`;
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
@@ -1561,7 +1590,7 @@
     }
 
     // 1. Top KPI: Position Allocation
-    if (elTopPosBadge) elTopPosBadge.textContent = `${holdPct.toFixed(1)}%`;
+    if (elTopPosBadge) elTopPosBadge.textContent = lots.length > 0 ? `${holdPct.toFixed(1)}% (${lots.length} ไม้)` : `${holdPct.toFixed(1)}%`;
     if (elTopPosBase) elTopPosBase.textContent = `${totalBase.toFixed(4)} ${baseSym}`;
     if (elTopPosUsd) elTopPosUsd.textContent = `$${invUsd.toFixed(2)}`;
     if (elTopMaxInv) elTopMaxInv.textContent = maxInvUsd.toFixed(0);
@@ -1627,7 +1656,7 @@
       }
     }
     if (elLotsCount) elLotsCount.textContent = `${lots.length} Open Lots`;
-    if (elLotsBadgeCount) elLotsBadgeCount.textContent = `${holdPct.toFixed(0)}%`;
+    if (elLotsBadgeCount) elLotsBadgeCount.textContent = `${lots.length}`;
 
     if (elPosCurrentHold) {
       elPosCurrentHold.textContent = `$${invUsd.toFixed(2)} (${holdPct.toFixed(0)}%)`;
@@ -2199,7 +2228,7 @@
     if (!openOrders || openOrders.length === 0) {
       elOpenOrdersTableBody.innerHTML = `
         <tr class="empty-row">
-          <td colspan="5">No resting maker orders in book</td>
+          <td colspan="6">ไม่มีออเดอร์ Limit ที่วางรอในสมุดคำสั่งซื้อ</td>
         </tr>`;
       if (elOpenOrdersBadgeCount) elOpenOrdersBadgeCount.textContent = "0";
       if (elOpenOrdersTotalValue) elOpenOrdersTotalValue.textContent = "$0.00 Waiting";
@@ -2436,12 +2465,16 @@
 
   // Activity Feed & Tabs Elements
   const elTradesFeed = document.getElementById("tradesFeed");
+  const elOpenOrdersFeed = document.getElementById("openOrdersFeed");
+  const elHoldingLotsFeed = document.getElementById("holdingLotsFeed");
   const elOnchainFeed = document.getElementById("onchainFeed");
   const elAllFeed = document.getElementById("allFeed");
   const elTradesCount = document.getElementById("tradesCount");
   const elOnchainCount = document.getElementById("onchainCount");
   const elOrdersCount = document.getElementById("ordersCount");
   const tabTradesBtn = document.getElementById("tabTradesBtn");
+  const tabOpenOrdersBtn = document.getElementById("tabOpenOrdersBtn");
+  const tabHoldingLotsBtn = document.getElementById("tabHoldingLotsBtn");
   const tabOnchainBtn = document.getElementById("tabOnchainBtn");
   const tabAllBtn = document.getElementById("tabAllBtn");
   let tradesCount = 0;
@@ -2451,6 +2484,8 @@
   // Tab switching logic
   const actTabs = [
     { btn: tabTradesBtn, feed: elTradesFeed, name: "trades" },
+    { btn: tabOpenOrdersBtn, feed: elOpenOrdersFeed, name: "openorders" },
+    { btn: tabHoldingLotsBtn, feed: elHoldingLotsFeed, name: "holdinglots" },
     { btn: tabOnchainBtn, feed: elOnchainFeed, name: "onchain" },
     { btn: tabAllBtn, feed: elAllFeed, name: "all" },
   ];
@@ -3152,12 +3187,57 @@
     const binanceGroups = document.querySelectorAll(".binance-fields-group");
     const dreamdexGroups = document.querySelectorAll(".dreamdex-fields-group");
     binanceGroups.forEach((el) => {
-      el.style.display = isDreamdex ? "none" : "flex";
+      el.style.display = isDreamdex ? "none" : "";
     });
     dreamdexGroups.forEach((el) => {
-      el.style.display = isDreamdex ? "flex" : "none";
+      el.style.display = isDreamdex ? "" : "none";
     });
   }
+
+  function updateSettingsConditionalVisibility() {
+    const execMode = document.getElementById("cfg_orderExecutionMode")?.value || "IOC_BRACKET";
+    const isIoc = execMode === "IOC_BRACKET";
+    const grpIoc = document.getElementById("group_iocSlippage");
+    const grpMakerPrice = document.getElementById("group_makerPriceTol");
+    const grpMakerQty = document.getElementById("group_makerQtyTol");
+    if (grpIoc) grpIoc.style.display = isIoc ? "" : "none";
+    if (grpMakerPrice) grpMakerPrice.style.display = isIoc ? "none" : "";
+    if (grpMakerQty) grpMakerQty.style.display = isIoc ? "none" : "";
+
+    const useTrueWick = document.getElementById("cfg_useTrueWick")?.checked ?? true;
+    const grpWick = document.getElementById("group_wickThreshold");
+    if (grpWick) grpWick.style.display = useTrueWick ? "none" : "";
+
+    const narrowEnabled = document.getElementById("cfg_enableNarrowChannelCollapse")?.checked ?? true;
+    const grpNarrow = document.getElementById("narrowChannelSubGroup");
+    if (grpNarrow) grpNarrow.style.display = narrowEnabled ? "" : "none";
+
+    const squeezeEnabled = document.getElementById("cfg_enableTriangleSqueezeExit")?.checked ?? true;
+    const grpSqueeze = document.getElementById("triangleSqueezeSubGroup");
+    if (grpSqueeze) grpSqueeze.style.display = squeezeEnabled ? "" : "none";
+
+    const cutLossEnabled = document.getElementById("cfg_cutLossAtLowerBound")?.checked ?? true;
+    const grpCutLoss = document.getElementById("cutLossSubGroup");
+    if (grpCutLoss) grpCutLoss.style.display = cutLossEnabled ? "" : "none";
+
+    const twoStageEnabled = document.getElementById("cfg_enableTwoStageCutLoss")?.checked ?? true;
+    const grpStage2 = document.getElementById("group_stage2Multiplier");
+    if (grpStage2) grpStage2.style.display = twoStageEnabled ? "" : "none";
+  }
+
+  [
+    "cfg_orderExecutionMode",
+    "cfg_useTrueWick",
+    "cfg_enableNarrowChannelCollapse",
+    "cfg_enableTriangleSqueezeExit",
+    "cfg_cutLossAtLowerBound",
+    "cfg_enableTwoStageCutLoss",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("change", updateSettingsConditionalVisibility);
+    }
+  });
 
   tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3199,7 +3279,7 @@
       setVal("cfg_dreamdexRpcUrl", data.dreamdexRpcUrl || "https://api.infra.mainnet.somnia.network");
       setVal("cfg_dashboardPort", data.dashboardPort || 3333);
       setCheck("cfg_dryRun", data.dryRun !== false);
-      setVal("cfg_maxInventoryUsdso", data.maxInventoryUsdso);
+      setVal("cfg_maxInventoryUsdso", data.maxInventoryQuote ?? data.maxInventoryUsdso);
       setVal("cfg_intervalMs", data.intervalMs ?? 2000);
       setVal("cfg_floorBufferPct", data.floorBufferPct);
       setVal("cfg_cutLossMaxBidDiscountPct", data.cutLossMaxBidDiscountPct);
@@ -3281,6 +3361,7 @@
       setCheck("cfg_sell_t5", enabledSells[4] !== false);
 
       updateGridSimulatorPreview();
+      updateSettingsConditionalVisibility();
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -3427,7 +3508,6 @@
       dashboardPort: document.getElementById("cfg_dashboardPort") ? parseInt(document.getElementById("cfg_dashboardPort").value, 10) : undefined,
       dryRun: document.getElementById("cfg_dryRun") ? document.getElementById("cfg_dryRun").checked : false,
       maxInventoryQuote: maxInvVal,
-      maxInventoryUsdso: maxInvVal,
       intervalMs: parseFloat(document.getElementById("cfg_intervalMs").value),
       floorBufferPct: parseFloat(document.getElementById("cfg_floorBufferPct").value),
       cutLossMaxBidDiscountPct: parseFloat(document.getElementById("cfg_cutLossMaxBidDiscountPct").value),
@@ -3459,7 +3539,6 @@
       enableSellBelowTrendResistance: document.getElementById("cfg_enableSellBelowTrendResistance").checked,
       enableSellAtRealCeiling: document.getElementById("cfg_enableSellAtRealCeiling").checked,
       sellProfitMode: document.getElementById("cfg_sellProfitMode").value,
-      requireProfitAboveAvgEntry: document.getElementById("cfg_sellProfitMode").value === "PORTFOLIO_AVG_PROFIT",
       enableTriangleSqueezeExit: document.getElementById("cfg_enableTriangleSqueezeExit").checked,
       triangleSqueezeSpreadPct: parseFloat(document.getElementById("cfg_triangleSqueezeSpreadPct").value),
       minTradeableChannelWidthPct: parseFloat(document.getElementById("cfg_minTradeableChannelWidthPct").value),

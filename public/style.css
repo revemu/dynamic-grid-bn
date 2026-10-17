@@ -2926,3 +2926,316 @@ input:checked + .slider:before { transform: translateX(20px); }
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD REDESIGN v2.2 — Top Bar Clusters, 4-Card KPI, Dock & Config Cards
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 1. Top Bar System Pills & Action Button Clusters */
+.nav-system-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-system-pills .status-pill,
+.nav-system-pills .dry-badge {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.nav-btn-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 3px 5px;
+  border-radius: 8px;
+}
+
+.nav-group-danger {
+  background: rgba(244, 63, 94, 0.04);
+  border-color: rgba(244, 63, 94, 0.16);
+}
+
+/* 2. 4-Card KPI Strip */
+.kpi-summary-bar.kpi-four-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1200px) {
+  .kpi-summary-bar.kpi-four-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .kpi-summary-bar.kpi-four-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kpi-wallet-card {
+  border-left: 3px solid #a855f7;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.07), var(--bg-card));
+}
+
+.kpi-pos-card {
+  border-left: 3px solid #38bdf8;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.07), var(--bg-card));
+}
+
+.kpi-body-single {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  flex: 1;
+}
+
+.kpi-main-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.kpi-sub-between {
+  justify-content: space-between;
+  width: 100%;
+}
+
+/* 3. Compact 13-Step Vertical Ladder */
+.dashboard-grid {
+  grid-template-columns: 1fr 370px;
+}
+
+.glow-ladder-card {
+  flex: 1.05;
+  padding: 8px 10px;
+  gap: 4px;
+}
+
+.ladder-active-summary {
+  padding: 3px 8px;
+  margin: 1px 0 2px 0;
+}
+
+.vertical-ladder-meter {
+  gap: 1.5px;
+}
+
+.ladder-step {
+  grid-template-columns: 34px 1fr 64px;
+  padding: 1.5px 5px;
+  min-height: 19px;
+}
+
+/* 4. Right Sidebar Multi-Tab Dock (Trades, Open Orders, Holding Lots, Logs) */
+.sidebar-activity-card {
+  flex: 1;
+  padding: 8px 10px;
+}
+
+.act-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(56, 189, 248, 0.18);
+  color: #38bdf8;
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  min-width: 16px;
+  height: 14px;
+}
+
+.sidebar-mini-table-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 0;
+}
+
+.sidebar-mini-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 5px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.mini-toolbar-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.mini-toolbar-val {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.sidebar-mini-table {
+  font-size: 10px;
+}
+
+.sidebar-mini-table th {
+  padding: 3px 5px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.sidebar-mini-table td {
+  padding: 4px 5px;
+  font-size: 9.5px;
+}
+
+/* 5. Categorized Settings Modal Cards & Sub-groups */
+.modal-card.settings-modal {
+  max-width: 880px;
+  max-height: 88vh;
+}
+
+.settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.settings-tabs .tab-btn {
+  text-align: center;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .settings-tabs {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.cfg-section-card {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cfg-section-card:last-child {
+  margin-bottom: 0;
+}
+
+.cfg-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cfg-section-title {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #38bdf8;
+  letter-spacing: 0.2px;
+}
+
+.cfg-section-desc {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.cfg-span-2 {
+  grid-column: span 2;
+}
+
+@media (max-width: 768px) {
+  .cfg-span-2 {
+    grid-column: span 1;
+  }
+}
+
+.cfg-conditional-subgrid {
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+/* 6. 5-Level Grid Target Rows inside Settings */
+.grid-levels-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.grid-level-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.grid-level-sell {
+  border-left: 3px solid #f97316;
+  background: linear-gradient(90deg, rgba(249, 115, 22, 0.06), rgba(15, 23, 42, 0.4));
+}
+
+.grid-level-buy {
+  border-left: 3px solid #10b981;
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.06), rgba(15, 23, 42, 0.4));
+}
+
+.grid-level-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin: 0;
+}
+
+.grid-level-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.grid-sell-check input[type="checkbox"] {
+  accent-color: #f97316;
+}
+
+.grid-buy-check input[type="checkbox"] {
+  accent-color: #10b981;
+}
+
+.pct-input-wrap {
+  width: 120px;
+  flex-shrink: 0;
+}
+

@@ -245,6 +245,26 @@ export class BotDatabase {
 
   public flushSettingsSync(): void {
     try {
+      const deprecatedKeys = [
+        "srMinTouchCount",
+        "srTouchTolerancePct",
+        "enableLaggardSnipe",
+        "enableLaggardGuard",
+        "laggardThresholdPct",
+        "maxInventoryUsdso",
+        "maxSessionLossUsdso",
+        "requireProfitAboveAvgEntry",
+        "tradingTimeframe",
+        "trendTimeframe",
+      ];
+      if (this.data.settings) {
+        if (this.data.settings.maxInventoryQuote === undefined && this.data.settings.maxInventoryUsdso !== undefined) {
+          this.data.settings.maxInventoryQuote = Number(this.data.settings.maxInventoryUsdso);
+        }
+        for (const k of deprecatedKeys) {
+          delete this.data.settings[k];
+        }
+      }
       const dir = path.dirname(this.settingsPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });

@@ -83,12 +83,12 @@ export const defaultStrategyConfig = {
 
   // ── DGRID_ATR_SOURCE=binance only ────────────────────────────────────────
   // ── Timeframes ────────────────────────────────────────────────────────────
-  /** Higher timeframe used for Dow Theory macro bounds (Upper Ceiling & Lower Floor). Default "15m". */
+  /** Unified timeframe used for Dow Theory macro bounds, candlestick chart, and grid execution (default "15m"). */
   dowTimeframe: "15m",
-  /** Trading timeframe used for the candlestick chart and grid execution. Default "15m". */
-  tradingTimeframe: "15m",
-  /** Timeframe used for detecting localized Downtrends (LH+LL) to pause buys (default "15m"). */
-  trendTimeframe: "15m",
+  get tradingTimeframe(): string { return this.dowTimeframe; },
+  set tradingTimeframe(v: string) { this.dowTimeframe = v; },
+  get trendTimeframe(): string { return this.dowTimeframe; },
+  set trendTimeframe(v: string) { this.dowTimeframe = v; },
   /** Lowercase Binance symbol to stream klines for. */
   binanceSymbol: cleanBinanceSymbol,
   /** wss host. */
@@ -117,9 +117,9 @@ export const defaultStrategyConfig = {
   enableSellBelowTrendResistance: false,
   /** When true, enables selling at the real frame (Real S/R Ceil) when it adjusts down, choosing the lower price between trendline and real ceiling. Default true. */
   enableSellAtRealCeiling: true,
-  /** When true, only maintains/places buy orders when price is at or below Sell Level 1 (<= 60%). Default true. */
+  /** When true, only maintains/places buy orders when price is at or below Sell Level 1 (<= 52%). Default true. */
   enableBuyBelowSellLevel1: true,
-  /** When true, only maintains/places sell orders when price is at or above Buy Level 1 (>= 40%). Default true. */
+  /** When true, only maintains/places sell orders when price is at or above Buy Level 1 (>= 42%). Default true. */
   enableSellAboveBuyLevel1: true,
   /** Active toggles for Buy Levels 1..5. If a level is disabled, it is skipped and budget is redistributed among active levels. */
   enabledBuyLevels: [true, true, true, true, true] as boolean[],
@@ -152,12 +152,13 @@ export const defaultStrategyConfig = {
   /**
    * Profit taking / Sell mode:
    * 1. "GRID_CASHFLOW" (Default): Sell at all grid targets regardless of avgEntry to maximize cash flow.
-   * 2. "PORTFOLIO_AVG_PROFIT": Only sell at prices higher than portfolio average entry (+0.1% profit).
+   * 2. "PORTFOLIO_AVG_PROFIT": Only sell at prices higher than portfolio average entry (+minNetProfitPct).
    * 3. "LOT_BASED_PROFIT": Lot-based matching; only sell inventory from lots bought lower than the sell target price.
    */
   sellProfitMode: "GRID_CASHFLOW" as "GRID_CASHFLOW" | "PORTFOLIO_AVG_PROFIT" | "LOT_BASED_PROFIT",
-  /** When true, only places sell orders strictly at prices higher than average entry (+0.1% profit). */
-  requireProfitAboveAvgEntry: false,
+  /** Computed alias for sellProfitMode === "PORTFOLIO_AVG_PROFIT". */
+  get requireProfitAboveAvgEntry(): boolean { return this.sellProfitMode === "PORTFOLIO_AVG_PROFIT"; },
+  set requireProfitAboveAvgEntry(v: boolean) { if (v) this.sellProfitMode = "PORTFOLIO_AVG_PROFIT"; },
   /** Automatically cut loss / sell all inventory if price breaks below Lower Bound (0% Floor). */
   cutLossAtLowerBound: true,
   /** Number of confirmed candle periods below floor buffer required before executing cut loss (default 1). */
@@ -233,13 +234,10 @@ export const defaultStrategyConfig = {
   /** Quantity difference ratio (%) before rebalancing an existing open order (default 10%). */
   orderQtyTolerancePct: 10.0,
 
-  // ── Cross-Exchange Laggard / Dislocation Detection ────────────────────────
-  /** Percentage difference between DreamDEX and Binance to qualify as a laggard opportunity (default 0.40%). */
+  // ── Legacy Internal Flags (Disabled) ─────────────────────────────────────
   laggardThresholdPct: 0.4,
-  /** Opportunistically buy discounted asks or sell to premium bids on DreamDEX vs Binance. */
-  enableLaggardSnipe: true,
-  /** Protect against buying on DreamDEX when DreamDEX is lagging above a dumping Binance market. */
-  enableLaggardGuard: true,
+  enableLaggardSnipe: false,
+  enableLaggardGuard: false,
 
   // ── State Persistence & Offline Database (Lots & PnL recovery on restart) ──
   /** Persist open lots, realized PnL, order history, and gas tracking to offline database. Default true. */
