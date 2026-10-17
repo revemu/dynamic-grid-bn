@@ -1341,10 +1341,42 @@ export class DowStructureEngine {
       !(candidatePeak && candidatePeak.time > p.time && candidatePeak.price > p.price) &&
       !candles.some((c) => c.time > p.time && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > p.price);
 
+    // Helper (Classic Dow Theory HL Confirmation):
+    // A Higher Low (HL) is only eligible to lift the channel Floor AFTER price (or a subsequent candle/peak)
+    // breaks above the peak that preceded that HL. A wave base / Lower Low (LL) is immediately eligible.
+    const isValleyEligibleForFloor = (v: SwingPoint): boolean => {
+      if (v.index <= activeWaveBaseIndex) return true;
+      const vPos = canonicalLows.findIndex((l) => l.index === v.index && l.time === v.time);
+      const prevValley = vPos > 0 ? canonicalLows[vPos - 1] : canonicalLows.filter((l) => l.index < v.index).pop();
+      if (!prevValley || v.price <= prevValley.price || (v as DowSwingPoint).dowLabel === "LL") {
+        return true;
+      }
+      const interveningPeaks = canonicalHighs.filter((h) => h.index > prevValley.index && h.index < v.index);
+      const precedingPeak = interveningPeaks.length > 0
+        ? interveningPeaks.reduce((max, h) => (h.price >= max.price ? h : max), interveningPeaks[0]!)
+        : canonicalHighs.filter((h) => h.index < v.index).pop();
+      if (!precedingPeak) return true;
+
+      const brokenByPrice = price > precedingPeak.price;
+      const brokenByPeak = canonicalHighs.some((h) => h.index > v.index && h.price > precedingPeak.price);
+      const brokenByCandidate = Boolean(
+        candidatePeak && candidatePeak.time > v.time && candidatePeak.price > precedingPeak.price
+      );
+      const brokenByCandle = candles.some(
+        (c) => c.time > v.time && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > precedingPeak.price
+      );
+      return brokenByPrice || brokenByPeak || brokenByCandidate || brokenByCandle;
+    };
+
     const lowsPool = activeCycleLows.length > 0 ? activeCycleLows : canonicalLows;
-    const unbrokenLowsBelowPrice = lowsPool
-      .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
-      .sort((a, b) => b.price - a.price); // Nearest (highest) unbroken confirmed valley below price first
+    const eligibleLowsBelowPrice = lowsPool
+      .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
+      .sort((a, b) => b.price - a.price);
+    const unbrokenLowsBelowPrice = eligibleLowsBelowPrice.length > 0
+      ? eligibleLowsBelowPrice
+      : lowsPool
+          .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
+          .sort((a, b) => b.price - a.price); // Nearest (highest) unbroken confirmed valley below price first
 
     if (unbrokenLowsBelowPrice.length > 0) {
       baseValley = unbrokenLowsBelowPrice[0]!;
@@ -1423,17 +1455,41 @@ export class DowStructureEngine {
       }
       if (price > curCeil) curCeil = price * 1.0005;
 
-      // ค้นหาเหวที่ยืนยันแล้ว (Unbroken Confirmed Valley) ที่อยู่ต่ำกว่าราคาปัจจุบันและให้ความกว้าง >= minSpanFromPct
-      const allUnbrokenValleysBelow = canonicalLows
-        .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
-        .sort((a, b) => b.price - a.price); // เรียงจากเหวที่ใกล้ราคาที่สุดลงไป
+      const unbrokenPeaksAbove = canonicalHighs
+        .filter((h) => h.price > curCeil && isUnbrokenPeak(h, canonicalHighs))
+        .sort((a, b) => a.price - b.price);
 
+      const canReachMinSpanWithPeak = (floorPrice: number) => {
+        if (curCeil - floorPrice >= minSpanFromPct && curCeil - floorPrice <= maxSpanFromPct) return true;
+        return unbrokenPeaksAbove.some(
+          (h) => h.price - floorPrice >= minSpanFromPct && h.price - floorPrice <= maxSpanFromPct
+        );
+      };
+
+      // ค้นหาเหวที่ยืนยันแล้ว (Unbroken Confirmed Valley) ที่ผ่านเกณฑ์ Dow Theory (HL ต้องเบรกยอดก่อนหน้าแล้ว)
+      const allEligibleValleysBelow = canonicalLows
+        .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
+        .sort((a, b) => b.price - a.price); // เรียงจากเหวที่ใกล้ราคาที่สุดลงไป
+      const allUnbrokenValleysBelow = allEligibleValleysBelow.length > 0
+        ? allEligibleValleysBelow
+        : canonicalLows
+            .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
+            .sort((a, b) => b.price - a.price);
+
+      // ให้ความสำคัญกับเหวในคลื่นปัจจุบัน (activeWaveBaseIndex ขึ้นไป) ที่สามารถจับคู่กับยอดต้านที่ยังไม่ถูกทำลายได้ความกว้างตามเกณฑ์ก่อน
+      // เพื่อไม่ให้ข้ามฐานคลื่นปัจจุบัน (เช่น LL $103.00) ถอยกลับไปเกาะเหวเก่าข้ามวัน (เช่น $101.56)
+      const activeWaveReachableValleys = allUnbrokenValleysBelow.filter(
+        (l) => l.index >= activeWaveBaseIndex && canReachMinSpanWithPeak(l.price)
+      );
       const validWidthValleys = allUnbrokenValleysBelow.filter(
         (l) => curCeil - l.price >= minSpanFromPct && curCeil - l.price <= maxSpanFromPct
       );
 
       let curFloor: number;
-      if (validWidthValleys.length > 0) {
+      if (activeWaveReachableValleys.length > 0) {
+        curFloor = activeWaveReachableValleys[0]!.price;
+        activeValley = activeWaveReachableValleys[0]!;
+      } else if (validWidthValleys.length > 0) {
         // เกาะเหวที่ยืนยันแล้วที่ใกล้ราคาที่สุดซึ่งมีความกว้างอยู่ในเกณฑ์ [minSpan, maxSpan]
         curFloor = validWidthValleys[0]!.price;
         activeValley = validWidthValleys[0]!;
@@ -1475,13 +1531,13 @@ export class DowStructureEngine {
       }
 
       // 2. ถ้าความกว้างระหว่างยอดและเหวยังน้อยกว่า minSpanFromPct
-      // ให้ขยายกรอบไปหาเหวหรือยอดที่ยืนยันแล้วถัดไป (ที่ไม่ถูกทำลาย) ก่อน
+      // ให้ขยาย Ceiling ขึ้นไปหายอดต้านที่ยืนยันแล้วถัดไป (LH/HH ที่ยังไม่ถูกทำลาย) ก่อน เพื่อรักษาฐานของคลื่นปัจจุบัน
       if (curCeil - curFloor < minSpanFromPct) {
         const higherConfirmedHighs = canonicalHighs
           .filter((h) => h.price > curCeil && isUnbrokenPeak(h, canonicalHighs))
           .sort((a, b) => a.price - b.price); // เรียงจากต่ำไปสูง
         const lowerConfirmedLows = canonicalLows
-          .filter((l) => l.price < curFloor && isUnbrokenValley(l, canonicalLows))
+          .filter((l) => l.price < curFloor && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
           .sort((a, b) => b.price - a.price); // เรียงจากสูงไปต่ำ
 
         let hIdx = 0;
@@ -1491,18 +1547,18 @@ export class DowStructureEngine {
           const nextL = lIdx < lowerConfirmedLows.length ? lowerConfirmedLows[lIdx]! : undefined;
 
           const needed = minSpanFromPct - (curCeil - curFloor);
-          const hDist = nextH !== undefined ? nextH.price - curCeil : Infinity;
           const lDist = nextL !== undefined ? curFloor - nextL.price : Infinity;
 
-          // ให้ความสำคัญกับการขยาย Floor ลงไปหาเหวที่ยืนยันแล้วถัดไปก่อน เพื่อรักษายอดแนวต้านปัจจุบัน
-          if (nextL !== undefined && (curCeil - nextL.price) <= maxSpanFromPct && (lDist <= hDist || lDist <= needed * 2.0)) {
-            curFloor = nextL.price;
-            activeValley = nextL;
-            lIdx++;
-          } else if (nextH !== undefined && (nextH.price - curFloor) <= maxSpanFromPct && hDist <= needed * 2.0) {
+          // ให้ความสำคัญกับการขยาย Ceiling ขึ้นไปเกาะยอดต้านที่ยืนยันแล้ว (LH/HH ที่ยังไม่ถูกทำลาย) ก่อน
+          // เพื่อให้ฐานกรอบเกาะอยู่ที่ฐานคลื่นปัจจุบัน (เช่น LL $103.00 คู่กับ LH $106.54) โดยไม่ถอยไปเกาะเหวเก่าข้ามวัน
+          if (nextH !== undefined && (nextH.price - curFloor) <= maxSpanFromPct) {
             curCeil = nextH.price;
             activePeak = nextH;
             hIdx++;
+          } else if (nextL !== undefined && (curCeil - nextL.price) <= maxSpanFromPct && lDist <= needed * 2.0) {
+            curFloor = nextL.price;
+            activeValley = nextL;
+            lIdx++;
           } else {
             break;
           }
@@ -1533,15 +1589,27 @@ export class DowStructureEngine {
       // 1) First try raising bottomBound to a newer unbroken confirmed valley below price so we preserve the true activePeak!
       // 2) Only step down upperBound if there is a confirmed unbroken Lower High (LH) formed AFTER activePeak!
       if (upperBound - bottomBound > maxSpanFromPct) {
-        const validLows = canonicalLows
+        const eligibleValidLows = canonicalLows
           .filter(
             (l) =>
               l.price < price &&
               isUnbrokenValley(l, canonicalLows) &&
+              isValleyEligibleForFloor(l) &&
               upperBound - l.price >= minSpanFromPct &&
               upperBound - l.price <= maxSpanFromPct,
           )
-          .sort((a, b) => b.price - a.price); // เหวที่ใกล้ราคาปัจจุบันที่สุด
+          .sort((a, b) => b.price - a.price);
+        const validLows = eligibleValidLows.length > 0
+          ? eligibleValidLows
+          : canonicalLows
+              .filter(
+                (l) =>
+                  l.price < price &&
+                  isUnbrokenValley(l, canonicalLows) &&
+                  upperBound - l.price >= minSpanFromPct &&
+                  upperBound - l.price <= maxSpanFromPct,
+              )
+              .sort((a, b) => b.price - a.price); // เหวที่ใกล้ราคาปัจจุบันที่สุด
 
         const postPeakUnbrokenHighs = canonicalHighs
           .filter((h) => (!activePeak || h.index > activePeak.index) && isUnbrokenPeak(h, canonicalHighs))
@@ -1659,10 +1727,10 @@ export class DowStructureEngine {
       clampStatus = "NATURAL_SWING";
     }
 
-    // 🔒 Dow Theory Symmetrical Rule ("เกาะเหวที่ยืนยันแล้วที่ยังไม่ถูกทำลายและอยู่ใกล้ราคาปัจจุบันที่สุด"):
+    // 🔒 Dow Theory Symmetrical Rule ("เกาะเหวที่ยืนยันแล้วที่ยังไม่ถูกทำลายและผ่านเกณฑ์เบรกยอดก่อนหน้า"):
     if (upperBound > bottomBound + minSpan) {
       const candidateValleys = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
-        .filter((l) => isUnbrokenValley(l, canonicalLows) && l.price > bottomBound && l.price <= price)
+        .filter((l) => isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l) && l.price > bottomBound && l.price <= price)
         .filter((l) => upperBound - l.price >= minSpan && upperBound - l.price <= maxSpan)
         .sort((a, b) => b.price - a.price); // เรียงจากเหวสูงไปเหวต่ำ (ใกล้ราคาปัจจุบันที่สุด)
 
@@ -1730,7 +1798,7 @@ export class DowStructureEngine {
         .filter((h) => h.price > price && isUnbrokenPeak(h, canonicalHighs))
         .sort((a, b) => a.price - b.price);
       const candidateLows = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
-        .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows))
+        .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
         .sort((a, b) => b.price - a.price);
 
       if (candidateHighs.length > 0 && candidateHighs[0]!.price > bottomBound) {
@@ -1747,26 +1815,24 @@ export class DowStructureEngine {
 
     // 🔒 Proximity-Guarded Channel Expansion:
     // If the channel is narrower than minSpan (with 95% tolerance threshold), expand prudently
-    // Prioritize expanding bottomBound first to preserve recent LH/resistance, and do NOT leap to distant macro peaks!
+    // Prefer expanding upperBound upward to an unbroken resistance peak first so we preserve the active wave floor!
     if (upperBound - bottomBound < minSpan * 0.95) {
       const needed = minSpan - (upperBound - bottomBound);
       const lowerLow = canonicalLows
-        .filter((l) => l.price < bottomBound && isUnbrokenValley(l, canonicalLows))
+        .filter((l) => l.price < bottomBound && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
         .sort((a, b) => b.price - a.price)[0];
       const higherHigh = canonicalHighs
         .filter((h) => h.price > upperBound && isUnbrokenPeak(h, canonicalHighs) && (h.price - bottomBound) <= maxSpan)
         .sort((a, b) => a.price - b.price)[0];
 
       const lDist = lowerLow !== undefined ? bottomBound - lowerLow.price : Infinity;
-      const hDist = higherHigh !== undefined ? higherHigh.price - upperBound : Infinity;
 
-      // Prefer expanding floor downward if nearby low exists within 2.0x needed
-      if (lowerLow && (upperBound - lowerLow.price) <= maxSpan && lDist <= needed * 2.0) {
-        bottomBound = lowerLow.price;
-        activeValley = lowerLow;
-      } else if (higherHigh && hDist <= needed * 2.0) {
+      if (higherHigh) {
         upperBound = higherHigh.price;
         activePeak = higherHigh;
+      } else if (lowerLow && (upperBound - lowerLow.price) <= maxSpan && lDist <= needed * 2.0) {
+        bottomBound = lowerLow.price;
+        activeValley = lowerLow;
       } else {
         // If no nearby swings exist, expand floor downward to satisfy minSpan without blowing out ceiling
         if (bottomBound - needed > 0) {
