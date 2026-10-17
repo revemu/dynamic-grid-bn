@@ -578,6 +578,14 @@ export class DynamicGrid {
           this.confirmedChannel = undefined;
           this.pendingConfirmedChannelUpdate = true;
           this.needsBuyRebalance = true;
+          if (this.lastDynamicBounds && this.lastDynamicBounds.buyLevels.length > 1) {
+            const dSpan = this.lastDynamicBounds.upperBound - this.lastDynamicBounds.lowerBound;
+            this.lastDynamicBounds.buyLevels = this.cfg.buyLevelPcts.map((pct) => this.lastDynamicBounds!.lowerBound + dSpan * (pct / 100));
+          }
+          if (this.lockedChannel && this.lockedChannel.buyLevels.length > 1) {
+            const dSpan = this.lockedChannel.upperBound - this.lockedChannel.lowerBound;
+            this.lockedChannel.buyLevels = this.cfg.buyLevelPcts.map((pct) => this.lockedChannel!.lowerBound + dSpan * (pct / 100));
+          }
           continue;
         }
         if (key === "sellLevelPcts" && Array.isArray(val)) {
@@ -587,6 +595,15 @@ export class DynamicGrid {
           this.confirmedChannel = undefined;
           this.pendingConfirmedChannelUpdate = true;
           this.needsSellRebalance = true;
+          this.iocBracketSellCycle = undefined;
+          if (this.lastDynamicBounds && this.lastDynamicBounds.sellLevels.length > 1) {
+            const dSpan = this.lastDynamicBounds.upperBound - this.lastDynamicBounds.lowerBound;
+            this.lastDynamicBounds.sellLevels = this.cfg.sellLevelPcts.map((pct) => this.lastDynamicBounds!.lowerBound + dSpan * (pct / 100));
+          }
+          if (this.lockedChannel && this.lockedChannel.sellLevels.length > 1) {
+            const dSpan = this.lockedChannel.upperBound - this.lockedChannel.lowerBound;
+            this.lockedChannel.sellLevels = this.cfg.sellLevelPcts.map((pct) => this.lockedChannel!.lowerBound + dSpan * (pct / 100));
+          }
           continue;
         }
         (this.cfg as any)[key] = val;
@@ -1382,9 +1399,9 @@ export class DynamicGrid {
         typeof persistentLockedChannel.lowerBound === "number" &&
         typeof persistentLockedChannel.upperBound === "number" &&
         Array.isArray(persistentLockedChannel.buyLevels) &&
-        persistentLockedChannel.buyLevels.length >= 4 &&
+        persistentLockedChannel.buyLevels.length >= 1 &&
         Array.isArray(persistentLockedChannel.sellLevels) &&
-        persistentLockedChannel.sellLevels.length >= 4
+        persistentLockedChannel.sellLevels.length >= 1
       ) {
         const hasInventory = this.lots.length > 0 && this.baseHeld() >= (this.minQty || 0.001);
         const hasOpenSells = this.openOrders.some((o) => !o.isBid);
@@ -1392,13 +1409,28 @@ export class DynamicGrid {
         // As long as the bot holds inventory or resting sell orders, this locked channel represents
         // the original structural entry and profit-taking bounds! Never wipe it arbitrarily.
         if (hasInventory || hasOpenSells) {
-          this.lockedChannel = persistentLockedChannel;
+          const dSpan = persistentLockedChannel.upperBound - persistentLockedChannel.lowerBound;
+          const isNarrowRestored = persistentLockedChannel.buyLevels.length === 1;
+          const curBuyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
+          const curSellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
+          const restoredBuyLevels = isNarrowRestored
+            ? [...persistentLockedChannel.buyLevels]
+            : curBuyPcts.map((pct) => persistentLockedChannel.lowerBound + dSpan * (pct / 100));
+          const restoredSellLevels = isNarrowRestored
+            ? [...persistentLockedChannel.sellLevels]
+            : curSellPcts.map((pct) => persistentLockedChannel.lowerBound + dSpan * (pct / 100));
+
+          this.lockedChannel = {
+            ...persistentLockedChannel,
+            buyLevels: restoredBuyLevels,
+            sellLevels: restoredSellLevels,
+          };
           this.lastDynamicBounds = {
             lowerBound: persistentLockedChannel.lowerBound,
             upperBound: persistentLockedChannel.upperBound,
             centerPrice: persistentLockedChannel.centerPrice,
-            buyLevels: [...persistentLockedChannel.buyLevels],
-            sellLevels: [...persistentLockedChannel.sellLevels],
+            buyLevels: [...restoredBuyLevels],
+            sellLevels: [...restoredSellLevels],
           };
           this.log(
             `🔒 [state] Restored persistent locked channel bounds for ${symbolKey}: [$${this.lastDynamicBounds.lowerBound.toFixed(6)} .. $${this.lastDynamicBounds.upperBound.toFixed(6)}] (Center: $${this.lastDynamicBounds.centerPrice.toFixed(6)}) with ${this.lots.length} lots held`,
@@ -2377,7 +2409,7 @@ export class DynamicGrid {
       }
     }
 
-    const inBuyZone = positionPct >= 18 && positionPct < 50 && !isBelowFloor && !this.waitingForHigherLow;
+    const inBuyZone = positionPct >= 0 && positionPct < 50 && !isBelowFloor && !this.waitingForHigherLow;
     const inSellZone = positionPct >= 50 && !isAboveCeiling;
     const offloadOnly = this.realizedPnl <= -this.cfg.maxSessionLossUsdso;
 
@@ -3491,13 +3523,14 @@ export class DynamicGrid {
     // On Binance (CEX): No gas or fee concerns, orders remain active continuously across the grid.
     // On DreamDEX (DEX): Apply hysteresis to reduce on-chain gas churn.
     const buyActionTerm = this.cfg.orderExecutionMode === "IOC_BRACKET" ? "IOC buy trigger" : "buy orders";
+    const sellL1Pct = this.cfg.sellLevelPcts?.[0] ?? 52;
     if (!isCexExchange && this.cfg.enableBuyBelowSellLevel1 !== false) {
       const isDexAskInAccumulationZone = currentBestAsk > 0 && currentBestAsk <= sellLevel1Price;
-      if (this.buyOrdersActive && (positionPct > 60.5 || refPrice > sellLevel1Price * 1.001) && !isDexAskInAccumulationZone) {
+      if (this.buyOrdersActive && (positionPct > (sellL1Pct + 0.5) || refPrice > sellLevel1Price * 1.001) && !isDexAskInAccumulationZone) {
         this.buyOrdersActive = false;
         this.log(`🛑 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) above Sell Level 1 ($${sellLevel1Price.toFixed(6)}) — pausing ${buyActionTerm} to prevent churn in upper profit zone`);
         this.saveState();
-      } else if (!this.buyOrdersActive && (positionPct <= 60.0 || refPrice <= sellLevel1Price || isDexAskInAccumulationZone)) {
+      } else if (!this.buyOrdersActive && (positionPct <= sellL1Pct || refPrice <= sellLevel1Price || isDexAskInAccumulationZone)) {
         this.buyOrdersActive = true;
         this.needsBuyRebalance = true;
         this.log(`🟢 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) returned below Sell Level 1 ($${sellLevel1Price.toFixed(6)}) — reactivating ${buyActionTerm}`);
@@ -3980,7 +4013,7 @@ export class DynamicGrid {
         })
         .map(({ idx }) => idx);
 
-      const numBuyLevels = effectiveBuyLevels.length || 4;
+      const numBuyLevels = effectiveBuyLevels.length || 5;
       const numEligibleBuyLevels = eligibleBuyIndices.length > 0 ? eligibleBuyIndices.length : numBuyLevels;
       // Fixed portfolio proportion tranche sizing: Each level represents maxInv / activeBuyCount
       const baseTrancheQuote = isSingleBuyLevel ? maxInv : (activeBuyCount > 0 ? (maxInv / activeBuyCount) : 0);
@@ -3996,8 +4029,9 @@ export class DynamicGrid {
 
       if (!canBuy) {
         if (openBuys.length > 0) {
+          const sellL1Pct = this.cfg.sellLevelPcts?.[0] ?? 52;
           const reason = !this.buyOrdersActive
-            ? "Price above Sell Level 1 (> 60%) — cancelling buy orders to avoid churn in profit zone"
+            ? `Price above Sell Level 1 (> ${sellL1Pct}%) — cancelling buy orders to avoid churn in profit zone`
             : "Buying paused by strategy filters";
           for (const o of openBuys) {
             await this.cancelOrderInternal(o, reason);
@@ -4720,7 +4754,11 @@ export class DynamicGrid {
       // ── Standard Sell Order Logic (no active trendline) ────────────────────────
       const sellHoldingTargets = isSingleSellLevel
         ? [0.0]
-        : [0.75, 0.50, 0.25, 0.0];
+        : sellLevels.map((_, idx) => {
+            if (!enabledSells[idx] || activeSellCount <= 0) return 0.0;
+            const rank = enabledSells.slice(0, idx + 1).filter(Boolean).length;
+            return Math.max(0.0, 1.0 - (rank / activeSellCount));
+          });
 
       // Clean up stale resting sell orders or correct mislabeled levelDesc to closest sellLevel
       const remainingStaleSells: OpenOrder[] = [];

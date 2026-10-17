@@ -1369,10 +1369,14 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. ลูปขยายกรอบเมื่อความกว้างต่ำกว่า `minSpanFromPct` เดิมให้ความสำคัญกับการดึง `curFloor` ลงไปหาเหวเก่าในอดีต (`nextL`) แทนที่จะขยาย `curCeil` ขึ้นไปหาแนวต้าน `LH/HH` ที่ยังไม่ถูกทำลายด้านบน (`nextH`, เช่น `LH $106.54`)
 - **การแก้ไขและสถาปัตยกรรมใหม่**:
   1. **Breakout-Confirmed Higher Low (`isValleyEligibleForFloor`)**:
-     - เหวที่เป็นฐานคลื่นหรือ `LL` (`v.index <= activeWaveBaseIndex` หรือ `v.price <= prevValley.price` หรือ `dowLabel === "LL"`) มีสิทธิ์ใช้เป็น `Floor` ของกรอบได้ทันที
-     - เหวที่เป็น `Higher Low (⭐ HL)` จะมีสิทธิ์ยก `Floor` ของกรอบขึ้นไปเกาะ **ก็ต่อเมื่อราคา (หรือแท่งเทียน/สวิงถัดมา) ทะลุยอด (`precedingPeak`) ที่คั่นอยู่ก่อนหน้า `HL` นั้นขึ้นไปได้แล้วเท่านั้น** ตามหลัก Dow Theory แท้
+     - เมื่อ `macroPeak.index < macroLow.index` ระบบยึด `activeWaveBaseIndex = macroLow.index` เป็นจุดเริ่มต้นของคลื่นเสมอ เพื่อให้ `activeCycleLows` มีทั้งฐาน `macroLow (LL)` และเหว `HL` ถัดมาครบถ้วน
+     - เหวที่เป็น `LL` (`!prevValley || v.price <= prevValley.price || dowLabel === "LL"`) มีสิทธิ์ใช้เป็น `Floor` ของกรอบได้ทันที
+     - เหวที่เป็น `Higher Low (⭐ HL)` ทุกตัวจะมีสิทธิ์ยก `Floor` ของกรอบขึ้นไปเกาะ **ก็ต่อเมื่อราคา (หรือแท่งเทียน/สวิงถัดมา) ทะลุยอด (`precedingPeak`) ที่คั่นอยู่ก่อนหน้า `HL` นั้นขึ้นไปได้แล้วเท่านั้น** ตามหลัก Dow Theory แท้ (โดยไม่มีทางลัดข้ามการเช็ค)
   2. **Active Wave Reachable Valley Priority (`activeWaveReachableValleys` & `canReachMinSpanWithPeak`)**:
      - บังคับให้ระบบเลือกเหวที่ผ่านเกณฑ์ในคลื่นปัจจุบัน (`l.index >= activeWaveBaseIndex`) ก่อนเสมอ หากเหวนั้นสามารถจับคู่กับยอดปัจจุบันหรือยอดต้าน `LH/HH` ด้านบนที่ยังไม่ถูกทำลาย (`unbrokenPeaksAbove`) แล้วได้ความกว้างอยู่ในเกณฑ์ `[minSpanFromPct, maxSpanFromPct]` เพื่อป้องกันไม่ให้บอทกระโดดข้ามฐานคลื่นปัจจุบันย้อนกลับไปเกาะเหวเก่าข้ามวัน
   3. **Upward Resistance Ceiling Expansion (`higherConfirmedHighs` First)**:
      - เมื่อความกว้าง `curCeil - curFloor < minSpanFromPct` ระบบจะขยาย `curCeil` ขึ้นไปเกาะยอดต้าน `LH` หรือ `HH` ที่ยังไม่ถูกทำลายด้านบน (`nextH`) ตามลำดับจากต่ำไปสูงจนกว่าความกว้างจะผ่านเกณฑ์ `minSpanFromPct` (เช่น ยก `Floor` มาที่ฐานคลื่น `LL $103.00` คู่กับ `Ceiling` ที่แนวต้าน `LH $106.54`) และจะขยับ `Floor` ขึ้นไปเกาะ `⭐ HL ($104.20)` ทันทีเมื่อราคาเบรกยอด `$104.71` ขึ้นไปสำเร็จ
-
+  4. **Dynamic 5-Level Grid Synchronization & Removal of Legacy 18% Buffer (`src/strategy.ts` & `public/app.js`)**:
+     - `inBuyZone` ใน `src/strategy.ts` และป้ายบอกโซนใน `public/app.js` ครอบคลุมช่วง `0% – 50%` ของกรอบทั้งหมด (`positionPct >= 0 && positionPct < 50`) สอดคล้องกับการตัด Safe Buffer `18%` ออกและใช้ Buy Level 4 (`12%`) / Buy Level 5 (`2%`)
+     - `sellHoldingTargets` ใน `syncRestingOrders` คำนวณสัดส่วนเป้าหมายการถือครองแบบไดนามิกตามจำนวนเลเวลขายที่เปิดใช้งานจริง (`enabledSells` / `activeSellCount`) รองรับครบทั้ง 5 เลเวล
+     - ระบบ Hysteresis ฝั่งซื้อบน DEX อ้างอิง `sellLevelPcts[0]` (`52%`) แบบไดนามิก และเมื่อโหลด `persistentLockedChannel` หรือแก้ไข `buyLevelPcts` / `sellLevelPcts` ขณะถือของ ระบบจะรีคำนวณ `buyLevels` และ `sellLevels` ทั้ง 5 เลเวลจากขอบ `lowerBound` และ `upperBound` ที่ล็อกไว้ทันที

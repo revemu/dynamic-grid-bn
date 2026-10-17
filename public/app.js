@@ -1465,9 +1465,6 @@
       } else if (data.isAboveCeiling) {
         elZoneStatusBadge.textContent = "ZONE: 100% CEIL (FULL EXIT)";
         elZoneStatusBadge.className = "zone-status-badge badge-breakout";
-      } else if (pos < 18) {
-        elZoneStatusBadge.textContent = `ZONE: BUFFER (0%-18% HOLD 100%)`;
-        elZoneStatusBadge.className = "zone-status-badge badge-warmup";
       } else if (pos < 50) {
         elZoneStatusBadge.textContent = `ZONE: BUY ZONE (${pos.toFixed(1)}%${targetHoldStr})`;
         elZoneStatusBadge.className = "zone-status-badge badge-inzone";

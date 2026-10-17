@@ -1297,18 +1297,10 @@ export class DowStructureEngine {
           activeWaveBaseIndex = lowestLaunchpad.index;
         }
       } else {
-        // macroPeak เกิดก่อน macroLow: ตลาดทุบลงมาทำ macroLow แล้ว และอาจมีการฟื้นตัวก่อตัวคลื่นใหม่
-        // ค้นหายอด High และเหว Low ที่เกิดขึ้นหลัง macroLow เพื่อดูว่ามีคลื่นฟื้นตัว/Consolidation เกิดขึ้นแล้วหรือไม่
-        const postLowHighs = canonicalHighs.filter((h) => h.index > macroLow.index);
-        const postLowLows = canonicalLows.filter((l) => l.index > macroLow.index);
-        if (postLowHighs.length > 0 && postLowLows.length > 0) {
-          // มีเหวที่เกิดขึ้นหลังจุดทุบ macroLow แล้ว (คลื่นฟื้นตัวได้สร้างฐานใหม่)
-          // ยึดเหวต่ำสุดของคลื่นฟื้นตัวหลังการทุบ เป็น activeWaveBaseIndex แทนที่จะดึง macroLow เดิม
-          const lowestPostLow = postLowLows.reduce((min, l) => (l.price < min.price ? l : min), postLowLows[0]!);
-          activeWaveBaseIndex = lowestPostLow.index;
-        } else {
-          activeWaveBaseIndex = macroLow.index;
-        }
+        // macroPeak เกิดก่อน macroLow: ตลาดทุบลงมาทำ macroLow แล้ว
+        // ยึด macroLow.index เป็นจุดเริ่มต้นของคลื่นเสมอ เพื่อให้ activeCycleLows มีทั้งฐาน macroLow (LL)
+        // และเหว HL ถัดมาครบถ้วน โดยเหว HL จะยกฐานได้ต่อเมื่อผ่านเกณฑ์ isValleyEligibleForFloor (เบรกยอดก่อนหน้า) แล้วเท่านั้น
+        activeWaveBaseIndex = macroLow.index;
       }
     } else if (macroLow) {
       activeWaveBaseIndex = macroLow.index;
@@ -1345,7 +1337,6 @@ export class DowStructureEngine {
     // A Higher Low (HL) is only eligible to lift the channel Floor AFTER price (or a subsequent candle/peak)
     // breaks above the peak that preceded that HL. A wave base / Lower Low (LL) is immediately eligible.
     const isValleyEligibleForFloor = (v: SwingPoint): boolean => {
-      if (v.index <= activeWaveBaseIndex) return true;
       const vPos = canonicalLows.findIndex((l) => l.index === v.index && l.time === v.time);
       const prevValley = vPos > 0 ? canonicalLows[vPos - 1] : canonicalLows.filter((l) => l.index < v.index).pop();
       if (!prevValley || v.price <= prevValley.price || (v as DowSwingPoint).dowLabel === "LL") {
