@@ -1074,9 +1074,11 @@
       const actionEl = step.el.querySelector(".step-action");
       if (step.enabled === false) {
         step.el.classList.add("step-disabled");
+        step.el.style.display = "none";
         if (actionEl) actionEl.textContent = "Disabled (OFF)";
       } else {
         step.el.classList.remove("step-disabled");
+        step.el.style.display = "";
         if (actionEl) {
           if (step.pct === 0) {
             actionEl.textContent = "0% Floor";
@@ -1106,8 +1108,9 @@
       const desc = (order.levelDesc || "").toLowerCase();
       const isBid = order.isBid;
 
-      // Available candidate steps on the corresponding side
+      // Available candidate steps on the corresponding side (only enabled steps)
       const candidateSteps = ladderSteps.filter((s) => {
+        if (!s.enabled) return false;
         if (usedSteps.has(s)) return false;
         if (isBid) return s.pct <= 49 && s.pct > 0;
         return s.pct >= 51 && s.pct < 100;
@@ -1295,6 +1298,26 @@
       colorClass = "highlight-red";
       zoneBadgeText = "100% CEIL (EXIT)";
       zoneBadgeClass = "active-zone-pill badge-breakout";
+    }
+
+    // Ensure activeStep is enabled and visible; if disabled, fallback to nearest visible enabled step
+    if (activeStep) {
+      const activeObj = ladderSteps.find((s) => s.el === activeStep);
+      if (activeObj && !activeObj.enabled) {
+        const visibleSteps = ladderSteps.filter((s) => s.enabled && s.el && s.el.style.display !== "none");
+        let closest = null;
+        let minDiff = Infinity;
+        visibleSteps.forEach((s) => {
+          const diff = Math.abs(s.pct - pos);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closest = s;
+          }
+        });
+        if (closest && closest.el) {
+          activeStep = closest.el;
+        }
+      }
     }
 
     if (activeStep) activeStep.classList.add("active-ladder-step");

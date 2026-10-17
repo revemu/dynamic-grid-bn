@@ -1455,3 +1455,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ลบคีย์ที่เลิกใช้และซ้ำซ้อนออกจาก `data/settings.db.json` และเพิ่ม `DEPRECATED_SETTINGS_KEYS` ใน `flushSettingsSync()` (`src/db.ts`) เพื่อป้องกันไม่ให้คีย์เก่าถูกเขียนกลับลงไฟล์อีก
      - แปลง `tradingTimeframe`, `trendTimeframe`, และ `requireProfitAboveAvgEntry` ใน `src/config.ts` เป็น Computed Getter/Setter ที่อ้างอิงจาก `dowTimeframe` และ `sellProfitMode` โดยตรง
 
+
+---
+
+### 21. Dashboard v2.5: Consolidated 2-Card KPI Strip, Orderbook Integration in Grid Meter & Active-Only Grid Levels (`public/index.html`, `public/style.css`, `public/app.js`)
+- **สาเหตุและเป้าหมายการปรับปรุง**:
+  1. **การ์ด KPI ด้านบนกระจัดกระจายและ Orderbook กินพื้นที่**: การ์ดกระเป๋าเงิน (Wallet) และของที่ถือ (Position) มีข้อมูลที่เกี่ยวข้องกันอย่างใกล้ชิด การแยกเป็นการ์ดเดี่ยวหลายใบทำให้แถบด้านบนแน่นเกินไป และการ์ด Orderbook (Best Bid/Ask) เหมาะที่จะอยู่เคียงข้างระดับราคาในบันไดกริด (Grid Meter) มากกว่า
+  2. **บันไดกริด (Grid Meter) แสดงระดับที่ปิดใช้งาน**: ขั้นบันไดกริดของเลเวลที่ผู้ใช้ปิดสวิตช์ไว้ (เช่น Buy Level 5 หรือ Sell Target 5 ปิดใช้งาน) เดิมเพียงแค่หรี่แสงลง ทำให้บันไดรกและยาวเกินจำเป็น
+- **สถาปัตยกรรมและการปรับปรุงใหม่**:
+  1. **Consolidated 2-Card KPI Ribbon (`kpi-two-grid`)**:
+     - ยุบรวม Card 1 (Wallet) และ Card 2 (Position) เข้าเป็นใบเดียว: `💼 กระเป๋า & การถือครอง (WALLET & POSITION)` แบ่ง 2 ฝั่งซ้าย-ขวาอย่างสมดุล (ฝั่งซ้าย: เงินสด USDT/USDso + เหรียญ Base ในกระเป๋า, ฝั่งขวา: ของที่ถือครอง + หลอดความจุ % Load + ปุ่ม `lotsCount` สำหรับเปิดแท็บจัดการล็อต)
+     - Card 2: `💰 กำไร / ขาดทุน (PNL & PERFORMANCE)` แสดง Unrealized PnL, Realized PnL, Win Rate, และจังหวะรอบเทรด
+     - แถบ KPI ด้านบนกลายเป็น 2 คอลัมน์ที่กว้าง โปร่ง สะอาดตา และไม่เบียดเสียด
+  2. **Integrated Orderbook Bar in Grid Meter (`.ladder-orderbook-bar`)**:
+     - ย้าย Best Bid, Best Ask, และ Spread เข้าไปอยู่ในกรอบบันไดกริด (Grid Meter) เหนือขั้นบันได 100% Ceil ถึง 0% Floor โดยตรง
+     - ผู้ใช้สามารถเทียบราคา Best Bid (รับซื้อ) และ Best Ask (ตั้งขาย) กับเส้นราคา Buy Levels และ Sell Targets ได้อย่างเป็นธรรมชาติในจุดเดียว
+  3. **Active-Only Grid Meter Levels (`updateZoneLevelBars`)**:
+     - ซ่อนระดับบันไดกริดที่ปิดใช้งานทั้งหมดด้วย `display: none` (แสดงเฉพาะ Level ที่เปิดสวิตช์ใช้งานจริงเท่านั้น) ทำให้บันไดกริดกะทัดรัดและตรงกับสภาพการเทรดจริง 100%
+     - ปรับตรรกะการจับคู่ Maker Order (`candidateSteps`) ให้ค้นหาเฉพาะบันไดที่เปิดใช้งาน (`s.enabled === true`)
+     - ปรับตรรกะการเน้นแถบราคาปัจจุบัน (`activeStep`) หากระดับราคาปัจจุบันตกอยู่ในเลเวลที่ปิดใช้งาน ระบบจะ Fallback ไปยังบันไดเลเวลที่เปิดใช้งานจริงที่ใกล้ที่สุดโดยอัตโนมัติ ไม่แสดงผลค้างบนแถวที่ถูกซ่อน

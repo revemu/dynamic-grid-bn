@@ -69,51 +69,47 @@
       </div>
     </header>
 
-    <!-- ═══════════════════ 4-Card Clear KPI Summary Strip ═══════════════════ -->
-    <section class="kpi-summary-bar kpi-four-grid">
-      <!-- Card 1: Wallet Assets -->
-      <div class="kpi-card kpi-wallet-card">
+    <!-- ═══════════════════ 2-Card Consolidated KPI Summary Strip ═══════════════════ -->
+    <section class="kpi-summary-bar kpi-two-grid">
+      <!-- Card 1: Merged Wallet Assets & Position Capacity -->
+      <div class="kpi-card kpi-wallet-pos">
         <div class="kpi-header">
-          <span class="kpi-tag">💼 กระเป๋าเงิน (WALLET)</span>
+          <span class="kpi-tag">💼 กระเป๋า &amp; การถือครอง (WALLET &amp; POSITION)</span>
           <div class="kpi-badge-group">
             <span class="kpi-badge badge-wallet" id="topWalletAddrBadge">Binance</span>
             <span class="kpi-badge badge-soft" id="topWalletTotalVal">Total: $0.00</span>
-          </div>
-        </div>
-        <div class="kpi-body-single">
-          <div class="kpi-main-row">
-            <div class="kpi-val highlight-purple" id="topWalletUsdso">$0.00 USDT</div>
-            <div class="kpi-sub-inline" id="topWalletSomi">0.0000 BASE</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Card 2: Active Grid Position & Capacity -->
-      <div class="kpi-card kpi-pos-card">
-        <div class="kpi-header">
-          <span class="kpi-tag">📦 ของที่ถือ &amp; ความจุ (POSITION)</span>
-          <div class="kpi-badge-group">
             <span class="kpi-badge badge-cyan" id="topPosBadge">0.0%</span>
             <span class="kpi-badge badge-soft" id="topCapPct">0% Load</span>
             <span class="kpi-badge badge-soft kpi-clickable-badge" id="lotsCount" title="คลิกเพื่อเปิดหน้าจัดการ Lots ที่ถือครอง">0 Open Lots</span>
           </div>
         </div>
-        <div class="kpi-body-single">
-          <div class="kpi-main-row">
-            <div class="kpi-val" id="topPosBase">0.0000 BASE</div>
-            <div class="kpi-val-sub"><span class="kpi-usd" id="topPosUsd">$0.00</span> <span class="kpi-dim">/ งบ $<span id="topMaxInv">80</span></span></div>
-            <span id="inventoryUsd" style="display: none;">$0.00</span>
+        <div class="wallet-pos-dual-grid">
+          <div class="wallet-pos-half wallet-half-cash">
+            <div class="pos-half-top">
+              <span class="pnl-mini-tag text-purple">เงินสดในกระเป๋า (WALLET CASH)</span>
+            </div>
+            <div class="kpi-val highlight-purple" id="topWalletUsdso">$0.00 USDT</div>
+            <div class="kpi-sub-inline" id="topWalletSomi">0.0000 BASE</div>
           </div>
-          <div class="mini-progress-track" style="margin-top: 4px;">
-            <div class="mini-progress-fill" id="inventoryProgress" style="width: 0%;"></div>
+          <div class="trigger-divider"></div>
+          <div class="wallet-pos-half wallet-half-inv">
+            <div class="pos-half-top">
+              <span class="pnl-mini-tag text-cyan">ของที่ถือครอง (HELD POSITION)</span>
+              <span class="kpi-val-sub"><span class="kpi-usd" id="topPosUsd">$0.00</span> <span class="kpi-dim">/ งบ $<span id="topMaxInv">80</span></span></span>
+            </div>
+            <div class="kpi-val text-cyan" id="topPosBase">0.0000 BASE</div>
+            <div class="mini-progress-track">
+              <div class="mini-progress-fill" id="inventoryProgress" style="width: 0%;"></div>
+            </div>
+            <span id="inventoryUsd" style="display: none;">$0.00</span>
           </div>
         </div>
       </div>
 
-      <!-- Card 3: Profit & Loss (Unrealized + Realized) -->
+      <!-- Card 2: Profit & Loss (Unrealized + Realized) -->
       <div class="kpi-card kpi-pnl">
         <div class="kpi-header">
-          <span class="kpi-tag">💰 กำไร / ขาดทุน (PNL)</span>
+          <span class="kpi-tag">💰 กำไร / ขาดทุน (PNL &amp; PERFORMANCE)</span>
           <div class="kpi-badge-group">
             <span class="kpi-badge badge-neutral" id="topUnrealizedBadge">0.00%</span>
           </div>
@@ -140,45 +136,6 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- Card 4: Exchange Orderbook (Best Bid & Ask) -->
-      <div class="kpi-card kpi-book">
-        <div class="kpi-header">
-          <span class="kpi-tag">📖 ราคาตลาด (ORDERBOOK)</span>
-          <div class="kpi-badge-group">
-            <span class="kpi-badge badge-soft" id="topBookSpread">Spread: --%</span>
-          </div>
-        </div>
-        <div class="triggers-dual-grid">
-          <div class="trigger-half trigger-half-buy">
-            <div class="trigger-half-top">
-              <span class="trigger-mini-tag text-green">BEST BID (รับซื้อ)</span>
-              <span class="kpi-badge badge-buy-pill" id="topBidStatusBadge" style="display:none;">Bid</span>
-            </div>
-            <div class="trigger-half-price highlight-green" id="hudBestBid">--.------</div>
-            <div class="trigger-half-sub" id="hudBidSub">
-              <span id="topBidSubText">Highest Buyer</span>
-            </div>
-          </div>
-          <div class="trigger-divider"></div>
-          <div class="trigger-half trigger-half-sell">
-            <div class="trigger-half-top">
-              <span class="trigger-mini-tag text-orange">BEST ASK (ตั้งขาย)</span>
-              <span class="kpi-badge badge-sell-pill" id="topAskStatusBadge" style="display:none;">Ask</span>
-            </div>
-            <div class="trigger-half-price highlight-orange" id="hudBestAsk">--.------</div>
-            <div class="trigger-half-sub" id="hudAskSub">
-              <span id="topAskSubText">Lowest Seller</span>
-            </div>
-          </div>
-        </div>
-        <span id="hudBuyTrigger" style="display:none;"></span>
-        <span id="hudSellTrigger" style="display:none;"></span>
-        <span id="topBuyStatusText" style="display:none;"></span>
-        <span id="topSellStatusText" style="display:none;"></span>
-        <span id="topBuyZonePill" style="display:none;"></span>
-        <span id="topSellZonePill" style="display:none;"></span>
       </div>
     </section>
 
@@ -299,6 +256,33 @@
               <span class="sum-val highlight-green" id="ladderTargetAlloc">Target 25% ($20)</span>
             </div>
           </div>
+
+          <!-- ── Exchange Orderbook: Best Bid & Ask in Grid Meter ── -->
+          <div class="ladder-orderbook-bar">
+            <div class="lob-item lob-bid">
+              <span class="lob-tag text-green">BEST BID (รับซื้อ)</span>
+              <span class="lob-price highlight-green" id="hudBestBid">--.------</span>
+              <span class="lob-sub" id="topBidSubText">Highest Buyer</span>
+            </div>
+            <div class="lob-divider"></div>
+            <div class="lob-item lob-spread">
+              <span class="kpi-badge badge-soft" id="topBookSpread">Spread: --%</span>
+              <span class="lob-sub" id="topBidStatusBadge" style="display:none;">Bid</span>
+              <span class="lob-sub" id="topAskStatusBadge" style="display:none;">Ask</span>
+            </div>
+            <div class="lob-divider"></div>
+            <div class="lob-item lob-ask">
+              <span class="lob-tag text-orange">BEST ASK (ตั้งขาย)</span>
+              <span class="lob-price highlight-orange" id="hudBestAsk">--.------</span>
+              <span class="lob-sub" id="topAskSubText">Lowest Seller</span>
+            </div>
+          </div>
+          <span id="hudBuyTrigger" style="display:none;"></span>
+          <span id="hudSellTrigger" style="display:none;"></span>
+          <span id="topBuyStatusText" style="display:none;"></span>
+          <span id="topSellStatusText" style="display:none;"></span>
+          <span id="topBuyZonePill" style="display:none;"></span>
+          <span id="topSellZonePill" style="display:none;"></span>
 
           <div class="vertical-ladder-meter" id="verticalLadderMeter">
             <div class="ladder-step step-ceiling" id="stepCeil" data-pct="100">
@@ -1819,7 +1803,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.4"></script>
+  <script src="app.js?v=2.5"></script>
 </body>
 
 </html>

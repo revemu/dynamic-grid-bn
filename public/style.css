@@ -388,12 +388,12 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 .kpi-summary-bar {
   display: grid;
-  grid-template-columns: 1.25fr 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 10px;
   flex-shrink: 0;
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 900px) {
   .kpi-summary-bar {
     grid-template-columns: 1fr;
   }
@@ -1433,6 +1433,70 @@ body {
 
 .sum-tag { font-size: 7.5px; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px; }
 .sum-val { font-size: 10.5px; font-weight: 700; font-family: var(--font-mono); color: var(--text-primary); }
+
+/* ── Integrated Orderbook Bar in Grid Meter ──────────────────────────────── */
+.ladder-orderbook-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card-inner);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin: 3px 0 5px 0;
+  gap: 6px;
+}
+
+.lob-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.lob-bid {
+  text-align: left;
+  flex: 1;
+}
+
+.lob-spread {
+  text-align: center;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+.lob-ask {
+  text-align: right;
+  flex: 1;
+  align-items: flex-end;
+}
+
+.lob-tag {
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.lob-price {
+  font-size: 11px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  line-height: 1.1;
+}
+
+.lob-sub {
+  font-size: 8px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.lob-divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
 
 /* ── Vertical Ladder Steps ────────────────────────────────────────────────── */
 .vertical-ladder-meter {
