@@ -13,7 +13,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2.2" />
+  <link rel="stylesheet" href="style.css?v=2.3" />
   <!-- TradingView Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -24,7 +24,7 @@
     <header class="top-nav">
       <div class="brand">
         <div class="logo-badge" id="logoBadge">BINANCE GRID</div>
-        <div class="symbol-pill" id="navSymbolBadge">BTC / USDT</div>
+        <div class="symbol-pill" id="navSymbolBadge" style="display: none;">BTC / USDT</div>
         <div class="symbol-select-wrap">
           <select id="topSymbolSelect" class="symbol-nav-select" title="สลับคู่เหรียญเทรด">
             <option value="BTCUSDT">BTC/USDT</option>
@@ -41,61 +41,28 @@
           </select>
         </div>
 
-        <!-- Live System Telemetry Badges in Top Bar -->
+        <!-- Unified System Mode & Connection Status Pills -->
         <div class="nav-system-pills">
-          <div class="status-pill connected" id="connectionStatus" title="สถานะการเชื่อมต่อข้อมูลตลาด">
+          <div class="dry-badge" id="dryRunBadge" title="โหมดการส่งคำสั่งเทรดของบอท (เงินจริง vs จำลอง)">🟡 โหมดจำลอง (DRY RUN)</div>
+          <div class="status-pill connected" id="connectionStatus" title="สถานะการเชื่อมต่อข้อมูลหน้าเว็บและความเร็วรอบประมวลผลของบอท">
             <span class="dot"></span>
-            <span id="connectionText">Live Feed</span>
-          </div>
-          <div class="dry-badge" id="dryRunBadge" title="โหมดการทำงานของบอท">DRY RUN</div>
-          <div class="status-pill tick-speed-pill" id="tickSpeedBadge" title="ความเร็วรอบประมวลผลของบอท">
-            <span class="dot"></span>
-            <span id="tickSpeedText">⚡ 0.2s</span>
+            <span id="connectionText">ออนไลน์</span>
+            <span class="pill-sep">•</span>
+            <span id="tickSpeedText" class="tick-speed-inline">⚡ 0.2s</span>
           </div>
         </div>
       </div>
 
       <div class="nav-metrics">
-        <!-- Group 1: Primary Bot Execution Toggle -->
-        <button class="ctrl-nav-btn ctrl-btn-pause" id="btnPauseBot" title="หยุดชั่วคราว / เริ่มการทำงานของบอท">
-          <span class="btn-icon" id="pauseBtnIcon">⏸️</span>
-          <span id="pauseBtnText">Pause</span>
+        <button class="top-menu-btn menu-btn-trades" id="btnOpenTradeManager" title="เปิดดูประวัติคำสั่งซื้อขาย, จัดการล็อตที่ถือครอง (Lots) และสรุปผลกำไรแต่ละรอบเทรด">
+          <span class="btn-icon">📊</span>
+          <span>ประวัติ / ล็อต / สรุปรอบ</span>
         </button>
-
-        <!-- Group 2: Unified Trade History, Lots & Rounds Manager -->
-        <div class="nav-btn-group">
-          <button class="ctrl-nav-btn ctrl-btn-manage-trades" id="btnOpenTradeManager" title="จัดการรายการซื้อขาย (Fills), ล็อตคงค้าง (Lots) และสรุปรอบเทรด">
-            <span class="btn-icon">📋</span>
-            <span>ประวัติ &amp; ล็อต</span>
-          </button>
-          <button class="ctrl-nav-btn ctrl-btn-rounds" id="btnOpenRoundsModal" title="เปิดดูสรุปผลกำไร/ขาดทุนแต่ละรอบการเทรด (Trade Rounds)">
-            <span class="btn-icon">📊</span>
-            <span>สรุปรอบ</span>
-          </button>
-        </div>
-
-        <!-- Group 3: Emergency & Reset Controls -->
-        <div class="nav-btn-group nav-emergency-group">
-          <button class="ctrl-nav-btn ctrl-btn-cancel" id="btnCancelAll" title="ยกเลิกออเดอร์ที่ตั้งรอทั้งหมดทันที">
-            <span class="btn-icon">🛑</span>
-            <span>ยกเลิกออเดอร์</span>
-          </button>
-          <button class="ctrl-nav-btn ctrl-btn-sell-all" id="btnSellAll" title="ขายเหรียญที่ถืออยู่ทั้งหมดทันทีที่ราคาตลาด (Emergency Market/IOC Exit)">
-            <span class="btn-icon">💥</span>
-            <span>ขายล้างพอร์ต</span>
-          </button>
-          <button class="ctrl-nav-btn ctrl-btn-pos-reset" id="btnResetPosition" title="เคลียร์เฉพาะรายการถือครอง (Lots) เพื่อเริ่มนับรอบใหม่" style="display: none;">
-            <span class="btn-icon">🎯</span>
-            <span>Reset Pos</span>
-          </button>
-          <button class="ctrl-nav-btn ctrl-btn-reset" id="btnOpenResetModal" title="รีเซ็ตสถานะบอท / เคลียร์ล็อต / รีเซ็ตสถิติ">
-            <span class="btn-icon">🔄</span>
-            <span>รีเซ็ต</span>
-          </button>
-        </div>
-
-        <!-- Group 4: Configuration Modal -->
-        <button class="settings-nav-btn" id="openSettingsBtn" title="ตั้งค่าระบบบอทและกลยุทธ์กริด">
+        <button class="top-menu-btn menu-btn-rounds" id="btnOpenRoundsModal" style="display: none;">
+          <span class="btn-icon">📊</span>
+          <span>สรุปรอบเทรด</span>
+        </button>
+        <button class="top-menu-btn menu-btn-config" id="openSettingsBtn" title="ตั้งค่าระบบบอทและกลยุทธ์กริด">
           <span class="btn-icon">⚙️</span>
           <span>ตั้งค่า (Config)</span>
         </button>
@@ -105,7 +72,7 @@
     <!-- ═══════════════════ 4-Card Clear KPI Summary Strip ═══════════════════ -->
     <section class="kpi-summary-bar kpi-four-grid">
       <!-- Card 1: Wallet Assets -->
-      <div class="kpi-card">
+      <div class="kpi-card kpi-wallet-card">
         <div class="kpi-header">
           <span class="kpi-tag">💼 กระเป๋าเงิน (WALLET)</span>
           <div class="kpi-badge-group">
@@ -122,13 +89,13 @@
       </div>
 
       <!-- Card 2: Active Grid Position & Capacity -->
-      <div class="kpi-card">
+      <div class="kpi-card kpi-pos-card">
         <div class="kpi-header">
           <span class="kpi-tag">📦 ของที่ถือ &amp; ความจุ (POSITION)</span>
           <div class="kpi-badge-group">
             <span class="kpi-badge badge-cyan" id="topPosBadge">0.0%</span>
             <span class="kpi-badge badge-soft" id="topCapPct">0% Load</span>
-            <span class="kpi-badge badge-soft" id="lotsCount">0 Open Lots</span>
+            <span class="kpi-badge badge-soft kpi-clickable-badge" id="lotsCount" title="คลิกเพื่อเปิดหน้าจัดการ Lots ที่ถือครอง">0 Open Lots</span>
           </div>
         </div>
         <div class="kpi-body-single">
@@ -215,7 +182,7 @@
       </div>
     </section>
 
-    <!-- ═══════════════════ Bot Live Operational Status Strip ═══════════════════ -->
+    <!-- ═══════════════════ Bot Live Operational Status & Control Strip ═══════════════════ -->
     <section class="bot-status-strip">
       <div class="bot-status-banner banner-info" id="botStatusBanner">
         <div class="banner-left-group">
@@ -224,11 +191,31 @@
             <span class="banner-pulse-dot"></span>
             <span id="bannerStatusTitle">⏳ Analyzing Market</span>
           </div>
-        </div>
-
-        <div class="banner-compact-msg">
           <span class="banner-reason-text" id="bannerReasonText">Synchronizing order book...</span>
           <span class="banner-trigger-text" id="bannerTriggerText">Evaluating market tick</span>
+        </div>
+
+        <div class="banner-controls-group">
+          <button class="ctrl-nav-btn ctrl-btn-pause" id="btnPauseBot" title="หยุดชั่วคราว / เริ่มการทำงานของบอท">
+            <span class="btn-icon" id="pauseBtnIcon">⏸️</span>
+            <span id="pauseBtnText">Pause</span>
+          </button>
+          <button class="ctrl-nav-btn ctrl-btn-cancel" id="btnCancelAll" title="ยกเลิกออเดอร์ที่ตั้งรอทั้งหมดทันที">
+            <span class="btn-icon">🛑</span>
+            <span>ยกเลิกออเดอร์</span>
+          </button>
+          <button class="ctrl-nav-btn ctrl-btn-sell-all" id="btnSellAll" title="ขายเหรียญที่ถืออยู่ทั้งหมดทันทีที่ราคาตลาด (Emergency Market/IOC Exit)">
+            <span class="btn-icon">💥</span>
+            <span>ขายล้างพอร์ต</span>
+          </button>
+          <button class="ctrl-nav-btn ctrl-btn-pos-reset" id="btnResetPosition" title="เคลียร์เฉพาะรายการถือครอง (Lots) เพื่อเริ่มนับรอบใหม่" style="display: none;">
+            <span class="btn-icon">🎯</span>
+            <span>Reset Pos</span>
+          </button>
+          <button class="ctrl-nav-btn ctrl-btn-reset" id="btnOpenResetModal" title="รีเซ็ตสถานะบอท / เคลียร์ล็อต / รีเซ็ตสถิติ">
+            <span class="btn-icon">🔄</span>
+            <span>รีเซ็ต</span>
+          </button>
         </div>
       </div>
     </section>
@@ -443,8 +430,8 @@
               <button class="act-tab-btn" id="tabOpenOrdersBtn" data-target="openorders" title="คำสั่ง Limit Order ที่วางรออยู่ในตลาดขณะนี้">
                 <span class="tab-icon">📖</span> ออเดอร์รอ (<span id="openOrdersBadgeCount">0</span>)
               </button>
-              <button class="act-tab-btn" id="tabHoldingLotsBtn" data-target="holdinglots" title="ไม้ที่บอทกำลังถือครองอยู่พร้อมราคาต้นทุน">
-                <span class="tab-icon">📦</span> ไม้ที่ถือ (<span id="lotsBadgeCount">0%</span>)
+              <button class="act-tab-btn" id="tabHoldingLotsBtn" data-target="holdinglots" style="display: none;">
+                <span class="tab-icon">📦</span> ไม้ที่ถือ (<span id="lotsBadgeCount">0</span>)
               </button>
               <button class="act-tab-btn" id="tabAllBtn" data-target="all" title="ประวัติกิจกรรมทั้งหมดของบอท">
                 ทั้งหมด (<span id="ordersCount">0</span>)
@@ -1832,7 +1819,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.2"></script>
+  <script src="app.js?v=2.3"></script>
 </body>
 
 </html>

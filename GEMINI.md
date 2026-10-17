@@ -1405,16 +1405,19 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - แสดง `Inner Spread (Buy L1 -> Sell T1)`
        - แสดง `First Profit Distance (Avg -> T1)` พร้อมป้ายขนาดไม้ (`%` และ `$USDT`) ของแต่ละเลเวลซื้อ
 
-### 20. Dashboard v2.2 Redesign, Categorized 4-Tab Config Modal & Obsolete Config Cleanup (`data/settings.db.json`, `src/db.ts`, `src/config.ts`, `public/index.html`, `public/style.css`, `public/app.js`)
+### 20. Dashboard v2.3 Redesign, Balanced Top Bar, Bot Status Control Strip, Categorized 4-Tab Config Modal & Obsolete Config Cleanup (`data/settings.db.json`, `src/db.ts`, `src/config.ts`, `public/index.html`, `public/style.css`, `public/app.js`)
 - **สาเหตุและเป้าหมายการปรับปรุง**:
-  1. **หน้า Dashboard เดิมอัดข้อมูลซ้อนกัน**: การ์ด KPI ใบแรกอัดทั้ง Wallet และ Position ไว้ด้วยกัน, แถบปุ่มด้านบนเรียงติดกันยาวโดยไม่แบ่งกลุ่ม, ตาราง `Open Orders` และ `Holding Lots` ถูกซ่อนอยู่ใน Modal ลึก และบันไดกริด 13 ขั้นแสดง `Hold 20%, 40%, 60%, 80%, 100%` แบบตายตัวไม่เปลี่ยนตามโหมด `PYRAMID`
+  1. **หน้า Dashboard เดิมอัดข้อมูลซ้อนกันและเมนูด้านบนไม่สมดุล**: การ์ด KPI ใบแรกอัดทั้ง Wallet และ Position ไว้ด้วยกัน, เมนูด้านบนมีขนาดฟอนต์ไม่เท่ากันและป้าย `Live Feed` กับ `LIVE ON-CHAIN` ชวนสับสน, ปุ่มควบคุมบอทอัดอยู่ด้านบนในขณะที่แถบสถานะบอทด้านล่างมีพื้นที่ว่างมาก, ปุ่มเปิดจัดการเทรด/ล็อต/รอบเทรดซ้ำซ้อนกันหลายจุด และบันไดกริด 13 ขั้นแสดง `Hold 20%, 40%, 60%, 80%, 100%` แบบตายตัวไม่เปลี่ยนตามโหมด `PYRAMID`
   2. **หน้า Config กระจัดกระจายและมีค่าที่เลิกใช้แล้วค้างอยู่**: การตั้งค่าที่เกี่ยวข้องกันกระจายอยู่คนละแท็บ ไม่มีกรอบหมวดหมู่ย่อย แสดงพารามิเตอร์ทุกตัวพร้อมกันแม้จะปิดฟีเจอร์นั้นอยู่ และมีคีย์เก่าที่ไม่ได้ใช้งานแล้ว (`srMinTouchCount`, `srTouchTolerancePct`, `enableLaggardSnipe`, `enableLaggardGuard`, `laggardThresholdPct`, `maxInventoryUsdso`, `requireProfitAboveAvgEntry`, `tradingTimeframe`, `trendTimeframe`) ปะปนอยู่ใน `data/settings.db.json`
 - **สถาปัตยกรรมและการปรับปรุงใหม่**:
-  1. **Dashboard Layout v2.2 (`public/index.html`, `public/style.css`, `public/app.js`)**:
-     - **Top Bar 4-Cluster Layout**: แยกกลุ่มชัดเจนเป็น (1) Brand + Pair Selector + System Status Pills (`#connectionStatus`, `#dryRunBadge`, `#tickSpeedBadge`), (2) ควบคุมการทำงาน (`Pause`), (3) ประวัติและสรุปรอบ (`จัดการเทรด/ไม้`, `สรุปรอบเทรด`), (4) ฉุกเฉินและรีเซ็ต (`ยกเลิกออเดอร์`, `ขายออกทั้งหมด`, `รีเซ็ต`) และปุ่ม `ตั้งค่า (Config)`
-     - **4-Card KPI Strip (`kpi-four-grid`)**: แยกการ์ดออกเป็น 4 ใบเต็มความกว้าง: `💼 กระเป๋าเงิน (Spot Wallet)`, `📦 ของที่ถือ & ความจุ (Active Position)`, `💰 กำไร / ขาดทุน (Performance PnL)`, และ `📖 ราคาตลาด (Best Bid / Ask)`
+  1. **Dashboard Layout v2.3 (`public/index.html`, `public/style.css`, `public/app.js`)**:
+     - **Balanced Single-Line Top Bar (`header.top-nav`)**:
+       - **ฝั่งซ้าย**: ป้ายกระดาน (`#logoBadge`) + Dropdown เลือกคู่เหรียญธีมมืด (`#topSymbolSelect`) + ป้ายโหมดการเทรดที่ชัดเจน (`#dryRunBadge`: `🟡 โหมดจำลอง (DRY RUN)` / `🟢 โหมดเทรดจริง (LIVE)`) + ป้ายสถานะการเชื่อมต่อรวมกับความเร็วรอบบอท (`#connectionStatus`: `🟢 ออนไลน์ • ⚡ 0.2s`)
+       - **ฝั่งขวา**: เหลือเพียง 2 ปุ่มเมนูหลักขนาดสมดุลกัน (`height: 32px`, บรรทัดเดียว): `📊 ประวัติ / ล็อต / สรุปรอบ` (`#btnOpenTradeManager` ซึ่งภายในมีครบทั้ง 3 แท็บ: ประวัติเทรด, จัดการ Lots, และสรุปรอบเทรด) และ `⚙️ ตั้งค่า (Config)` (`#openSettingsBtn`)
+     - **Bot Status & Operational Control Strip (`#botStatusBanner`)**: ย้ายปุ่มควบคุมการทำงานของบอททั้ง 4 ปุ่ม (`⏸️ หยุดชั่วคราว`, `🛑 ยกเลิกออเดอร์`, `💥 ขายล้างพอร์ต`, `🔄 รีเซ็ต`) ลงมาไว้ฝั่งขวาของแถบสถานะบอท ใช้พื้นที่ว่างให้เกิดประโยชน์สูงสุดและอยู่ติดกับข้อความสถานะบอทโดยตรง
+     - **4-Card KPI Strip (`kpi-four-grid`)**: แยกการ์ดออกเป็น 4 ใบเต็มความกว้าง: `💼 กระเป๋าเงิน (Spot Wallet)`, `📦 ของที่ถือ & ความจุ (Active Position)` (คลิกป้าย `0 ไม้` `#lotsCount` เพื่อเปิดแท็บจัดการ Lots ได้ทันที), `💰 กำไร / ขาดทุน (Performance PnL)`, และ `📖 ราคาตลาด (Best Bid / Ask)`
      - **Dynamic Pyramid / Equal Grid Channel Meter (`updateZoneLevelBars`)**: บันได 13 ขั้นคำนวณและแสดงสัดส่วน `Hold % (+$USDT)` ของแต่ละ Buy Level (`L1–L5`) และ Sell Target (`T1–T5`) แบบไดนามิกตามโหมด `PYRAMID` หรือ `EQUAL` และตามเลเวลที่เปิดใช้งานจริง
-     - **Right Sidebar 4-Tab Live Dock**: เพิ่มแท็บ `📖 ออเดอร์` (`#openOrdersFeed`) และ `📦 ไม้` (`#holdingLotsFeed`) ลงในแถบด้านขวาคู่กับ `⚡ เทรด` และ `ทั้งหมด` เพื่อให้ดูออเดอร์ Limit ที่วางรอและรายการไม้ที่ถืออยู่ได้ทันทีจากหน้าหลักโดยไม่ต้องเปิด Modal
+     - **Right Sidebar 3-Tab Live Dock**: แสดง 3 แท็บหลักที่กว้างและอ่านง่าย (`⚡ เทรด`, `📖 ออเดอร์รอ`, `ทั้งหมด`) โดยตัดแท็บ Lots ที่ซ้ำซ้อนกับหน้าต่าง `📊 ประวัติ / ล็อต / สรุปรอบ` ออก
   2. **Categorized 4-Tab Settings Modal & Smart Conditional Visibility (`updateSettingsConditionalVisibility`)**:
      - จัดระเบียบหน้าต่าง Settings ใหม่เป็น 4 หมวดหมู่ตามลำดับความคิด พร้อมการ์ดหมวดย่อย (`.cfg-section-card`):
        - **Tab 1 (`🎯 1. กริด & การออกคำสั่ง`)**: งบประมาณ & รูปแบบคำสั่ง (`IOC_BRACKET` / `LIMIT_MAKER`), โหมดคิดกำไร (`GRID_CASHFLOW` / `PORTFOLIO_AVG_PROFIT`), กำไรสุทธิขั้นต่ำ (`minNetProfitPct`), ตารางตั้งค่าระดับกริด 5 ชั้น + โหมด `PYRAMID`/`EQUAL` + Live Grid Simulator, และเงื่อนไขโซนซื้อ/ขาย
@@ -1424,3 +1427,4 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. **Obsolete Config Cleanup (`data/settings.db.json`, `src/db.ts`, `src/config.ts`)**:
      - ลบคีย์ที่เลิกใช้และซ้ำซ้อนออกจาก `data/settings.db.json` และเพิ่ม `DEPRECATED_SETTINGS_KEYS` ใน `flushSettingsSync()` (`src/db.ts`) เพื่อป้องกันไม่ให้คีย์เก่าถูกเขียนกลับลงไฟล์อีก
      - แปลง `tradingTimeframe`, `trendTimeframe`, และ `requireProfitAboveAvgEntry` ใน `src/config.ts` เป็น Computed Getter/Setter ที่อ้างอิงจาก `dowTimeframe` และ `sellProfitMode` โดยตรง
+

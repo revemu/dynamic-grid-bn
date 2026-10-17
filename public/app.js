@@ -1337,18 +1337,18 @@
       elLogoBadge.textContent = isDreamdex ? "DREAMDEX SPOT" : "BINANCE GRID";
     }
 
-    // Dry Run vs Live On-Chain Badge
+    // Dry Run vs Live Trading Mode Badge
     if (data.dryRun !== undefined && elDryRunBadge) {
       if (data.dryRun) {
-        elDryRunBadge.textContent = "DRY RUN";
+        elDryRunBadge.textContent = "🟡 โหมดจำลอง (DRY RUN)";
         elDryRunBadge.className = "dry-badge";
-        elDryRunBadge.style.background = "rgba(245, 158, 11, 0.2)";
+        elDryRunBadge.style.background = "rgba(245, 158, 11, 0.16)";
         elDryRunBadge.style.color = "#fbbf24";
         elDryRunBadge.style.borderColor = "rgba(245, 158, 11, 0.4)";
       } else {
-        elDryRunBadge.textContent = "LIVE ON-CHAIN";
+        elDryRunBadge.textContent = "🟢 โหมดเทรดจริง (LIVE)";
         elDryRunBadge.className = "dry-badge live-badge";
-        elDryRunBadge.style.background = "rgba(16, 185, 129, 0.2)";
+        elDryRunBadge.style.background = "rgba(16, 185, 129, 0.16)";
         elDryRunBadge.style.color = "#34d399";
         elDryRunBadge.style.borderColor = "rgba(16, 185, 129, 0.4)";
       }
@@ -3035,7 +3035,7 @@
 
     sse.addEventListener("connected", () => {
       if (elConnectionStatus) elConnectionStatus.className = "status-pill connected";
-      if (elConnectionText) elConnectionText.textContent = "Live Feed";
+      if (elConnectionText) elConnectionText.textContent = "ออนไลน์";
     });
 
     sse.addEventListener("candles_batch", (e) => {
@@ -5141,6 +5141,7 @@
   if (elTmTabLotsBtn) elTmTabLotsBtn.addEventListener("click", () => switchTmTab("tmTabLots"));
   if (elTmTabRoundsBtn) elTmTabRoundsBtn.addEventListener("click", () => switchTmTab("tmTabRounds"));
   if (elBtnOpenRoundsModal) elBtnOpenRoundsModal.addEventListener("click", () => openTradeManager("tmTabRounds"));
+  if (elLotsCount) elLotsCount.addEventListener("click", () => openTradeManager("tmTabLots"));
 
   if (elTmSearchInput) elTmSearchInput.addEventListener("input", renderTmTrades);
   if (elTmFilterAction) elTmFilterAction.addEventListener("change", renderTmTrades);

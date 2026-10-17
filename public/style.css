@@ -2930,36 +2930,214 @@ input:checked + .slider:before { transform: translateX(20px); }
    DASHBOARD REDESIGN v2.2 — Top Bar Clusters, 4-Card KPI, Dock & Config Cards
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* 1. Top Bar System Pills & Action Button Clusters */
+/* 1. Top Bar Balanced Single-Line Navigation & Bot Status Strip Controls */
+.top-nav {
+  padding: 6px 14px;
+  min-height: 44px;
+  gap: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.logo-badge {
+  white-space: nowrap;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 11px;
+  font-size: 11.5px;
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+
+.symbol-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.symbol-nav-select {
+  height: 30px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  color: #38bdf8;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 28px 0 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.15);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.symbol-nav-select:hover,
+.symbol-nav-select:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.3);
+}
+
 .nav-system-pills {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-left: 4px;
+  gap: 8px;
+  margin-left: 2px;
   padding-left: 10px;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
+  flex-wrap: nowrap;
 }
 
 .nav-system-pills .status-pill,
 .nav-system-pills .dry-badge {
-  font-size: 10px;
-  padding: 3px 8px;
-  border-radius: 6px;
-}
-
-.nav-btn-group {
+  height: 28px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  padding: 3px 5px;
-  border-radius: 8px;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 10px;
+  border-radius: 7px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.nav-group-danger {
-  background: rgba(244, 63, 94, 0.04);
-  border-color: rgba(244, 63, 94, 0.16);
+.pill-sep {
+  opacity: 0.45;
+  font-size: 10px;
+}
+
+.tick-speed-inline {
+  color: #a5b4fc;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.nav-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.top-menu-btn {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px;
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.top-menu-btn .btn-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.menu-btn-trades {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  color: #e0f2fe;
+}
+
+.menu-btn-trades:hover {
+  background: rgba(56, 189, 248, 0.24);
+  border-color: #38bdf8;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(56, 189, 248, 0.22);
+}
+
+.menu-btn-config {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(168, 85, 247, 0.22));
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  color: #f3e8ff;
+}
+
+.menu-btn-config:hover {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(168, 85, 247, 0.4));
+  border-color: #c084fc;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(168, 85, 247, 0.28);
+}
+
+/* Bot Status & Operational Control Strip */
+.bot-status-banner {
+  padding: 6px 12px;
+  gap: 12px;
+}
+
+.bot-status-banner .banner-left-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.bot-status-banner .banner-reason-text {
+  font-size: 11.5px;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bot-status-banner .banner-trigger-text {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.banner-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.banner-controls-group .ctrl-nav-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  border-radius: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.kpi-clickable-badge {
+  cursor: pointer;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  transition: all 0.15s ease;
+}
+
+.kpi-clickable-badge:hover {
+  background: rgba(56, 189, 248, 0.22);
+  color: #38bdf8;
+  border-color: #38bdf8;
 }
 
 /* 2. 4-Card KPI Strip */
