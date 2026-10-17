@@ -278,7 +278,13 @@ async function main(): Promise<void> {
 
       // 1. Handle Exchange Adapter switch or credentials update dynamically
       if (exchangeChanged || (targetExchangeName === "dreamdex" && privateKeyChanged)) {
+        grid.setSwitchingSymbol(true);
         try {
+          // If switching exchange or symbol, cancel all resting orders on the current exchange/pair first
+          if (exchangeChanged || symbolChanged) {
+            await grid.prepareForSymbolSwitch(normNextSymbol || targetExchangeName.toUpperCase());
+          }
+
           const realPrivateKey = (s.dreamdexPrivateKey !== undefined && s.dreamdexPrivateKey !== "******" && s.dreamdexPrivateKey.trim() !== "")
             ? s.dreamdexPrivateKey.trim()
             : grid.getRealDreamdexPrivateKey();
@@ -314,6 +320,8 @@ async function main(): Promise<void> {
           await initFeeds(nextInfo.symbol);
           grid.updateExchangeClient(newExchange, nextInfo, atrSource!);
           wireFeedsToGrid();
+          await grid.refreshWalletBalances();
+          await grid.syncOnChainOrders();
           dashboard.resetState({ clearTrades: false });
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
@@ -330,16 +338,25 @@ async function main(): Promise<void> {
           log(`🔄 Successfully switched Exchange Adapter to: ${exchange.exchangeName.toUpperCase()} (${nextInfo.symbol})`);
         } catch (err) {
           log(`⚠️ Failed to switch exchange adapter to ${targetExchangeName}: ${(err as Error).message}`);
+        } finally {
+          grid.setSwitchingSymbol(false);
         }
       } else if (symbolChanged) {
         // 2. Handle trading pair change dynamically on same exchange
         const nextSymbolStr = normNextSymbol;
+        grid.setSwitchingSymbol(true);
         try {
+          // Validate symbol on exchange first before cancelling existing orders
           const nextInfo = await exchange.getExchangeInfo(nextSymbolStr);
+          // Cancel all resting orders on the old pair (and sweep any orphan quote-locking orders) before switching
+          await grid.prepareForSymbolSwitch(nextInfo.symbol);
           symbolInfo = nextInfo;
           await initFeeds(nextInfo.symbol);
           grid.updateSymbolInfo(nextInfo, atrSource!);
           wireFeedsToGrid();
+          // Immediately refresh unlocked wallet balances & open orders before the first tick on the new pair
+          await grid.refreshWalletBalances();
+          await grid.syncOnChainOrders();
           dashboard.resetState({ clearTrades: false });
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
@@ -355,7 +372,14 @@ async function main(): Promise<void> {
           wakeSleep?.();
           log(`🔄 Switched active ${exchange.exchangeName} trading pair to: ${nextInfo.symbol}`);
         } catch (err) {
+          // Restore previous symbol in settings if getExchangeInfo failed
+          if (prevSymbol) {
+            grid.updateRuntimeSettings({ symbol: prevSymbol });
+          }
           log(`⚠️ Failed to switch symbol to ${nextSymbolStr}: ${(err as Error).message}`);
+          throw err;
+        } finally {
+          grid.setSwitchingSymbol(false);
         }
       }
 
@@ -391,7 +415,7 @@ async function main(): Promise<void> {
 
       grid.emitTelemetryTick();
       wakeSleep?.();
-      return res;
+      return grid.getRuntimeConfig();
     },
     onPauseBot: (paused) => grid.setPaused(paused),
     getIsPaused: () => grid.getIsPaused(),

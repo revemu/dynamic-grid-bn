@@ -104,7 +104,7 @@ export interface IExchangeClient {
   syncTime(): Promise<number>;
   getExchangeInfo(symbol: string): Promise<ExchangeSymbolInfo>;
   getAccountBalances(symbol: string): Promise<ExchangeAccountBalances>;
-  getOpenOrders(symbol: string): Promise<ExchangeOpenOrder[]>;
+  getOpenOrders(symbol?: string): Promise<ExchangeOpenOrder[]>;
   getOrder(symbol: string, orderId: string | number): Promise<ExchangeOpenOrder | ExchangeOrderResult>;
   getTopOfBook(symbol: string, forceFresh?: boolean): Promise<ExchangeTopOfBook | undefined>;
   placeOrder(params: PlaceOrderParams): Promise<ExchangeOrderResult>;

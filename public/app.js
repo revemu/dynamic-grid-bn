@@ -1521,11 +1521,28 @@
     const elCfgSymbol = document.getElementById("cfg_symbol");
     const elCfgExchange = document.getElementById("cfg_exchange");
     if (elTopSymbolSelect) {
-      if (isHoldingActivePosition) {
+      if (!window.__isSwitchingSymbolUI && document.activeElement !== elTopSymbolSelect && rawSymbol) {
+        const cleanSym = rawSymbol.replace(/[\/\s]/g, "").toUpperCase();
+        const hasOpt = Array.from(elTopSymbolSelect.options).some((o) => o.value.toUpperCase() === cleanSym);
+        if (!hasOpt && cleanSym !== "__CUSTOM__") {
+          const opt = document.createElement("option");
+          opt.value = cleanSym;
+          opt.textContent = displaySymbol;
+          const customOpt = Array.from(elTopSymbolSelect.options).find((o) => o.value === "__custom__");
+          if (customOpt) elTopSymbolSelect.insertBefore(opt, customOpt);
+          else elTopSymbolSelect.appendChild(opt);
+        }
+        if (elTopSymbolSelect.value !== cleanSym) {
+          elTopSymbolSelect.value = cleanSym;
+        }
+      }
+      if (isHoldingActivePosition || window.__isSwitchingSymbolUI) {
         elTopSymbolSelect.disabled = true;
         elTopSymbolSelect.style.cursor = "not-allowed";
         elTopSymbolSelect.style.opacity = "0.6";
-        elTopSymbolSelect.title = "🔒 ปิดการเปลี่ยนคู่เทรดชั่วคราวเนื่องจากบอทกำลังถือ Position อยู่ (กรุณา Take Profit หรือ Cut Loss ให้หมดก่อนสลับคู่เหรียญ)";
+        elTopSymbolSelect.title = isHoldingActivePosition
+          ? "🔒 ปิดการเปลี่ยนคู่เทรดชั่วคราวเนื่องจากบอทกำลังถือ Position อยู่ (กรุณา Take Profit หรือ Cut Loss ให้หมดก่อนสลับคู่เหรียญ)"
+          : "⏳ กำลังสลับคู่เหรียญและยกเลิกออเดอร์คู่เดิม...";
       } else {
         elTopSymbolSelect.disabled = false;
         elTopSymbolSelect.style.cursor = "pointer";
@@ -3828,6 +3845,14 @@
         newSym = entered.trim().toUpperCase().replace(/[\/\-_:]/g, "");
       }
 
+      window.__isSwitchingSymbolUI = true;
+      elTopSymbolSelect.disabled = true;
+      showToast({
+        title: "⏳ SWITCHING TRADING PAIR",
+        desc: `กำลังยกเลิกออเดอร์คู่เดิม บันทึก Config และสลับกราฟเป็น ${newSym}...`,
+        action: "SETTINGS",
+      });
+
       try {
         const res = await fetch(`${API_BASE}/api/db/settings`, {
           method: "POST",
@@ -3835,15 +3860,19 @@
           body: JSON.stringify({ symbol: newSym }),
         });
         if (res.ok) {
+          const respData = await res.json().catch(() => ({}));
+          const savedSym = (respData.settings && respData.settings.symbol) || newSym;
           showToast({
-            title: "SYMBOL CHANGED",
-            desc: `Switched trading pair to ${newSym}`,
+            title: "✅ SYMBOL CHANGED",
+            desc: `ยกเลิกออเดอร์คู่เดิม บันทึก Config และสลับคู่เทรดเป็น ${savedSym} เรียบร้อยแล้ว`,
             action: "SETTINGS",
           });
           const navPill = document.getElementById("navSymbolBadge");
-          if (navPill) navPill.textContent = newSym;
+          if (navPill) navPill.textContent = savedSym;
           const cfgSym = document.getElementById("cfg_symbol");
-          if (cfgSym) cfgSym.value = newSym;
+          if (cfgSym) cfgSym.value = savedSym;
+          elTopSymbolSelect.value = savedSym;
+          await refreshFrontPageState();
         } else {
           const errData = await res.json().catch(() => ({}));
           showToast({
@@ -3856,6 +3885,9 @@
         }
       } catch (err) {
         console.error("Failed to switch symbol:", err);
+      } finally {
+        window.__isSwitchingSymbolUI = false;
+        elTopSymbolSelect.disabled = isHoldingActivePosition;
       }
     });
   }

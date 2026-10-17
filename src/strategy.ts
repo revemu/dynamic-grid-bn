@@ -294,12 +294,96 @@ export class DynamicGrid {
     };
   }
 
+  private isSwitchingSymbol = false;
+
+  public setSwitchingSymbol(switching: boolean): void {
+    this.isSwitchingSymbol = switching;
+  }
+
+  /**
+   * Sweeps and cancels any orphan open BUY orders on other Binance symbols that lock the current quoteAsset (e.g. FDUSD/USDT).
+   */
+  public async sweepOrphanQuoteOrders(): Promise<number> {
+    if (this.cfg.dryRun || !this.binance.hasCredentials() || this.binance.exchangeName !== "binance") {
+      return 0;
+    }
+    try {
+      const allOpen = await this.binance.getOpenOrders("");
+      const activeSymUpper = (this.symbol || "").toUpperCase();
+      const quoteUpper = (this.quoteAsset || "").toUpperCase();
+      if (!quoteUpper) return 0;
+
+      const orphanOrders = allOpen.filter((o) => {
+        const sym = (o.symbol || "").toUpperCase();
+        return sym && sym !== activeSymUpper && o.side === "BUY" && sym.endsWith(quoteUpper);
+      });
+
+      if (orphanOrders.length === 0) return 0;
+
+      let cancelled = 0;
+      const now = Date.now();
+      for (const ord of orphanOrders) {
+        const idStr = String(ord.orderId);
+        this.cancelledOrderIds.set(idStr, now);
+        try {
+          await this.binance.cancelOrder(ord.symbol, idStr);
+          cancelled++;
+          const lockedVal = Math.max(0, ord.origQty - ord.executedQty) * ord.price;
+          this.log(
+            `🧹 [ORPHAN ORDER SWEEP] Cancelled lingering BUY order #${idStr} on ${ord.symbol} ($${lockedVal.toFixed(2)} ${quoteUpper}) to free locked ${quoteUpper} balance!`,
+          );
+        } catch (err) {
+          this.log(`⚠️ [ORPHAN ORDER SWEEP] Failed to cancel order #${idStr} on ${ord.symbol}: ${(err as Error).message}`);
+        }
+      }
+      return cancelled;
+    } catch (err) {
+      this.log(`⚠️ [ORPHAN ORDER SWEEP] Could not query cross-symbol open orders: ${(err as Error).message}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Cancels all resting orders on the current symbol (and sweeps any orphan quote-locking orders)
+   * BEFORE switching to a new trading pair or exchange.
+   */
+  public async prepareForSymbolSwitch(nextSymbolLabel?: string): Promise<void> {
+    const prevSymbol = this.symbol;
+    const reason = `Switching trading pair from ${prevSymbol} to ${nextSymbolLabel || "new pair"}`;
+    this.log(`🧹 [PAIR SWITCH] Preparing to switch ${prevSymbol} -> ${nextSymbolLabel || "new pair"}: cancelling all open orders...`);
+
+    const now = Date.now();
+    for (const o of this.openOrders) {
+      if (o.onChainOrderId) this.cancelledOrderIds.set(o.onChainOrderId, now);
+    }
+
+    if (this.openOrders.length > 0) {
+      await this.cancelAllRestingOrders(undefined, reason);
+    }
+
+    if (!this.cfg.dryRun && this.binance.hasCredentials()) {
+      try {
+        await this.binance.cancelAllOpenOrders(prevSymbol);
+        this.log(`🗑️ [PAIR SWITCH] Purged all open exchange orders on ${prevSymbol}`);
+      } catch (err) {
+        this.log(`⚠️ [PAIR SWITCH] Exchange cancelAllOpenOrders(${prevSymbol}) notice: ${(err as Error).message}`);
+      }
+      await this.sweepOrphanQuoteOrders();
+    }
+
+    this.openOrders = [];
+    this.inFlightOrders.clear();
+    this.orderCooldowns.clear();
+    this.saveState(true);
+  }
+
   public updateExchangeClient(newClient: IExchangeClient, info?: ExchangeSymbolInfo, newAtrSource?: AtrSource): void {
     if (this.cfg.persistState) {
       this.saveState(true);
     }
     this.binance = newClient;
     this.cfg.exchange = newClient.exchangeName as "binance" | "dreamdex";
+    this.db.setSetting("exchange", this.cfg.exchange);
     this.wireExchangeGasListener(newClient);
     if (info) {
       this.updateSymbolInfo(info, newAtrSource);
@@ -320,7 +404,10 @@ export class DynamicGrid {
       this.atrSource = newAtrSource;
     }
     this.lastRefPrice = undefined;
+    this.lastBestBid = undefined;
+    this.lastBestAsk = undefined;
     this.wsBookTicker = undefined;
+    this.lastPeriodicSyncTs = 0;
     this.lastDynamicBounds = undefined;
     this.confirmedChannel = undefined;
     this.pendingConfirmedChannelUpdate = true;
@@ -334,6 +421,9 @@ export class DynamicGrid {
     this.cutLossStage1Executed = false;
     this.cutLossStage1Price = undefined;
     this.cutLossStage1CandleTime = undefined;
+    this.needsBuyRebalance = true;
+    this.needsSellRebalance = true;
+    this.inFlightOrders.clear();
     this.orderCooldowns.clear();
 
     this.symbolInfo = info;
@@ -348,6 +438,7 @@ export class DynamicGrid {
     this.qtyPrecision = info.qtyPrecision ?? 4;
     this.pricePrecision = info.pricePrecision ?? 6;
     this.minNotional = info.minNotional;
+    this.db.setSetting("symbol", this.symbol);
     this.loadState();
     this.log(`🔄 [strategy] Updated trading pair to ${this.symbol} (${this.baseAsset}/${this.quoteAsset})`);
   }
@@ -684,6 +775,13 @@ export class DynamicGrid {
           }
           continue;
         }
+        if (key === "symbol" && typeof val === "string" && val.trim().length > 0) {
+          const cleanSym = val.trim().toUpperCase().replace(/[\/\-_]/g, "");
+          this.symbol = cleanSym;
+          this.cfg.symbol = cleanSym;
+          this.cfg.binanceSymbol = cleanSym.toLowerCase().replace(/:/g, "");
+          continue;
+        }
         (this.cfg as any)[key] = val;
       }
     }
@@ -824,6 +922,20 @@ export class DynamicGrid {
       // 1. Query active open orders directly from Binance Spot API / DreamDEX
       const liveOrders = await this.binance.getOpenOrders(this.symbol);
       const onChainIdSet = new Set<string>(liveOrders.map((o) => o.orderId.toString()));
+
+      // 1b. Detect & sweep orphan BUY orders on other Binance symbols that lock our quoteAsset (FDUSD/USDT)
+      if (this.binance.exchangeName === "binance") {
+        const activeBuyLockedQuote = liveOrders
+          .filter((o) => o.side === "BUY")
+          .reduce((sum, o) => sum + Math.max(0, o.origQty - o.executedQty) * o.price, 0);
+        if (this.walletQuoteLocked > activeBuyLockedQuote + 1.0) {
+          const swept = await this.sweepOrphanQuoteOrders();
+          if (swept > 0) {
+            await this.refreshWalletBalances();
+            this.needsBuyRebalance = true;
+          }
+        }
+      }
 
       // Reconcile database OPEN order records against live exchange state
       if (typeof (this.db as any).reconcileOpenOrdersWithExchange === "function") {
@@ -1675,6 +1787,7 @@ export class DynamicGrid {
       } catch (err) {
         this.log(`⚠️ ${this.binance.exchangeName.toUpperCase()} cancel all orders error: ${(err as Error).message}`);
       }
+      await this.sweepOrphanQuoteOrders();
     }
 
     await this.refreshWalletBalances();
@@ -1706,6 +1819,7 @@ export class DynamicGrid {
       } catch (err) {
         this.log(`⚠️ ${this.binance.exchangeName.toUpperCase()} cancel all orders error: ${(err as Error).message}`);
       }
+      await this.sweepOrphanQuoteOrders();
     }
 
     // 2. Clear memory lots & orders completely
@@ -1974,6 +2088,7 @@ export class DynamicGrid {
   }
 
   async tick(): Promise<void> {
+    if (this.isSwitchingSymbol) return;
     const now = Date.now();
     // 1. Periodic background sync (every 30s) as sanity check only, eliminating aggressive 200ms REST polling!
     if (now - this.lastPeriodicSyncTs >= this.periodicSyncIntervalMs) {

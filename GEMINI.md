@@ -201,6 +201,33 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         3. **Strict Total Buy Exposure Cap Guard**:
            - บังคับใช้กฎ Invariant: $\text{Total Open Buys} \le \text{currentAvailableCapacity} = \max(0, \text{maxInventoryQuote} - \text{currentHeldQuote})$
            - ทุกคำสั่งซื้อใหม่และการปรับขนาด จะถูก Cap ด้วย `currentAvailableCapacity` เสมอ ทำให้ผลรวมของเหรียญที่ถืออยู่ + ยอดรอซื้อทั้งหมดไม่มีทางเกิน `maxInventoryQuote` ($100) อย่างเด็ดขาด และตัดปัญหา Churn Loop ให้หมดไป 100%
+   - **Automated Order Cancellation, Balance Refresh, Cross-Symbol Orphan Order Sweep, and Dynamic Symbol Persistence on Chart Switch**:
+       - **สาเหตุของปัญหา**:
+         1. **ไม่ได้ยกเลิกออเดอร์เดิมก่อนสลับกราฟ**: เมื่อผู้ใช้เปลี่ยนคู่เทรดจากหน้าแรกผ่าน Dropdown (`topSymbolSelect`) ระบบเดิมเพียงแค่เปลี่ยน `symbolInfo` และโหลดแท่งเทียนใหม่ โดยไม่ได้สั่ง `cancelAllRestingOrders()` หรือยกเลิกออเดอร์คู่เดิมบน Exchange ทำให้ออเดอร์ซื้อขายของคู่เหรียญเดิม (เช่น `ETHFDUSD`) ยังคงค้างอยู่บนกระดาน Binance
+         2. **เงินสดถูกล็อกข้ามคู่เหรียญ ทำให้ตั้งออเดอร์คู่ใหม่ไม่ตรงงบ**: ออเดอร์ซื้อของคู่เหรียญเดิมที่ค้างอยู่ได้ล็อกเงินทุน `FDUSD`/`USDT` ในกระเป๋าไว้ (เช่น ~$99.76 ถูกล็อก) ส่งผลให้เมื่อบอทเริ่มรันคู่เหรียญใหม่ (เช่น `BNBFDUSD`) เงินสดคงเหลือจริง (`quoteFree`) ไม่เพียงพอสำหรับการตั้งโควตาเต็มของ Buy Level 1-5 ทำให้วางออเดอร์ได้เพียงบางระดับ หรือวางได้ด้วยเศษเงินที่เหลือ (เช่น $20.09 ใน Level 4 และ $0 ใน Level 5) ไม่ตรงตามแผน
+         3. **ไม่บันทึกคู่เหรียญลงใน Database Config**: ใน `src/index.ts` เมธอด `onUpdateSettings` เรียก `grid.updateRuntimeSettings(s)` ก่อนที่ `symbol` จะถูกอัปเดตเป็นคู่ใหม่ และใน `src/strategy.ts` เมธอด `getRuntimeConfig()` ยังคงคืนค่า `symbol: this.symbol` ซึ่งเป็นคู่เดิม ทำให้การบันทึก `this.db.setSettings(configToPersist)` เขียนทับคู่เหรียญเดิมลงใน `data/settings.db.json` เสมอ เมื่อรีสตาร์ทบอทจึงกลับไปใช้คู่เหรียญเดิมโดยไม่จำคู่ที่เพิ่งเลือก
+       - **การแก้ไขและสถาปัตยกรรมใหม่**:
+         1. **Automated Order Cancellation on Symbol/Exchange Switch (`prepareForSymbolSwitch`)**:
+            - ใน `src/strategy.ts`: เพิ่มเมธอด `prepareForSymbolSwitch(nextSymbolLabel)` ซึ่งจะสั่งยกเลิกออเดอร์ที่ตั้งรออยู่ทั้งหมดของคู่เดิม (`cancelAllRestingOrders`), กวาดล้างออเดอร์บนกระดานของคู่นั้น (`cancelAllOpenOrders(this.symbol)`), กวาดออเดอร์ข้ามเหรียญที่ล็อกเงินสด (`sweepOrphanQuoteOrders()`), และเคลียร์ Memory `openOrders` ทันที
+            - ใน `src/index.ts`: เมื่อตรวจพบ `symbolChanged` หรือ `exchangeChanged` จะเปิดแฟลก `grid.setSwitchingSymbol(true)` เพื่อหยุดการประมวลผล `tick()` ชั่วคราว และเรียก `await grid.prepareForSymbolSwitch(...)` ก่อนที่จะสลับ `symbolInfo` หรือเริ่มต้นฟีดใหม่
+         2. **Cross-Symbol Orphan Order Sweep (`sweepOrphanQuoteOrders`)**:
+            - ใน `src/exchange/types.ts` & `src/exchange/binance/client.ts`: ปรับปรุง `getOpenOrders(symbol?: string)` ให้สามารถดึงออเดอร์ที่เปิดอยู่ทั้งหมดข้ามทุกคู่เหรียญบน Binance เมื่อส่งค่า `""` หรือไม่ระบุ `symbol`
+            - ใน `src/strategy.ts`: เพิ่ม `sweepOrphanQuoteOrders()` สแกนหาออเดอร์ซื้อฝั่ง BUY บนคู่เหรียญอื่นที่ลงท้ายด้วย Quote Asset เดียวกัน (เช่น `ETHFDUSD` หรือ `BTCFDUSD` ที่ล็อก `FDUSD`) และยกเลิกออเดอร์เหล่านั้นเพื่อคืนเงินสดกลับเข้ากระเป๋า
+            - เมธอดนี้จะถูกเรียกอัตโนมัติใน:
+              - `prepareForSymbolSwitch()` ก่อนสลับเหรียญ
+              - `cancelAllOrdersUser()` เมื่อผู้ใช้กดปุ่ม Emergency Cancel All
+              - `resetBotState()` เมื่อผู้ใช้กด Reset Bot
+              - `syncOnChainOrders()` ทุกครั้งที่พบว่าเงินสดที่ถูกล็อก (`walletQuoteLocked`) มีค่ามากกว่ายอดออเดอร์ซื้อของคู่เหรียญปัจจุบัน (`activeBuyLockedQuote + 1.0`)
+         3. **Immediate Wallet Balance Refresh & Ready State**:
+            - หลังจากสลับเหรียญและฟีดเสร็จสิ้น ใน `src/index.ts` จะเรียก `await grid.refreshWalletBalances()` และ `await grid.syncOnChainOrders()` ทันที เพื่อให้ยอดเงินสดที่เพิ่งปลดล็อกอัปเดตเป็นปัจจุบัน 100% ก่อนที่บอทจะเริ่มคำนวณและวางคำสั่งซื้อของคู่เหรียญใหม่
+         4. **Instant Dynamic Symbol Persistence (`data/settings.db.json`)**:
+            - ใน `src/strategy.ts` เมธอด `updateRuntimeSettings()`: หากพบการส่งค่า `symbol` ใหม่ จะทำการอัปเดต `this.symbol`, `this.cfg.symbol`, และ `this.cfg.binanceSymbol` ให้เสร็จสิ้นทันทีก่อนที่ `getRuntimeConfig()` จะถูกดึงไปบันทึกผ่าน `this.db.setSettings(configToPersist)`
+            - ใน `updateSymbolInfo()`: เรียก `this.db.setSetting("symbol", this.symbol)` เพื่อการันตีว่าค่าคู่เหรียญที่เป็น Canonical Symbol จะถูกบันทึกลงใน `data/settings.db.json` อย่างถาวรทุกครั้ง
+            - ใน `src/index.ts`: คืนค่า `grid.getRuntimeConfig()` จาก `onUpdateSettings` เพื่อให้ผลลัพธ์ของ API ส่งคู่เหรียญใหม่ล่าสุดกลับไปยัง Frontend
+         5. **Frontend Synchronization & Smooth Feedback (`public/app.js` & `public/index.html`)**:
+            - ใน `public/app.js` ฟังก์ชัน `updateTick()`: ซิงค์ค่าของ Dropdown `#topSymbolSelect` ให้ตรงกับ `data.symbol` ของระบบอยู่เสมอ (หากไม่มีตัวเลือกเหรียญนั้น จะสร้าง `<option>` ให้อัตโนมัติ)
+            - ใน Event Listener ของ `#topSymbolSelect`: ขณะกำลังสลับเหรียญจะทำการ Disable Dropdown ชั่วคราวและแสดง Toast แจ้งเตือนสถานะชัดเจน (`⏳ กำลังยกเลิกออเดอร์คู่เดิม บันทึก Config และสลับกราฟเป็น ...`) เมื่อสำเร็จจะแจ้งเตือนและเรียก `refreshFrontPageState()` เพื่ออัปเดตยอดเงินสดและหน้าต่างออเดอร์บนแดชบอร์ดทันที
+            - อัปเดต Cache Buster เป็น `app.js?v=2.4` ใน `public/index.html`
    - **Dual Resistance Selling Architecture (`enableSellAtRealCeiling` & `min(TL, Real Ceil)` Overrides)**:
       - **สาเหตุและความต้องการ**:
         1. เมื่อบอทล็อกกรอบ (`lockChannelInPosition`) เพื่อป้องกันไม่ให้กรอบหลักขยับลงมาทับต้นทุน แต่โครงสร้างราคาจริง (Dow Theory / Donchian Highs) ได้ปรับตัวลงมาและสร้างแนวต้านจริง (`Real S/R Ceil`) ที่ต่ำกว่าเพดานเดิม (เช่น Locked Ceil อยู่ที่ $108.03 แต่ Real S/R Ceil ลดลงมาอยู่ที่ $105.38)

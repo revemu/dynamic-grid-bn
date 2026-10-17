@@ -318,9 +318,10 @@ export class BinanceClient implements IExchangeClient {
   /**
    * Fetch all resting open orders for a symbol.
    */
-  public async getOpenOrders(symbol: string): Promise<BinanceOpenOrder[]> {
-    const sym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
-    const rawOrders = await this.signedRequest<any[]>("GET", "/api/v3/openOrders", { symbol: sym });
+  public async getOpenOrders(symbol?: string): Promise<BinanceOpenOrder[]> {
+    const sym = (symbol || "").trim().toUpperCase().replace(/[\/\-_:]/g, "");
+    const params: Record<string, any> = sym ? { symbol: sym } : {};
+    const rawOrders = await this.signedRequest<any[]>("GET", "/api/v3/openOrders", params);
     return (rawOrders || []).map((o) => ({
       symbol: o.symbol,
       orderId: Number(o.orderId),
