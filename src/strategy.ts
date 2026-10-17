@@ -2805,9 +2805,9 @@ export class DynamicGrid {
     let isTlSellTrigger = false;
     let tlSellPrice: number | undefined;
     const isTlActiveForTrigger = (this.cfg.enableSellBelowTrendResistance !== false) &&
-      Boolean(downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed && downtrendLine.currentLinePrice > refPrice);
+      Boolean(downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed);
     const isRealCeilActiveForTrigger = (this.cfg.enableSellAtRealCeiling !== false) &&
-      Boolean(liveCalculatedCeil && liveCalculatedCeil > refPrice && liveCalculatedCeil < upperBound);
+      Boolean(liveCalculatedCeil && liveCalculatedCeil < upperBound);
 
     if (isTlActiveForTrigger || isRealCeilActiveForTrigger) {
       const tlPrice = (isTlActiveForTrigger && downtrendLine) ? downtrendLine.currentLinePrice : Infinity;
@@ -3076,11 +3076,12 @@ export class DynamicGrid {
           severity: "info",
         };
       } else if (isTlSellTrigger && this.baseHeld() > 0 && openBuys.length === 0) {
+        const tlSlipPct = (this.cfg.iocSlippagePct ?? 0.2);
         botActionState = {
           code: "WAITING_TRENDLINE_EXIT",
           title: "📉 Waiting TL Sell Exit",
           reason: `Sells paused below TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
-          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)})`,
+          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)} • slip ${tlSlipPct.toFixed(2)}%)`,
           severity: "info",
         };
       } else if (openBuys.length > 0) {
@@ -3116,11 +3117,12 @@ export class DynamicGrid {
           severity: "success",
         };
       } else if (isTlSellTrigger && this.baseHeld() > 0) {
+        const tlSlipPct = (this.cfg.iocSlippagePct ?? 0.2);
         botActionState = {
           code: "WAITING_TRENDLINE_EXIT",
           title: "📉 Waiting TL Sell Exit",
           reason: `Sells suppressed by TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
-          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)})`,
+          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)} • slip ${tlSlipPct.toFixed(2)}%)`,
           severity: "info",
         };
       } else {
@@ -3424,18 +3426,21 @@ export class DynamicGrid {
 
       if (this.baseHeld() > 0 && !isBelowFloor) {
         // Check Best Bid liquidity on DEX/CEX before executing IOC
-        const effectiveBestBid = bestBid !== undefined && bestBid > 0 ? bestBid : undefined;
+        const effectiveBestBid = bestBid !== undefined && bestBid > 0 ? bestBid : (currentBestBid > 0 ? currentBestBid : undefined);
         const avgEntry = this.getAvgEntryPrice();
-        const isBidAtResistance = effectiveBestBid !== undefined && effectiveBestBid >= effectiveResPrice;
+        const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
+        const minAllowedResPrice = effectiveResPrice * (1 - sellSlippage);
+        const isBidWithinSlippage = effectiveBestBid !== undefined && effectiveBestBid >= minAllowedResPrice;
         const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
+        const isPriceAtResistance = refPrice >= minAllowedResPrice || (effectiveBestBid !== undefined && effectiveBestBid >= minAllowedResPrice);
 
-        if (refPrice >= effectiveResPrice) {
-          if (effectiveBestBid !== undefined && !isBidAtResistance) {
-            // Bid is below resistance price -> hold off to avoid selling below target
+        if (isPriceAtResistance) {
+          if (effectiveBestBid !== undefined && !isBidWithinSlippage) {
+            // Bid is below slippage floor -> hold off to avoid selling below target
             if (Date.now() - (this.orderCooldowns.get("res_ioc_bid_warn") ?? 0) > 30_000) {
               this.orderCooldowns.set("res_ioc_bid_warn", Date.now());
               this.log(
-                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} >= ${resDisplayName} $${effectiveResPrice.toFixed(6)} but DEX Best Bid $${effectiveBestBid.toFixed(6)} is below ${resDisplayName} — waiting for bid to reach level`,
+                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} reached ${resDisplayName} ($${effectiveResPrice.toFixed(6)}, slip ${(sellSlippage * 100).toFixed(2)}%: $${minAllowedResPrice.toFixed(6)}) but Best Bid $${effectiveBestBid.toFixed(6)} is below slippage floor — waiting for bid to reach level`,
               );
             }
           } else if (effectiveBestBid !== undefined && !isProfitableAtBid) {
@@ -3443,10 +3448,10 @@ export class DynamicGrid {
             if (Date.now() - (this.orderCooldowns.get("res_ioc_loss_warn") ?? 0) > 30_000) {
               this.orderCooldowns.set("res_ioc_loss_warn", Date.now());
               this.log(
-                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} >= ${resDisplayName} $${effectiveResPrice.toFixed(6)} but Best Bid $${effectiveBestBid.toFixed(6)} is below Avg Entry $${avgEntry.toFixed(6)} — holding for profit`,
+                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} reached ${resDisplayName} $${effectiveResPrice.toFixed(6)} but Best Bid $${effectiveBestBid.toFixed(6)} is below Avg Entry $${avgEntry.toFixed(6)} — holding for profit`,
               );
             }
-          } else if (effectiveBestBid !== undefined && isBidAtResistance && isProfitableAtBid) {
+          } else if (effectiveBestBid !== undefined && isBidWithinSlippage && isProfitableAtBid) {
             const iocCooldownKey = `res_ioc_sell`;
             const lastIocTime = this.orderCooldowns.get(iocCooldownKey) ?? 0;
             const iocCooldownMs = 30_000; // 30-second cooldown to prevent rapid re-triggers
@@ -3456,7 +3461,7 @@ export class DynamicGrid {
               const sellExecPrice = effectiveBestBid;
 
               this.log(
-                `📉 [RES IOC] Triggered (refPrice: $${refPrice.toFixed(6)}, Best Bid: $${sellExecPrice.toFixed(6)} >= ${resDisplayName}: $${effectiveResPrice.toFixed(6)}) — executing IOC sell at Best Bid $${sellExecPrice.toFixed(6)} for all ${this.baseHeld().toFixed(4)} ${this.baseAsset} (Avg Entry: $${avgEntry.toFixed(6)})`,
+                `📉 [RES IOC] Triggered (refPrice: $${refPrice.toFixed(6)}, Best Bid: $${sellExecPrice.toFixed(6)} >= ${resDisplayName}: $${effectiveResPrice.toFixed(6)} - ${(sellSlippage * 100).toFixed(2)}% slip: $${minAllowedResPrice.toFixed(6)}) — executing IOC sell at Best Bid $${sellExecPrice.toFixed(6)} for all ${this.baseHeld().toFixed(4)} ${this.baseAsset} (Avg Entry: $${avgEntry.toFixed(6)})`,
               );
               if (this.openOrders.length > 0) {
                 await this.cancelAllRestingOrders(undefined, `${resDisplayName} IOC sell: cancelling resting orders before IOC execution`);
@@ -5978,7 +5983,8 @@ export class DynamicGrid {
     if (this.cfg.dryRun) {
       let dryLimitPrice: number;
       if (action === "SELL") {
-        dryLimitPrice = roundToTick(Math.max(targetPrice, price * (1 - slippagePctVal / 100)), this.tickSize || 0.0001);
+        const minAllowed = targetPrice * (1 - slippagePctVal / 100);
+        dryLimitPrice = roundToTick(Math.max(minAllowed, price * (1 - slippagePctVal / 100)), this.tickSize || 0.0001);
       } else if (action === "MANUAL") {
         dryLimitPrice = roundToTick(price, this.tickSize || 0.0001);
       } else {
@@ -6086,12 +6092,13 @@ export class DynamicGrid {
         const avgEntry = this.getAvgEntryPrice();
         const slippagePct = slippagePctVal / 100;
         if (action === "SELL") {
-          // Take profit / Resistance IOC: limitPrice must NEVER drop below targetPrice, and must stay above avg entry
-          const anchor = targetPrice;
+          // Take profit / Resistance IOC: limitPrice allows matching down to targetPrice * (1 - slippagePct), while staying above avg entry if profit required
+          const minAllowedBySlippage = targetPrice * (1 - slippagePct);
           const isStrictProfitRequired = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT";
-          const minProfitablePrice = (isStrictProfitRequired && avgEntry > 0) ? avgEntry * 1.0005 : anchor;
-          const minAllowedPrice = Math.max(minProfitablePrice, anchor);
-          limitPrice = Math.max(minAllowedPrice, price * (1 - slippagePct));
+          const minProfitablePrice = (isStrictProfitRequired && avgEntry > 0) ? avgEntry * 1.0005 : minAllowedBySlippage;
+          const minAllowedPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
+          const basePrice = (price > 0) ? price : targetPrice;
+          limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct));
         } else if (action === "MANUAL") {
           // Manual Sell All: If Best Bid is available in orderbook, send strictly at Best Bid (0% discount)
           // No need to reduce/discount price beforehand. Only fallback to slippage if no valid Best Bid exists.
