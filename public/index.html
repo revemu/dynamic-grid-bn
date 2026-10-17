@@ -1180,6 +1180,37 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Live Grid & Avg Entry Simulator Card -->
+              <div id="gridSimulatorCard" style="margin-top: 12px; background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 6px;">
+                  <div style="font-size: 12px; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 6px;">
+                    <span>📊 Live Grid Allocation &amp; Avg Entry Simulator</span>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label for="cfg_buySizingMode" style="font-size: 11px; color: #94a3b8; margin: 0;">Buy Sizing:</label>
+                    <select id="cfg_buySizingMode" class="form-select" style="width: auto; padding: 3px 8px; font-size: 11px; height: 26px;">
+                      <option value="PYRAMID">🔺 PYRAMID (10% / 15% / 20% / 25% / 30% — ดึงทุนต่ำ)</option>
+                      <option value="EQUAL">⚖️ EQUAL (20% เท่ากันทุกไม้)</option>
+                    </select>
+                  </div>
+                </div>
+                <div id="gridSimSummaryRow" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; font-size: 11px;">
+                  <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; padding: 6px 8px;">
+                    <div style="color: #94a3b8; font-size: 10px;">Full-Fill Avg Entry (% ของกรอบ)</div>
+                    <div id="simFullAvgPct" style="color: #34d399; font-weight: 700; font-size: 13px;">17.0%</div>
+                  </div>
+                  <div style="background: rgba(249, 115, 22, 0.08); border: 1px solid rgba(249, 115, 22, 0.2); border-radius: 6px; padding: 6px 8px;">
+                    <div style="color: #94a3b8; font-size: 10px;">Inner Spread (Buy L1 &rarr; Sell T1)</div>
+                    <div id="simInnerSpreadPct" style="color: #fb923c; font-weight: 700; font-size: 13px;">42% &rarr; 52% (10% กรอบ)</div>
+                  </div>
+                  <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 6px; padding: 6px 8px;">
+                    <div style="color: #94a3b8; font-size: 10px;">First Profit Distance (Avg &rarr; T1)</div>
+                    <div id="simAvgToT1Pct" style="color: #38bdf8; font-weight: 700; font-size: 13px;">+35.0% ของกรอบ</div>
+                  </div>
+                </div>
+                <div id="gridSimTranchesList" style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: #cbd5e1;"></div>
+              </div>
             </div>
 
             <div class="form-group">
@@ -1205,6 +1236,50 @@
             </div>
 
             <div class="form-group">
+              <label for="cfg_minNetProfitPct">
+                Minimum Net Profit Guard (%)
+                <span class="help-tip" title="กำไรขั้นต่ำเหนือราคาทุนก่อนอนุญาตให้วางหรือยิงไม้ขาย ป้องกันการขายคู่ใน (42% -> 52%) ตอนกรอบแคบแล้วโดนค่าธรรมเนียมกินขาดทุน (ค่าแนะนำ: 0.25%)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_minNetProfitPct" step="0.05" min="0.05" max="5.0" placeholder="0.25" />
+                <span class="unit">%</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="cfg_cutLossStage2Multiplier">
+                2-Stage Cut Loss Full Exit Buffer (x)
+                <span class="help-tip" title="ตัวคูณระยะ Cut Loss Stage 2 สำหรับตัดขาดทุนไม้ที่เหลืออีก 50% (เช่น 2.0x = หาก Buffer แรกคือ 0.5% จะคัทครึ่งแรกที่ -0.5% และคัทที่เหลือทั้งหมดที่ -1.0%)">ℹ️</span>
+              </label>
+              <div class="input-with-unit">
+                <input type="number" id="cfg_cutLossStage2Multiplier" step="0.25" min="1.25" max="5.0" placeholder="2.0" />
+                <span class="unit">x Buffer</span>
+              </div>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">2-Stage Smart Cut Loss (แบ่งคัท 50% ลดความเสี่ยงไส้เทียนกวาด)</span>
+                <span class="switch-desc">เมื่อหลุด Buffer แรก จะแบ่งคัทลดความเสี่ยงออกก่อน 50% หากราคาดึงกลับเข้ากรอบ (Floor) จะถืออีก 50% ไว้ขายคืนทุนตอนเด้ง แต่ถ้าลงต่อถึง 2x Buffer หรือปิดแท่งต่ำลงจะคัทออก 100%</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableTwoStageCutLoss" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group switch-group">
+              <div class="switch-label-group">
+                <span class="switch-title">LH Dynamic Escape (ขายหนีตายเมื่อเกิดยอด Lower High ต่ำกว่าเป้าขาย)</span>
+                <span class="switch-desc">ขณะถือของและล็อกกรอบ หากราคาเด้งขึ้นไปทำยอดสวิง LH ใหม่ที่ต่ำกว่า Sell Target 1 (52%) แต่สูงกว่าทุนเฉลี่ย + กำไรขั้นต่ำ บอทจะรวบขายทำกำไรที่ยอด LH นั้นทันทีก่อนทุบทำ LL</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cfg_enableLhDynamicEscape" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-group">
               <label for="cfg_stuckTimeoutMinutes">
                 Hold Timeout Limit (Minutes)
                 <span class="help-tip" title="ระยะเวลาถือครองสูงสุดก่อน Cut Loss อัตโนมัติ (นาที) หากไม่ต้องการ Cut Loss ตามเวลาให้ใส่ 0 เพื่อปิดการใช้งาน (แนะนำ 0 สำหรับ Grid)">ℹ️</span>
@@ -1217,7 +1292,7 @@
 
             <div class="form-group switch-group">
               <div class="switch-label-group">
-                <span class="switch-title">Buy Only Below Sell Level 1 (&le; 60%)</span>
+                <span class="switch-title">Buy Only Below Sell Level 1 (&le; 52%)</span>
                 <span class="switch-desc">เริ่มตั้ง/ยิงซื้อเฉพาะเมื่อราคาอยู่ต่ำกว่า Sell Level 1 ลงมาเท่านั้น ป้องกันการเปิด-ปิดออเดอร์ซื้อบ่อยๆ ในโซนกำไร</span>
               </div>
               <label class="toggle-switch">
@@ -1228,7 +1303,7 @@
 
             <div class="form-group switch-group">
               <div class="switch-label-group">
-                <span class="switch-title">Sell Only Above Buy Level 1 (&ge; 40%)</span>
+                <span class="switch-title">Sell Only Above Buy Level 1 (&ge; 42%)</span>
                 <span class="switch-desc">เริ่มตั้ง/ยิงขายเฉพาะเมื่อราคาอยู่สูงกว่า Buy Level 1 ขึ้นไปเท่านั้น ป้องกันการเปิด-ปิดออเดอร์ขายบ่อยๆ ในโซนสะสม</span>
               </div>
               <label class="toggle-switch">

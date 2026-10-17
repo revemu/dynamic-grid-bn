@@ -1380,3 +1380,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `inBuyZone` ใน `src/strategy.ts` และป้ายบอกโซนใน `public/app.js` ครอบคลุมช่วง `0% – 50%` ของกรอบทั้งหมด (`positionPct >= 0 && positionPct < 50`) สอดคล้องกับการตัด Safe Buffer `18%` ออกและใช้ Buy Level 4 (`12%`) / Buy Level 5 (`2%`)
      - `sellHoldingTargets` ใน `syncRestingOrders` คำนวณสัดส่วนเป้าหมายการถือครองแบบไดนามิกตามจำนวนเลเวลขายที่เปิดใช้งานจริง (`enabledSells` / `activeSellCount`) รองรับครบทั้ง 5 เลเวล
      - ระบบ Hysteresis ฝั่งซื้อบน DEX อ้างอิง `sellLevelPcts[0]` (`52%`) แบบไดนามิก และเมื่อโหลด `persistentLockedChannel` หรือแก้ไข `buyLevelPcts` / `sellLevelPcts` ขณะถือของ ระบบจะรีคำนวณ `buyLevels` และ `sellLevels` ทั้ง 5 เลเวลจากขอบ `lowerBound` และ `upperBound` ที่ล็อกไว้ทันที
+
+### 19. Pyramid Buy Tranche Sizing, 2-Stage Smart Cut Loss, LH Dynamic Escape, Minimum Net Profit Guard & Live Grid Simulator (`src/config.ts`, `src/strategy.ts`, `public/index.html`, `public/app.js`)
+- **สาเหตุและเป้าหมายการปรับปรุง**:
+  1. **Equal Sizing (20% x 5) เสียเปรียบเมื่อรวบครบ 5 ไม้**: ทำให้ต้นทุนเฉลี่ย (`Avg Entry`) อยู่กลางโซนซื้อ (`22%` ของกรอบ) และเมื่อหลุด Floor เพียงเล็กน้อยจะโดนคัทก้อนใหญ่ `100%` ทันที
+  2. **100% Cut Loss ครั้งเดียวเสี่ยงโดนไส้เทียนกวาด (Stop-Hunt Whipsaw)**: บ่อยครั้งที่ราคาทุบหลุด `Floor Buffer` ลงไปกิน Stop แล้วดีดกลับเข้ากรอบทันที
+  3. **การล็อกกรอบขณะถือของอาจพลาดจังหวะออกเมื่อตลาดเริ่มทำ Lower High (LH)**: หากราคาเด้งขึ้นไปทำยอด `LH` ใหม่ที่ต่ำกว่า `Sell Target 1 (52%)` แต่ยังมีกำไรเหนือทุนเฉลี่ย ระบบเดิมจะถือรอจนราคาทุบลงมาคัทลอส
+  4. **ความเสี่ยง Fee Erosion บนคู่ใน (`Buy L1 42% -> Sell T1 52%`)**: เมื่อกรอบแคบ ระยะ `10%` ของกรอบอาจแคบเกินกว่าจะคุ้มค่าธรรมเนียมและ Slippage
+- **สถาปัตยกรรมและฟีเจอร์ทั้ง 5 ข้อ**:
+  1. **Pyramid Buy Tranche Sizing (`buySizingMode`: `"PYRAMID" | "EQUAL"`, `buyLevelWeights`: `[10, 15, 20, 25, 30]`)**:
+     - เมธอด `getBuyLevelWeightFractions()` และ `getCumulativeBuyTargetFraction()` คำนวณสัดส่วนงบประมาณของแต่ละเลเวลแบบไดนามิกตามเลเวลที่เปิดใช้งานจริง (`enabledBuyLevels`)
+     - ในโหมด `PYRAMID` (ค่าเริ่มต้น): กระจายน้ำหนัก `L1 (42%) = 10%`, `L2 (32%) = 15%`, `L3 (22%) = 20%`, `L4 (12%) = 25%`, `L5 (2%) = 30%` ดึงต้นทุนเฉลี่ยเมื่อรับครบ 5 ไม้ลงมาจาก `22.0%` เหลือเพียง **`17.0%` ของกรอบ** (เด้งขึ้นเพียง `18%` ของกรอบก็เริ่มเขียว)
+  2. **2-Stage Smart Cut Loss (`enableTwoStageCutLoss`: `true`, `cutLossStage2Multiplier`: `2.0`)**:
+     - **Stage 1 (De-Risk 50%)**: เมื่อราคาหลุด `cutLossBound` (และครบ `cutLossBufferDelaySeconds`) บอทจะแบ่งขายตัดขาดทุนออกก่อน **`50%`** (`sellTrancheIOC(..., true)`) เพื่อลดความเสี่ยงครึ่งพอร์ต
+     - **Recovery**: หากราคาดีดกลับขึ้นมายืนเหนือ `lowerBound` (`Floor 0%`) สำเร็จ ระบบจะรีเซ็ต `cutLossStage1Executed = false` และเก็บของอีก `50%` ที่เหลือไว้ขายคืนทุนในกรอบ
+     - **Stage 2 (Full Exit 100%)**: หากราคาไหลลงต่อจนหลุด `stage2CutBound` (`lowerBound - floorBuffer * cutLossStage2Multiplier`) หรือปิดแท่งเทียนถัดมาต่ำกว่าราคาที่คัท Stage 1 บอทจะตัดขายไม้ที่เหลืออีก `50%` ออกทั้งหมดทันที (`exitAllPosition`)
+  3. **LH Dynamic Escape (`enableLhDynamicEscape`: `true`)**:
+     - ขณะถือครองเหรียญในกรอบที่ล็อกไว้ หากโครงสร้างตลาดสร้างยอดสวิง `Lower High (LH)` ที่ยืนยันแล้ว (หรือ `liveCalculatedCeil`) ซึ่งอยู่ต่ำกว่า `Sell Target 1` (`52%`) แต่สูงกว่าต้นทุนเฉลี่ยบวกกำไรขั้นต่ำ (`avgEntry * getMinProfitMultiplier()`) บอทจะปรับเพดานขายหนีตาย (`lhDynamicEscapePrice`) ลงมาปิดทำกำไรที่ยอด `LH` นั้นทันทีก่อนที่ราคาจะม้วนตัวลงทำ `LL`
+  4. **Minimum Net Profit Guard (`minNetProfitPct`: `0.25%`)**:
+     - เมธอด `getMinProfitMultiplier()` บังคับระยะกำไรสุทธิขั้นต่ำ (`+0.25%` เหนือต้นทุนไม้ที่ถูกสุด หรือเหนือ `avgEntry` ในโหมด `PORTFOLIO_AVG_PROFIT`) ทั้งใน `syncRestingOrders`, `executeIocBracketGrid`, และ `sellTrancheIOC` ป้องกันการขายหมุนรอบที่ได้กำไรไม่คุ้มค่าธรรมเนียมเมื่อกรอบแคบ
+  5. **Interactive Grid & Avg Entry Simulator (`public/index.html` & `public/app.js`)**:
+     - เพิ่มการ์ด **`📊 Live Grid Allocation & Avg Entry Simulator`** ในหน้าต่าง Settings (Tab 3: Execution & Guard) คำนวณและแสดงผลแบบ Real-time ทันทีที่ปรับแก้ `%`, เปิด/ปิดเลเวล, หรือสลับโหมด `PYRAMID` / `EQUAL`:
+       - แสดง `Full-Fill Avg Entry (% ของกรอบ)`
+       - แสดง `Inner Spread (Buy L1 -> Sell T1)`
+       - แสดง `First Profit Distance (Avg -> T1)` พร้อมป้ายขนาดไม้ (`%` และ `$USDT`) ของแต่ละเลเวลซื้อ

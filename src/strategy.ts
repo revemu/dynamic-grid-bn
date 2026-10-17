@@ -99,6 +99,9 @@ export class DynamicGrid {
   private breakdownCandleTimes = new Set<number>();
   private lastCutLossTime?: number;
   private bufferBreakStartTime?: number;
+  private cutLossStage1Executed = false;
+  private cutLossStage1Price?: number;
+  private cutLossStage1CandleTime?: number;
   private postCutSingleTrancheOnly = false;
   private sellOrdersActive = true;
   private sellZoneTransitionCandleTime?: number;
@@ -328,6 +331,9 @@ export class DynamicGrid {
     this.breakdownTime = undefined;
     this.iocBracketSellCycle = undefined;
     this.bufferBreakStartTime = undefined;
+    this.cutLossStage1Executed = false;
+    this.cutLossStage1Price = undefined;
+    this.cutLossStage1CandleTime = undefined;
     this.orderCooldowns.clear();
 
     this.symbolInfo = info;
@@ -553,6 +559,53 @@ export class DynamicGrid {
     return this.cfg.intervalMs ?? 2000;
   }
 
+  /**
+   * Returns the normalized fraction (0..1) of maxInventoryQuote allocated to each buy level (0..4).
+   * Disabled levels receive 0. Active levels sum to 1.0.
+   */
+  public getBuyLevelWeightFractions(enabledBuys?: boolean[], numLevels = 5, forceFirstActive = false): number[] {
+    const enabled = Array.isArray(enabledBuys)
+      ? enabledBuys
+      : (Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true]);
+    if (numLevels === 1) {
+      return enabled.some(Boolean) ? [1.0] : [0.0];
+    }
+    const isPyramid = (this.cfg.buySizingMode ?? "PYRAMID") === "PYRAMID";
+    const rawWeights = Array.isArray(this.cfg.buyLevelWeights) && this.cfg.buyLevelWeights.length >= 5
+      ? this.cfg.buyLevelWeights
+      : [10, 15, 20, 25, 30];
+    const weights: number[] = [];
+    let totalWeight = 0;
+    for (let i = 0; i < numLevels; i++) {
+      const isEnabled = (i === 0 && forceFirstActive) ? enabled.some(Boolean) : (enabled[i] !== false);
+      const w = isEnabled ? (isPyramid ? Math.max(1, Number(rawWeights[i]) || 10) : 1) : 0;
+      weights.push(w);
+      totalWeight += w;
+    }
+    if (totalWeight <= 0) return weights.map(() => 0);
+    return weights.map((w) => w / totalWeight);
+  }
+
+  /**
+   * Returns the cumulative holding fraction (0..1) of maxInventoryQuote when price reaches down to buy level `upToIdx`.
+   */
+  public getCumulativeBuyTargetFraction(upToIdx: number, enabledBuys?: boolean[], numLevels = 5, forceFirstActive = false): number {
+    const fractions = this.getBuyLevelWeightFractions(enabledBuys, numLevels, forceFirstActive);
+    let sum = 0;
+    for (let i = 0; i <= Math.min(upToIdx, fractions.length - 1); i++) {
+      sum += fractions[i] ?? 0;
+    }
+    return Math.min(1.0, sum);
+  }
+
+  /**
+   * Returns the minimum net profit multiplier (e.g. 1.0025 for 0.25% minNetProfitPct) required for profitable exits.
+   */
+  public getMinProfitMultiplier(): number {
+    const pct = Math.max(0.05, Number(this.cfg.minNetProfitPct ?? 0.25));
+    return 1 + pct / 100;
+  }
+
   public updateRuntimeSettings(newSettings: Record<string, any>): Record<string, any> {
     for (const [key, val] of Object.entries(newSettings)) {
       if (key in this.cfg && val !== undefined) {
@@ -569,6 +622,25 @@ export class DynamicGrid {
           while (this.cfg.enabledSellTargets.length < 5) this.cfg.enabledSellTargets.push(true);
           this.needsSellRebalance = true;
           this.iocBracketSellCycle = undefined;
+          continue;
+        }
+        if (key === "buySizingMode") {
+          this.cfg.buySizingMode = val === "EQUAL" ? "EQUAL" : "PYRAMID";
+          this.needsBuyRebalance = true;
+          continue;
+        }
+        if (key === "buyLevelWeights" && Array.isArray(val)) {
+          this.cfg.buyLevelWeights = val.map((v: any) => Math.max(1, Number(v) || 10));
+          const defaultWeights = [10, 15, 20, 25, 30];
+          while (this.cfg.buyLevelWeights.length < 5) {
+            this.cfg.buyLevelWeights.push(defaultWeights[this.cfg.buyLevelWeights.length] ?? 20);
+          }
+          this.needsBuyRebalance = true;
+          continue;
+        }
+        if (key === "minNetProfitPct") {
+          this.cfg.minNetProfitPct = Math.max(0.05, Number(val) || 0.25);
+          this.needsSellRebalance = true;
           continue;
         }
         if (key === "buyLevelPcts" && Array.isArray(val)) {
@@ -874,16 +946,9 @@ export class DynamicGrid {
                     ? [`Buy Edge Floor (+${buyBufPct.toFixed(2)}%)`]
                     : currentBounds.buyLevels.map((_, idx) => `Buy Level ${idx + 1} (${buyPcts[idx] ?? Math.round(42 - idx * 10)}%)`);
                   const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true];
-                  const activeBuyCount = enabledBuys.filter(Boolean).length || 5;
-                  let activeBuyRank = 0;
-                  const buyTargets = currentBounds.buyLevels.map((_, i) => {
-                    if (isSingleBuy) return 1.0;
-                    if (enabledBuys[i]) {
-                      activeBuyRank++;
-                      return activeBuyRank / activeBuyCount;
-                    }
-                    return 1.0;
-                  });
+                  const buyTargets = currentBounds.buyLevels.map((_, i) =>
+                    this.getCumulativeBuyTargetFraction(i, enabledBuys, currentBounds.buyLevels.length, false)
+                  );
                   let bestBuyIdx = -1;
                   let minBuyDiff = Infinity;
                   for (let i = 0; i < currentBounds.buyLevels.length; i++) {
@@ -2466,6 +2531,17 @@ export class DynamicGrid {
       const cutLossOnBufferOnly = this.cfg.cutLossOnBufferOnly !== false;
       const isFloorCandleCut = !cutLossOnBufferOnly && (confirmedCandlesCount >= (this.cfg.cutLossConfirmCandles ?? 1));
       const shouldExecuteCut = isFastBufferCut || isFloorCandleCut;
+      const stage2Mult = Math.max(1.2, Number(this.cfg.cutLossStage2Multiplier ?? 2.0));
+      const stage2CutBound = lowerBound - bufferAmount * stage2Mult;
+      const isBelowStage2Bound = isChannelReady && refPrice < stage2CutBound;
+      const isStage2CandleClosed = Boolean(
+        this.cutLossStage1Executed &&
+        latestClosedCandle &&
+        this.cutLossStage1CandleTime !== undefined &&
+        latestClosedCandle.time > this.cutLossStage1CandleTime &&
+        this.cutLossStage1Price !== undefined &&
+        latestClosedCandle.close < this.cutLossStage1Price
+      );
 
       if (!this.isPaused && this.lots.length > 0) {
         const dexBid = bestBid ?? effectiveMid;
@@ -2506,21 +2582,59 @@ export class DynamicGrid {
                     : `EMERGENCY FAST CUT (> ${Math.round(bufferDelayMs / 1000)}s BELOW BUFFER): Price $${refPrice.toFixed(6)} stayed below Buffer $${cutLossBound.toFixed(6)} for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s`))
             : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`;
 
-          this.log(
-            `🚨 CUT LOSS TRIGGERED (${triggerReason}): DEX Bid $${dexBid.toFixed(6)} — ${exitActionDesc}`,
-          );
-          if (this.openOrders.length > 0) {
-            await this.cancelAllRestingOrders();
+          const heldNow = this.baseHeld();
+          const minNotionalForSplit = Math.max(this.minNotional || 5.0, 5.0);
+          const canDoStage1Split =
+            !this.cutLossStage1Executed &&
+            (this.cfg.enableTwoStageCutLoss !== false) &&
+            !isBelowStage2Bound &&
+            (heldNow * dexBid >= minNotionalForSplit * 2.1);
+
+          if (canDoStage1Split) {
+            const halfQty = roundToStep(heldNow * 0.50, this.stepSize || 0.0001, this.qtyPrecision);
+            this.log(
+              `🛡️ CUT LOSS STAGE 1/2 (50% DE-RISK | ${triggerReason}): Selling 50% (${halfQty.toFixed(4)} ${this.baseAsset}) @ Bid $${dexBid.toFixed(6)} — holding remaining 50% unless Stage 2 ($${stage2CutBound.toFixed(6)}) breaks`,
+            );
+            if (this.openOrders.length > 0) {
+              await this.cancelAllRestingOrders();
+            }
+            const stage1Ok = await this.sellTrancheIOC(halfQty, dexBid, "CUT LOSS STAGE 1 (50% DE-RISK)", dexBid, true);
+            if (stage1Ok) {
+              this.cutLossStage1Executed = true;
+              this.cutLossStage1Price = refPrice;
+              this.cutLossStage1CandleTime = latestClosedCandle?.time ?? 0;
+              this.lastCutLossTime = Date.now();
+              this.iocBracketSellCycle = undefined;
+              this.saveState();
+              return;
+            }
           }
-          await this.sellAll(dexBid, "CUT");
-          this.lastCutLossTime = Date.now();
-          this.bufferBreakStartTime = undefined;
-          this.postCutSingleTrancheOnly = true;
-          this.iocBracketSellCycle = undefined;
-          this.stuckSince = undefined;
-          this.breakdownCandleTimes.clear();
-          this.saveState();
-          return;
+
+          if (this.cutLossStage1Executed && !isBelowStage2Bound && !isStage2CandleClosed) {
+            this.status(
+              `🛡️ STAGE 1 DE-RISKED (50% HELD): Price $${refPrice.toFixed(6)} above Stage 2 Cut Bound ($${stage2CutBound.toFixed(6)}) — holding remaining 50% for potential wick recovery`,
+            );
+          } else {
+            const stageLabel = this.cutLossStage1Executed ? "STAGE 2/2 FULL EXIT | " : "";
+            this.log(
+              `🚨 CUT LOSS TRIGGERED (${stageLabel}${triggerReason}): DEX Bid $${dexBid.toFixed(6)} — ${exitActionDesc}`,
+            );
+            if (this.openOrders.length > 0) {
+              await this.cancelAllRestingOrders();
+            }
+            await this.sellAll(dexBid, "CUT");
+            this.lastCutLossTime = Date.now();
+            this.bufferBreakStartTime = undefined;
+            this.cutLossStage1Executed = false;
+            this.cutLossStage1Price = undefined;
+            this.cutLossStage1CandleTime = undefined;
+            this.postCutSingleTrancheOnly = true;
+            this.iocBracketSellCycle = undefined;
+            this.stuckSince = undefined;
+            this.breakdownCandleTimes.clear();
+            this.saveState();
+            return;
+          }
         }
       } else if (!this.isPaused && isInitialBreakdown) {
         // Price fell below floor while holding 0 lots: cancel any open resting buy orders to prevent buying a falling knife
@@ -2528,19 +2642,29 @@ export class DynamicGrid {
         this.saveState();
       }
     } else {
-      // If price is back above floor, reset confirmation counters and buffer timer
+      // If price is back above floor, reset confirmation counters, buffer timer, and Stage 1 cut loss state
       this.bufferBreakStartTime = undefined;
+      if (this.cutLossStage1Executed) {
+        this.log(
+          `🟢 CUT LOSS STAGE 1 RECOVERED: Price ($${refPrice.toFixed(6)}) reclaimed Channel Floor ($${lowerBound.toFixed(6)}) — keeping remaining 50% inventory to sell on bounce!`,
+        );
+        this.cutLossStage1Executed = false;
+        this.cutLossStage1Price = undefined;
+        this.cutLossStage1CandleTime = undefined;
+        this.needsSellRebalance = true;
+        this.saveState();
+      }
       if (!this.waitingForHigherLow && this.breakdownCandleTimes.size > 0) {
         this.breakdownCandleTimes.clear();
       }
     }
 
-    // ── 100% UPPER BOUND: 100% FULL TAKE PROFIT EXIT ─────────────────────────
+    // ── 100% UPPER BOUND: 100% FULL TAKE PROFIT EXIT & LH DYNAMIC ESCAPE ─────
     // Take profit when the Binance reference price or Best Bid reaches or crosses the 100% Ceiling or highest ENABLED sell level!
     // SAFETY: Take Profit must NEVER sell at a loss or micro-dust profit! Strictly require >= 0.50% profit above avgEntry on the actual execution Bid, and check DEX Bid discount vs Binance.
     const avgEntryPrice = this.getAvgEntryPrice();
     const tpExecBid = (bestBid !== undefined && bestBid > 0) ? bestBid : effectiveMid;
-    const minTpProfitPct = 0.50;
+    const minTpProfitPct = Math.max(0.50, this.cfg.minNetProfitPct ?? 0.25);
     const isProfitableExit = avgEntryPrice <= 0 || tpExecBid >= avgEntryPrice * (1 + minTpProfitPct / 100);
     const tpMaxBidDiscountPct = this.cfg.cutLossMaxBidDiscountPct ?? 0.75;
     const tpBidDiscountPct = (binancePrice && binancePrice > 0 && tpExecBid > 0)
@@ -2550,39 +2674,68 @@ export class DynamicGrid {
 
     const enabledSellsForTp = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true];
     const activeSellTargetsForTp = sellLevels.filter((_, idx) => enabledSellsForTp[idx]);
+    const firstActiveSellTarget = activeSellTargetsForTp.length > 0
+      ? activeSellTargetsForTp[0]!
+      : upperBound;
     const highestActiveSellTarget = activeSellTargetsForTp.length > 0
       ? activeSellTargetsForTp[activeSellTargetsForTp.length - 1]!
       : upperBound;
 
     const liveCalculatedCeil = dow?.gridZone?.upperBound ?? dow?.upperBound;
-    const liveRealCeil = liveCalculatedCeil;
-    const isLiveRealCeilReached = liveCalculatedCeil !== undefined && liveCalculatedCeil > 0 && (
-      refPrice >= liveCalculatedCeil ||
-      (bestBid !== undefined && bestBid >= liveCalculatedCeil)
+    const latestSwingHigh = dow?.lastSwingHigh;
+    const isLatestHighLh = Boolean(
+      (latestSwingHigh && (latestSwingHigh as any).dowLabel === "LH") ||
+      (dow?.waveCycle?.lastLh && latestSwingHigh && dow.waveCycle.lastLh.time === latestSwingHigh.time),
     );
+    const latestLhPrice = isLatestHighLh && latestSwingHigh ? latestSwingHigh.price : undefined;
+    const minNetProfitTargetPrice = avgEntryPrice > 0 ? avgEntryPrice * this.getMinProfitMultiplier() : 0;
+    const candidateLhEscape = Math.min(
+      latestLhPrice !== undefined && latestLhPrice > 0 ? latestLhPrice : Infinity,
+      liveCalculatedCeil !== undefined && liveCalculatedCeil > 0 ? liveCalculatedCeil : Infinity,
+    );
+    const lhDynamicEscapePrice = (
+      (this.cfg.enableLhDynamicEscape !== false) &&
+      Number.isFinite(candidateLhEscape) &&
+      candidateLhEscape < firstActiveSellTarget &&
+      candidateLhEscape >= minNetProfitTargetPrice
+    ) ? candidateLhEscape : undefined;
+
+    const liveRealCeil = lhDynamicEscapePrice !== undefined && liveCalculatedCeil !== undefined
+      ? Math.min(liveCalculatedCeil, lhDynamicEscapePrice)
+      : (lhDynamicEscapePrice ?? liveCalculatedCeil);
+
+    const isLiveRealCeilReached = liveRealCeil !== undefined && liveRealCeil > 0 && (
+      refPrice >= liveRealCeil ||
+      (bestBid !== undefined && bestBid >= liveRealCeil)
+    );
+    const isLhEscapeReached = lhDynamicEscapePrice !== undefined && (
+      refPrice >= lhDynamicEscapePrice ||
+      (bestBid !== undefined && bestBid >= lhDynamicEscapePrice)
+    ) && tpExecBid >= minNetProfitTargetPrice;
 
     const isIocMode = this.cfg.orderExecutionMode === "IOC_BRACKET";
     const reachedTargetPrice = isIocMode
       ? Math.min(
           upperBound,
-          liveCalculatedCeil && isLiveRealCeilReached ? liveCalculatedCeil : upperBound,
+          liveRealCeil && isLiveRealCeilReached ? liveRealCeil : upperBound,
           highestActiveSellTarget,
         )
       : Math.min(
           upperBound,
-          liveCalculatedCeil && isLiveRealCeilReached ? liveCalculatedCeil : upperBound,
+          liveRealCeil && isLiveRealCeilReached ? liveRealCeil : upperBound,
         );
-    const isBidAtTarget = tpExecBid >= reachedTargetPrice;
+    const isBidAtTarget = tpExecBid >= reachedTargetPrice * (isLhEscapeReached ? (1 - (this.cfg.iocSlippagePct ?? 0.2) / 100) : 1.0);
 
-    // In MAKER_LIMIT mode: Grid sell targets (Sell Targets 1..4) are strictly handled by resting MAKER limit orders!
+    // In MAKER_LIMIT mode: Grid sell targets (Sell Targets 1..5) are strictly handled by resting MAKER limit orders!
     // Never hijack intra-channel grid sell targets with IOC sellAll in Maker mode.
-    // Full Take Profit via sellAll is ONLY for reaching true Upper Bound / Ceiling or when running in IOC_BRACKET mode.
+    // Full Take Profit via sellAll is ONLY for reaching true Upper Bound / Ceiling, LH Escape, or when running in IOC_BRACKET mode.
     const realCeilingReached =
       isAboveCeiling ||
       refPrice >= upperBound ||
       (bestBid !== undefined && bestBid >= upperBound) ||
       (isIocMode && tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget) ||
-      (isLiveRealCeilReached && isProfitableExit);
+      (isLiveRealCeilReached && isProfitableExit) ||
+      isLhEscapeReached;
 
     if (
       !this.isPaused &&
@@ -2590,7 +2743,7 @@ export class DynamicGrid {
       this.lots.length > 0 &&
       realCeilingReached
     ) {
-      if (!isProfitableExit) {
+      if (!isProfitableExit && !isLhEscapeReached) {
         this.status(
           `⏳ TAKE PROFIT STANDBY: Price $${refPrice.toFixed(6)} reached Upper Bound ($${upperBound.toFixed(6)}) but DEX Bid $${tpExecBid.toFixed(6)} is below min profit target (+${minTpProfitPct.toFixed(2)}% >= $${(avgEntryPrice * (1 + minTpProfitPct / 100)).toFixed(6)} | Avg Entry: $${avgEntryPrice.toFixed(6)}) — holding for profitable bid`,
         );
@@ -2604,8 +2757,9 @@ export class DynamicGrid {
         );
       } else {
         const exitPrice = tpExecBid;
+        const exitTypeLabel = isLhEscapeReached ? "LH DYNAMIC ESCAPE" : "100% TAKE PROFIT";
         this.log(
-          `🎯 100% TAKE PROFIT: Price $${refPrice.toFixed(6)} (Bid: $${exitPrice.toFixed(6)}) reached Upper Bound / Real Ceil ($${reachedTargetPrice.toFixed(6)}) with +${(((exitPrice - avgEntryPrice) / (avgEntryPrice || exitPrice)) * 100).toFixed(2)}% profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
+          `🎯 ${exitTypeLabel}: Price $${refPrice.toFixed(6)} (Bid: $${exitPrice.toFixed(6)}) reached ${isLhEscapeReached ? "Lower High / Real Ceil" : "Upper Bound / Real Ceil"} ($${reachedTargetPrice.toFixed(6)}) with +${(((exitPrice - avgEntryPrice) / (avgEntryPrice || exitPrice)) * 100).toFixed(2)}% profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
         );
         await this.cancelAllRestingOrders();
         await this.sellAll(exitPrice, "SELL", reachedTargetPrice);
@@ -2651,12 +2805,7 @@ export class DynamicGrid {
         if (activeBuyCount === 0) {
           targetHoldingFraction = 0.0;
         } else {
-          // Count how many enabled buy levels have been reached down to matchedBand.idx
-          let reachedActiveBuyCount = 0;
-          for (let bIdx = 0; bIdx <= matchedBand.idx; bIdx++) {
-            if (enabledBuys[bIdx]) reachedActiveBuyCount++;
-          }
-          targetHoldingFraction = Math.min(1.0, reachedActiveBuyCount / activeBuyCount);
+          targetHoldingFraction = this.getCumulativeBuyTargetFraction(matchedBand.idx, enabledBuys, 5, false);
         }
       } else {
         targetHoldingFraction = 0.0;
@@ -3919,16 +4068,10 @@ export class DynamicGrid {
         return isEnabled ? cnt + 1 : cnt;
       }, 0) || (buyLevels.length || 5);
 
-      let activeRank = 0;
-      const buyTargets = effectiveBuyLevels.map((_, idx) => {
-        if (isSingleBuyLevel) return 1.0;
-        const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
-        if (isEnabled) {
-          activeRank++;
-          return activeRank / activeBuyCount;
-        }
-        return 1.0;
-      });
+      const buyWeightFractions = this.getBuyLevelWeightFractions(enabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget);
+      const buyTargets = effectiveBuyLevels.map((_, idx) =>
+        this.getCumulativeBuyTargetFraction(idx, enabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget)
+      );
 
       // Clean up stale resting buy orders or correct mislabeled levelDesc to closest buyLevel
       const remainingStaleBuys: OpenOrder[] = [];
@@ -4209,7 +4352,12 @@ export class DynamicGrid {
             .filter((o) => o.isBid && o !== currentOpenBuyAtLvl)
             .reduce((sum, o) => sum + ((o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty)), 0);
           const remainingCapacityForOrder = Math.max(0, currentAvailableCapacity - otherOpenBuysQuote);
-          const targetOrderQuote = Math.min(trancheQuote, remainingCapacityForOrder);
+          const levelWeightFrac = buyWeightFractions[i] ?? (activeBuyCount > 0 ? (1 / activeBuyCount) : 0.2);
+          let levelTrancheQuote = isSingleBuyLevel ? maxInv : (maxInv * levelWeightFrac);
+          if (levelTrancheQuote < minOrderNotional && currentAvailableCapacity >= minOrderNotional) {
+            levelTrancheQuote = Math.min(currentAvailableCapacity, minOrderNotional);
+          }
+          const targetOrderQuote = Math.min(levelTrancheQuote, remainingCapacityForOrder);
 
           if (currentOpenBuyAtLvl) {
             // Preserve resting buy order! Only re-align price if channel shifted significantly OR if rebalancing to equal tranche
@@ -4800,12 +4948,18 @@ export class DynamicGrid {
         this.saveState();
       }
 
-      // Only place/maintain sell orders at levels strictly ABOVE the current market price AND (if required) above average entry
+      // Only place/maintain sell orders at levels strictly ABOVE the current market price AND meeting minNetProfitPct
       const mode = this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
       const avgEntry = this.getAvgEntryPrice();
-      let minAllowedSellPrice = Math.max(currentBestBid, refPrice);
-      if (mode === "PORTFOLIO_AVG_PROFIT" && avgEntry > 0) {
-        minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * 1.001);
+      const minProfitMulti = this.getMinProfitMultiplier();
+      const lowestLotPrice = this.lots.length > 0 ? Math.min(...this.lots.map((l) => l.price)) : 0;
+      let minAllowedSellPrice = Math.max(
+        currentBestBid,
+        refPrice,
+        lowestLotPrice > 0 ? lowestLotPrice * minProfitMulti : 0,
+      );
+      if ((mode === "PORTFOLIO_AVG_PROFIT" || this.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
+        minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
       }
 
       // Determine eligible sell levels strictly ABOVE minAllowedSellPrice
@@ -5392,6 +5546,7 @@ export class DynamicGrid {
     const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true];
     const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true];
     const activeBuyCount = enabledBuys.filter(Boolean).length;
+    const buyFractions = this.getBuyLevelWeightFractions(enabledBuys, buyLevels.length);
     const baseTrancheQuote = activeBuyCount > 0 ? (maxInv / activeBuyCount) : 0;
     const baseTrancheUsdso = baseTrancheQuote;
 
@@ -5457,11 +5612,18 @@ export class DynamicGrid {
       }
 
       if (targetTranches > 0 && matchedLevelIndex >= 0 && matchedBuyPrice !== undefined && baseTrancheQuote > 0) {
-        const targetCapacityQuote = targetTranches * baseTrancheQuote;
+        const firstActiveFrac = buyFractions.find((f) => f > 0) ?? (1 / activeBuyCount);
+        const targetCapacityFraction = isTlBuy
+          ? firstActiveFrac
+          : this.getCumulativeBuyTargetFraction(matchedLevelIndex, enabledBuys, buyLevels.length);
+        const targetCapacityQuote = maxInv * targetCapacityFraction;
+        const levelTrancheQuote = isTlBuy
+          ? (maxInv * firstActiveFrac)
+          : (maxInv * (buyFractions[matchedLevelIndex] || firstActiveFrac));
         const deficitQuote = targetCapacityQuote - currentHeldQuote;
 
-        // Only trigger if deficit is significant (at least 70% of a tranche, avoiding micro-dust churn)
-        if (deficitQuote >= (baseTrancheQuote * 0.70)) {
+        // Only trigger if deficit is significant (at least 70% of this level's tranche, avoiding micro-dust churn)
+        if (deficitQuote >= (levelTrancheQuote * 0.70)) {
           const cooldownKey = isTlBuy ? `ioc_bracket_buy_tl` : `ioc_bracket_buy_level_${matchedLevelIndex}`;
           const lastBuyTime = this.orderCooldowns.get(cooldownKey) ?? 0;
           const globalBuyCooldown = this.orderCooldowns.get("ioc_bracket_buy_global") ?? 0;
@@ -5470,8 +5632,8 @@ export class DynamicGrid {
           // 10s cooldown per level, 3s global debounce
           if (now - lastBuyTime > 10_000 && now - globalBuyCooldown > 3_000) {
             const availableWalletQuote = this.cfg.dryRun ? maxInv : this.walletQuoteBalance;
-            // After a Cut Loss, enforce incremental 1-tranche DCA re-entry (prevent immediate 4x lump-sum whipsaw buy)
-            const maxAllowedPerBuy = this.postCutSingleTrancheOnly ? baseTrancheQuote : deficitQuote;
+            // After a Cut Loss, enforce incremental 1-tranche DCA re-entry (prevent immediate lump-sum whipsaw buy)
+            const maxAllowedPerBuy = this.postCutSingleTrancheOnly ? levelTrancheQuote : deficitQuote;
             let toSpendQuote = Math.min(deficitQuote, maxAllowedPerBuy, Math.max(0, maxInv - currentHeldQuote), availableWalletQuote);
             const minNotional = Math.max(this.minNotional || 5.0, 5.0);
 
@@ -5488,7 +5650,7 @@ export class DynamicGrid {
               this.orderCooldowns.set("ioc_bracket_buy_global", now);
 
               // Calculate how many tranches are being aggregated
-              const tranchesAggregated = Math.max(1, Math.round(toSpendQuote / baseTrancheQuote));
+              const tranchesAggregated = Math.max(1, Math.round(toSpendQuote / Math.max(levelTrancheQuote, 0.01)));
               const buyQty = toSpendQuote / currentBestAsk;
               const actionLabel = isTlBuy
                 ? `IOC Buy @ Trendline Support ($${matchedBuyPrice.toFixed(6)})`
@@ -5587,7 +5749,11 @@ export class DynamicGrid {
         const matchedSellPrice = sellLevels[matchedStep.levelIndex];
         if (matchedSellPrice !== undefined) {
           const avgEntry = this.getAvgEntryPrice();
-          const meetsProfitRequirement = !this.cfg.requireProfitAboveAvgEntry || (avgEntry <= 0 || currentBestBid >= avgEntry * 1.001);
+          const minProfitMult = this.getMinProfitMultiplier();
+          const lowestLotCost = this.lots.length > 0 ? Math.min(...this.lots.map((l) => l.price)) : avgEntry;
+          const meetsProfitRequirement = this.cfg.requireProfitAboveAvgEntry
+            ? (avgEntry <= 0 || currentBestBid >= avgEntry * minProfitMult)
+            : (lowestLotCost <= 0 || currentBestBid >= lowestLotCost * minProfitMult);
 
           if (meetsProfitRequirement) {
             const targetRemainingQty = matchedStep.targetRemainingFraction * cycle.baselineHeldQty;
@@ -5656,6 +5822,7 @@ export class DynamicGrid {
     execPrice: number,
     levelName: string,
     targetPrice: number,
+    allowLoss = false,
   ): Promise<boolean> {
     const actionLabel = levelName.startsWith("IOC") ? levelName : `IOC ${levelName}`;
     const held = this.baseHeld();
@@ -5667,8 +5834,8 @@ export class DynamicGrid {
       return false;
     }
     const now = Date.now();
-    // In IOC sell: price must NEVER be below targetPrice (Sell Level)
-    const effectivePrice = Math.max(execPrice, targetPrice);
+    // In IOC sell: price must NEVER be below targetPrice (Sell Level) unless allowLoss is explicitly true (Stage 1 Cut Loss)
+    const effectivePrice = allowLoss ? (execPrice > 0 ? execPrice : targetPrice) : Math.max(execPrice, targetPrice);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const orderNotional = executeQty * effectivePrice;
 
@@ -5735,12 +5902,12 @@ export class DynamicGrid {
 
     try {
       // In CLOB IOC sell: targetPrice acts as trigger price and anchor.
-      // Grid tranche sell allows setting below level down to targetPrice * (1 - slippagePct), while guarding against selling below avg entry
+      // Grid tranche sell allows setting below level down to targetPrice * (1 - slippagePct), while guarding against selling below avg entry (unless allowLoss is true)
       const avgEntry = this.getAvgEntryPrice();
       const slippagePctVal = this.cfg.iocSlippagePct ?? 0.2;
       const slippagePct = slippagePctVal / 100;
       const minAllowedBySlippage = targetPrice * (1 - slippagePct);
-      const minProfitablePrice = avgEntry > 0 ? avgEntry * 1.0005 : minAllowedBySlippage;
+      const minProfitablePrice = (!allowLoss && avgEntry > 0) ? avgEntry * this.getMinProfitMultiplier() : minAllowedBySlippage;
       const minAllowedPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
       const basePrice = (execPrice > 0) ? execPrice : targetPrice;
       let limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct));

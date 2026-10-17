@@ -3236,6 +3236,11 @@
       setVal("cfg_minTradeableChannelWidthPct", data.minTradeableChannelWidthPct ?? 2.0);
       setVal("cfg_orderExecutionMode", data.orderExecutionMode || "IOC_BRACKET");
       setVal("cfg_iocSlippagePct", data.iocSlippagePct ?? 0.35);
+      setVal("cfg_buySizingMode", data.buySizingMode || "PYRAMID");
+      setVal("cfg_minNetProfitPct", data.minNetProfitPct ?? 0.25);
+      setVal("cfg_cutLossStage2Multiplier", data.cutLossStage2Multiplier ?? 2.0);
+      setCheck("cfg_enableTwoStageCutLoss", data.enableTwoStageCutLoss !== false);
+      setCheck("cfg_enableLhDynamicEscape", data.enableLhDynamicEscape !== false);
       setVal("cfg_stuckTimeoutMinutes", data.stuckTimeoutMs ? Math.round(data.stuckTimeoutMs / 60000) : 0);
       setCheck("cfg_enableBuyBelowSellLevel1", data.enableBuyBelowSellLevel1 !== false);
       setCheck("cfg_enableSellAboveBuyLevel1", data.enableSellAboveBuyLevel1 !== false);
@@ -3274,10 +3279,95 @@
       setCheck("cfg_sell_t3", enabledSells[2] !== false);
       setCheck("cfg_sell_t4", enabledSells[3] !== false);
       setCheck("cfg_sell_t5", enabledSells[4] !== false);
+
+      updateGridSimulatorPreview();
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
   }
+
+  function updateGridSimulatorPreview() {
+    const elFullAvg = document.getElementById("simFullAvgPct");
+    const elInnerSpread = document.getElementById("simInnerSpreadPct");
+    const elAvgToT1 = document.getElementById("simAvgToT1Pct");
+    const elTranchesList = document.getElementById("gridSimTranchesList");
+    if (!elFullAvg || !elInnerSpread || !elAvgToT1 || !elTranchesList) return;
+
+    const maxInv = parseFloat(document.getElementById("cfg_maxInventoryUsdso")?.value) || 40;
+    const sizingMode = document.getElementById("cfg_buySizingMode")?.value || "PYRAMID";
+    const defaultBuys = [42, 32, 22, 12, 2];
+    const defaultSells = [52, 62, 72, 82, 92];
+
+    const buyEnabled = [1, 2, 3, 4, 5].map((i) => {
+      const el = document.getElementById(`cfg_buy_l${i}`);
+      return el ? el.checked : true;
+    });
+    const buyPcts = [1, 2, 3, 4, 5].map((i, idx) => {
+      const el = document.getElementById(`cfg_buy_pct_${i}`);
+      const val = el ? parseFloat(el.value) : NaN;
+      return Number.isFinite(val) ? val : defaultBuys[idx];
+    });
+    const sellEnabled = [1, 2, 3, 4, 5].map((i) => {
+      const el = document.getElementById(`cfg_sell_t${i}`);
+      return el ? el.checked : true;
+    });
+    const sellPcts = [1, 2, 3, 4, 5].map((i, idx) => {
+      const el = document.getElementById(`cfg_sell_pct_${i}`);
+      const val = el ? parseFloat(el.value) : NaN;
+      return Number.isFinite(val) ? val : defaultSells[idx];
+    });
+
+    const rawWeights = sizingMode === "EQUAL" ? [1, 1, 1, 1, 1] : [10, 15, 20, 25, 30];
+    const activeWeightSum = rawWeights.reduce((sum, w, idx) => (buyEnabled[idx] ? sum + w : sum), 0);
+    const fractions = rawWeights.map((w, idx) => (buyEnabled[idx] && activeWeightSum > 0 ? w / activeWeightSum : 0));
+
+    if (activeWeightSum <= 0) {
+      elFullAvg.textContent = "N/A (ปิด Buy ครบ)";
+      elInnerSpread.textContent = "-";
+      elAvgToT1.textContent = "-";
+      elTranchesList.innerHTML = `<span style="color:#f87171;">⚠️ กรุณาเปิดอย่างน้อย 1 Buy Level</span>`;
+      return;
+    }
+
+    const fullFillAvgPct = fractions.reduce((sum, frac, idx) => sum + frac * buyPcts[idx], 0);
+    const firstActiveBuyIdx = buyEnabled.findIndex(Boolean);
+    const firstActiveSellIdx = sellEnabled.findIndex(Boolean);
+    const firstBuyPct = firstActiveBuyIdx >= 0 ? buyPcts[firstActiveBuyIdx] : 42;
+    const firstSellPct = firstActiveSellIdx >= 0 ? sellPcts[firstActiveSellIdx] : 52;
+    const innerSpread = firstSellPct - firstBuyPct;
+    const avgToT1 = firstSellPct - fullFillAvgPct;
+
+    elFullAvg.textContent = `${fullFillAvgPct.toFixed(1)}% ของกรอบ`;
+    elInnerSpread.textContent = `${firstBuyPct}% → ${firstSellPct}% (${innerSpread >= 0 ? "+" : ""}${innerSpread.toFixed(0)}% กรอบ)`;
+    elAvgToT1.textContent = `${avgToT1 >= 0 ? "+" : ""}${avgToT1.toFixed(1)}% ของกรอบ`;
+
+    const pills = fractions
+      .map((frac, idx) => {
+        if (!buyEnabled[idx]) {
+          return `<span style="padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.03); color: #64748b; text-decoration: line-through;">L${idx + 1} (${buyPcts[idx]}%): ปิด</span>`;
+        }
+        const pctWeight = (frac * 100).toFixed(1).replace(/\.0$/, "");
+        const quoteAmt = (maxInv * frac).toFixed(2);
+        return `<span style="padding: 2px 7px; border-radius: 4px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); color: #a7f3d0;"><b>L${idx + 1} (${buyPcts[idx]}%)</b>: ${pctWeight}% ($${quoteAmt})</span>`;
+      })
+      .join("");
+    elTranchesList.innerHTML = pills;
+  }
+
+  [
+    "cfg_buySizingMode",
+    "cfg_maxInventoryUsdso",
+    "cfg_buy_l1", "cfg_buy_l2", "cfg_buy_l3", "cfg_buy_l4", "cfg_buy_l5",
+    "cfg_buy_pct_1", "cfg_buy_pct_2", "cfg_buy_pct_3", "cfg_buy_pct_4", "cfg_buy_pct_5",
+    "cfg_sell_t1", "cfg_sell_t2", "cfg_sell_t3", "cfg_sell_t4", "cfg_sell_t5",
+    "cfg_sell_pct_1", "cfg_sell_pct_2", "cfg_sell_pct_3", "cfg_sell_pct_4", "cfg_sell_pct_5",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("input", updateGridSimulatorPreview);
+      el.addEventListener("change", updateGridSimulatorPreview);
+    }
+  });
 
   async function loadDatabaseStatus() {
     try {
@@ -3375,6 +3465,11 @@
       minTradeableChannelWidthPct: parseFloat(document.getElementById("cfg_minTradeableChannelWidthPct").value),
       orderExecutionMode: document.getElementById("cfg_orderExecutionMode").value,
       iocSlippagePct: parseFloat(document.getElementById("cfg_iocSlippagePct").value) || 0.35,
+      buySizingMode: document.getElementById("cfg_buySizingMode") ? document.getElementById("cfg_buySizingMode").value : "PYRAMID",
+      minNetProfitPct: document.getElementById("cfg_minNetProfitPct") ? parseFloat(document.getElementById("cfg_minNetProfitPct").value) || 0.25 : 0.25,
+      cutLossStage2Multiplier: document.getElementById("cfg_cutLossStage2Multiplier") ? parseFloat(document.getElementById("cfg_cutLossStage2Multiplier").value) || 2.0 : 2.0,
+      enableTwoStageCutLoss: document.getElementById("cfg_enableTwoStageCutLoss") ? document.getElementById("cfg_enableTwoStageCutLoss").checked : true,
+      enableLhDynamicEscape: document.getElementById("cfg_enableLhDynamicEscape") ? document.getElementById("cfg_enableLhDynamicEscape").checked : true,
       stuckTimeoutMs: (parseFloat(document.getElementById("cfg_stuckTimeoutMinutes").value) || 0) * 60_000,
       enableBuyBelowSellLevel1: document.getElementById("cfg_enableBuyBelowSellLevel1").checked,
       enableSellAboveBuyLevel1: document.getElementById("cfg_enableSellAboveBuyLevel1").checked,

@@ -130,6 +130,18 @@ export const defaultStrategyConfig = {
   /** Grid zone percentage allocations for Sell Targets 1..5 (default [52, 62, 72, 82, 92]%). */
   sellLevelPcts: [52, 62, 72, 82, 92] as number[],
   /**
+   * Buy Tranche Sizing Mode:
+   * 1. "PYRAMID" (Default): Weighted sizing [10%, 15%, 20%, 25%, 30%] from Buy L1..L5 to pull average entry lower toward the floor.
+   * 2. "EQUAL": Equal 20% allocation per active buy level.
+   */
+  buySizingMode: "PYRAMID" as "EQUAL" | "PYRAMID",
+  /** Relative tranche weights for Buy Levels 1..5 when buySizingMode === "PYRAMID" (default [10, 15, 20, 25, 30]). */
+  buyLevelWeights: [10, 15, 20, 25, 30] as number[],
+  /** Minimum net profit spread (%) above cost basis required for sell targets to prevent fee-eroded micro-exits in narrow channels (default 0.25%). */
+  minNetProfitPct: 0.25,
+  /** When true, dynamically lowers sell target to a confirmed Lower High (LH) formed below Sell Target 1 while holding inventory (if profitable >= minNetProfitPct). */
+  enableLhDynamicEscape: true,
+  /**
    * Order Execution Mode:
    * 1. "IOC_BRACKET" (Default): Zero resting orders on book. Dynamically snipes buys/sells via IOC when price enters level brackets. Aggregates tranches on fast moves to save gas.
    * 2. "MAKER_LIMIT": Maintains resting limit orders on DreamDEX CLOB book.
@@ -154,6 +166,10 @@ export const defaultStrategyConfig = {
   cutLossOnBufferOnly: true,
   /** Required continuous elapsed time (seconds) below cutLossBound before executing fast cut (default 60s, 0 = instant real-time). */
   cutLossBufferDelaySeconds: 60,
+  /** When true, executes Cut Loss in 2 stages (Stage 1: 50% de-risk on buffer break, Stage 2: remaining 50% if price drops below 2x buffer or next candle closes lower). */
+  enableTwoStageCutLoss: true,
+  /** Buffer multiplier for Stage 2 full cut loss (default 2.0x buffer distance below Floor). */
+  cutLossStage2Multiplier: 2.0,
   /** Automatically sell 100% of all inventory when price reaches Upper Bound (100% Ceiling). */
   takeProfitAtUpperBound: true,
   /** When true, if market price exceeds a grid sell level's target price, executes an immediate IOC sell. */
@@ -280,6 +296,20 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.adjustChannelOnClosedOnly !== undefined) merged.adjustChannelOnClosedOnly = Boolean(saved.adjustChannelOnClosedOnly);
       if (saved.cutLossOnBufferOnly !== undefined) merged.cutLossOnBufferOnly = Boolean(saved.cutLossOnBufferOnly);
       if (saved.cutLossBufferDelaySeconds !== undefined) merged.cutLossBufferDelaySeconds = Number(saved.cutLossBufferDelaySeconds);
+      if (saved.enableTwoStageCutLoss !== undefined) merged.enableTwoStageCutLoss = Boolean(saved.enableTwoStageCutLoss);
+      if (saved.cutLossStage2Multiplier !== undefined) merged.cutLossStage2Multiplier = Number(saved.cutLossStage2Multiplier);
+      if (saved.enableLhDynamicEscape !== undefined) merged.enableLhDynamicEscape = Boolean(saved.enableLhDynamicEscape);
+      if (saved.minNetProfitPct !== undefined) merged.minNetProfitPct = Number(saved.minNetProfitPct);
+      if (saved.buySizingMode === "EQUAL" || saved.buySizingMode === "PYRAMID") {
+        merged.buySizingMode = saved.buySizingMode;
+      }
+      if (Array.isArray(saved.buyLevelWeights)) {
+        merged.buyLevelWeights = saved.buyLevelWeights.map((v: any) => Math.max(1, Number(v) || 10));
+        const defaultWeights = [10, 15, 20, 25, 30];
+        while (merged.buyLevelWeights.length < 5) {
+          merged.buyLevelWeights.push(defaultWeights[merged.buyLevelWeights.length] ?? 20);
+        }
+      }
       if (saved.narrowChannelThresholdPct !== undefined) merged.narrowChannelThresholdPct = Number(saved.narrowChannelThresholdPct);
       if (saved.narrowChannelBuyBufferPct !== undefined) merged.narrowChannelBuyBufferPct = Number(saved.narrowChannelBuyBufferPct);
       if (saved.narrowChannelSellBufferPct !== undefined) merged.narrowChannelSellBufferPct = Number(saved.narrowChannelSellBufferPct);
