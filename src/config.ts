@@ -121,10 +121,14 @@ export const defaultStrategyConfig = {
   enableBuyBelowSellLevel1: true,
   /** When true, only maintains/places sell orders when price is at or above Buy Level 1 (>= 40%). Default true. */
   enableSellAboveBuyLevel1: true,
-  /** Active toggles for Buy Levels 1..4. If a level is disabled, it is skipped and budget is redistributed among active levels. */
-  enabledBuyLevels: [true, true, true, true] as boolean[],
-  /** Active toggles for Sell Targets 1..4. If a target is disabled, it is skipped and inventory is redistributed among active targets. */
-  enabledSellTargets: [true, true, true, true] as boolean[],
+  /** Active toggles for Buy Levels 1..5. If a level is disabled, it is skipped and budget is redistributed among active levels. */
+  enabledBuyLevels: [true, true, true, true, true] as boolean[],
+  /** Active toggles for Sell Targets 1..5. If a target is disabled, it is skipped and inventory is redistributed among active targets. */
+  enabledSellTargets: [true, true, true, true, true] as boolean[],
+  /** Grid zone percentage allocations for Buy Levels 1..5 (default [42, 32, 22, 12, 2]%). */
+  buyLevelPcts: [42, 32, 22, 12, 2] as number[],
+  /** Grid zone percentage allocations for Sell Targets 1..5 (default [52, 62, 72, 82, 92]%). */
+  sellLevelPcts: [52, 62, 72, 82, 92] as number[],
   /**
    * Order Execution Mode:
    * 1. "IOC_BRACKET" (Default): Zero resting orders on book. Dynamically snipes buys/sells via IOC when price enters level brackets. Aggregates tranches on fast moves to save gas.
@@ -281,9 +285,25 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.narrowChannelSellBufferPct !== undefined) merged.narrowChannelSellBufferPct = Number(saved.narrowChannelSellBufferPct);
       if (Array.isArray(saved.enabledBuyLevels)) {
         merged.enabledBuyLevels = saved.enabledBuyLevels.map((v: any) => Boolean(v));
+        while (merged.enabledBuyLevels.length < 5) merged.enabledBuyLevels.push(true);
       }
       if (Array.isArray(saved.enabledSellTargets)) {
         merged.enabledSellTargets = saved.enabledSellTargets.map((v: any) => Boolean(v));
+        while (merged.enabledSellTargets.length < 5) merged.enabledSellTargets.push(true);
+      }
+      if (Array.isArray(saved.buyLevelPcts)) {
+        merged.buyLevelPcts = saved.buyLevelPcts.map((v: any) => Number(v));
+        const defaultBuys = [42, 32, 22, 12, 2];
+        while (merged.buyLevelPcts.length < 5) {
+          merged.buyLevelPcts.push(defaultBuys[merged.buyLevelPcts.length] ?? 2);
+        }
+      }
+      if (Array.isArray(saved.sellLevelPcts)) {
+        merged.sellLevelPcts = saved.sellLevelPcts.map((v: any) => Number(v));
+        const defaultSells = [52, 62, 72, 82, 92];
+        while (merged.sellLevelPcts.length < 5) {
+          merged.sellLevelPcts.push(defaultSells[merged.sellLevelPcts.length] ?? 92);
+        }
       }
       return merged;
     }

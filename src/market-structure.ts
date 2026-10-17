@@ -148,6 +148,8 @@ export interface ChannelOptions {
   narrowChannelThresholdPct?: number;   // narrow channel threshold % (default 1.2%)
   narrowChannelBuyBufferPct?: number;   // buffer % above floor for buy edge (default 0.05%)
   narrowChannelSellBufferPct?: number;  // buffer % below ceiling for sell edge (default 0.05%)
+  buyLevelPcts?: number[];              // percentage allocations for buy levels (default [42, 32, 22, 12, 2])
+  sellLevelPcts?: number[];             // percentage allocations for sell levels (default [52, 62, 72, 82, 92])
   useOnlyClosedCandles?: boolean;       // calculate structure and channel bounds strictly on closed candles
 }
 
@@ -1845,27 +1847,22 @@ export class DowStructureEngine {
     const buyBufferFrac = (options?.narrowChannelBuyBufferPct ?? 0.05) / 100;
     const sellBufferFrac = (options?.narrowChannelSellBufferPct ?? 0.05) / 100;
 
-    // Grid Levels in 10% to 50% (Buy Zone): 40%, 30%, 20%, 10% (0%-5% is safe buffer above floor)
+    const defaultBuyPcts = [42, 32, 22, 12, 2];
+    const defaultSellPcts = [52, 62, 72, 82, 92];
+    const buyPcts = options?.buyLevelPcts && options.buyLevelPcts.length > 0 ? options.buyLevelPcts : defaultBuyPcts;
+    const sellPcts = options?.sellLevelPcts && options.sellLevelPcts.length > 0 ? options.sellLevelPcts : defaultSellPcts;
+
+    // Grid Levels in Buy Zone (e.g. 42%, 32%, 22%, 12%, 2%)
     // In narrow channels (< threshold), collapse to a single edge-bracket level: Buy at Floor + Buffer%
     const buyLevels = isNarrowChannel
       ? [bottomBound * (1 + buyBufferFrac)]
-      : [
-          bottomBound + finalSpan * 0.40,
-          bottomBound + finalSpan * 0.30,
-          bottomBound + finalSpan * 0.20,
-          bottomBound + finalSpan * 0.10,
-        ];
+      : buyPcts.map((pct) => bottomBound + finalSpan * (pct / 100));
 
-    // Grid Levels in 50% to 100% (Sell Zone): 60%, 70%, 80%, 90% (Hold 0% near 100% Upper Bound)
+    // Grid Levels in Sell Zone (e.g. 52%, 62%, 72%, 82%, 92%)
     // In narrow channels (< threshold), collapse to a single edge-bracket level: Sell at Ceiling - Buffer%
     const sellLevels = isNarrowChannel
       ? [upperBound * (1 - sellBufferFrac)]
-      : [
-          bottomBound + finalSpan * 0.60,
-          bottomBound + finalSpan * 0.70,
-          bottomBound + finalSpan * 0.80,
-          bottomBound + finalSpan * 0.90,
-        ];
+      : sellPcts.map((pct) => bottomBound + finalSpan * (pct / 100));
 
     const zoneWidthPct = bottomBound > 0 ? (finalSpan / bottomBound) * 100 : 0;
 

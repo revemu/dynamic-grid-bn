@@ -530,8 +530,10 @@ export class DynamicGrid {
       minGasReserveSomi: this.cfg.minGasReserveSomi ?? 2.0,
       timezone: this.cfg.timezone || "Asia/Bangkok",
       dashboardPort: this.cfg.dashboardPort ?? 3333,
-      enabledBuyLevels: Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true],
-      enabledSellTargets: Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true],
+      enabledBuyLevels: Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true],
+      enabledSellTargets: Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true],
+      buyLevelPcts: Array.isArray(this.cfg.buyLevelPcts) ? this.cfg.buyLevelPcts : [42, 32, 22, 12, 2],
+      sellLevelPcts: Array.isArray(this.cfg.sellLevelPcts) ? this.cfg.sellLevelPcts : [52, 62, 72, 82, 92],
     };
   }
 
@@ -558,13 +560,33 @@ export class DynamicGrid {
         if ((key === "binanceApiKey" || key === "binanceApiSecret" || key === "dreamdexPrivateKey") && val === "******") continue;
         if (key === "enabledBuyLevels" && Array.isArray(val)) {
           this.cfg.enabledBuyLevels = val.map(Boolean);
+          while (this.cfg.enabledBuyLevels.length < 5) this.cfg.enabledBuyLevels.push(true);
           this.needsBuyRebalance = true;
           continue;
         }
         if (key === "enabledSellTargets" && Array.isArray(val)) {
           this.cfg.enabledSellTargets = val.map(Boolean);
+          while (this.cfg.enabledSellTargets.length < 5) this.cfg.enabledSellTargets.push(true);
           this.needsSellRebalance = true;
           this.iocBracketSellCycle = undefined;
+          continue;
+        }
+        if (key === "buyLevelPcts" && Array.isArray(val)) {
+          this.cfg.buyLevelPcts = val.map(Number);
+          const defaultBuys = [42, 32, 22, 12, 2];
+          while (this.cfg.buyLevelPcts.length < 5) this.cfg.buyLevelPcts.push(defaultBuys[this.cfg.buyLevelPcts.length] ?? 2);
+          this.confirmedChannel = undefined;
+          this.pendingConfirmedChannelUpdate = true;
+          this.needsBuyRebalance = true;
+          continue;
+        }
+        if (key === "sellLevelPcts" && Array.isArray(val)) {
+          this.cfg.sellLevelPcts = val.map(Number);
+          const defaultSells = [52, 62, 72, 82, 92];
+          while (this.cfg.sellLevelPcts.length < 5) this.cfg.sellLevelPcts.push(defaultSells[this.cfg.sellLevelPcts.length] ?? 92);
+          this.confirmedChannel = undefined;
+          this.pendingConfirmedChannelUpdate = true;
+          this.needsSellRebalance = true;
           continue;
         }
         (this.cfg as any)[key] = val;
@@ -632,7 +654,9 @@ export class DynamicGrid {
       newSettings.enableNarrowChannelCollapse !== undefined ||
       newSettings.narrowChannelThresholdPct !== undefined ||
       newSettings.narrowChannelBuyBufferPct !== undefined ||
-      newSettings.narrowChannelSellBufferPct !== undefined
+      newSettings.narrowChannelSellBufferPct !== undefined ||
+      newSettings.buyLevelPcts !== undefined ||
+      newSettings.sellLevelPcts !== undefined
     ) {
       this.confirmedChannel = undefined;
       this.pendingConfirmedChannelUpdate = true;
@@ -828,11 +852,12 @@ export class DynamicGrid {
                 if (isBid && currentBounds.buyLevels) {
                   const isSingleBuy = currentBounds.buyLevels.length === 1;
                   const buyBufPct = this.cfg.narrowChannelBuyBufferPct ?? 0.05;
+                  const buyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
                   const buyNames = isSingleBuy
                     ? [`Buy Edge Floor (+${buyBufPct.toFixed(2)}%)`]
-                    : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
-                  const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
-                  const activeBuyCount = enabledBuys.filter(Boolean).length || 4;
+                    : currentBounds.buyLevels.map((_, idx) => `Buy Level ${idx + 1} (${buyPcts[idx] ?? Math.round(42 - idx * 10)}%)`);
+                  const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true];
+                  const activeBuyCount = enabledBuys.filter(Boolean).length || 5;
                   let activeBuyRank = 0;
                   const buyTargets = currentBounds.buyLevels.map((_, i) => {
                     if (isSingleBuy) return 1.0;
@@ -861,12 +886,21 @@ export class DynamicGrid {
                 } else if (!isBid && currentBounds.sellLevels) {
                   const isSingleSell = currentBounds.sellLevels.length === 1;
                   const sellBufPct = this.cfg.narrowChannelSellBufferPct ?? 0.05;
+                  const sellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
                   const sellNames = isSingleSell
                     ? [`Sell Edge Ceil (-${sellBufPct.toFixed(2)}%)`]
-                    : ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
-                  const sellTargets = isSingleSell
-                    ? [0.0]
-                    : [0.75, 0.50, 0.25, 0.0];
+                    : currentBounds.sellLevels.map((_, idx) => `Sell Target ${idx + 1} (${sellPcts[idx] ?? Math.round(52 + idx * 10)}%)`);
+                  const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true];
+                  const activeSellCount = enabledSells.filter(Boolean).length || 5;
+                  let activeSellRank = 0;
+                  const sellTargets = currentBounds.sellLevels.map((_, i) => {
+                    if (isSingleSell) return 0.0;
+                    if (enabledSells[i]) {
+                      activeSellRank++;
+                      return Math.max(0.0, 1.0 - (activeSellRank / activeSellCount));
+                    }
+                    return 0.0;
+                  });
                   let bestSellIdx = -1;
                   let minSellDiff = Infinity;
                   for (let i = 0; i < currentBounds.sellLevels.length; i++) {
@@ -1977,6 +2011,8 @@ export class DynamicGrid {
         narrowChannelThresholdPct: this.cfg.narrowChannelThresholdPct,
         narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct,
         narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct,
+        buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
+        sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
         useOnlyClosedCandles: adjustOnClosedOnly,
       });
       gridZone = dow?.gridZone;
@@ -1989,13 +2025,16 @@ export class DynamicGrid {
       cutLossBound = dow?.cutLossBound ?? (lowerBound - (currentFloorBufferPct / 100) * lowerBound);
       rawFloorPrice = dow?.activeValley?.price ?? lowerBound;
 
+      const buyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
+      const sellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
+
       buyLevels = gridZone?.buyLevels && gridZone.buyLevels.length > 0
         ? [...gridZone.buyLevels]
-        : [lowerBound + rawSpan * 0.40, lowerBound + rawSpan * 0.30, lowerBound + rawSpan * 0.20, lowerBound + rawSpan * 0.10];
+        : buyPcts.map((pct) => lowerBound + rawSpan * (pct / 100));
 
       sellLevels = gridZone?.sellLevels && gridZone.sellLevels.length > 0
         ? [...gridZone.sellLevels]
-        : [lowerBound + rawSpan * 0.60, lowerBound + rawSpan * 0.70, lowerBound + rawSpan * 0.80, lowerBound + rawSpan * 0.90];
+        : sellPcts.map((pct) => lowerBound + rawSpan * (pct / 100));
 
       if (adjustOnClosedOnly && lastClosedTime > 0) {
         if (this.confirmedChannel && this.confirmedChannel.candleTime !== lastClosedTime) {
@@ -2077,22 +2116,14 @@ export class DynamicGrid {
           const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
           const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
           const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
+          const curBuyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
+          const curSellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
           this.lastDynamicBounds.sellLevels = isNarrowChannel
             ? [newCeiling * (1 - sellBufferFrac)]
-            : [
-                currentFloor + dSpan * 0.60,
-                currentFloor + dSpan * 0.70,
-                currentFloor + dSpan * 0.80,
-                currentFloor + dSpan * 0.90,
-              ];
+            : curSellPcts.map((pct) => currentFloor + dSpan * (pct / 100));
           this.lastDynamicBounds.buyLevels = isNarrowChannel
             ? [currentFloor * (1 + buyBufferFrac)]
-            : [
-                currentFloor + dSpan * 0.40,
-                currentFloor + dSpan * 0.30,
-                currentFloor + dSpan * 0.20,
-                currentFloor + dSpan * 0.10,
-              ];
+            : curBuyPcts.map((pct) => currentFloor + dSpan * (pct / 100));
         }
       }
 
@@ -2113,22 +2144,14 @@ export class DynamicGrid {
         const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
         const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
         const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
+        const curBuyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
+        const curSellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
         this.lastDynamicBounds.sellLevels = isNarrowChannel
           ? [clampedCeiling * (1 - sellBufferFrac)]
-          : [
-              currentFloor + dSpan * 0.60,
-              currentFloor + dSpan * 0.70,
-              currentFloor + dSpan * 0.80,
-              currentFloor + dSpan * 0.90,
-            ];
+          : curSellPcts.map((pct) => currentFloor + dSpan * (pct / 100));
         this.lastDynamicBounds.buyLevels = isNarrowChannel
           ? [currentFloor * (1 + buyBufferFrac)]
-          : [
-              currentFloor + dSpan * 0.40,
-              currentFloor + dSpan * 0.30,
-              currentFloor + dSpan * 0.20,
-              currentFloor + dSpan * 0.10,
-            ];
+          : curBuyPcts.map((pct) => currentFloor + dSpan * (pct / 100));
       }
 
       lowerBound = this.lastDynamicBounds.lowerBound;
@@ -2204,25 +2227,17 @@ export class DynamicGrid {
           const buyBufferFrac = (this.cfg.narrowChannelBuyBufferPct ?? 0.05) / 100;
           const sellBufferFrac = (this.cfg.narrowChannelSellBufferPct ?? 0.05) / 100;
 
+          const curBuyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
+          const curSellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
           if (!Array.isArray(this.lastDynamicBounds.buyLevels) || this.lastDynamicBounds.buyLevels.length === 0) {
             this.lastDynamicBounds.buyLevels = isNarrowChannel
               ? [lowerBound * (1 + buyBufferFrac)]
-              : [
-                  lowerBound + dSpan * 0.40,
-                  lowerBound + dSpan * 0.30,
-                  lowerBound + dSpan * 0.20,
-                  lowerBound + dSpan * 0.10,
-                ];
+              : curBuyPcts.map((pct) => lowerBound + dSpan * (pct / 100));
           }
           if (!Array.isArray(this.lastDynamicBounds.sellLevels) || this.lastDynamicBounds.sellLevels.length === 0) {
             this.lastDynamicBounds.sellLevels = isNarrowChannel
               ? [upperBound * (1 - sellBufferFrac)]
-              : [
-                  lowerBound + dSpan * 0.60,
-                  lowerBound + dSpan * 0.70,
-                  lowerBound + dSpan * 0.80,
-                  lowerBound + dSpan * 0.90,
-                ];
+              : curSellPcts.map((pct) => lowerBound + dSpan * (pct / 100));
           }
 
           // If channel mode changed between narrow and normal, adapt buyLevels/sellLevels accordingly
@@ -2230,18 +2245,8 @@ export class DynamicGrid {
             this.lastDynamicBounds.buyLevels = [lowerBound * (1 + buyBufferFrac)];
             this.lastDynamicBounds.sellLevels = [upperBound * (1 - sellBufferFrac)];
           } else if (!isNarrowChannel && this.lastDynamicBounds.buyLevels.length === 1) {
-            this.lastDynamicBounds.buyLevels = [
-              lowerBound + dSpan * 0.40,
-              lowerBound + dSpan * 0.30,
-              lowerBound + dSpan * 0.20,
-              lowerBound + dSpan * 0.10,
-            ];
-            this.lastDynamicBounds.sellLevels = [
-              lowerBound + dSpan * 0.60,
-              lowerBound + dSpan * 0.70,
-              lowerBound + dSpan * 0.80,
-              lowerBound + dSpan * 0.90,
-            ];
+            this.lastDynamicBounds.buyLevels = curBuyPcts.map((pct) => lowerBound + dSpan * (pct / 100));
+            this.lastDynamicBounds.sellLevels = curSellPcts.map((pct) => lowerBound + dSpan * (pct / 100));
           }
 
           buyLevels = this.lastDynamicBounds.buyLevels;
@@ -2511,7 +2516,7 @@ export class DynamicGrid {
       : 0;
     const isTpBidHealthy = tpBidDiscountPct <= tpMaxBidDiscountPct;
 
-    const enabledSellsForTp = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+    const enabledSellsForTp = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true];
     const activeSellTargetsForTp = sellLevels.filter((_, idx) => enabledSellsForTp[idx]);
     const highestActiveSellTarget = activeSellTargetsForTp.length > 0
       ? activeSellTargetsForTp[activeSellTargetsForTp.length - 1]!
@@ -2583,8 +2588,10 @@ export class DynamicGrid {
     }
 
     // ── Target Holding % Rebalancing Model based on Ladder Zone ───────────────
-    const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
-    const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+    const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true];
+    const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true];
+    const buyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
+    const sellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
     const activeBuyCount = enabledBuys.filter(Boolean).length;
     const activeSellCount = enabledSells.filter(Boolean).length;
 
@@ -2596,12 +2603,13 @@ export class DynamicGrid {
       activeLevelName = this.baseHeld() > 0 ? "0% Floor (Cut Loss)" : "0% Floor (Protected in Cash)";
     } else if (positionPct < 50) {
       // Buy Zone: 0% .. 50%
-      // Map Buy Level 4 (10%), Buy Level 3 (20%), Buy Level 2 (30%), Buy Level 1 (40%)
+      // Map Buy Levels dynamically (e.g. 2%, 12%, 22%, 32%, 42%)
       const buyLevelBands = [
-        { idx: 3, maxPct: 10, name: "10% Buy Level 4" },
-        { idx: 2, maxPct: 20, name: "20% Buy Level 3" },
-        { idx: 1, maxPct: 30, name: "30% Buy Level 2" },
-        { idx: 0, maxPct: 40, name: "40% Buy Level 1" },
+        { idx: 4, maxPct: buyPcts[4] ?? 2, name: `${buyPcts[4] ?? 2}% Buy Level 5` },
+        { idx: 3, maxPct: buyPcts[3] ?? 12, name: `${buyPcts[3] ?? 12}% Buy Level 4` },
+        { idx: 2, maxPct: buyPcts[2] ?? 22, name: `${buyPcts[2] ?? 22}% Buy Level 3` },
+        { idx: 1, maxPct: buyPcts[1] ?? 32, name: `${buyPcts[1] ?? 32}% Buy Level 2` },
+        { idx: 0, maxPct: buyPcts[0] ?? 42, name: `${buyPcts[0] ?? 42}% Buy Level 1` },
       ];
 
       // Find which buy band price sits in
@@ -2612,7 +2620,6 @@ export class DynamicGrid {
           targetHoldingFraction = 0.0;
         } else {
           // Count how many enabled buy levels have been reached down to matchedBand.idx
-          // (level 0 is highest buy price, level 3 is lowest buy price)
           let reachedActiveBuyCount = 0;
           for (let bIdx = 0; bIdx <= matchedBand.idx; bIdx++) {
             if (enabledBuys[bIdx]) reachedActiveBuyCount++;
@@ -2621,19 +2628,20 @@ export class DynamicGrid {
         }
       } else {
         targetHoldingFraction = 0.0;
-        activeLevelName = "Accumulation Midline (40-50%)";
+        activeLevelName = `Accumulation Midline (${buyPcts[0] ?? 42}-50%)`;
       }
-    } else if (positionPct <= 55) {
+    } else if (positionPct <= (50 + Math.max(1, ((sellPcts[0] ?? 52) - 50) / 2))) {
       targetHoldingFraction = 1.0;
       activeLevelName = "50% Center Midline (Hold 100%)";
     } else if (positionPct < 100 && !isAboveCeiling) {
-      // Sell Zone: 55% .. 100%
-      // Map Sell Target 1 (60%), Target 2 (70%), Target 3 (80%), Target 4 (90%)
+      // Sell Zone: 50% .. 100%
+      // Map Sell Targets dynamically (e.g. 52%, 62%, 72%, 82%, 92%)
       const sellTargetBands = [
-        { idx: 0, maxPct: 65, name: "60% Sell Target 1" },
-        { idx: 1, maxPct: 75, name: "70% Sell Target 2" },
-        { idx: 2, maxPct: 85, name: "80% Sell Target 3" },
-        { idx: 3, maxPct: 99.9, name: "90% Sell Target 4" },
+        { idx: 0, maxPct: ((sellPcts[0] ?? 52) + (sellPcts[1] ?? 62)) / 2, name: `${sellPcts[0] ?? 52}% Sell Target 1` },
+        { idx: 1, maxPct: ((sellPcts[1] ?? 62) + (sellPcts[2] ?? 72)) / 2, name: `${sellPcts[1] ?? 62}% Sell Target 2` },
+        { idx: 2, maxPct: ((sellPcts[2] ?? 72) + (sellPcts[3] ?? 82)) / 2, name: `${sellPcts[2] ?? 72}% Sell Target 3` },
+        { idx: 3, maxPct: ((sellPcts[3] ?? 82) + (sellPcts[4] ?? 92)) / 2, name: `${sellPcts[3] ?? 82}% Sell Target 4` },
+        { idx: 4, maxPct: 99.9, name: `${sellPcts[4] ?? 92}% Sell Target 5` },
       ];
 
       const matchedBand = sellTargetBands.find((b) => positionPct <= b.maxPct);
@@ -2678,11 +2686,11 @@ export class DynamicGrid {
     if (enabledBuyLvlPrices.length === 0) {
       buyTrigger = 0;
     } else if (inventoryQuote < targetInventoryQuote - 1.0) {
-      const activeZoneCeiling = enabledBuyLvlPrices.find((lvl) => lvl >= effectivePriceForBuyTrigger * 0.9995) ?? enabledBuyLvlPrices[0] ?? (lowerBound + span * 0.40);
+      const activeZoneCeiling = enabledBuyLvlPrices.find((lvl) => lvl >= effectivePriceForBuyTrigger * 0.9995) ?? enabledBuyLvlPrices[0] ?? (lowerBound + span * ((buyPcts[0] ?? 42) / 100));
       buyTrigger = activeZoneCeiling;
     } else {
       const nextBuyLevel = enabledBuyLvlPrices.find((lvl) => lvl < effectivePriceForBuyTrigger * 0.999);
-      buyTrigger = nextBuyLevel ?? (enabledBuyLvlPrices[enabledBuyLvlPrices.length - 1] ?? (lowerBound + span * 0.20));
+      buyTrigger = nextBuyLevel ?? (enabledBuyLvlPrices[enabledBuyLvlPrices.length - 1] ?? (lowerBound + span * ((buyPcts[buyPcts.length - 1] ?? 2) / 100)));
     }
 
     let sellTrigger: number;
@@ -2691,7 +2699,7 @@ export class DynamicGrid {
       sellTrigger = 0;
     } else {
       const nextSellLevel = enabledSellLvlPrices.find((lvl) => lvl > refPrice * 1.0001);
-      sellTrigger = nextSellLevel ?? enabledSellLvlPrices[enabledSellLvlPrices.length - 1] ?? (lowerBound + span * 0.90);
+      sellTrigger = nextSellLevel ?? enabledSellLvlPrices[enabledSellLvlPrices.length - 1] ?? (lowerBound + span * ((sellPcts[sellPcts.length - 1] ?? 92) / 100));
     }
 
     // Grid spacing per zone step in %
@@ -3233,8 +3241,10 @@ export class DynamicGrid {
         sellOrdersActive: this.sellOrdersActive,
         buyLevels: buyLevels,
         sellLevels: sellLevels,
-        enabledBuyLevels: this.cfg.enabledBuyLevels ?? [true, true, true, true],
-        enabledSellTargets: this.cfg.enabledSellTargets ?? [true, true, true, true],
+        enabledBuyLevels: this.cfg.enabledBuyLevels ?? [true, true, true, true, true],
+        enabledSellTargets: this.cfg.enabledSellTargets ?? [true, true, true, true, true],
+        buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
+        sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
         openOrders: this.openOrders.map((o) => ({
           id: o.id,
           onChainOrderId: o.onChainOrderId,
@@ -3499,12 +3509,13 @@ export class DynamicGrid {
 
     // Rule: Hysteresis for Sell Orders / IOC Sell Trigger
     const sellActionTerm = this.cfg.orderExecutionMode === "IOC_BRACKET" ? "IOC sell trigger" : "resting sell orders";
+    const buyL1Pct = this.cfg.buyLevelPcts?.[0] ?? 42;
     if (!isCexExchange && this.cfg.enableSellAboveBuyLevel1 !== false) {
-      if (this.sellOrdersActive && (positionPct < 39.5 || refPrice < buyLevel1Price * 0.999)) {
+      if (this.sellOrdersActive && (positionPct < (buyL1Pct - 0.5) || refPrice < buyLevel1Price * 0.999)) {
         this.sellOrdersActive = false;
         this.log(`🛑 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) below Buy Level 1 ($${buyLevel1Price.toFixed(6)}) — pausing ${sellActionTerm} to prevent churn in lower accumulation zone`);
         this.saveState();
-      } else if (!this.sellOrdersActive && (positionPct >= 40.0 || refPrice >= buyLevel1Price)) {
+      } else if (!this.sellOrdersActive && (positionPct >= buyL1Pct || refPrice >= buyLevel1Price)) {
         this.sellOrdersActive = true;
         this.needsSellRebalance = true;
         this.log(`🟢 Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) returned above Buy Level 1 ($${buyLevel1Price.toFixed(6)}) — reactivating ${sellActionTerm}`);
@@ -3841,11 +3852,12 @@ export class DynamicGrid {
     } else {
       const isSingleBuyLevel = buyLevels.length === 1;
       const buyBufPct = this.cfg.narrowChannelBuyBufferPct ?? 0.05;
+      const buyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
       const levelNames = isSingleBuyLevel
         ? [`Buy Edge Floor (+${buyBufPct.toFixed(2)}%)`]
-        : ["Buy Level 1 (40%)", "Buy Level 2 (30%)", "Buy Level 3 (20%)", "Buy Level 4 (10%)"];
+        : buyLevels.map((_, idx) => `Buy Level ${idx + 1} (${buyPcts[idx] ?? Math.round(42 - idx * 10)}%)`);
 
-      const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
+      const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true];
       const highestEnabledBuyPrice = buyLevels.find((_, idx) => enabledBuys[idx]) ?? (buyLevels[0] ?? 0);
       const sellLevel1Limit = sellLevels[0] ?? upperBound;
 
@@ -3872,7 +3884,7 @@ export class DynamicGrid {
       const activeBuyCount = effectiveBuyLevels.reduce((cnt, _, idx) => {
         const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
         return isEnabled ? cnt + 1 : cnt;
-      }, 0) || 4;
+      }, 0) || (buyLevels.length || 5);
 
       let activeRank = 0;
       const buyTargets = effectiveBuyLevels.map((_, idx) => {
@@ -4283,57 +4295,6 @@ export class DynamicGrid {
     const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), totalTradingCapacity);
     const isDustPosition = held < this.minQty || currentHeldQuote < 0.05;
 
-    // Rule: Legacy Fallback Hysteresis Band (only if enableSellAboveBuyLevel1 is false, and on DEX only)
-    if (!isCexExchange && this.cfg.enableSellAboveBuyLevel1 === false) {
-      const isBelowSafetyBuffer = positionPct < 5;
-      const isAtOrAboveBuyRecovery = positionPct >= 15;
-      const candles = this.dowEngine?.getCandles() ?? [];
-      const currentCandle = candles.length > 0 ? candles[candles.length - 1] : undefined;
-      const currentCandleTime = currentCandle ? currentCandle.time : Math.floor(Date.now() / (5 * 60 * 1000));
-
-      if (this.sellOrdersActive) {
-        if (isBelowSafetyBuffer) {
-          if (this.sellZoneTransitionCandleTime === undefined) {
-            this.sellZoneTransitionCandleTime = currentCandleTime;
-            this.status(
-              `⏳ Sell orders pause pending: 1 bar confirmation below 5% Safe Buffer ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}% < 5%)`,
-            );
-          } else if (currentCandleTime !== this.sellZoneTransitionCandleTime) {
-            this.sellOrdersActive = false;
-            this.sellZoneTransitionCandleTime = undefined;
-            this.log(
-              `🛑 Safe Buffer breach confirmed (1 candle < 5% @ $${refPrice.toFixed(6)}) — cancelling resting sell orders to free inventory`,
-            );
-            const openSells = this.openOrders.filter((o) => !o.isBid);
-            if (openSells.length > 0) {
-              await this.cancelAllRestingOrders("SELL", "Below 5% Safe Buffer confirmed (1 candle) — cancelling sell orders");
-            }
-            this.saveState();
-          }
-        } else {
-          this.sellZoneTransitionCandleTime = undefined;
-        }
-      } else {
-        if (isAtOrAboveBuyRecovery) {
-          if (this.sellZoneTransitionCandleTime === undefined) {
-            this.sellZoneTransitionCandleTime = currentCandleTime;
-            this.status(
-              `⏳ Sell orders reactivation pending: 1 bar confirmation at Buy Level 3+ ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}% >= 15%)`,
-            );
-          } else if (currentCandleTime !== this.sellZoneTransitionCandleTime) {
-            this.sellOrdersActive = true;
-            this.sellZoneTransitionCandleTime = undefined;
-            this.log(
-              `🟢 Buy Level 3+ confirmed (1 candle >= 15% @ $${refPrice.toFixed(6)}) — reactivating resting sell orders`,
-            );
-            this.saveState();
-          }
-        } else {
-          this.sellZoneTransitionCandleTime = undefined;
-        }
-      }
-    }
-
     if (isDustPosition) {
       const openSells = this.openOrders.filter((o) => !o.isBid);
       if (openSells.length > 0) {
@@ -4344,18 +4305,21 @@ export class DynamicGrid {
         this.saveState();
       }
     } else if (!this.sellOrdersActive) {
-      // Sell orders are paused/deactivated while below Buy Level 1 (< 40%)
+      // Sell orders are paused/deactivated while below Buy Level 1
+      const buyL1Pct = this.cfg.buyLevelPcts?.[0] ?? 42;
       const openSells = this.openOrders.filter((o) => !o.isBid);
       if (openSells.length > 0) {
-        await this.cancelAllRestingOrders("SELL", "Price below Buy Level 1 (< 40%) — cancelling sell orders to avoid churn while accumulating");
+        await this.cancelAllRestingOrders("SELL", `Price below Buy Level 1 (< ${buyL1Pct}%) — cancelling sell orders to avoid churn while accumulating`);
       }
     } else {
       const isSingleSellLevel = sellLevels.length === 1;
+      const sellBufPct = this.cfg.narrowChannelSellBufferPct ?? 0.05;
+      const sellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
       const sellNames = isSingleSellLevel
-        ? ["Sell Edge Ceil (-0.2%)"]
-        : ["Sell Target 1 (60%)", "Sell Target 2 (70%)", "Sell Target 3 (80%)", "Sell Target 4 (90%)"];
+        ? [`Sell Edge Ceil (-${sellBufPct.toFixed(2)}%)`]
+        : sellLevels.map((_, idx) => `Sell Target ${idx + 1} (${sellPcts[idx] ?? Math.round(52 + idx * 10)}%)`);
 
-      const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+      const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true];
       const activeSellCount = enabledSells.filter(Boolean).length;
       if (activeSellCount === 0) {
         // All sell targets disabled: cancel resting sell orders
@@ -4828,7 +4792,7 @@ export class DynamicGrid {
       // Pick active sell levels:
       // When consolidated, pick the first 2 eligible levels (Target 1 & 2) for maximum exit speed!
       const activeSellIndices = eligibleSellIndices.slice(0, targetTrancheCount);
-      const numActiveLevels = activeSellIndices.length > 0 ? activeSellIndices.length : (sellLevels.length || 4);
+      const numActiveLevels = activeSellIndices.length > 0 ? activeSellIndices.length : (sellLevels.length || 5);
       const trancheQty = held / numActiveLevels;
 
       // Check if any active levels are missing an open sell order
@@ -5387,8 +5351,8 @@ export class DynamicGrid {
     const maxInv = this.cfg.maxInventoryQuote ?? 40;
     const currentHeldQuote = this.baseHeld() * refPrice;
     const currentHeldUsdso = currentHeldQuote;
-    const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true];
-    const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true];
+    const enabledBuys = Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true];
+    const enabledSells = Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true];
     const activeBuyCount = enabledBuys.filter(Boolean).length;
     const baseTrancheQuote = activeBuyCount > 0 ? (maxInv / activeBuyCount) : 0;
     const baseTrancheUsdso = baseTrancheQuote;
@@ -5514,7 +5478,9 @@ export class DynamicGrid {
     const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableTradingBase);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const totalHeldQuote = held * currentBestBid;
-    const activeSellIndices = [0, 1, 2, 3].filter((idx) => enabledSells[idx] && sellLevels[idx] !== undefined);
+    const activeSellIndices = (sellLevels.length > 0 ? sellLevels.map((_, idx) => idx) : [0, 1, 2, 3, 4]).filter(
+      (idx) => enabledSells[idx] && sellLevels[idx] !== undefined,
+    );
 
     // Ceiling / Upper Bound Guard: If price reached or exceeded Upper Bound, do NOT execute stepped ladder tranches.
     // Stepped tranches (Step 1..4) are for intra-channel distribution only. Upper bound exit is handled by 100% Full Take Profit.

@@ -48,6 +48,7 @@
   const elLadderTargetAlloc = document.getElementById("ladderTargetAlloc");
 
   const elStepCeil = document.getElementById("stepCeil");
+  const elStepSell5 = document.getElementById("stepSell5");
   const elStepSell4 = document.getElementById("stepSell4");
   const elStepSell3 = document.getElementById("stepSell3");
   const elStepSell2 = document.getElementById("stepSell2");
@@ -57,10 +58,11 @@
   const elStepBuy2 = document.getElementById("stepBuy2");
   const elStepBuy3 = document.getElementById("stepBuy3");
   const elStepBuy4 = document.getElementById("stepBuy4");
-  const elStepBuffer = document.getElementById("stepBuffer");
+  const elStepBuy5 = document.getElementById("stepBuy5");
   const elStepFloor = document.getElementById("stepFloor");
 
   const elStepPriceCeil = document.getElementById("stepPriceCeil");
+  const elStepPriceSell5 = document.getElementById("stepPriceSell5");
   const elStepPriceSell4 = document.getElementById("stepPriceSell4");
   const elStepPriceSell3 = document.getElementById("stepPriceSell3");
   const elStepPriceSell2 = document.getElementById("stepPriceSell2");
@@ -70,7 +72,7 @@
   const elStepPriceBuy2 = document.getElementById("stepPriceBuy2");
   const elStepPriceBuy3 = document.getElementById("stepPriceBuy3");
   const elStepPriceBuy4 = document.getElementById("stepPriceBuy4");
-  const elStepPriceBuffer = document.getElementById("stepPriceBuffer");
+  const elStepPriceBuy5 = document.getElementById("stepPriceBuy5");
   const elStepPriceFloor = document.getElementById("stepPriceFloor");
 
   const elRealizedPnl = document.getElementById("realizedPnl");
@@ -968,39 +970,71 @@
     const span = Math.max(0.000001, ceil - floor);
     const center = data.centerPrice ?? (floor + ceil) / 2;
 
+    const buyPcts = Array.isArray(data.buyLevelPcts) && data.buyLevelPcts.length >= 5
+      ? data.buyLevelPcts
+      : [42, 32, 22, 12, 2];
+    const sellPcts = Array.isArray(data.sellLevelPcts) && data.sellLevelPcts.length >= 5
+      ? data.sellLevelPcts
+      : [52, 62, 72, 82, 92];
+
+    // Update step percentages on DOM if present
+    const elPctBuy1 = document.getElementById("stepPctBuy1");
+    if (elPctBuy1) elPctBuy1.textContent = `${buyPcts[0]}%`;
+    const elPctBuy2 = document.getElementById("stepPctBuy2");
+    if (elPctBuy2) elPctBuy2.textContent = `${buyPcts[1]}%`;
+    const elPctBuy3 = document.getElementById("stepPctBuy3");
+    if (elPctBuy3) elPctBuy3.textContent = `${buyPcts[2]}%`;
+    const elPctBuy4 = document.getElementById("stepPctBuy4");
+    if (elPctBuy4) elPctBuy4.textContent = `${buyPcts[3]}%`;
+    const elPctBuy5 = document.getElementById("stepPctBuy5");
+    if (elPctBuy5) elPctBuy5.textContent = `${buyPcts[4]}%`;
+
+    const elPctSell1 = document.getElementById("stepPctSell1");
+    if (elPctSell1) elPctSell1.textContent = `${sellPcts[0]}%`;
+    const elPctSell2 = document.getElementById("stepPctSell2");
+    if (elPctSell2) elPctSell2.textContent = `${sellPcts[1]}%`;
+    const elPctSell3 = document.getElementById("stepPctSell3");
+    if (elPctSell3) elPctSell3.textContent = `${sellPcts[2]}%`;
+    const elPctSell4 = document.getElementById("stepPctSell4");
+    if (elPctSell4) elPctSell4.textContent = `${sellPcts[3]}%`;
+    const elPctSell5 = document.getElementById("stepPctSell5");
+    if (elPctSell5) elPctSell5.textContent = `${sellPcts[4]}%`;
+
     // 1. Update prices on each vertical step (from top 100% to bottom 0%)
     if (elStepPriceCeil) elStepPriceCeil.textContent = ceil.toFixed(6);
-    if (elStepPriceSell4) elStepPriceSell4.textContent = (floor + span * 0.90).toFixed(6);
-    if (elStepPriceSell3) elStepPriceSell3.textContent = (floor + span * 0.80).toFixed(6);
-    if (elStepPriceSell2) elStepPriceSell2.textContent = (floor + span * 0.70).toFixed(6);
-    if (elStepPriceSell1) elStepPriceSell1.textContent = (floor + span * 0.60).toFixed(6);
+    if (elStepPriceSell5) elStepPriceSell5.textContent = (floor + span * (sellPcts[4] / 100)).toFixed(6);
+    if (elStepPriceSell4) elStepPriceSell4.textContent = (floor + span * (sellPcts[3] / 100)).toFixed(6);
+    if (elStepPriceSell3) elStepPriceSell3.textContent = (floor + span * (sellPcts[2] / 100)).toFixed(6);
+    if (elStepPriceSell2) elStepPriceSell2.textContent = (floor + span * (sellPcts[1] / 100)).toFixed(6);
+    if (elStepPriceSell1) elStepPriceSell1.textContent = (floor + span * (sellPcts[0] / 100)).toFixed(6);
     if (elStepPriceCenter) elStepPriceCenter.textContent = center.toFixed(6);
-    if (elStepPriceBuy1) elStepPriceBuy1.textContent = (floor + span * 0.40).toFixed(6);
-    if (elStepPriceBuy2) elStepPriceBuy2.textContent = (floor + span * 0.30).toFixed(6);
-    if (elStepPriceBuy3) elStepPriceBuy3.textContent = (floor + span * 0.20).toFixed(6);
-    if (elStepPriceBuy4) elStepPriceBuy4.textContent = (floor + span * 0.10).toFixed(6);
-    if (elStepPriceBuffer) elStepPriceBuffer.textContent = (floor + span * 0.05).toFixed(6);
+    if (elStepPriceBuy1) elStepPriceBuy1.textContent = (floor + span * (buyPcts[0] / 100)).toFixed(6);
+    if (elStepPriceBuy2) elStepPriceBuy2.textContent = (floor + span * (buyPcts[1] / 100)).toFixed(6);
+    if (elStepPriceBuy3) elStepPriceBuy3.textContent = (floor + span * (buyPcts[2] / 100)).toFixed(6);
+    if (elStepPriceBuy4) elStepPriceBuy4.textContent = (floor + span * (buyPcts[3] / 100)).toFixed(6);
+    if (elStepPriceBuy5) elStepPriceBuy5.textContent = (floor + span * (buyPcts[4] / 100)).toFixed(6);
     if (elStepPriceFloor) {
       elStepPriceFloor.textContent = floor.toFixed(6);
       elStepPriceFloor.title = `0% Grid Base (Structural Valley: $${floor.toFixed(6)})`;
     }
 
     // 2. Define ladder steps with percentage targets
-    const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true];
-    const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true];
+    const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true, true];
+    const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true, true];
 
     const ladderSteps = [
       { pct: 100, el: elStepCeil, priceEl: elStepPriceCeil, defaultAction: "Flat 0%", price: ceil, enabled: true },
-      { pct: 90, el: elStepSell4, priceEl: elStepPriceSell4, defaultAction: "Hold 0%", price: floor + span * 0.90, enabled: enabledSells[3] !== false },
-      { pct: 80, el: elStepSell3, priceEl: elStepPriceSell3, defaultAction: "Hold 25%", price: floor + span * 0.80, enabled: enabledSells[2] !== false },
-      { pct: 70, el: elStepSell2, priceEl: elStepPriceSell2, defaultAction: "Hold 50%", price: floor + span * 0.70, enabled: enabledSells[1] !== false },
-      { pct: 60, el: elStepSell1, priceEl: elStepPriceSell1, defaultAction: "Hold 75%", price: floor + span * 0.60, enabled: enabledSells[0] !== false },
+      { pct: sellPcts[4], el: elStepSell5, priceEl: elStepPriceSell5, defaultAction: "Hold 0%", price: floor + span * (sellPcts[4] / 100), enabled: enabledSells[4] !== false },
+      { pct: sellPcts[3], el: elStepSell4, priceEl: elStepPriceSell4, defaultAction: "Hold 20%", price: floor + span * (sellPcts[3] / 100), enabled: enabledSells[3] !== false },
+      { pct: sellPcts[2], el: elStepSell3, priceEl: elStepPriceSell3, defaultAction: "Hold 40%", price: floor + span * (sellPcts[2] / 100), enabled: enabledSells[2] !== false },
+      { pct: sellPcts[1], el: elStepSell2, priceEl: elStepPriceSell2, defaultAction: "Hold 60%", price: floor + span * (sellPcts[1] / 100), enabled: enabledSells[1] !== false },
+      { pct: sellPcts[0], el: elStepSell1, priceEl: elStepPriceSell1, defaultAction: "Hold 80%", price: floor + span * (sellPcts[0] / 100), enabled: enabledSells[0] !== false },
       { pct: 50, el: elStepCenter, priceEl: elStepPriceCenter, defaultAction: "Midline", price: center, enabled: true },
-      { pct: 40, el: elStepBuy1, priceEl: elStepPriceBuy1, defaultAction: "Hold 25%", price: floor + span * 0.40, enabled: enabledBuys[0] !== false },
-      { pct: 30, el: elStepBuy2, priceEl: elStepPriceBuy2, defaultAction: "Hold 50%", price: floor + span * 0.30, enabled: enabledBuys[1] !== false },
-      { pct: 20, el: elStepBuy3, priceEl: elStepPriceBuy3, defaultAction: "Hold 75%", price: floor + span * 0.20, enabled: enabledBuys[2] !== false },
-      { pct: 10, el: elStepBuy4, priceEl: elStepPriceBuy4, defaultAction: "Hold 100%", price: floor + span * 0.10, enabled: enabledBuys[3] !== false },
-      { pct: 5, el: elStepBuffer, priceEl: elStepPriceBuffer, defaultAction: "Hold 100%", price: floor + span * 0.05, enabled: true },
+      { pct: buyPcts[0], el: elStepBuy1, priceEl: elStepPriceBuy1, defaultAction: "Hold 20%", price: floor + span * (buyPcts[0] / 100), enabled: enabledBuys[0] !== false },
+      { pct: buyPcts[1], el: elStepBuy2, priceEl: elStepPriceBuy2, defaultAction: "Hold 40%", price: floor + span * (buyPcts[1] / 100), enabled: enabledBuys[1] !== false },
+      { pct: buyPcts[2], el: elStepBuy3, priceEl: elStepPriceBuy3, defaultAction: "Hold 60%", price: floor + span * (buyPcts[2] / 100), enabled: enabledBuys[2] !== false },
+      { pct: buyPcts[3], el: elStepBuy4, priceEl: elStepPriceBuy4, defaultAction: "Hold 80%", price: floor + span * (buyPcts[3] / 100), enabled: enabledBuys[3] !== false },
+      { pct: buyPcts[4], el: elStepBuy5, priceEl: elStepPriceBuy5, defaultAction: "Hold 100%", price: floor + span * (buyPcts[4] / 100), enabled: enabledBuys[4] !== false },
       { pct: 0, el: elStepFloor, priceEl: elStepPriceFloor, defaultAction: "Cut Loss", price: floor, enabled: true },
     ];
 
@@ -1046,21 +1080,23 @@
       // Available candidate steps on the corresponding side
       const candidateSteps = ladderSteps.filter((s) => {
         if (usedSteps.has(s)) return false;
-        if (isBid) return s.pct >= 10 && s.pct <= 40;
-        return s.pct >= 60 && s.pct <= 90;
+        if (isBid) return s.pct <= 49 && s.pct > 0;
+        return s.pct >= 51 && s.pct < 100;
       });
 
       // 1. Try matching by levelDesc
       const isRealCeilOrder = desc.includes("real ceil");
       const isTlExitOrder = desc.includes("tl exit") || desc.includes("trendline") || isRealCeilOrder;
-      if (desc.includes("buy level 1") || desc.includes("40%")) matchedStep = candidateSteps.find((s) => s.pct === 40);
-      else if (desc.includes("buy level 2") || desc.includes("30%")) matchedStep = candidateSteps.find((s) => s.pct === 30);
-      else if (desc.includes("buy level 3") || desc.includes("20%")) matchedStep = candidateSteps.find((s) => s.pct === 20);
-      else if (desc.includes("buy level 4") || desc.includes("10%")) matchedStep = candidateSteps.find((s) => s.pct === 10);
-      else if (desc.includes("sell target 1") || desc.includes("60%")) matchedStep = candidateSteps.find((s) => s.pct === 60);
-      else if (desc.includes("sell target 2") || desc.includes("70%")) matchedStep = candidateSteps.find((s) => s.pct === 70);
-      else if (desc.includes("sell target 3") || desc.includes("80%")) matchedStep = candidateSteps.find((s) => s.pct === 80);
-      else if (desc.includes("sell target 4") || desc.includes("90%")) matchedStep = candidateSteps.find((s) => s.pct === 90);
+      if (desc.includes("buy level 1") || desc.includes(`${buyPcts[0]}%`)) matchedStep = candidateSteps.find((s) => s.pct === buyPcts[0]);
+      else if (desc.includes("buy level 2") || desc.includes(`${buyPcts[1]}%`)) matchedStep = candidateSteps.find((s) => s.pct === buyPcts[1]);
+      else if (desc.includes("buy level 3") || desc.includes(`${buyPcts[2]}%`)) matchedStep = candidateSteps.find((s) => s.pct === buyPcts[2]);
+      else if (desc.includes("buy level 4") || desc.includes(`${buyPcts[3]}%`)) matchedStep = candidateSteps.find((s) => s.pct === buyPcts[3]);
+      else if (desc.includes("buy level 5") || desc.includes(`${buyPcts[4]}%`)) matchedStep = candidateSteps.find((s) => s.pct === buyPcts[4]);
+      else if (desc.includes("sell target 1") || desc.includes(`${sellPcts[0]}%`)) matchedStep = candidateSteps.find((s) => s.pct === sellPcts[0]);
+      else if (desc.includes("sell target 2") || desc.includes(`${sellPcts[1]}%`)) matchedStep = candidateSteps.find((s) => s.pct === sellPcts[1]);
+      else if (desc.includes("sell target 3") || desc.includes(`${sellPcts[2]}%`)) matchedStep = candidateSteps.find((s) => s.pct === sellPcts[2]);
+      else if (desc.includes("sell target 4") || desc.includes(`${sellPcts[3]}%`)) matchedStep = candidateSteps.find((s) => s.pct === sellPcts[3]);
+      else if (desc.includes("sell target 5") || desc.includes(`${sellPcts[4]}%`)) matchedStep = candidateSteps.find((s) => s.pct === sellPcts[4]);
       else if (isTlExitOrder) {
         // Find candidate sell step closest to the resistance/trendline exit order price
         let bestTlStep = null;
@@ -1139,80 +1175,87 @@
       colorClass = hasLots ? "highlight-red" : "highlight-blue";
       zoneBadgeText = hasLots ? "0% FLOOR (CUT)" : "0% FLOOR (100% CASH)";
       zoneBadgeClass = hasLots ? "active-zone-pill badge-breakdown" : "active-zone-pill badge-warmup";
-    } else if (pos <= 5) {
-      activeStep = elStepBuffer;
-      levelName = `Safe Buffer 0-5% (${pos.toFixed(1)}%)`;
-      targetText = "Hold 100% (Safety Reserve)";
-      colorClass = "highlight-green";
-      zoneBadgeText = "SAFE BUFFER (0-5%)";
-      zoneBadgeClass = "active-zone-pill badge-warmup";
-    } else if (pos <= 10) {
-      activeStep = elStepBuy4;
-      levelName = `Buy Level 4 (10% | ${pos.toFixed(1)}%)`;
+    } else if (pos <= buyPcts[4]) {
+      activeStep = elStepBuy5;
+      levelName = `Buy Level 5 (${buyPcts[4]}% | ${pos.toFixed(1)}%)`;
       targetText = "Target 100% (Max Inventory)";
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
-    } else if (pos <= 20) {
+    } else if (pos <= buyPcts[3]) {
+      activeStep = elStepBuy4;
+      levelName = `Buy Level 4 (${buyPcts[3]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Target 80% (4/5 Capacity)";
+      colorClass = "highlight-green";
+      zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
+      zoneBadgeClass = "active-zone-pill badge-inzone";
+    } else if (pos <= buyPcts[2]) {
       activeStep = elStepBuy3;
-      levelName = `Buy Level 3 (20% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 75% (3/4 Capacity)";
+      levelName = `Buy Level 3 (${buyPcts[2]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Target 60% (3/5 Capacity)";
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
-    } else if (pos <= 30) {
+    } else if (pos <= buyPcts[1]) {
       activeStep = elStepBuy2;
-      levelName = `Buy Level 2 (30% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 50% (1/2 Capacity)";
+      levelName = `Buy Level 2 (${buyPcts[1]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Target 40% (2/5 Capacity)";
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
-    } else if (pos <= 40) {
+    } else if (pos <= buyPcts[0]) {
       activeStep = elStepBuy1;
-      levelName = `Buy Level 1 (40% | ${pos.toFixed(1)}%)`;
-      targetText = "Target 25% (1/4 Capacity)";
+      levelName = `Buy Level 1 (${buyPcts[0]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Target 20% (1/5 Capacity)";
       colorClass = "highlight-green";
       zoneBadgeText = `BUY ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-inzone";
     } else if (pos < 50) {
       activeStep = elStepCenter;
       levelName = `Accumulation Midline (${pos.toFixed(1)}%)`;
-      targetText = "Waiting Dip (<40%)";
+      targetText = `Waiting Dip (<${buyPcts[0]}%)`;
       colorClass = "highlight-amber";
       zoneBadgeText = `ACCUMULATION (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-range";
-    } else if (pos <= 55) {
+    } else if (pos <= (50 + Math.max(1, (sellPcts[0] - 50) / 2))) {
       activeStep = elStepCenter;
       levelName = `50% Center (${pos.toFixed(1)}%)`;
       targetText = "Hold 100% (Neutral Midline)";
       colorClass = "highlight-amber";
       zoneBadgeText = `50% CENTER (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-range";
-    } else if (pos <= 65) {
+    } else if (pos <= ((sellPcts[0] + sellPcts[1]) / 2)) {
       activeStep = elStepSell1;
-      levelName = `Sell Target 1 (60% | ${pos.toFixed(1)}%)`;
-      targetText = "Hold 75% ($68 / 5 lots)";
+      levelName = `Sell Target 1 (${sellPcts[0]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Hold 80% (Exit 1/5)";
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
-    } else if (pos <= 75) {
+    } else if (pos <= ((sellPcts[1] + sellPcts[2]) / 2)) {
       activeStep = elStepSell2;
-      levelName = `Sell Target 2 (70% | ${pos.toFixed(1)}%)`;
-      targetText = "Hold 50% ($45 / 3 lots)";
+      levelName = `Sell Target 2 (${sellPcts[1]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Hold 60% (Exit 2/5)";
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
-    } else if (pos <= 85) {
+    } else if (pos <= ((sellPcts[2] + sellPcts[3]) / 2)) {
       activeStep = elStepSell3;
-      levelName = `Sell Target 3 (80% | ${pos.toFixed(1)}%)`;
-      targetText = "Hold 25% ($23 / 1-2 lots)";
+      levelName = `Sell Target 3 (${sellPcts[2]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Hold 40% (Exit 3/5)";
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
-    } else if (pos < 95) {
+    } else if (pos <= ((sellPcts[3] + sellPcts[4]) / 2)) {
       activeStep = elStepSell4;
-      levelName = `Sell Target 4 (90% | ${pos.toFixed(1)}%)`;
-      targetText = "Flat 0% ($0 / 0 lots)";
+      levelName = `Sell Target 4 (${sellPcts[3]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Hold 20% (Exit 4/5)";
+      colorClass = "highlight-red";
+      zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
+      zoneBadgeClass = "active-zone-pill badge-breakout";
+    } else if (pos < 99) {
+      activeStep = elStepSell5;
+      levelName = `Sell Target 5 (${sellPcts[4]}% | ${pos.toFixed(1)}%)`;
+      targetText = "Flat 0% (Final Target Exit)";
       colorClass = "highlight-red";
       zoneBadgeText = `SELL ZONE (${pos.toFixed(1)}%)`;
       zoneBadgeClass = "active-zone-pill badge-breakout";
@@ -1779,26 +1822,23 @@
       }
 
       // 4. Intermediate Grid Levels in Buy and Sell Zones (Clean line only, no overlapping canvas labels)
+      const buyPcts = Array.isArray(data.buyLevelPcts) && data.buyLevelPcts.length >= 5
+        ? data.buyLevelPcts
+        : [42, 32, 22, 12, 2];
+      const sellPcts = Array.isArray(data.sellLevelPcts) && data.sellLevelPcts.length >= 5
+        ? data.sellLevelPcts
+        : [52, 62, 72, 82, 92];
+
       let buyLevels = Array.isArray(data.buyLevels) && data.buyLevels.length > 0
         ? data.buyLevels
         : (data.bottomBound && data.upperBound
-            ? [
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.40,
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.30,
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.20,
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.10,
-              ]
+            ? buyPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
             : (data.buyLevels || []));
 
       let sellLevels = Array.isArray(data.sellLevels) && data.sellLevels.length > 0
         ? data.sellLevels
         : (data.bottomBound && data.upperBound
-            ? [
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.60,
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.70,
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.80,
-                data.bottomBound + (data.upperBound - data.bottomBound) * 0.90,
-              ]
+            ? sellPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
             : (data.sellLevels || []));
 
       const allLevels = [...buyLevels, ...sellLevels].filter(Number.isFinite);
@@ -1823,8 +1863,8 @@
           }
         }
 
-        const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true];
-        const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true];
+        const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true, true];
+        const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true, true];
 
         let lineIdx = 0;
         // Buy Levels (40%, 30%, 20%, 10%) - Dotted sky blue / cyan lines, or muted clean gray line if disabled
@@ -3206,17 +3246,37 @@
       setVal("cfg_orderQtyTolerancePct", data.orderQtyTolerancePct);
       setVal("cfg_minGasReserveSomi", data.minGasReserveSomi ?? 2.0);
 
-      const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true];
+      const buyPcts = Array.isArray(data.buyLevelPcts) && data.buyLevelPcts.length >= 5
+        ? data.buyLevelPcts
+        : [42, 32, 22, 12, 2];
+      setVal("cfg_buy_pct_1", buyPcts[0]);
+      setVal("cfg_buy_pct_2", buyPcts[1]);
+      setVal("cfg_buy_pct_3", buyPcts[2]);
+      setVal("cfg_buy_pct_4", buyPcts[3]);
+      setVal("cfg_buy_pct_5", buyPcts[4]);
+
+      const sellPcts = Array.isArray(data.sellLevelPcts) && data.sellLevelPcts.length >= 5
+        ? data.sellLevelPcts
+        : [52, 62, 72, 82, 92];
+      setVal("cfg_sell_pct_1", sellPcts[0]);
+      setVal("cfg_sell_pct_2", sellPcts[1]);
+      setVal("cfg_sell_pct_3", sellPcts[2]);
+      setVal("cfg_sell_pct_4", sellPcts[3]);
+      setVal("cfg_sell_pct_5", sellPcts[4]);
+
+      const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true, true];
       setCheck("cfg_buy_l1", enabledBuys[0] !== false);
       setCheck("cfg_buy_l2", enabledBuys[1] !== false);
       setCheck("cfg_buy_l3", enabledBuys[2] !== false);
       setCheck("cfg_buy_l4", enabledBuys[3] !== false);
+      setCheck("cfg_buy_l5", enabledBuys[4] !== false);
 
-      const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true];
+      const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true, true];
       setCheck("cfg_sell_t1", enabledSells[0] !== false);
       setCheck("cfg_sell_t2", enabledSells[1] !== false);
       setCheck("cfg_sell_t3", enabledSells[2] !== false);
       setCheck("cfg_sell_t4", enabledSells[3] !== false);
+      setCheck("cfg_sell_t5", enabledSells[4] !== false);
     } catch (e) {
       console.error("Failed to load settings:", e);
     }
@@ -3324,17 +3384,33 @@
       orderPriceTolerancePct: parseFloat(document.getElementById("cfg_orderPriceTolerancePct").value),
       orderQtyTolerancePct: parseFloat(document.getElementById("cfg_orderQtyTolerancePct").value),
       minGasReserveSomi: document.getElementById("cfg_minGasReserveSomi") ? parseFloat(document.getElementById("cfg_minGasReserveSomi").value) : 0,
+      buyLevelPcts: [
+        parseFloat(document.getElementById("cfg_buy_pct_1") ? document.getElementById("cfg_buy_pct_1").value : 42) || 42,
+        parseFloat(document.getElementById("cfg_buy_pct_2") ? document.getElementById("cfg_buy_pct_2").value : 32) || 32,
+        parseFloat(document.getElementById("cfg_buy_pct_3") ? document.getElementById("cfg_buy_pct_3").value : 22) || 22,
+        parseFloat(document.getElementById("cfg_buy_pct_4") ? document.getElementById("cfg_buy_pct_4").value : 12) || 12,
+        parseFloat(document.getElementById("cfg_buy_pct_5") ? document.getElementById("cfg_buy_pct_5").value : 2) || 2,
+      ],
+      sellLevelPcts: [
+        parseFloat(document.getElementById("cfg_sell_pct_1") ? document.getElementById("cfg_sell_pct_1").value : 52) || 52,
+        parseFloat(document.getElementById("cfg_sell_pct_2") ? document.getElementById("cfg_sell_pct_2").value : 62) || 62,
+        parseFloat(document.getElementById("cfg_sell_pct_3") ? document.getElementById("cfg_sell_pct_3").value : 72) || 72,
+        parseFloat(document.getElementById("cfg_sell_pct_4") ? document.getElementById("cfg_sell_pct_4").value : 82) || 82,
+        parseFloat(document.getElementById("cfg_sell_pct_5") ? document.getElementById("cfg_sell_pct_5").value : 92) || 92,
+      ],
       enabledBuyLevels: [
         document.getElementById("cfg_buy_l1") ? document.getElementById("cfg_buy_l1").checked : true,
         document.getElementById("cfg_buy_l2") ? document.getElementById("cfg_buy_l2").checked : true,
         document.getElementById("cfg_buy_l3") ? document.getElementById("cfg_buy_l3").checked : true,
         document.getElementById("cfg_buy_l4") ? document.getElementById("cfg_buy_l4").checked : true,
+        document.getElementById("cfg_buy_l5") ? document.getElementById("cfg_buy_l5").checked : true,
       ],
       enabledSellTargets: [
         document.getElementById("cfg_sell_t1") ? document.getElementById("cfg_sell_t1").checked : true,
         document.getElementById("cfg_sell_t2") ? document.getElementById("cfg_sell_t2").checked : true,
         document.getElementById("cfg_sell_t3") ? document.getElementById("cfg_sell_t3").checked : true,
         document.getElementById("cfg_sell_t4") ? document.getElementById("cfg_sell_t4").checked : true,
+        document.getElementById("cfg_sell_t5") ? document.getElementById("cfg_sell_t5").checked : true,
       ],
     };
 

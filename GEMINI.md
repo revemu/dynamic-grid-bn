@@ -288,6 +288,41 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
         3. **Activity Feed & Trade Manager UI (`public/app.js`)**:
            - ใน `createActivityElement`: เพิ่ม Badge แสดงสถานะและ Telemetry ชัดเจน: `🎯 Target: $... | Slip: ...% (Sent: $...) ➔ Fill: $...` พร้อม Tooltip ข้อมูลเชิงลึกเมื่อนำเมาส์ไปชี้ และปรับ Badge Action ให้ชัดเจนเป็น `IOC BUY`, `IOC SELL`, `IOC CUT`, `IOC TP`
            - ในตาราง Trade Manager Modal (`renderTmTrades`): แสดง Sub-text ใต้ช่องราคา: `🎯 T: $... (Slip ...%)` หรือ `⚡ IOC` และแก้ไขการแสดงชื่อเหรียญให้เป็น Dynamic Base Asset (`o.baseAsset`) แทนการฮาร์ดโค้ด
+   - **5-Level Dynamic Grid & In-Channel Safe Buffer Removal Architecture**:
+      - **ความต้องการของผู้ใช้**:
+        1. ตัด Safe Buffer (0-5%) ในกรอบออกไปเลยอย่างถาวร
+        2. ปรับ Target ระดับการซื้อ-ขายใหม่เป็น **5 Levels** (Buy 5 Levels & Sell 5 Targets):
+           - ฝั่งซื้อ 5 ระดับ: `42%, 32%, 22%, 12%, 2%` (เรียงจากบนลงล่าง: Level 1 อยู่บนสุดที่ 42%, Level 5 ติด Floor ที่ 2%)
+           - ฝั่งขาย 5 ระดับ: `52%, 62%, 72%, 82%, 92%` (เรียงจากล่างขึ้นบน: Target 1 อยู่ล่างสุดที่ 52%, Target 5 ติด Ceiling ที่ 92%)
+        3. ทั้ง 5 Levels ฝั่งซื้อและขายต้องสามารถ **เปิด-ปิด (toggle checkbox)** ได้อย่างอิสระ และสามารถ **ปรับแก้ค่า `%` ใหม่ได้** จากหน้าต่าง Settings Modal
+      - **การพัฒนาและสถาปัตยกรรมใหม่**:
+        1. **Configuration & Data Layer (`src/config.ts`, `data/settings.db.json`)**:
+           - เพิ่ม `buyLevelPcts: number[]` (ค่าเริ่มต้น: `[42, 32, 22, 12, 2]`) และ `sellLevelPcts: number[]` (ค่าเริ่มต้น: `[52, 62, 72, 82, 92]`)
+           - ขยาย `enabledBuyLevels: boolean[]` และ `enabledSellTargets: boolean[]` เป็น 5 ช่อง (ค่าเริ่มต้น: `[true, true, true, true, true]`)
+           - เพิ่ม Auto-migration ใน `loadConfigFromDatabase()`: หากฐานข้อมูลเดิมเก็บอาร์เรย์ 4 ช่อง จะขยายเป็น 5 ช่องและเติมค่าเริ่มต้นให้อัตโนมัติ ป้องกัน Index Out of Bounds
+        2. **Market Structure Calculations (`src/market-structure.ts`)**:
+           - รับ `buyLevelPcts` และ `sellLevelPcts` ใน `ChannelOptions`
+           - คำนวณ `buyLevels` และ `sellLevels` ใน `getStructure()` จากค่า % ไดนามิกที่ผู้ใช้กำหนดแทนการฮาร์ดโค้ด
+        3. **Core Strategy Execution State Machine (`src/strategy.ts`)**:
+           - ใน `syncRestingOrders()`:
+             - สร้าง `levelNames` ฝั่งซื้อและ `sellNames` ฝั่งขายตามจำนวนและ % ที่ตั้งไว้
+             - ตัด Safe Buffer Legacy Hysteresis (`positionPct < 5`) ออกทั้งหมด
+             - ใช้ `buyLevelPcts[0]` (เช่น 42%) เป็นจุด Hysteresis ของการพัก/เปิดคำสั่งขายรอบล่าง
+           - ใน `executeIocBracketGrid()`:
+             - รองรับ 5 ระดับซื้อและ 5 ระดับขายอย่างสมบูรณ์ คำนวณ `activeBuyCount` และ `baseTrancheQuote = maxInv / activeBuyCount`
+             - ขยาย `activeSellIndices` เป็น 5 ระดับไดนามิก `[0, 1, 2, 3, 4]` พร้อมคำนวณ `targetRemainingFraction` ตามสัดส่วนของแต่ละระดับ
+           - ใน Dynamic Holding Fraction Telemetry:
+             - ปรับ `buyLevelBands` (5 bands) และ `sellTargetBands` (5 bands) ให้เกาะค่า `buyLevelPcts` และ `sellLevelPcts`
+        4. **UI Dashboard & Settings Modal (`public/index.html`, `public/app.js`)**:
+            - **Zone Ladder Meter**:
+              - ถอด `0-5% Safe Buffer` ออก และเพิ่ม `Buy Level 5 (2%)` กับ `Sell Target 5 (92%)`
+              - อัปเดตป้าย % และคำนวณราคาของทั้ง 10 ขั้นบันได (5 ซื้อ + 5 ขาย + Center + Floor + Ceiling) แบบไดนามิกตามค่าใน DB
+            - **Settings Modal**:
+              - ฝั่งซื้อ: แสดง 5 แถว แต่ละแถวมี Checkbox เปิด/ปิด และช่อง Input ตัวเลข `%` (`#cfg_buy_pct_1..5`)
+              - ฝั่งขาย: แสดง 5 แถว แต่ละแถวมี Checkbox เปิด/ปิด และช่อง Input ตัวเลข `%` (`#cfg_sell_pct_1..5`)
+              - ฟังก์ชัน `loadSettings()` และ `saveSettings()` โหลดและบันทึกค่า % และสถานะ Checkbox ทั้ง 5 ระดับเข้าฐานข้อมูล
+            - **Lightweight Charts Rendering**:
+              - วาดเส้นระดับราคากริดย่อย 5 เส้นซื้อ (สีฟ้า) และ 5 เส้นขาย (สีส้ม) ตาม % ไดนามิก และหรี่สีเป็นสีเทาหากระดับนั้นถูกปิดใช้งาน
    - **Gas Compensation Decoupling, Persistence & Historical Reconcile Architecture**:
       - **การแยกความแตกต่าง CEX (Binance) vs DEX (DreamDEX) เรื่องแก๊สอย่างเด็ดขาด**:
         1. **Capability Flags บน Adapter Layer (`IExchangeClient`)**:
