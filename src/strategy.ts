@@ -95,6 +95,7 @@ export class DynamicGrid {
   private waitingForHigherLow = false;
   private breakdownFloorPrice?: number;
   private breakdownLowPrice?: number;
+  private breakdownBuyLevel2Price?: number;
   private breakdownTime?: number;
   private breakdownCandleTimes = new Set<number>();
   private lastCutLossTime?: number;
@@ -415,6 +416,7 @@ export class DynamicGrid {
     this.waitingForHigherLow = false;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
+    this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
     this.iocBracketSellCycle = undefined;
     this.bufferBreakStartTime = undefined;
@@ -1830,6 +1832,7 @@ export class DynamicGrid {
     this.waitingForHigherLow = false;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
+    this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
     this.breakdownCandleTimes.clear();
     this.sellOrdersActive = true;
@@ -1879,6 +1882,7 @@ export class DynamicGrid {
     this.waitingForHigherLow = false;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
+    this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
     this.breakdownCandleTimes.clear();
     this.sellOrdersActive = true;
@@ -2507,7 +2511,11 @@ export class DynamicGrid {
     // 1. Reclaiming & standing above Buy Level 2 (30% Zone) for >= 1 candle bar
     // 2. Trendline Breakout (2-candle confirmation)
     // 3. Confirmed Higher Low (HL)
-    const buyLevel2Price = buyLevels[1] ?? (lowerBound + span * 0.30);
+    // 🔒 ANCHOR TO BROKEN STRUCTURE: Never use the shifted lower grid L2 to trigger recovery while dumping!
+    const originalBrokenL2 = this.breakdownBuyLevel2Price ?? this.breakdownFloorPrice;
+    const effectiveBuyLevel2Target = originalBrokenL2 !== undefined && originalBrokenL2 > 0
+      ? originalBrokenL2
+      : (buyLevels[1] ?? (lowerBound + span * 0.30));
 
     if (this.waitingForHigherLow) {
       if (this.breakdownLowPrice === undefined || refPrice < this.breakdownLowPrice) {
@@ -2520,14 +2528,17 @@ export class DynamicGrid {
       const elapsedSinceCutMs = this.lastCutLossTime ? (Date.now() - this.lastCutLossTime) : Infinity;
       const isInCutLossCooldown = elapsedSinceCutMs < cutLossCooldownMs;
 
-      const candles = this.dowEngine?.getCandles() ?? [];
-      const lastClosedCandle = candles.length >= 2 ? candles[candles.length - 2] : undefined;
-      const currentCandle = candles.length >= 1 ? candles[candles.length - 1] : undefined;
+      const closedCandlesList = this.dowEngine?.getClosedCandles() ?? [];
+      const confirmedLastClosed = closedCandlesList.length > 0 ? closedCandlesList[closedCandlesList.length - 1] : undefined;
 
-      // 1. Resolve via standing above Buy Level 2 (30% Zone) for at least 1 candle bar
-      const isCandleStandingAboveBuy2 =
-        (lastClosedCandle && lastClosedCandle.close >= buyLevel2Price * 0.9995 && refPrice >= buyLevel2Price * 0.999) ||
-        (currentCandle && currentCandle.close >= buyLevel2Price && refPrice >= buyLevel2Price);
+      // 1. Resolve via standing above Buy Level 2 (30% Zone) of the ORIGINAL broken structure
+      // 🔒 STRICT RULE: Only confirmed CLOSED candle body (never live-tick / unconfirmed candle)
+      // and price MUST have re-entered at or above the original broken L2 target!
+      const isCandleStandingAboveBuy2 = Boolean(
+        confirmedLastClosed &&
+        confirmedLastClosed.close >= effectiveBuyLevel2Target * 0.9995 &&
+        refPrice >= effectiveBuyLevel2Target * 0.999
+      );
 
       if (isInCutLossCooldown) {
         const remainMin = Math.ceil((cutLossCooldownMs - elapsedSinceCutMs) / 60000);
@@ -2536,12 +2547,13 @@ export class DynamicGrid {
         );
       } else if (this.cfg.enableBuyLevel2Recovery && isCandleStandingAboveBuy2) {
         this.log(
-          `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Stood above Buy Level 2 $${buyLevel2Price.toFixed(6)} | 30% Zone for at least 1 candle) — Floor breakdown resolved, resuming grid accumulation!`,
+          `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle above Original Broken L2 $${effectiveBuyLevel2Target.toFixed(6)}) — Floor breakdown resolved, resuming grid accumulation!`,
         );
         this.waitingForHigherLow = false;
         this.breakdownTime = undefined;
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
+        this.breakdownBuyLevel2Price = undefined;
         this.saveState();
       } else if (this.cfg.trendlineFilter && (dow?.downtrendBreakoutConfirmed || (dow?.downtrendLine && (dow.downtrendLine.isBroken || dow.downtrendLine.breakoutConfirmed)))) {
         // 2. Resolve via Trendline Breakout if TRENDLINE_FILTER is active (requires 2-candle confirmation)
@@ -2554,6 +2566,7 @@ export class DynamicGrid {
         this.breakdownTime = undefined;
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
+        this.breakdownBuyLevel2Price = undefined;
         this.saveState();
       } else if (this.breakdownFloorPrice || this.breakdownLowPrice || lowerBound > 0) {
         // 3. Resolve via Confirmed Higher Low (HL)
@@ -2636,6 +2649,7 @@ export class DynamicGrid {
       this.breakdownFloorPrice = this.breakdownFloorPrice ?? lowerBound;
       this.breakdownTime = this.breakdownTime ?? Math.floor(Date.now() / 1000);
       this.breakdownLowPrice = this.breakdownLowPrice !== undefined ? Math.min(this.breakdownLowPrice, refPrice) : refPrice;
+      this.breakdownBuyLevel2Price = this.breakdownBuyLevel2Price ?? buyLevels[1];
 
       // Track confirmed CLOSED candle bars whose CLOSE price (body) is strictly below Channel Floor (lowerBound)
       let confirmedCandlesCount = 0;
@@ -3260,7 +3274,7 @@ export class DynamicGrid {
           reason: `Floor broke • Under TL ($${downtrendLine.currentLinePrice.toFixed(4)})${count === 1 ? " [1/2 bars breaking]" : ""}`,
           nextTrigger: count === 1
             ? `Wait 2nd candle confirm > $${downtrendLine.currentLinePrice.toFixed(4)}`
-            : `Wait breakout > $${downtrendLine.currentLinePrice.toFixed(4)} or Stand above Buy 2 ($${buyLevel2Price.toFixed(4)})`,
+            : `Wait breakout > $${downtrendLine.currentLinePrice.toFixed(4)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(4)})`,
           severity: "warning",
         };
       } else {
@@ -3268,7 +3282,7 @@ export class DynamicGrid {
           code: "WAITING_HIGHER_LOW",
           title: "⏳ Wait Higher Low",
           reason: `Floor broke ($${dumpFloor.toFixed(4)})`,
-          nextTrigger: `Wait HL > $${dumpLow.toFixed(4)} or Stand above Buy 2 ($${buyLevel2Price.toFixed(4)})`,
+          nextTrigger: `Wait HL > $${dumpLow.toFixed(4)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(4)})`,
           severity: "warning",
         };
       }

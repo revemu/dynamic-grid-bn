@@ -154,6 +154,20 @@ dynamic-grid-bn/                     # Project Root (c:\Sites\github\dynamic-gri
       - **การแก้ไข**:
         1. **Backend Protection (`src/index.ts`)**: ใน `onUpdateSettings` เพิ่ม Guard ตรวจสอบ `if ((symbolChanged || exchangeChanged) && isHoldingPosition)` โดยตรวจทั้ง `grid.baseHeld() > minQty` และ `grid.getLots().length > 0` หากบอทกำลังถือ Position อยู่ จะโยน Error ปฏิเสธการสลับเหรียญหรือกระดานทันที พร้อมแจ้งเตือนจำนวนเหรียญและ Lots ที่ต้องเคลียร์ก่อน
         2. **Frontend UI Lock (`public/app.js`)**: ในฟังก์ชัน `updateTick` เมื่อพบว่าบอทมี Position (`lots.length > 0` หรือ `baseHeld > 0` หรือ `holdPct > 0`) จะตั้งค่า `disabled = true`, `cursor = not-allowed`, `opacity = 0.6` ให้กับ `#topSymbolSelect`, `#cfg_symbol`, และ `#cfg_exchange` พร้อม Tooltip: `🔒 ปิดการเปลี่ยนคู่เทรดชั่วคราวเนื่องจากบอทกำลังถือ Position อยู่` และใน Event Listener ของ `#topSymbolSelect` จะตรวจสอบ Guard และแสดง Toast Alert ปฏิเสธทันที
+   - **Anchor LL Floor & Upward Peak Search / L2 Breakdown Structure Recovery (src/market-structure.ts & src/strategy.ts)**:
+     - **สาเหตุของปัญหา**:
+       1. **กรอบลอยในอากาศใต้ LL เมื่อตลาดทุบลงเรื่อยๆ**: ใน src/market-structure.ts เมื่อกรอบระหว่างยอดและเหวแคบกว่า minChannelWidthPct โค้ดเดิมใช้วิธีลบขอบล่างลงในอากาศ (ottomBound -= needed และ curFloor -= needed) ทำให้ Floor ลอยอยู่ใต้เหว LL จริงของแท่งเทียน ส่งผลให้เส้น Buy Levels ลอยเคว้งและเปิดรับของผิดจังหวะกลางอากาศ
+       2. **L2 Recovery หลอกตัวเองขณะราคาไหลลง**: ใน src/strategy.ts เมื่อราคาหลุด Floor และ Cut Loss ไปแล้ว ระบบจำกัดการซื้อ (waitingForHigherLow = true) แต่ uyLevel2Price = buyLevels[1] ไปอิงตาม Buy Level 2 ของกรอบใหม่ที่เพิ่งเลื่อนรูดต่ำลงมาตามราคา เมื่อราคาเด้งทางเทคนิคสั้นๆ จึงเข้าใจผิดว่าราคากลับมายืนเหนือโซน 30% ได้แล้ว และรีบปลดล็อกเข้าซื้อก่อนทำ Higher Low จริง
+       3. **Drop Guard ไม่ตรวจจับการทุบฉับพลันหลังยอด HH**: โค้ดเดิมดักจับเฉพาะรูปแบบ LH + LL ทำให้เมื่อราคาทำยอด HH แล้วรูดทำ New Low ทันที (HH + LL) ระบบยังไม่ถือว่าเป็นรอบคลื่นขาลง จึงไม่สั่งหยุดซื้อ
+     - **การแก้ไขและสถาปัตยกรรมใหม่**:
+       1. **Anchor LL Protection & Upward Peak Search (src/market-structure.ts)**:
+          - ในช่วงขาลงหรือทำ New Low: ฐานกรอบ (Floor) ต้องยึดติดกับจุดต่ำสุดจริงของสวิง Low / LL ล่าสุดเสมอ (ottomBound ไม่ถูกลบลอยลงในอากาศ)
+          - หากความกว้างแคบกว่า minChannelWidthPct: ให้กวาดสายตาขึ้นไปข้างบนเพื่อค้นหายอดต้านในอดีต (canonicalHighs เหนือราคา) หรือปรับขยาย Ceiling ขึ้นไป เพื่อรักษาฐาน LL ด้านล่างให้ติดดินตาม Dow Theory
+       2. **Original Broken L2 Anchoring & Confirmed Close Only (src/strategy.ts)**:
+          - เมื่อเกิด Floor Breakdown หรือ Cut Loss ระบบจะบันทึกระดับ Buy Level 2 ของกรอบเดิมที่พังไว้ (reakdownBuyLevel2Price)
+          - การจะปลดล็อกด้วย L2 Recovery ได้ ราคาจะต้องมีแท่งเทียนที่ปิดสมบูรณ์แล้ว (getClosedCandles()) ยืนเหนือ effectiveBuyLevel2Target ของกรอบเดิมเท่านั้น (ตัดเงื่อนไข unconfirmed live-tick ทิ้ง)
+       3. **Comprehensive Downtrend Drop Detection (src/market-structure.ts)**:
+          - เพิ่มการตรวจจับ isHhThenLlBreakdown: ตรวจสอบกรณีที่ยอดล่าสุดเป็น HH แต่ตามด้วยสวิง Low ที่รูดทำ LL หลุดฐานเหวก่อนหน้า เพื่อให้บอทเปิดโหมด DOWNTREND_DROP_WAIT_BASE หยุดรับของและรอตั้งฐาน HL ทันที
    - **Preserved Locked Channel & Direct Real Ceiling Take Profit Architecture (`liveRealCeil` Take Profit)**:
       - **สาเหตุของปัญหา**:
         1. เมื่อบอทเข้าถือ Position (`isHoldingPosition = true`) ระบบจะเปิดใช้งาน `lockChannelInPosition` (Strict Freeze 100%) เพื่อป้องกันไม่ให้กรอบเลื่อนลงมาจนเทขายขาดทุน

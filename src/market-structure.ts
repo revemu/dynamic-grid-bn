@@ -1555,16 +1555,19 @@ export class DowStructureEngine {
           }
         }
 
-        // หากสวิงยืนยันหมดแล้วแต่ความกว้างยังไม่ถึง minSpanFromPct
-        // ให้ขยาย Floor ลงไปเพื่อเติมเต็ม minChannelWidthPct โดยไม่ยกเพดานขึ้นเหนือยอดต้านจริง
+        // 🔒 หากสวิงยืนยันหมดแล้วแต่ความกว้างยังไม่ถึง minSpanFromPct:
+        // ในขาลง / หลุดฐาน ให้ยึดฐาน LL เป็นหลักเสมอ (curFloor) แล้วขยับ Ceiling (curCeil) ขึ้นไปเติมเต็ม minChannelWidthPct
+        // ห้ามกด curFloor ลงไปลอยในอากาศใต้เหว LL จริง
         if (curCeil - curFloor < minSpanFromPct) {
           const needed = minSpanFromPct - (curCeil - curFloor);
-          if (curFloor - needed > 0) {
-            curFloor -= needed;
+          const higherPeaks = canonicalHighs
+            .filter((h) => h.price > curCeil && (h.price - curFloor) <= maxSpanFromPct)
+            .sort((a, b) => a.price - b.price);
+          if (higherPeaks.length > 0) {
+            curCeil = higherPeaks[0]!.price;
+            activePeak = higherPeaks[0]!;
           } else {
-            const half = needed / 2;
-            curCeil += half;
-            curFloor = Math.max(0.000001, curFloor - half);
+            curCeil = curFloor + minSpanFromPct;
           }
         }
       }
@@ -1825,13 +1828,19 @@ export class DowStructureEngine {
         bottomBound = lowerLow.price;
         activeValley = lowerLow;
       } else {
-        // If no nearby swings exist, expand floor downward to satisfy minSpan without blowing out ceiling
-        if (bottomBound - needed > 0) {
-          bottomBound -= needed;
+        // 🔒 Anchor LL Protection: Never artificially push floor down into thin air below actual LL/support!
+        // Search upward for higher unbroken resistance peaks in history to satisfy minSpan
+        const higherPeaksInHistory = canonicalHighs
+          .filter((h) => h.price > upperBound && (h.price - bottomBound) <= maxSpan)
+          .sort((a, b) => a.price - b.price);
+
+        if (higherPeaksInHistory.length > 0) {
+          upperBound = higherPeaksInHistory[0]!.price;
+          activePeak = higherPeaksInHistory[0]!;
         } else {
-          const half = needed / 2;
-          upperBound = Math.min(bottomBound + maxSpan, upperBound + half);
-          bottomBound = Math.max(0.000001, bottomBound - half);
+          // If price is near/at bottom (downtrend / making LL), anchor the bottom directly to actual swing low / LL,
+          // and adjust ceiling upward to satisfy minSpan rather than inventing a floating floor below the lowest low.
+          upperBound = bottomBound + minSpan;
         }
       }
       clampStatus = "CLAMPED_MIN";
@@ -1972,8 +1981,19 @@ export class DowStructureEngine {
       price < activeFloorPrice ||
       (candidateValley && candidateValley.price < bottomBound)
     );
+    // ตรวจจับขาลงทั้ง 2 รูปแบบ:
+    // A) ขาลงมาตรฐาน: LH + LL กดตัว
+    // B) ขาลงฉับพลันหลังทำยอด HH: ยอดล่าสุดเป็น HH แต่ตามด้วยสวิง Low ที่รูดทำ LL หลุดฐานเหวก่อนหน้า (HH + LL breakdown)
+    const isHhThenLlBreakdown = Boolean(
+      lastCanonicalHigh?.dowLabel === "HH" &&
+      lastCanonicalLow?.dowLabel === "LL" &&
+      lastCanonicalLow.index > lastCanonicalHigh.index &&
+      price < (activePeak?.price ?? upperBound)
+    );
     const isConfirmedDowntrendWave = Boolean(
-      (waveCycle.activeCycleSummary?.includes("LH + LL") || (lastCanonicalHigh?.dowLabel === "LH" && lastCanonicalLow?.dowLabel === "LL")) &&
+      (waveCycle.activeCycleSummary?.includes("LH + LL") ||
+       (lastCanonicalHigh?.dowLabel === "LH" && lastCanonicalLow?.dowLabel === "LL") ||
+       isHhThenLlBreakdown) &&
       price < (activePeak?.price ?? upperBound)
     );
     const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowChannelFloor;
