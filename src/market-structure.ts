@@ -1681,14 +1681,18 @@ export class DowStructureEngine {
       }
     }
 
-    // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Lower Low (LL) หรือทะลุหลุดกรอบเดิมลงไป กรอบล่างต้องปรับลดลงมารับ New Low"):
-    const isLatestLowLl = lastCanonicalLow?.dowLabel === "LL";
+    // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Lower Low (LL) ใหม่หรือทะลุหลุดกรอบเดิมลงไป กรอบล่างต้องปรับลดลงมารับ New Low"):
+    const isLatestLowLl = Boolean(
+      lastCanonicalLow &&
+      lastCanonicalLow.dowLabel === "LL" &&
+      (!activeValley || lastCanonicalLow.index > activeValley.index) &&
+      lastCanonicalLow.price < bottomBound
+    );
     if (
       isLatestLowLl &&
       lastCanonicalLow &&
       isUnbrokenValley(lastCanonicalLow, canonicalLows) &&
-      lastCanonicalLow.price <= price &&
-      bottomBound > lastCanonicalLow.price
+      lastCanonicalLow.price <= price
     ) {
       bottomBound = lastCanonicalLow.price;
       activeValley = lastCanonicalLow;

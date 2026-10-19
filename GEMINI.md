@@ -1531,3 +1531,21 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - ระบบจะคงฐานแนวรับ Floor ที่ใกล้ราคาไว้ (`Floor = 2420.00`)
        - และขยาย Ceiling ขึ้นไปเกาะยอดต้านถัดไป หรือขยายขึ้นไปให้ความกว้างของกรอบเท่ากับ `minChannelWidthPct` พอดี (3.0%)
        - ส่งผลให้กรอบราคาไม่บวมเป็น 4.94% และเส้น Buy Levels จะขยับขึ้นมาอยู่แถวๆ $2,422–$2,426 ใกล้ราคาปัจจุบัน พร้อมรองรับการย่อตัวเข้าซื้อได้ทันที
+
+
+---
+
+### 24. Prevention of Outdated LL Dragging Floor Downward (`src/market-structure.ts`)
+- **สาเหตุของปัญหา**:
+  1. **สวิง LL โบราณในอดีตกระชาก Floor กลับลงไปที่ก้นเหว (`lastCanonicalLow.dowLabel === "LL"` Override)**:
+     - ใน `src/market-structure.ts` (เดิมบรรทัด 1684–1696): มีบล็อกตรรกะที่ตั้งใจปรับลด Floor เมื่อตลาดทำนิวโลว์:
+       `if (isLatestLowLl && bottomBound > lastCanonicalLow.price) { bottomBound = lastCanonicalLow.price; }`
+     - โค้ดเดิมไม่ได้ตรวจสอบว่า `lastCanonicalLow` เกิดขึ้น **หลังจาก `activeValley` หรือไม่**
+     - แม้ว่าตรรกะ Nearest Valley จะยกฐาน `curFloor` ขึ้นมาเกาะที่ `⭐ HL ~2420.00` ได้สำเร็จแล้ว แต่เนื่องจากสวิงต่ำสุดของคลื่นในประวัติคือ `LL 2334.10` (ซึ่งมีป้ายเป็น `LL`) และ `2420 > 2334.10`
+     - โค้ดบล็อกนี้จึงมองว่าเงื่อนไขเป็นจริง และ **เขียนทับ (Override) กระชาก Floor กลับลงไปที่ $2,334.10 ทุกครั้ง!** ทำให้หน้าจอแสดง Floor ค้างอยู่ที่ $2,334.10 และความกว้าง 4.94% ไม่ยอมเปลี่ยน
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **Strict Recency Guard for Lower Low Override**:
+     - เพิ่มเงื่อนไข `(!activeValley || lastCanonicalLow.index > activeValley.index) && lastCanonicalLow.price < bottomBound`
+     - การปรับลด Floor ลงไปรับ Lower Low จะทำงานได้ก็ต่อเมื่อเป็น **LL ที่เกิดขึ้นใหม่หลังจากฐาน `activeValley` ปัจจุบันเท่านั้น**
+     - สวิง LL โบราณที่เกิดขึ้นก่อนหน้า `activeValley` จะไม่มีสิทธิ์ดึง Floor ถอยหลังกลับไปเด็ดขาด
+     - ส่งผลให้ Floor ล็อกแน่นอยู่ที่ฐานแนวรับที่ใกล้ราคาปัจจุบัน (`⭐ HL ~2420.00`) อย่างถาวร และความกว้างกรอบจะเริ่มต้นจากความกว้างต่ำสุด (Minimum Width เช่น 3.0%) ตามที่ผู้ใช้ต้องการ 100%
