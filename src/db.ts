@@ -67,6 +67,7 @@ export interface StrategyStateRecord {
   totalTxCount?: number;
   stuckSince?: number;
   waitingForHigherLow?: boolean;
+  isFlatChannelShiftWaiting?: boolean;
   breakdownFloorPrice?: number;
   breakdownLowPrice?: number;
   breakdownBuyLevel2Price?: number;

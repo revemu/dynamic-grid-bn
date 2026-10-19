@@ -1699,6 +1699,7 @@ export class DowStructureEngine {
     );
     const isConfirmedDowntrendWave = Boolean(
       (waveCycle.activeCycleSummary?.includes("LH + LL") ||
+       waveCycle.activeCycleSummary?.includes("LL") ||
        (lastCanonicalHigh?.dowLabel === "LH" && lastCanonicalLow?.dowLabel === "LL") ||
        isHhThenLlBreakdown) &&
       price < (activePeak?.price ?? upperBound)

@@ -1629,3 +1629,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. **New Channel Buy Level 2 Recovery Target**:
      - ปรับปรุงการคำนวณ `effectiveBuyLevel2Target` ให้ใช้ `currentBuyLevel2 = buyLevels[1]` ของกรอบปัจจุบันเป็นอันดับแรก
      - เมื่อแท่งเทียนที่ยืนยันแล้วปิดราคาเหนือ Buy Level 2 ของกรอบใหม่ ($2441.69) ระบบจะยืนยันการฟื้นตัว ปลดล็อก `waitingForHigherLow = false` และกลับมาเข้าซื้อสะสมในกรอบใหม่อย่างปลอดภัยตามความต้องการของผู้ใช้
+
+
+---
+
+### 28. Flat Cash Channel Shift & Downtrend LL Prevention Architecture (`src/strategy.ts`, `src/market-structure.ts` & `src/db.ts`)
+- **สาเหตุของปัญหา**:
+  1. **การเข้าซื้อมีดร่วง (Falling Knife) เมื่อพอร์ตว่าง 100% Cash หลังขายหมด**:
+     - เมื่อบอทขายทำกำไรหรือขายหมดพอร์ต (`100% Cash / held = 0 / 0 lots`) พอร์ตไม่มีความเสี่ยง
+     - เมื่อแท่งเทียนปิดและมีการปรับกรอบราคาใหม่ (Channel Shift เช่น SOMI: Floor $0.187300, Ceiling $0.193800) ระดับเส้นซื้อ Buy Level 4 ($0.1880) และ Buy Level 5 ($0.1874) อยู่ใกล้ชิดติดกับ Floor ($0.187300, ห่างเพียง 0.06%)
+     - ระหว่างที่ราคารูดลงมาจากยอด $0.1930 โดยยังไม่มีสวิงกลับตัวหรือฐาน Higher Low (`HL`) ใดๆ มารองรับ โค้ดเดิมปล่อยให้เข้าซื้อ IOC Buy Level 4 และ Buy Level 5 จนเต็มงบ 100%
+     - ส่งผลให้เพียงไม่กี่นาทีถัดมา ราคาไหลหลุด Floor $0.187300 เพียงเล็กน้อย ทำให้บอทติดสถานะ `Cut Loss Confirming` ทันทีและเกิดความเสียหายโดยไม่จำเป็น
+  2. **ตัวตรวจจับคลื่นขาลง (`isConfirmedDowntrendWave`) มองข้ามคลื่นที่ลงท้ายด้วย LL**:
+     - ใน `src/market-structure.ts`: โค้ดเดิมตรวจจับเฉพาะ `waveCycle.activeCycleSummary?.includes("LH + LL")`
+     - หากคลื่นเป็นไซด์เวย์ที่รูดลงทำนิวโลว์ เช่น `รอบคลื่น: ไซด์เวย์ (HH ➔ LL)` หรือ `(LH ➔ LL)` ระบบจะไม่ถือว่าเป็นคลื่นขาลง ทำให้ `isDowntrendDropActive` และ `downtrendDropPaused` ไม่ทำงาน
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **ขยายการตรวจจับคลื่นขาลงครอบคลุมทุกคลื่นที่มี LL (`src/market-structure.ts`)**:
+     - ปรับ `isConfirmedDowntrendWave` ให้ตรวจสอบ `waveCycle.activeCycleSummary?.includes("LL")` ทำให้คลื่น `HH ➔ LL` และ `LH ➔ LL` ถูกตรวจจับเป็นคลื่นขาลงที่เสี่ยงทำ Lower Low ทันที
+  2. **Flat Cash & Channel Shift LL Guard (`src/strategy.ts` & `src/db.ts`)**:
+     - เมื่อบอทถือเงินสด 100% (`isFlatCash = !isHoldingPosition && this.lots.length === 0`) และเกิดการปรับกรอบราคาใหม่ (`isChannelChanged`) หรือเพิ่งขายหมดพอร์ต (`justSoldOut`):
+     - ระบบจะประเมินความเสี่ยงของการทำ LL ใหม่ (`hasRiskOfNewLl`):
+       - รอบคลื่นมีป้าย `LL` (`activeCycleSummary.includes("LL")` หรือ `lastAnnotatedLow.dowLabel === "LL"`)
+       - ยอดล่าสุดเป็น `LH` (Lower High สะท้อนแรงขายกดตัว)
+       - ขอบล่างกรอบใหม่ต่ำลง (`newFloor < prevFloor * 0.999`)
+       - `isDowntrendDropActive` หรือ `regime === "DOWNTREND"`
+       - ราคากำลังไหลลงจากยอดโดยที่ยังไม่มีสวิง Higher Low (`HL`) ที่ยืนยันแล้วเหนือ Floor
+     - หากตรวจพบความเสี่ยง: สั่งเปิดโหมดรอตั้งฐาน `waitingForHigherLow = true` และตั้งแฟล็ก `isFlatChannelShiftWaiting = true` พร้อมเซฟลง DB ทันที
+     - บอทจะหยุดการเข้าซื้อทุกระดับ ไม่รับมีดร่วง และแสดงสถานะอย่างโปร่งใส: `🛡️ รอตั้งฐาน HL (100% Cash) | 100% Cash • กรอบเปลี่ยน/เสี่ยงทำ LL`
+  3. **เงื่อนไขการปลดล็อกกลับมาเข้าซื้อสะสมอย่างปลอดภัย (Triple Recovery Engine)**:
+     - 1. ยืนยันการสร้างฐาน **Higher Low (HL)** ที่ยกตัวสูงขึ้นเหนือจุดต่ำสุดของการทุบหรือเหนือ Floor
+     - 2. ราคาแท่งเทียนปิดสมบูรณ์ยืนเหนือ **Buy Level 2** ของกรอบใหม่
+     - 3. เกิดการ **Breakout ทะลุเส้น Downtrend Line**
+     - เมื่อเข้าเงื่อนไขใดเงื่อนไขหนึ่ง ระบบจะปลดล็อก `waitingForHigherLow = false` และเริ่มสะสมกริดบนฐานแนวรับที่มั่นคง 100%

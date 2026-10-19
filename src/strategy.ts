@@ -93,6 +93,10 @@ export class DynamicGrid {
   private lastBestAsk?: number;
   private stuckSince?: number;
   private waitingForHigherLow = false;
+  private isFlatChannelShiftWaiting = false;
+  private wasFlatCashLastTick = true;
+  private lastEvaluatedFloor?: number;
+  private lastEvaluatedCeil?: number;
   private breakdownFloorPrice?: number;
   private breakdownLowPrice?: number;
   private breakdownBuyLevel2Price?: number;
@@ -414,6 +418,9 @@ export class DynamicGrid {
     this.pendingConfirmedChannelUpdate = true;
     this.lockedChannel = undefined;
     this.waitingForHigherLow = false;
+    this.isFlatChannelShiftWaiting = false;
+    this.lastEvaluatedFloor = undefined;
+    this.lastEvaluatedCeil = undefined;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
@@ -1517,6 +1524,9 @@ export class DynamicGrid {
         this.breakdownLowPrice = undefined;
         this.breakdownTime = undefined;
       }
+      if (typeof data.isFlatChannelShiftWaiting === "boolean") {
+        this.isFlatChannelShiftWaiting = data.isFlatChannelShiftWaiting;
+      }
       if (typeof data.breakdownFloorPrice === "number") {
         this.breakdownFloorPrice = data.breakdownFloorPrice;
       }
@@ -1675,6 +1685,7 @@ export class DynamicGrid {
         totalTxCount: this.totalTxCount,
         stuckSince: this.stuckSince,
         waitingForHigherLow: this.waitingForHigherLow,
+        isFlatChannelShiftWaiting: this.isFlatChannelShiftWaiting,
         breakdownFloorPrice: this.breakdownFloorPrice,
         breakdownLowPrice: this.breakdownLowPrice,
         breakdownBuyLevel2Price: this.breakdownBuyLevel2Price,
@@ -1834,6 +1845,7 @@ export class DynamicGrid {
     this.inFlightOrders.clear();
     this.orderCooldowns.clear();
     this.waitingForHigherLow = false;
+    this.isFlatChannelShiftWaiting = false;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
@@ -1884,6 +1896,7 @@ export class DynamicGrid {
     await this.cancelAllRestingOrders("SELL", "User Reset Position");
 
     this.waitingForHigherLow = false;
+    this.isFlatChannelShiftWaiting = false;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
@@ -2521,6 +2534,68 @@ export class DynamicGrid {
 
 
     const isChannelReady = dow?.gridZone !== undefined && lowerBound > 0 && upperBound > lowerBound;
+
+    // ── Flat Cash & Channel Shift LL Guard ─────────────────────────────────
+    // When sold all (100% Cash) and channel shifts with risk of making a new LL,
+    // wait for a confirmed Higher Low (HL) or reclaiming Buy Level 2 before accumulating!
+    const isFlatCash = !isHoldingPosition && this.lots.length === 0;
+    const justSoldOut = isFlatCash && !this.wasFlatCashLastTick;
+    this.wasFlatCashLastTick = isFlatCash;
+
+    const prevFloor = this.lastEvaluatedFloor;
+    const prevCeil = this.lastEvaluatedCeil;
+    const isChannelChanged = prevFloor !== undefined && (
+      Math.abs(lowerBound - prevFloor) / lowerBound > 0.001 ||
+      Math.abs(upperBound - (prevCeil ?? upperBound)) / upperBound > 0.001
+    );
+
+    if (isFlatCash && (isChannelChanged || justSoldOut) && !this.waitingForHigherLow && isChannelReady) {
+      const activeCycleSummary = dow?.waveCycle?.activeCycleSummary ?? "";
+      const annotatedLows = dow?.waveCycle?.annotatedSwings?.filter((s) => s.type === "LOW") ?? [];
+      const lastAnnotatedLow = annotatedLows[annotatedLows.length - 1];
+      const annotatedHighs = dow?.waveCycle?.annotatedSwings?.filter((s) => s.type === "HIGH") ?? [];
+      const lastAnnotatedHigh = annotatedHighs[annotatedHighs.length - 1];
+
+      const hasLlInCycle = activeCycleSummary.includes("LL") || dow?.waveCycle?.lastLl?.dowLabel === "LL" || lastAnnotatedLow?.dowLabel === "LL";
+      const isLastHighLh = lastAnnotatedHigh?.dowLabel === "LH" || dow?.waveCycle?.lastLh !== undefined;
+      const isFloorShiftedDown = prevFloor !== undefined && lowerBound < prevFloor * 0.999;
+      const isDowntrendDrop = Boolean(dow?.isDowntrendDropActive);
+      const isWaveDowntrend = dow?.regime === "DOWNTREND";
+
+      const activePeak = dow?.activePeak ?? dow?.lastSwingHigh;
+      const peakTime = activePeak?.time ?? 0;
+      const hasRecentHl = Boolean(
+        dow?.waveCycle?.lastHl &&
+        dow.waveCycle.lastHl.time >= peakTime &&
+        dow.waveCycle.lastHl.price > lowerBound * 1.0005
+      );
+
+      const hasRiskOfNewLl = Boolean(
+        hasLlInCycle ||
+        isLastHighLh ||
+        isFloorShiftedDown ||
+        isDowntrendDrop ||
+        isWaveDowntrend ||
+        (!hasRecentHl && refPrice < centerPrice)
+      );
+
+      if (hasRiskOfNewLl) {
+        this.waitingForHigherLow = true;
+        this.isFlatChannelShiftWaiting = true;
+        this.breakdownFloorPrice = lowerBound;
+        this.breakdownBuyLevel2Price = buyLevels.length > 1 ? buyLevels[1] : (lowerBound + span * 0.32);
+        this.breakdownLowPrice = refPrice;
+        this.breakdownTime = (this.dowEngine?.getCandles().slice(-1)[0]?.time) ?? Math.floor(Date.now() / 1000);
+        const reasonDesc = hasLlInCycle ? `รอบคลื่นมี LL (${activeCycleSummary || "LL"})` : isLastHighLh ? "ยอดล่าสุดเป็น LH" : isFloorShiftedDown ? "ขอบล่างกรอบใหม่ต่ำลง" : isDowntrendDrop ? "Downtrend Drop" : "ไม่มีฐาน HL รองรับ";
+        this.log(
+          `🛡️ [FLAT CASH & CHANNEL SHIFT] 100% Cash & Channel shift with LL risk (${reasonDesc}) — Waiting for confirmed Higher Low (HL > $${refPrice.toFixed(4)}) or Closed Candle above Buy Level 2 ($${this.breakdownBuyLevel2Price.toFixed(4)}) before accumulating! (Floor: $${lowerBound.toFixed(4)})`,
+        );
+        this.saveState();
+      }
+    }
+
+    this.lastEvaluatedFloor = lowerBound;
+    this.lastEvaluatedCeil = upperBound;
     const isBelowFloor = isChannelReady && (refPrice < lowerBound || (this.waitingForHigherLow && this.breakdownFloorPrice !== undefined && refPrice < this.breakdownFloorPrice));
     const isAboveCeiling = isChannelReady && refPrice >= upperBound;
 
@@ -2564,6 +2639,7 @@ export class DynamicGrid {
           `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle above Buy Level 2 $${effectiveBuyLevel2Target.toFixed(6)}) — Floor breakdown resolved, resuming grid accumulation!`,
         );
         this.waitingForHigherLow = false;
+        this.isFlatChannelShiftWaiting = false;
         this.breakdownTime = undefined;
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
@@ -2577,6 +2653,7 @@ export class DynamicGrid {
           `🚀 TRENDLINE BREAKOUT CONFIRMED (${brokenCount} candles) @ $${refPrice.toFixed(6)} (Broke above ${linePriceStr}) — Floor breakdown resolved via 2-candle breakout, resuming grid accumulation!`,
         );
         this.waitingForHigherLow = false;
+        this.isFlatChannelShiftWaiting = false;
         this.breakdownTime = undefined;
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
@@ -2597,6 +2674,7 @@ export class DynamicGrid {
             `✅ HIGHER LOW (HL) CONFIRMED @ $${hlCheck.higherLow.price.toFixed(6)} (${hlCheck.reason}) — Floor breakdown resolved, establishing new floor & resuming grid accumulation!`,
           );
           this.waitingForHigherLow = false;
+          this.isFlatChannelShiftWaiting = false;
           this.breakdownTime = undefined;
           this.breakdownFloorPrice = undefined;
           this.breakdownLowPrice = undefined;
@@ -2614,6 +2692,7 @@ export class DynamicGrid {
             `🚀 CHANNEL FLOOR RECLAIMED @ $${refPrice.toFixed(6)} >= Original Breakdown Floor $${this.breakdownFloorPrice.toFixed(6)} — Floor breakdown resolved, resuming normal grid operation!`,
           );
           this.waitingForHigherLow = false;
+          this.isFlatChannelShiftWaiting = false;
           this.breakdownTime = undefined;
           this.breakdownFloorPrice = undefined;
           this.breakdownLowPrice = undefined;
@@ -3280,12 +3359,13 @@ export class DynamicGrid {
     } else if (this.waitingForHigherLow) {
       const dumpFloor = this.breakdownFloorPrice ?? lowerBound;
       const dumpLow = this.breakdownLowPrice ?? effectiveMid;
+      const isFlatWait = this.isFlatChannelShiftWaiting;
       if (this.cfg.trendlineFilter && downtrendLine && !downtrendLine.isBroken) {
         const count = downtrendLine.brokenCandleCount;
         botActionState = {
           code: "WAITING_TRENDLINE_BREAKOUT",
-          title: count === 1 ? "⏳ TL Breakout (1/2 bars)" : "📉 Under Trendline",
-          reason: `Floor broke • Under TL ($${downtrendLine.currentLinePrice.toFixed(4)})${count === 1 ? " [1/2 bars breaking]" : ""}`,
+          title: count === 1 ? "⏳ TL Breakout (1/2 bars)" : (isFlatWait ? "🛡️ รอตั้งฐาน HL (ใต้เส้นกด)" : "📉 Under Trendline"),
+          reason: `${isFlatWait ? `100% Cash • กรอบเปลี่ยน/เสี่ยงทำ LL (Floor: $${dumpFloor.toFixed(4)})` : `Floor broke`} • Under TL ($${downtrendLine.currentLinePrice.toFixed(4)})${count === 1 ? " [1/2 bars breaking]" : ""}`,
           nextTrigger: count === 1
             ? `Wait 2nd candle confirm > $${downtrendLine.currentLinePrice.toFixed(4)}`
             : `Wait breakout > $${downtrendLine.currentLinePrice.toFixed(4)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(4)})`,
@@ -3294,8 +3374,10 @@ export class DynamicGrid {
       } else {
         botActionState = {
           code: "WAITING_HIGHER_LOW",
-          title: "⏳ Wait Higher Low",
-          reason: `Floor broke ($${dumpFloor.toFixed(4)})`,
+          title: isFlatWait ? "🛡️ รอตั้งฐาน HL (100% Cash)" : "⏳ Wait Higher Low",
+          reason: isFlatWait
+            ? `100% Cash • กรอบเปลี่ยน/เสี่ยงทำ LL (Floor: $${dumpFloor.toFixed(4)})`
+            : `Floor broke ($${dumpFloor.toFixed(4)})`,
           nextTrigger: `Wait HL > $${dumpLow.toFixed(4)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(4)})`,
           severity: "warning",
         };
@@ -3513,6 +3595,7 @@ export class DynamicGrid {
         laggardGuardActive,
         downtrendDropPaused,
         waitingForHigherLow: this.waitingForHigherLow,
+        isFlatChannelShiftWaiting: this.isFlatChannelShiftWaiting,
         waitingForNewValley: this.waitingForHigherLow,
         breakdownFloorPrice: this.breakdownFloorPrice,
         breakdownLowPrice: this.breakdownLowPrice,
