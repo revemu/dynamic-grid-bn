@@ -1492,52 +1492,48 @@ export class DowStructureEngine {
       let chosenPair: { valley: SwingPoint; peak: SwingPoint; width: number; widthPct: number } | undefined;
 
       if (isPeakFirst && mostRecentHigh) {
-        // ── Case A: เจอยอดก่อน -> เริ่มตรวจจากยอดที่เจอก่อน แล้วสแกนยอดถัดไปหากยอดแรกหาเหวในเกณฑ์ไม่ได้ ──
-        for (const p of sortedHighsByRecency) {
-          const validValleys = candidateLows.filter((v) => {
-            const w = p.price - v.price;
-            if (w <= 0 || v.price <= 0) return false;
-            const wPct = (w / v.price) * 100;
-            return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
-          });
-          if (validValleys.length > 0) {
-            // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
-            validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price));
-            const bestValley = validValleys[0]!;
-            const w = p.price - bestValley.price;
-            chosenPair = {
-              peak: p,
-              valley: bestValley,
-              width: w,
-              widthPct: (w / bestValley.price) * 100,
-            };
-            anchorSide = "UPPER_CEILING";
-            break;
-          }
+        // ── Case A: เจอยอดก่อน -> ยึดยอดล่าสุด (mostRecentHigh) เป็นแนวต้านหลักเท่านั้น ──
+        const p = mostRecentHigh;
+        const validValleys = candidateLows.filter((v) => {
+          const w = p.price - v.price;
+          if (w <= 0 || v.price <= 0) return false;
+          const wPct = (w / v.price) * 100;
+          return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
+        });
+        if (validValleys.length > 0) {
+          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
+          validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price));
+          const bestValley = validValleys[0]!;
+          const w = p.price - bestValley.price;
+          chosenPair = {
+            peak: p,
+            valley: bestValley,
+            width: w,
+            widthPct: (w / bestValley.price) * 100,
+          };
+          anchorSide = "UPPER_CEILING";
         }
       } else if (mostRecentLow) {
-        // ── Case B: เจอเหวก่อน -> เริ่มตรวจจากเหวที่เจอก่อน แล้วสแกนเหวถัดไปหากเหวแรกหายอดในเกณฑ์ไม่ได้ ──
-        for (const v of sortedLowsByRecency) {
-          const validPeaks = candidateHighs.filter((p) => {
-            const w = p.price - v.price;
-            if (w <= 0 || v.price <= 0) return false;
-            const wPct = (w / v.price) * 100;
-            return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
-          });
-          if (validPeaks.length > 0) {
-            // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
-            validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price));
-            const bestPeak = validPeaks[0]!;
-            const w = bestPeak.price - v.price;
-            chosenPair = {
-              peak: bestPeak,
-              valley: v,
-              width: w,
-              widthPct: (w / v.price) * 100,
-            };
-            anchorSide = "LOWER_FLOOR";
-            break;
-          }
+        // ── Case B: เจอเหวก่อน -> ยึดเหวล่าสุด (mostRecentLow) เป็นแนวรับหลักเท่านั้น ──
+        const v = mostRecentLow;
+        const validPeaks = candidateHighs.filter((p) => {
+          const w = p.price - v.price;
+          if (w <= 0 || v.price <= 0) return false;
+          const wPct = (w / v.price) * 100;
+          return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
+        });
+        if (validPeaks.length > 0) {
+          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
+          validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price));
+          const bestPeak = validPeaks[0]!;
+          const w = bestPeak.price - v.price;
+          chosenPair = {
+            peak: bestPeak,
+            valley: v,
+            width: w,
+            widthPct: (w / v.price) * 100,
+          };
+          anchorSide = "LOWER_FLOOR";
         }
       }
 
