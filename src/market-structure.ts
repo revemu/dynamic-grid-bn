@@ -1505,57 +1505,101 @@ export class DowStructureEngine {
         }
       }
 
-      interface ValidPair {
-        valley: SwingPoint;
-        peak: SwingPoint;
-        width: number;
-        widthPct: number;
-        proximityDistance: number;
-      }
+      // 2. "จุดสำคัญเจอ ยอดก่อน หรือ เหวก่อน เวลามองไปทางซ้าย" (Scan backwards in time)
+      // ค้นหาสวิงยอดเหนือราคาตัวแรกสุด (Index สูงสุด) และ สวิงเหวใต้ราคาตัวแรกสุด (Index สูงสุด) ที่เจอเวลามองย้อนเวลาไปทางซ้าย
+      const mostRecentHigh = candidateHighs.length > 0
+        ? candidateHighs.reduce((latest, h) => (h.index > latest.index ? h : latest), candidateHighs[0]!)
+        : undefined;
 
-      const validPairs: ValidPair[] = [];
-      for (const p of candidateHighs) {
-        for (const v of candidateLows) {
-          const w = p.price - v.price;
-          if (w >= minSpanFromPct && w <= maxSpanFromPct) {
-            const distP = Math.abs(p.price - price);
-            const distV = Math.abs(price - v.price);
-            validPairs.push({
-              valley: v,
-              peak: p,
-              width: w,
-              widthPct: (w / v.price) * 100,
-              proximityDistance: Math.min(distP, distV),
-            });
-          }
-        }
-      }
+      const mostRecentLow = candidateLows.length > 0
+        ? candidateLows.reduce((latest, l) => (l.index > latest.index ? l : latest), candidateLows[0]!)
+        : undefined;
 
-      if (validPairs.length > 0) {
-        // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน (Narrowest Valid Width First)
-        validPairs.sort((a, b) => {
-          const diffWidth = a.width - b.width;
-          if (Math.abs(diffWidth) > 1e-6) return diffWidth;
-          return a.proximityDistance - b.proximityDistance;
+      // ตรวจสอบว่าเวลามองไปทางซ้าย "เจอยอดก่อน" หรือ "เจอเหวก่อน"
+      const isPeakFirst = Boolean(
+        mostRecentHigh && (!mostRecentLow || mostRecentHigh.index > mostRecentLow.index)
+      );
+
+      if (isPeakFirst && mostRecentHigh) {
+        // ── Case A: เจอยอดก่อน -> เลือกล็อก "ยอด (Peak)" เป็นแนวต้านหลัก (Ceiling) ก่อน ──
+        const curCeil = mostRecentHigh.price;
+        // ค้นหาเหวใต้ราคาที่เป็นไปได้มาประกบคู่ โดยเลือกเหวที่ให้ความกว้างแคบที่สุดใน [minSpan, maxSpan]
+        const validValleys = candidateLows.filter((v) => {
+          const w = curCeil - v.price;
+          return w >= minSpanFromPct && w <= maxSpanFromPct;
         });
 
-        const best = validPairs[0]!;
-        const distP = Math.abs(best.peak.price - price);
-        const distV = Math.abs(price - best.valley.price);
-        anchorSide = distP < distV ? "UPPER_CEILING" : "LOWER_FLOOR";
+        if (validValleys.length > 0) {
+          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
+          validValleys.sort((a, b) => (curCeil - a.price) - (curCeil - b.price));
+          const chosenValley = validValleys[0]!;
+          const width = curCeil - chosenValley.price;
 
-        bottomBound = best.valley.price;
-        upperBound = best.peak.price;
-        activePeak = best.peak;
-        activeValley = best.valley;
-        isSwingConfirmed = true;
-        clampStatus = "NATURAL_SWING";
+          bottomBound = chosenValley.price;
+          upperBound = curCeil;
+          activePeak = mostRecentHigh;
+          activeValley = chosenValley;
+          anchorSide = "UPPER_CEILING";
+          isSwingConfirmed = true;
+          clampStatus = "NATURAL_SWING";
 
-        rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
-        minWidthPct = (minSpan / price) * 100;
-        maxWidthPct = (maxSpan / price) * 100;
+          rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
+          minWidthPct = (minSpan / price) * 100;
+          maxWidthPct = (maxSpan / price) * 100;
+        } else {
+          // "ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน"
+          isSwingConfirmed = false;
+          clampStatus = "WARMUP";
+          upperBound = price * (1 + minPct / 2);
+          bottomBound = price * (1 - minPct / 2);
+          activePeak = mostRecentHigh;
+          activeValley = undefined;
+          anchorSide = "UPPER_CEILING";
+          rawWidthPct = undefined;
+          minWidthPct = (minSpan / price) * 100;
+          maxWidthPct = (maxSpan / price) * 100;
+        }
+      } else if (mostRecentLow) {
+        // ── Case B: เจอเหวก่อน -> เลือกล็อก "เหว (Valley)" เป็นแนวรับหลัก (Floor) ก่อน ──
+        const curFloor = mostRecentLow.price;
+        // ค้นหายอดเหนือราคาที่เป็นไปได้มาประกบคู่ โดยเลือกยอดที่ให้ความกว้างแคบที่สุดใน [minSpan, maxSpan]
+        const validPeaks = candidateHighs.filter((p) => {
+          const w = p.price - curFloor;
+          return w >= minSpanFromPct && w <= maxSpanFromPct;
+        });
+
+        if (validPeaks.length > 0) {
+          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
+          validPeaks.sort((a, b) => (a.price - curFloor) - (b.price - curFloor));
+          const chosenPeak = validPeaks[0]!;
+          const width = chosenPeak.price - curFloor;
+
+          bottomBound = curFloor;
+          upperBound = chosenPeak.price;
+          activePeak = chosenPeak;
+          activeValley = mostRecentLow;
+          anchorSide = "LOWER_FLOOR";
+          isSwingConfirmed = true;
+          clampStatus = "NATURAL_SWING";
+
+          rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
+          minWidthPct = (minSpan / price) * 100;
+          maxWidthPct = (maxSpan / price) * 100;
+        } else {
+          // "แต่ถ้าหายอดที่อยู่ใน range ไม่ได้ก็หยุดเล่นไปก่อน"
+          isSwingConfirmed = false;
+          clampStatus = "WARMUP";
+          upperBound = price * (1 + minPct / 2);
+          bottomBound = price * (1 - minPct / 2);
+          activePeak = undefined;
+          activeValley = mostRecentLow;
+          anchorSide = "LOWER_FLOOR";
+          rawWidthPct = undefined;
+          minWidthPct = (minSpan / price) * 100;
+          maxWidthPct = (maxSpan / price) * 100;
+        }
       } else {
-        // "ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน" / "แต่ถ้าหายอดที่อยู่ใน range ไม่ได้ก็หยุดเล่นไปก่อน"
+        // ไม่มีทั้งยอดและเหว
         isSwingConfirmed = false;
         clampStatus = "WARMUP";
         upperBound = price * (1 + minPct / 2);
