@@ -1333,15 +1333,24 @@ export class DowStructureEngine {
       !(candidatePeak && candidatePeak.time > p.time && candidatePeak.price > p.price) &&
       !candles.some((c) => c.time > p.time && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > p.price);
 
-    // Helper (Classic Dow Theory HL Confirmation):
-    // A Higher Low (HL) is only eligible to lift the channel Floor AFTER price (or a subsequent candle/peak)
-    // breaks above the peak that preceded that HL. A wave base / Lower Low (LL) is immediately eligible.
+    // Helper (Dow Theory Recovery & Breakout HL Confirmation):
+    // 1) A wave base / Lower Low (LL) is immediately eligible.
+    // 2) An unbroken confirmed Higher Low (HL) in the active cycle is eligible to lift the Floor immediately
+    //    if price is holding above it (in recovery wave 'ฟื้นตัว (ยก HL ฐานสูงขึ้น)'), OR
+    // 3) Price (or a subsequent candle/peak) breaks above the preceding peak (classic trend continuation).
     const isValleyEligibleForFloor = (v: SwingPoint): boolean => {
       const vPos = canonicalLows.findIndex((l) => l.index === v.index && l.time === v.time);
       const prevValley = vPos > 0 ? canonicalLows[vPos - 1] : canonicalLows.filter((l) => l.index < v.index).pop();
       if (!prevValley || v.price <= prevValley.price || (v as DowSwingPoint).dowLabel === "LL") {
         return true;
       }
+
+      // In active wave recovery, an unbroken confirmed Higher Low that price is currently holding above
+      // serves as the immediate higher support floor without waiting for HH breakout:
+      if (v.index >= activeWaveBaseIndex && price >= v.price && isUnbrokenValley(v, canonicalLows)) {
+        return true;
+      }
+
       const interveningPeaks = canonicalHighs.filter((h) => h.index > prevValley.index && h.index < v.index);
       const precedingPeak = interveningPeaks.length > 0
         ? interveningPeaks.reduce((max, h) => (h.price >= max.price ? h : max), interveningPeaks[0]!)
@@ -1600,10 +1609,9 @@ export class DowStructureEngine {
                 (l) =>
                   l.price < price &&
                   isUnbrokenValley(l, canonicalLows) &&
-                  upperBound - l.price >= minSpanFromPct &&
                   upperBound - l.price <= maxSpanFromPct,
               )
-              .sort((a, b) => b.price - a.price); // เหวที่ใกล้ราคาปัจจุบันที่สุด
+              .sort((a, b) => b.price - a.price); // เหวที่ใกล้ราคาปัจจุบันที่สุดที่กว้างไม่เกิน maxSpan
 
         const postPeakUnbrokenHighs = canonicalHighs
           .filter((h) => (!activePeak || h.index > activePeak.index) && isUnbrokenPeak(h, canonicalHighs))
@@ -1851,7 +1859,22 @@ export class DowStructureEngine {
       if (price < (upperBound + bottomBound) / 2) {
         upperBound = bottomBound + maxSpan;
       } else {
-        bottomBound = Math.max(0.000001, upperBound - maxSpan);
+        // Look for an unbroken confirmed valley below price to lift the floor legitimately
+        const unbrokenValleysBelow = canonicalLows
+          .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows))
+          .sort((a, b) => b.price - a.price);
+        const validValley = unbrokenValleysBelow.find(
+          (l) => upperBound - l.price <= maxSpan && upperBound - l.price >= minSpan
+        ) ?? unbrokenValleysBelow.find((l) => upperBound - l.price <= maxSpan);
+
+        if (validValley && validValley.price > bottomBound) {
+          bottomBound = validValley.price;
+          activeValley = validValley;
+        } else {
+          // 🔒 Anchor Support Protection: Never artificially push floor up into thin air above actual swing support!
+          // If no closer confirmed valley exists, keep bottomBound anchored to the actual swing low and cap ceiling instead
+          upperBound = Math.max(price * 1.0005, bottomBound + maxSpan);
+        }
       }
       clampStatus = "CLAMPED_MAX";
     }
