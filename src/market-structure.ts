@@ -1477,136 +1477,81 @@ export class DowStructureEngine {
       const maxSpanFromPct = maxSpan;
 
       const candidateHighs = confirmedHighs.filter((h) => h.price >= price);
-      const rawCandidateLows = confirmedLows.filter((l) => l.price <= price);
+      const candidateLows = confirmedLows.filter((l) => l.price <= price);
 
-      // Helper: ตรวจสอบและแทนที่ HL ที่ลอยห่างจาก LL ในคลื่นเดียวกันมากเกินไป
-      const resolveValley = (v: SwingPoint): SwingPoint => {
-        const sw = waveCycle.annotatedSwings.find((s) => s.index === v.index && s.type === "LOW");
-        if (sw && sw.dowLabel === "HL") {
-          const priorLows = waveCycle.annotatedSwings.filter((s) => s.type === "LOW" && s.index < v.index);
-          const waveLl = priorLows.length > 0 ? priorLows.reduce((min, l) => (l.price < min.price ? l : min), priorLows[priorLows.length - 1]!) : undefined;
-          if (waveLl) {
-            const distPct = ((v.price - waveLl.price) / waveLl.price) * 100;
-            if (distPct > (options?.minChannelWidthPct ?? 1.8)) {
-              return waveLl;
-            }
-          }
-        }
-        return v;
-      };
+      const sortedHighsByRecency = [...candidateHighs].sort((a, b) => b.index - a.index);
+      const sortedLowsByRecency = [...candidateLows].sort((a, b) => b.index - a.index);
 
-      const candidateLows: SwingPoint[] = [];
-      const seenLowIndices = new Set<number>();
-      for (const l of rawCandidateLows) {
-        const resolved = resolveValley(l);
-        if (!seenLowIndices.has(resolved.index) && resolved.price <= price) {
-          seenLowIndices.add(resolved.index);
-          candidateLows.push(resolved);
-        }
-      }
+      const mostRecentHigh = sortedHighsByRecency[0];
+      const mostRecentLow = sortedLowsByRecency[0];
 
       // 2. "จุดสำคัญเจอ ยอดก่อน หรือ เหวก่อน เวลามองไปทางซ้าย" (Scan backwards in time)
-      // ค้นหาสวิงยอดเหนือราคาตัวแรกสุด (Index สูงสุด) และ สวิงเหวใต้ราคาตัวแรกสุด (Index สูงสุด) ที่เจอเวลามองย้อนเวลาไปทางซ้าย
-      const mostRecentHigh = candidateHighs.length > 0
-        ? candidateHighs.reduce((latest, h) => (h.index > latest.index ? h : latest), candidateHighs[0]!)
-        : undefined;
-
-      const mostRecentLow = candidateLows.length > 0
-        ? candidateLows.reduce((latest, l) => (l.index > latest.index ? l : latest), candidateLows[0]!)
-        : undefined;
-
-      // ตรวจสอบว่าเวลามองไปทางซ้าย "เจอยอดก่อน" หรือ "เจอเหวก่อน"
       const isPeakFirst = Boolean(
         mostRecentHigh && (!mostRecentLow || mostRecentHigh.index > mostRecentLow.index)
       );
 
+      let chosenPair: { valley: SwingPoint; peak: SwingPoint; width: number } | undefined;
+
       if (isPeakFirst && mostRecentHigh) {
-        // ── Case A: เจอยอดก่อน -> เลือกล็อก "ยอด (Peak)" เป็นแนวต้านหลัก (Ceiling) ก่อน ──
-        const curCeil = mostRecentHigh.price;
-        // ค้นหาเหวใต้ราคาที่เป็นไปได้มาประกบคู่ โดยเลือกเหวที่ให้ความกว้างแคบที่สุดใน [minSpan, maxSpan]
-        const validValleys = candidateLows.filter((v) => {
-          const w = curCeil - v.price;
-          return w >= minSpanFromPct && w <= maxSpanFromPct;
-        });
-
-        if (validValleys.length > 0) {
-          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
-          validValleys.sort((a, b) => (curCeil - a.price) - (curCeil - b.price));
-          const chosenValley = validValleys[0]!;
-          const width = curCeil - chosenValley.price;
-
-          bottomBound = chosenValley.price;
-          upperBound = curCeil;
-          activePeak = mostRecentHigh;
-          activeValley = chosenValley;
-          anchorSide = "UPPER_CEILING";
-          isSwingConfirmed = true;
-          clampStatus = "NATURAL_SWING";
-
-          rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
-          minWidthPct = (minSpan / price) * 100;
-          maxWidthPct = (maxSpan / price) * 100;
-        } else {
-          // "ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน"
-          isSwingConfirmed = false;
-          clampStatus = "WARMUP";
-          upperBound = price * (1 + minPct / 2);
-          bottomBound = price * (1 - minPct / 2);
-          activePeak = mostRecentHigh;
-          activeValley = undefined;
-          anchorSide = "UPPER_CEILING";
-          rawWidthPct = undefined;
-          minWidthPct = (minSpan / price) * 100;
-          maxWidthPct = (maxSpan / price) * 100;
+        // ── Case A: เจอยอดก่อน -> เริ่มตรวจจากยอดที่เจอก่อน แล้วสแกนยอดถัดไปหากยอดแรกหาเหวในเกณฑ์ไม่ได้ ──
+        for (const p of sortedHighsByRecency) {
+          const validValleys = candidateLows.filter((v) => {
+            const w = p.price - v.price;
+            return w >= minSpanFromPct && w <= maxSpanFromPct;
+          });
+          if (validValleys.length > 0) {
+            // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
+            validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price));
+            chosenPair = {
+              peak: p,
+              valley: validValleys[0]!,
+              width: p.price - validValleys[0]!.price,
+            };
+            anchorSide = "UPPER_CEILING";
+            break;
+          }
         }
       } else if (mostRecentLow) {
-        // ── Case B: เจอเหวก่อน -> เลือกล็อก "เหว (Valley)" เป็นแนวรับหลัก (Floor) ก่อน ──
-        const curFloor = mostRecentLow.price;
-        // ค้นหายอดเหนือราคาที่เป็นไปได้มาประกบคู่ โดยเลือกยอดที่ให้ความกว้างแคบที่สุดใน [minSpan, maxSpan]
-        const validPeaks = candidateHighs.filter((p) => {
-          const w = p.price - curFloor;
-          return w >= minSpanFromPct && w <= maxSpanFromPct;
-        });
-
-        if (validPeaks.length > 0) {
-          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
-          validPeaks.sort((a, b) => (a.price - curFloor) - (b.price - curFloor));
-          const chosenPeak = validPeaks[0]!;
-          const width = chosenPeak.price - curFloor;
-
-          bottomBound = curFloor;
-          upperBound = chosenPeak.price;
-          activePeak = chosenPeak;
-          activeValley = mostRecentLow;
-          anchorSide = "LOWER_FLOOR";
-          isSwingConfirmed = true;
-          clampStatus = "NATURAL_SWING";
-
-          rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
-          minWidthPct = (minSpan / price) * 100;
-          maxWidthPct = (maxSpan / price) * 100;
-        } else {
-          // "แต่ถ้าหายอดที่อยู่ใน range ไม่ได้ก็หยุดเล่นไปก่อน"
-          isSwingConfirmed = false;
-          clampStatus = "WARMUP";
-          upperBound = price * (1 + minPct / 2);
-          bottomBound = price * (1 - minPct / 2);
-          activePeak = undefined;
-          activeValley = mostRecentLow;
-          anchorSide = "LOWER_FLOOR";
-          rawWidthPct = undefined;
-          minWidthPct = (minSpan / price) * 100;
-          maxWidthPct = (maxSpan / price) * 100;
+        // ── Case B: เจอเหวก่อน -> เริ่มตรวจจากเหวที่เจอก่อน แล้วสแกนเหวถัดไปหากเหวแรกหายอดในเกณฑ์ไม่ได้ ──
+        for (const v of sortedLowsByRecency) {
+          const validPeaks = candidateHighs.filter((p) => {
+            const w = p.price - v.price;
+            return w >= minSpanFromPct && w <= maxSpanFromPct;
+          });
+          if (validPeaks.length > 0) {
+            // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
+            validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price));
+            chosenPair = {
+              peak: validPeaks[0]!,
+              valley: v,
+              width: validPeaks[0]!.price - v.price,
+            };
+            anchorSide = "LOWER_FLOOR";
+            break;
+          }
         }
+      }
+
+      if (chosenPair) {
+        bottomBound = chosenPair.valley.price;
+        upperBound = chosenPair.peak.price;
+        activePeak = chosenPair.peak;
+        activeValley = chosenPair.valley;
+        isSwingConfirmed = true;
+        clampStatus = "NATURAL_SWING";
+
+        rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
+        minWidthPct = (minSpan / price) * 100;
+        maxWidthPct = (maxSpan / price) * 100;
       } else {
-        // ไม่มีทั้งยอดและเหว
+        // "ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน" / "แต่ถ้าหายอดที่อยู่ใน range ไม่ได้ก็หยุดเล่นไปก่อน"
         isSwingConfirmed = false;
         clampStatus = "WARMUP";
-        upperBound = price * (1 + minPct / 2);
-        bottomBound = price * (1 - minPct / 2);
-        activePeak = undefined;
-        activeValley = undefined;
-        anchorSide = "NONE";
+        upperBound = 0;
+        bottomBound = 0;
+        activePeak = mostRecentHigh;
+        activeValley = mostRecentLow;
+        anchorSide = isPeakFirst ? "UPPER_CEILING" : (mostRecentLow ? "LOWER_FLOOR" : "NONE");
         rawWidthPct = undefined;
         minWidthPct = (minSpan / price) * 100;
         maxWidthPct = (maxSpan / price) * 100;
@@ -1638,16 +1583,17 @@ export class DowStructureEngine {
     }
 
     // Channel span & center
-    const floorBuffer = ((options?.floorBufferPct ?? 0.0) / 100) * bottomBound;
-    const cutLossBound = bottomBound - floorBuffer;
-    const finalSpan = upperBound - bottomBound;
-    const centerPrice = bottomBound + finalSpan * 0.5; // 50% level
+    const hasValidChannel = isSwingConfirmed && bottomBound > 0 && upperBound > 0;
+    const floorBuffer = hasValidChannel ? ((options?.floorBufferPct ?? 0.0) / 100) * bottomBound : 0;
+    const cutLossBound = hasValidChannel ? bottomBound - floorBuffer : 0;
+    const finalSpan = hasValidChannel ? upperBound - bottomBound : 0;
+    const centerPrice = hasValidChannel ? bottomBound + finalSpan * 0.5 : price;
 
     // Position percentage in channel: 0% at floor, 50% at center, 100% at ceiling
     const positionPct = finalSpan > 0 ? ((price - bottomBound) / finalSpan) * 100 : 50;
 
-    const isBelowFloor = price < cutLossBound;
-    const isAboveCeiling = price >= upperBound;
+    const isBelowFloor = hasValidChannel && price < cutLossBound;
+    const isAboveCeiling = hasValidChannel && price >= upperBound;
 
     let zoneType: GridZone["zoneType"] = "BUY_ZONE";
     if (isBelowFloor) {
@@ -1677,15 +1623,19 @@ export class DowStructureEngine {
 
     // Grid Levels in Buy Zone (e.g. 42%, 32%, 22%, 12%, 2%)
     // In narrow channels (< threshold), collapse to a single edge-bracket level: Buy at Floor + Buffer%
-    const buyLevels = isNarrowChannel
-      ? [bottomBound * (1 + buyBufferFrac)]
-      : buyPcts.map((pct) => bottomBound + finalSpan * (pct / 100));
+    const buyLevels = hasValidChannel
+      ? (isNarrowChannel
+          ? [bottomBound * (1 + buyBufferFrac)]
+          : buyPcts.map((pct) => bottomBound + finalSpan * (pct / 100)))
+      : [];
 
     // Grid Levels in Sell Zone (e.g. 52%, 62%, 72%, 82%, 92%)
     // In narrow channels (< threshold), collapse to a single edge-bracket level: Sell at Ceiling - Buffer%
-    const sellLevels = isNarrowChannel
-      ? [upperBound * (1 - sellBufferFrac)]
-      : sellPcts.map((pct) => bottomBound + finalSpan * (pct / 100));
+    const sellLevels = hasValidChannel
+      ? (isNarrowChannel
+          ? [upperBound * (1 - sellBufferFrac)]
+          : sellPcts.map((pct) => bottomBound + finalSpan * (pct / 100)))
+      : [];
 
     const zoneWidthPct = bottomBound > 0 ? (finalSpan / bottomBound) * 100 : 0;
 

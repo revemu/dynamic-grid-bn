@@ -1427,13 +1427,15 @@
 
     // Channel Clamp Mode & Swing Details
     const widthPct = data.zoneWidthPct !== undefined ? data.zoneWidthPct : 0;
-    let clampStr = data.channelMode === "DOW_SWINGS"
-      ? `Pure Dow Swings`
-      : data.clampStatus === "CLAMPED_MIN"
-        ? `Clamped Min (${(data.minWidthPct || 0).toFixed(1)}%)`
-        : data.clampStatus === "CLAMPED_MAX"
-          ? `Clamped Max (${(data.maxWidthPct || 0).toFixed(1)}%)`
-          : `Natural Swing (${widthPct.toFixed(1)}%)`;
+    let clampStr = data.isSwingConfirmed === false && !data.isChannelLocked
+      ? "⚪ ไม่มีกรอบสวิงที่เข้าเกณฑ์ (หยุดรอสวิง)"
+      : data.channelMode === "DOW_SWINGS"
+        ? `Pure Dow Swings`
+        : data.clampStatus === "CLAMPED_MIN"
+          ? `Clamped Min (${(data.minWidthPct || 0).toFixed(1)}%)`
+          : data.clampStatus === "CLAMPED_MAX"
+            ? `Clamped Max (${(data.maxWidthPct || 0).toFixed(1)}%)`
+            : `Natural Swing (${widthPct.toFixed(1)}%)`;
 
     if (data.isChannelLocked) {
       const realCeilStr = data.liveCalculatedUpperBound
@@ -1446,7 +1448,11 @@
     }
 
     if (elChannelStatusText) {
-      elChannelStatusText.textContent = `Channel: ${widthPct.toFixed(2)}% (${clampStr})`;
+      if (data.isSwingConfirmed === false && !data.isChannelLocked) {
+        elChannelStatusText.textContent = `Channel: ไม่มีกรอบที่เข้าเกณฑ์ (หยุดรอสวิง)`;
+      } else {
+        elChannelStatusText.textContent = `Channel: ${widthPct.toFixed(2)}% (${clampStr})`;
+      }
     }
     const elLegendPillBottomText = document.getElementById("legendPillBottomText");
     if (elLegendPillBottomText && data.bottomBound) {
