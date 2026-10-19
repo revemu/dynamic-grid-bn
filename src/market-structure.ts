@@ -1442,171 +1442,7 @@ export class DowStructureEngine {
     const maxSpan = price * maxPct;
 
     // ── 4. Calculate Final Bounds by Selected Channel Mode ────────────────────
-    if (mode !== "DONCHIAN_ATR") {
-      // 🔒 Pure Dow Theory Active Wave Swing Bounds
-      // กรอบต้องอิงจาก "เหวและยอดที่ยืนยันแล้ว" ของรอบคลื่นปัจจุบันที่ยังไม่ถูกทำลาย (Unbroken Confirmed Swings)
-      const minSpanFromPct = price * minPct;
-      const maxSpanFromPct = price * maxPct;
-
-      // 1. เริ่มต้นจากยอดที่ยืนยันแล้ว (activeCeilingPoint) และหาเหวที่ยืนยันแล้วที่รองรับราคาปัจจุบัน
-      let curCeil = activeCeilingPoint?.price ?? (activePeak ? activePeak.price : price * (1 + minPct / 2));
-      if (lastCanonicalHigh && lastCanonicalHigh.dowLabel === "HH" && lastCanonicalHigh.price > curCeil) {
-        curCeil = lastCanonicalHigh.price;
-      }
-      if (price > curCeil) curCeil = price * 1.0005;
-
-      const unbrokenPeaksAbove = canonicalHighs
-        .filter((h) => h.price > curCeil && isUnbrokenPeak(h, canonicalHighs))
-        .sort((a, b) => a.price - b.price);
-
-      const canReachMinSpanWithPeak = (floorPrice: number) => {
-        if (curCeil - floorPrice >= minSpanFromPct && curCeil - floorPrice <= maxSpanFromPct) return true;
-        return unbrokenPeaksAbove.some(
-          (h) => h.price - floorPrice >= minSpanFromPct && h.price - floorPrice <= maxSpanFromPct
-        );
-      };
-
-      // ค้นหาเหวที่ยืนยันแล้ว (Unbroken Confirmed Valley) ที่ผ่านเกณฑ์ Dow Theory (HL ต้องเบรกยอดก่อนหน้าแล้ว)
-      const allEligibleValleysBelow = canonicalLows
-        .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
-        .sort((a, b) => b.price - a.price); // เรียงจากเหวที่ใกล้ราคาที่สุดลงไป
-      const allUnbrokenValleysBelow = allEligibleValleysBelow.length > 0
-        ? allEligibleValleysBelow
-        : canonicalLows
-            .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
-            .sort((a, b) => b.price - a.price);
-
-      // ยึดเหวที่ใกล้ราคาปัจจุบันที่สุดในคลื่นปัจจุบันก่อนเสมอ (Nearest Confirmed Valley in Active Wave)
-      // เพื่อให้กรอบเริ่มจากโครงสร้างที่กระชับรอบราคาที่สุด แล้วค่อยขยายออกเท่าที่จำเป็นตาม minSpan แทนการกระโดดข้ามไปหาเหวมหึมาที่อยู่ไกล
-      const activeWaveValleys = allUnbrokenValleysBelow.filter((l) => l.index >= activeWaveBaseIndex);
-
-      let curFloor: number;
-      if (activeWaveValleys.length > 0) {
-        curFloor = activeWaveValleys[0]!.price;
-        activeValley = activeWaveValleys[0]!;
-      } else if (allUnbrokenValleysBelow.length > 0) {
-        curFloor = allUnbrokenValleysBelow[0]!.price;
-        activeValley = allUnbrokenValleysBelow[0]!;
-      } else {
-        curFloor = baseValley?.price ?? (macroLow ? macroLow.price : price * (1 - minPct / 2));
-      }
-
-      // เมื่อราคาหลุดต่ำกว่า curFloor ให้มองหาเหว/แนวรับที่ยืนยันแล้วที่ยังไม่ถูกทำลายและอยู่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน
-      if (price < curFloor) {
-        const lowerValleys = canonicalLows
-          .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows) && curCeil - l.price <= maxSpanFromPct)
-          .sort((a, b) => b.price - a.price); // เรียงจากเหวที่ใกล้ราคาที่สุดลงไป
-        if (lowerValleys.length > 0) {
-          const minSpanLower = lowerValleys.find((l) => curCeil - l.price >= minSpanFromPct);
-          const chosenValley = minSpanLower ?? lowerValleys[0]!;
-          curFloor = chosenValley.price;
-          activeValley = chosenValley;
-        } else {
-          // ในกรณีที่ไม่มีเหวรองรับอีก (หรือเหวในอดีตอยู่ลึกเกิน maxSpanFromPct) ให้อนุญาตให้เกาะแท่งเทียนได้
-          const lastCandleLow = lastCandle ? getEffectiveLow(lastCandle, useTrueWick, this.wickThresholdPct) : undefined;
-          const candleFloor = candidateValley
-            ? candidateValley.price
-            : (lastCandleLow !== undefined ? Math.min(price, lastCandleLow) : price);
-          curFloor = candleFloor;
-          if (candidateValley) {
-            activeValley = candidateValley;
-          } else if (lastCandle) {
-            activeValley = {
-              index: n - 1,
-              time: lastCandle.time,
-              price: candleFloor,
-              type: "LOW",
-            };
-          }
-        }
-      }
-
-      // 2. ถ้าความกว้างระหว่างยอดและเหวยังน้อยกว่า minSpanFromPct
-      // ให้ขยาย Ceiling ขึ้นไปหายอดต้านที่ยืนยันแล้วถัดไป (LH/HH ที่ยังไม่ถูกทำลาย) เพื่อรักษาฐานแนวรับที่ใกล้ราคาปัจจุบัน
-      if (curCeil - curFloor < minSpanFromPct) {
-        const higherConfirmedHighs = canonicalHighs
-          .filter((h) => h.price > curCeil && isUnbrokenPeak(h, canonicalHighs))
-          .sort((a, b) => a.price - b.price); // เรียงจากต่ำไปสูง
-
-        let hIdx = 0;
-        while (curCeil - curFloor < minSpanFromPct && hIdx < higherConfirmedHighs.length) {
-          const nextH = higherConfirmedHighs[hIdx]!;
-          if ((nextH.price - curFloor) <= maxSpanFromPct) {
-            curCeil = nextH.price;
-            activePeak = nextH;
-            hIdx++;
-          } else {
-            break;
-          }
-        }
-
-        // 🔒 หากสวิงต้านยืนยันหมดแล้วแต่ความกว้างยังไม่ถึง minSpanFromPct:
-        // ให้ยึดฐาน Floor ที่ใกล้ราคาไว้ แล้วขยับ Ceiling ขึ้นไปเติมเต็มความกว้างขั้นต่ำ (minChannelWidthPct)
-        if (curCeil - curFloor < minSpanFromPct) {
-          curCeil = curFloor + minSpanFromPct;
-        }
-      }
-
-      upperBound = curCeil;
-      bottomBound = curFloor;
-
-      isSwingConfirmed = true;
-      clampStatus = "NATURAL_SWING";
-      anchorSide = "NONE";
-
-      // Enforce max channel width if natural wave swing is unusually wide:
-      // 1) First try raising bottomBound to a newer unbroken confirmed valley below price so we preserve the true activePeak!
-      // 2) Only step down upperBound if there is a confirmed unbroken Lower High (LH) formed AFTER activePeak!
-      if (upperBound - bottomBound > maxSpanFromPct) {
-        const eligibleValidLows = canonicalLows
-          .filter(
-            (l) =>
-              l.price < price &&
-              isUnbrokenValley(l, canonicalLows) &&
-              isValleyEligibleForFloor(l) &&
-              upperBound - l.price >= minSpanFromPct &&
-              upperBound - l.price <= maxSpanFromPct,
-          )
-          .sort((a, b) => b.price - a.price);
-        const validLows = eligibleValidLows.length > 0
-          ? eligibleValidLows
-          : canonicalLows
-              .filter(
-                (l) =>
-                  l.price < price &&
-                  isUnbrokenValley(l, canonicalLows) &&
-                  upperBound - l.price <= maxSpanFromPct,
-              )
-              .sort((a, b) => b.price - a.price); // เหวที่ใกล้ราคาปัจจุบันที่สุดที่กว้างไม่เกิน maxSpan
-
-        const postPeakUnbrokenHighs = canonicalHighs
-          .filter((h) => (!activePeak || h.index > activePeak.index) && isUnbrokenPeak(h, canonicalHighs))
-          .filter((h) => h.price > price && h.price - bottomBound >= minSpanFromPct && h.price - bottomBound <= maxSpanFromPct)
-          .sort((a, b) => a.price - b.price);
-
-        if (validLows.length > 0 && (!isLatestHighLh || postPeakUnbrokenHighs.length === 0)) {
-          bottomBound = validLows[0]!.price;
-          activeValley = validLows[0]!;
-        } else if (postPeakUnbrokenHighs.length > 0) {
-          upperBound = postPeakUnbrokenHighs[0]!.price;
-          activePeak = postPeakUnbrokenHighs[0]!;
-        } else if (
-          candidateValley &&
-          candidateValley.price <= price &&
-          upperBound - candidateValley.price >= minSpanFromPct &&
-          upperBound - candidateValley.price <= maxSpanFromPct
-        ) {
-          bottomBound = candidateValley.price;
-          activeValley = candidateValley;
-        }
-        clampStatus = "CLAMPED_MAX";
-      }
-
-      rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
-      minWidthPct = (minSpan / price) * 100;
-      maxWidthPct = (maxSpan / price) * 100;
-    } else {
-      // DONCHIAN_ATR mode
+    if (mode === "DONCHIAN_ATR") {
       const lookback = Math.min(n, options?.donchianLookback ?? 20);
       const donchianCandles = candles.slice(Math.max(0, n - lookback));
       const allLows = donchianCandles.map((c) => (useTrueWick ? c.low : getEffectiveLow(c, false))).filter(Number.isFinite);
@@ -1627,226 +1463,226 @@ export class DowStructureEngine {
       rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
       minWidthPct = (minSpan / price) * 100;
       maxWidthPct = (maxSpan / price) * 100;
-    }
+    } else {
+      // 🔒 Proximity-First & Minimum-Width Anchoring:
+      // เกณฑ์ Dow Theory: คำนวณจากยอดและเหวที่ยืนยันแล้วที่ยังไม่ถูกทำลาย (Unbroken Confirmed Swings)
+      const minSpanFromPct = minSpan;
+      const maxSpanFromPct = maxSpan;
 
-    // 🔒 Dow Theory overrides: Ensure Ceiling snaps to HH and steps down ONLY on confirmed LH formed AFTER activePeak
-    if (true) {
-      // 🔒 Dow Theory Rule ("ถ้ายังไม่ทำ LH ไม่ควรปรับลดกรอบบนลงมา"):
-      const isLatestHighTrueHh = Boolean(
-        lastCanonicalHigh &&
-        lastCanonicalHigh.dowLabel === "HH" &&
-        (!activePeak || lastCanonicalHigh.price >= activePeak.price)
-      );
-      if (isLatestHighTrueHh && lastCanonicalHigh && upperBound < lastCanonicalHigh.price) {
-        upperBound = lastCanonicalHigh.price;
-        activePeak = lastCanonicalHigh;
-        clampStatus = "NATURAL_SWING";
-      }
+      // 1. ค้นหาเหวแนวรับที่ยืนยันแล้วและยังไม่ถูกทำลาย ซึ่งอยู่ต่ำกว่าหรือเท่ากับราคาปัจจุบัน
+      const allEligibleValleysBelow = canonicalLows
+        .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
+        .sort((a, b) => b.price - a.price); // เรียงจากใกล้ราคาลงไป (ราคาสูงไปต่ำ)
+      const unbrokenValleysBelow = allEligibleValleysBelow.length > 0
+        ? allEligibleValleysBelow
+        : canonicalLows
+            .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
+            .sort((a, b) => b.price - a.price);
 
-      // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้"):
-      // เฉพาะยอด LH ที่เกิดขึ้นหลังจาก activePeak (h.index > activePeak.index) และยังไม่ถูกทำลายเท่านั้น!
-      // ห้ามดึงยอดเก่าที่เกิดก่อนหน้า activePeak (ซึ่งถูกทะลุไปแล้วตอนทำ HH) มาเป็นเพดานโดยเด็ดขาด
-      if (upperBound > bottomBound + minSpan && !isLatestHighTrueHh) {
-        const peakIdx = activePeak?.index ?? -1;
-        const peakPrice = activePeak?.price ?? upperBound;
-        const candidateLhs = canonicalHighs
-          .filter((h) => h.index > peakIdx && h.price < peakPrice && isUnbrokenPeak(h, canonicalHighs) && h.price > price)
-          .filter((h) => h.price - bottomBound >= minSpan && h.price - bottomBound <= maxSpan)
-          .sort((a, b) => a.price - b.price);
+      // 2. ค้นหายอดแนวต้านที่ยืนยันแล้วและยังไม่ถูกทำลาย ซึ่งอยู่สูงกว่าหรือเท่ากับราคาปัจจุบัน
+      const unbrokenPeaksAbove = canonicalHighs
+        .filter((h) => h.price >= price && isUnbrokenPeak(h, canonicalHighs))
+        .sort((a, b) => a.price - b.price); // เรียงจากใกล้ราคาขึ้นไป (ราคาต่ำไปสูง)
 
-        const hasPostPeakLowerHigh = Boolean(
-          isLatestHighLh ||
-          (lastCanonicalHigh && activePeak && lastCanonicalHigh.index > activePeak.index && lastCanonicalHigh.price < activePeak.price)
-        );
+      const nearestPeak = unbrokenPeaksAbove[0];
+      const nearestValley = unbrokenValleysBelow[0];
 
-        if (candidateLhs.length > 0 && (hasPostPeakLowerHigh || upperBound - bottomBound > maxSpan)) {
-          const targetLh = candidateLhs[0]!;
-          if (targetLh.price < upperBound) {
-            upperBound = targetLh.price;
-            activePeak = targetLh;
-            clampStatus = "NATURAL_SWING";
+      // Effective reference prices for proximity distance comparison
+      const effPeakPrice = nearestPeak?.price ?? candidatePeak?.price ?? (lastCandle ? getEffectiveHigh(lastCandle, useTrueWick, this.wickThresholdPct) : price * (1 + minPct / 2));
+      const effValleyPrice = nearestValley?.price ?? candidateValley?.price ?? (lastCandle ? getEffectiveLow(lastCandle, useTrueWick, this.wickThresholdPct) : price * (1 - minPct / 2));
+
+      const distToPeak = Math.max(0, effPeakPrice - price);
+      const distToValley = Math.max(0, price - effValleyPrice);
+
+      // ตรวจสอบว่าราคาปัจจุบันอยู่ใกล้ยอด หรือ ใกล้เหว ทางซ้ายมากกว่ากัน
+      const isCloserToPeak = distToPeak < distToValley;
+
+      let curCeil: number;
+      let curFloor: number;
+
+      if (isCloserToPeak && (nearestPeak || unbrokenPeaksAbove.length > 0)) {
+        // ── Case A: ใกล้ยอดมากกว่า -> เลือกล็อก "ยอด (Peak)" เป็นแนวต้านหลักก่อน (Ceiling) ──
+        const pAnchor = nearestPeak ?? unbrokenPeaksAbove[0]!;
+        curCeil = pAnchor.price;
+        activePeak = pAnchor;
+        anchorSide = "UPPER_CEILING";
+
+        // ค้นหาเหว (Valley) ที่เป็นไปได้มาประกบคู่ (จะไกลแค่ไหนก็ได้ แต่เลือกที่ใกล้ก่อน แต่ที่ไกลกว่า ใกล้กับความกว้างขั้นต่ำมากกว่า ก็เลือกได้)
+        if (unbrokenValleysBelow.length > 0) {
+          // กลุ่มที่ให้ความกว้างอยู่ในเกณฑ์ [minSpan, maxSpan]
+          const validValleys = unbrokenValleysBelow.filter((v) => {
+            const w = curCeil - v.price;
+            return w >= minSpanFromPct && w <= maxSpanFromPct;
+          });
+
+          if (validValleys.length > 0) {
+            // เลือกเหวที่ให้ความกว้างใกล้เคียงกับ minSpanFromPct ที่สุด
+            let chosen = validValleys[0]!;
+            let bestDiff = (curCeil - chosen.price) - minSpanFromPct;
+            for (let i = 1; i < validValleys.length; i++) {
+              const v = validValleys[i]!;
+              const diffNext = (curCeil - v.price) - minSpanFromPct;
+              if (diffNext < bestDiff) {
+                bestDiff = diffNext;
+                chosen = v;
+              }
+            }
+            curFloor = chosen.price;
+            activeValley = chosen;
+          } else {
+            // หากไม่มีเหวใดที่กว้างถึง minSpanFromPct:
+            // เลือกเหวที่ให้ความกว้างใกล้ minSpanFromPct ที่สุด (เหวที่ลึกที่สุดที่ไม่เกิน maxSpanFromPct)
+            let chosen = unbrokenValleysBelow[0]!;
+            let bestDiff = Math.abs((curCeil - chosen.price) - minSpanFromPct);
+            for (let i = 1; i < unbrokenValleysBelow.length; i++) {
+              const v = unbrokenValleysBelow[i]!;
+              const w = curCeil - v.price;
+              if (w > maxSpanFromPct) continue;
+              const diff = Math.abs(w - minSpanFromPct);
+              if (diff < bestDiff) {
+                bestDiff = diff;
+                chosen = v;
+              }
+            }
+            curFloor = chosen.price;
+            activeValley = chosen;
+
+            // หากยังแคบกว่า minSpanFromPct ให้ขยาย Floor ลงไปให้ได้ minSpanFromPct พอดี
+            if (curCeil - curFloor < minSpanFromPct) {
+              curFloor = curCeil - minSpanFromPct;
+              clampStatus = "CLAMPED_MIN";
+            }
           }
-        } else if (
-          hasPostPeakLowerHigh &&
-          lastCanonicalHigh &&
-          (!activePeak || lastCanonicalHigh.index >= activePeak.index) &&
-          isUnbrokenPeak(lastCanonicalHigh, canonicalHighs) &&
-          upperBound > lastCanonicalHigh.price &&
-          lastCanonicalHigh.price - bottomBound >= minSpan
-        ) {
-          upperBound = lastCanonicalHigh.price;
-          activePeak = lastCanonicalHigh;
-          clampStatus = "NATURAL_SWING";
-        }
-      }
-    }
-
-    // 🔒 Dow Theory Symmetrical Rule ("ถ้าราคาทำ Lower Low (LL) ใหม่หรือทะลุหลุดกรอบเดิมลงไป กรอบล่างต้องปรับลดลงมารับ New Low"):
-    const isLatestLowLl = Boolean(
-      lastCanonicalLow &&
-      lastCanonicalLow.dowLabel === "LL" &&
-      (!activeValley || lastCanonicalLow.index > activeValley.index) &&
-      lastCanonicalLow.price < bottomBound
-    );
-    if (
-      isLatestLowLl &&
-      lastCanonicalLow &&
-      isUnbrokenValley(lastCanonicalLow, canonicalLows) &&
-      lastCanonicalLow.price <= price
-    ) {
-      bottomBound = lastCanonicalLow.price;
-      activeValley = lastCanonicalLow;
-      clampStatus = "NATURAL_SWING";
-    }
-
-    // 🔒 Dow Theory Symmetrical Rule ("เกาะเหวที่ยืนยันแล้วที่ยังไม่ถูกทำลายและผ่านเกณฑ์เบรกยอดก่อนหน้า"):
-    if (upperBound > bottomBound + minSpan) {
-      const candidateValleys = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
-        .filter((l) => isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l) && l.price > bottomBound && l.price <= price)
-        .filter((l) => upperBound - l.price >= minSpan && upperBound - l.price <= maxSpan)
-        .sort((a, b) => b.price - a.price); // เรียงจากเหวสูงไปเหวต่ำ (ใกล้ราคาปัจจุบันที่สุด)
-
-      if (candidateValleys.length > 0) {
-        const targetValley = candidateValleys[0]!;
-        bottomBound = targetValley.price;
-        activeValley = targetValley;
-        clampStatus = "NATURAL_SWING";
-      }
-    }
-
-    const lastLowPoint = this.swingLows[this.swingLows.length - 1];
-    const isDropBreakdown = Boolean(
-      (lastLowPoint && price < lastLowPoint.price) ||
-      (candidateValley && lastLowPoint && candidateValley.price < lastLowPoint.price) ||
-      (waveCycle.activeCycleSummary?.includes("LH + LL"))
-    );
-
-    if (isDropBreakdown && price < bottomBound) {
-      // เมื่อราคาหลุดต่ำกว่า Floor เดิมในช่วงทุบ ให้มองหาเหวที่ยืนยันแล้วที่ต่ำกว่าราคาปัจจุบันไปเกาะก่อน (และต้องอยู่ในระยะ maxSpan)
-      const lowerConfirmedValleys = canonicalLows
-        .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows) && upperBound - l.price <= maxSpan)
-        .sort((a, b) => b.price - a.price);
-
-      if (lowerConfirmedValleys.length > 0) {
-        const minSpanValley = lowerConfirmedValleys.find((l) => upperBound - l.price >= minSpan);
-        const chosenValley = minSpanValley ?? lowerConfirmedValleys[0]!;
-        bottomBound = chosenValley.price;
-        activeValley = chosenValley;
-      } else {
-        // ในกรณีที่ไม่มีเหวรองรับอีก (หรือเหวในอดีตอยู่ลึกเกิน maxSpan) ให้อนุญาตให้เกาะแท่งเทียนได้ (Candidate Valley หรือ Candle Low ของแท่งเทียนล่าสุด)
-        const lastCandleLow = lastCandle ? getEffectiveLow(lastCandle, useTrueWick, this.wickThresholdPct) : undefined;
-        const candleFloor = candidateValley
-          ? candidateValley.price
-          : (lastCandleLow !== undefined ? Math.min(price, lastCandleLow) : price);
-        bottomBound = candleFloor;
-        if (candidateValley) {
-          activeValley = candidateValley;
-        } else if (lastCandle) {
-          activeValley = {
-            index: n - 1,
-            time: lastCandle.time,
-            price: candleFloor,
-            type: "LOW",
-          };
-        }
-      }
-      clampStatus = "NATURAL_SWING";
-
-      // ปรับกรอบบนเฉพาะเมื่อมียอดที่ยืนยันแล้วซึ่งเกิดขึ้นหลังจากเหว/ยอดปัจจุบันและยังไม่ถูกทำลายเท่านั้น
-      const peakIdx = activePeak?.index ?? -1;
-      const validHighsAboveNewFloor = canonicalHighs
-        .filter((h) => h.index >= peakIdx && isUnbrokenPeak(h, canonicalHighs) && h.price > bottomBound + minSpan && h.price > price)
-        .sort((a, b) => a.price - b.price);
-
-      if (validHighsAboveNewFloor.length > 0) {
-        upperBound = validHighsAboveNewFloor[0]!.price;
-        activePeak = validHighsAboveNewFloor[0]!;
-      }
-    }
-
-    // Ensure sensible minimum channel width (at least 0.5%) without artificial floating synthesis
-    if (upperBound <= bottomBound || (upperBound - bottomBound) / bottomBound < 0.005) {
-      const candidateHighs = (activeCycleHighs.length > 0 ? activeCycleHighs : canonicalHighs)
-        .filter((h) => h.price > price && isUnbrokenPeak(h, canonicalHighs))
-        .sort((a, b) => a.price - b.price);
-      const candidateLows = (activeCycleLows.length > 0 ? activeCycleLows : canonicalLows)
-        .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
-        .sort((a, b) => b.price - a.price);
-
-      if (candidateHighs.length > 0 && candidateHighs[0]!.price > bottomBound) {
-        upperBound = candidateHighs[0]!.price;
-      }
-      if (candidateLows.length > 0 && candidateLows[0]!.price < upperBound) {
-        bottomBound = candidateLows[0]!.price;
-      }
-      if (upperBound <= bottomBound || (upperBound - bottomBound) / bottomBound < 0.005) {
-        if (activePeak && activePeak.price > price) upperBound = activePeak.price;
-        if (activeValley && activeValley.price < price) bottomBound = activeValley.price;
-      }
-    }
-
-    // 🔒 Proximity-Guarded Channel Expansion:
-    // If the channel is narrower than minSpan (with 95% tolerance threshold), expand prudently
-    // Prefer expanding upperBound upward to an unbroken resistance peak first so we preserve the active wave floor!
-    if (upperBound - bottomBound < minSpan * 0.95) {
-      const needed = minSpan - (upperBound - bottomBound);
-      const lowerLow = canonicalLows
-        .filter((l) => l.price < bottomBound && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
-        .sort((a, b) => b.price - a.price)[0];
-      const higherHigh = canonicalHighs
-        .filter((h) => h.price > upperBound && isUnbrokenPeak(h, canonicalHighs) && (h.price - bottomBound) <= maxSpan)
-        .sort((a, b) => a.price - b.price)[0];
-
-      const lDist = lowerLow !== undefined ? bottomBound - lowerLow.price : Infinity;
-
-      if (higherHigh) {
-        upperBound = higherHigh.price;
-        activePeak = higherHigh;
-      } else if (lowerLow && (upperBound - lowerLow.price) <= maxSpan && lDist <= needed * 2.0) {
-        bottomBound = lowerLow.price;
-        activeValley = lowerLow;
-      } else {
-        // 🔒 Anchor LL Protection: Never artificially push floor down into thin air below actual LL/support!
-        // Search upward for higher unbroken resistance peaks in history to satisfy minSpan
-        const higherPeaksInHistory = canonicalHighs
-          .filter((h) => h.price > upperBound && (h.price - bottomBound) <= maxSpan)
-          .sort((a, b) => a.price - b.price);
-
-        if (higherPeaksInHistory.length > 0) {
-          upperBound = higherPeaksInHistory[0]!.price;
-          activePeak = higherPeaksInHistory[0]!;
         } else {
-          // If price is near/at bottom (downtrend / making LL), anchor the bottom directly to actual swing low / LL,
-          // and adjust ceiling upward to satisfy minSpan rather than inventing a floating floor below the lowest low.
-          upperBound = bottomBound + minSpan;
+          // ไม่มีเหวยืนยันใต้ราคา: ใช้ candidateValley หรือปรับตาม minSpanFromPct
+          const candFloor = candidateValley && candidateValley.price <= price
+            ? candidateValley.price
+            : curCeil - minSpanFromPct;
+          curFloor = candFloor;
+          if (candidateValley && candidateValley.price <= price) {
+            activeValley = candidateValley;
+          }
         }
-      }
-      clampStatus = "CLAMPED_MIN";
-    }
 
-    // 🔒 Hard Guarantee: Channel span MUST NEVER exceed maxSpan!
-    if (upperBound - bottomBound > maxSpan) {
-      if (price < (upperBound + bottomBound) / 2) {
-        upperBound = bottomBound + maxSpan;
-      } else {
-        // Look for an unbroken confirmed valley below price to lift the floor legitimately
-        const unbrokenValleysBelow = canonicalLows
-          .filter((l) => l.price < price && isUnbrokenValley(l, canonicalLows))
-          .sort((a, b) => b.price - a.price);
-        const validValley = unbrokenValleysBelow.find(
-          (l) => upperBound - l.price <= maxSpan && upperBound - l.price >= minSpan
-        ) ?? unbrokenValleysBelow.find((l) => upperBound - l.price <= maxSpan);
+        // ตรวจสอบความกว้างขั้นต่ำ (Min Channel Width Guarantee)
+        if (curCeil - curFloor < minSpanFromPct) {
+          const deeperValley = canonicalLows.find(
+            (l) => l.price < curFloor && isUnbrokenValley(l, canonicalLows) && (curCeil - l.price) <= maxSpanFromPct
+          );
+          if (deeperValley && curCeil - deeperValley.price >= minSpanFromPct) {
+            curFloor = deeperValley.price;
+            activeValley = deeperValley;
+          } else {
+            curFloor = curCeil - minSpanFromPct;
+          }
+          clampStatus = "CLAMPED_MIN";
+        }
 
-        if (validValley && validValley.price > bottomBound) {
-          bottomBound = validValley.price;
-          activeValley = validValley;
+        // ตรวจสอบความกว้างสูงสุด (Max Channel Width Guarantee)
+        if (curCeil - curFloor > maxSpanFromPct) {
+          curFloor = curCeil - maxSpanFromPct;
+          clampStatus = "CLAMPED_MAX";
+        }
+      } else if (nearestValley || unbrokenValleysBelow.length > 0) {
+        // ── Case B: ใกล้เหวมากกว่า -> เลือกล็อก "เหว (Valley)" เป็นแนวรับหลักก่อน (Floor) ──
+        const vAnchor = nearestValley ?? unbrokenValleysBelow[0]!;
+        curFloor = vAnchor.price;
+        activeValley = vAnchor;
+        anchorSide = "LOWER_FLOOR";
+
+        // ค้นหายอด (Peak) ที่เป็นไปได้มาประกบคู่ (จะไกลแค่ไหนก็ได้ แต่เลือกที่ใกล้ก่อน แต่ที่ไกลกว่า ใกล้กับความกว้างขั้นต่ำมากกว่า ก็เลือกได้)
+        if (unbrokenPeaksAbove.length > 0) {
+          // กลุ่มที่ให้ความกว้างอยู่ในเกณฑ์ [minSpan, maxSpan]
+          const validPeaks = unbrokenPeaksAbove.filter((p) => {
+            const w = p.price - curFloor;
+            return w >= minSpanFromPct && w <= maxSpanFromPct;
+          });
+
+          if (validPeaks.length > 0) {
+            // เลือกยอดที่ให้ความกว้างใกล้เคียงกับ minSpanFromPct ที่สุด
+            let chosen = validPeaks[0]!;
+            let bestDiff = (chosen.price - curFloor) - minSpanFromPct;
+            for (let i = 1; i < validPeaks.length; i++) {
+              const p = validPeaks[i]!;
+              const diffNext = (p.price - curFloor) - minSpanFromPct;
+              if (diffNext < bestDiff) {
+                bestDiff = diffNext;
+                chosen = p;
+              }
+            }
+            curCeil = chosen.price;
+            activePeak = chosen;
+          } else {
+            // หากไม่มียอดใดที่กว้างถึง minSpanFromPct:
+            // เลือกยอดที่ให้ความกว้างใกล้ minSpanFromPct ที่สุด (ยอดที่สูงที่สุดที่ไม่เกิน maxSpanFromPct)
+            let chosen = unbrokenPeaksAbove[0]!;
+            let bestDiff = Math.abs((chosen.price - curFloor) - minSpanFromPct);
+            for (let i = 1; i < unbrokenPeaksAbove.length; i++) {
+              const p = unbrokenPeaksAbove[i]!;
+              const w = p.price - curFloor;
+              if (w > maxSpanFromPct) continue;
+              const diff = Math.abs(w - minSpanFromPct);
+              if (diff < bestDiff) {
+                bestDiff = diff;
+                chosen = p;
+              }
+            }
+            curCeil = chosen.price;
+            activePeak = chosen;
+
+            // หากยังแคบกว่า minSpanFromPct ให้ขยาย Ceiling ขึ้นไปให้ได้ minSpanFromPct พอดี
+            if (curCeil - curFloor < minSpanFromPct) {
+              curCeil = curFloor + minSpanFromPct;
+              clampStatus = "CLAMPED_MIN";
+            }
+          }
         } else {
-          // 🔒 Anchor Support Protection: Never artificially push floor up into thin air above actual swing support!
-          // If no closer confirmed valley exists, keep bottomBound anchored to the actual swing low and cap ceiling instead
-          upperBound = Math.max(price * 1.0005, bottomBound + maxSpan);
+          // ไม่มียอดยืนยันเหนือราคา: ใช้ candidatePeak หรือปรับตาม minSpanFromPct
+          const candCeil = candidatePeak && candidatePeak.price >= price
+            ? candidatePeak.price
+            : curFloor + minSpanFromPct;
+          curCeil = candCeil;
+          if (candidatePeak && candidatePeak.price >= price) {
+            activePeak = candidatePeak;
+          }
         }
+
+        // ตรวจสอบความกว้างขั้นต่ำ (Min Channel Width Guarantee)
+        if (curCeil - curFloor < minSpanFromPct) {
+          const higherPeak = canonicalHighs.find(
+            (h) => h.price > curCeil && isUnbrokenPeak(h, canonicalHighs) && (h.price - curFloor) <= maxSpanFromPct
+          );
+          if (higherPeak && higherPeak.price - curFloor >= minSpanFromPct) {
+            curCeil = higherPeak.price;
+            activePeak = higherPeak;
+          } else {
+            curCeil = curFloor + minSpanFromPct;
+          }
+          clampStatus = "CLAMPED_MIN";
+        }
+
+        // ตรวจสอบความกว้างสูงสุด (Max Channel Width Guarantee)
+        if (curCeil - curFloor > maxSpanFromPct) {
+          curCeil = curFloor + maxSpanFromPct;
+          clampStatus = "CLAMPED_MAX";
+        }
+      } else {
+        // Fallback หากไม่มีทั้งยอดและเหว
+        curCeil = price * (1 + minPct / 2);
+        curFloor = price * (1 - minPct / 2);
       }
-      clampStatus = "CLAMPED_MAX";
+
+      // ป้องกันราคาหลุดกรอบ (Price Containment Guarantee)
+      if (price > curCeil) curCeil = price * 1.0005;
+      if (price < curFloor) curFloor = price * 0.9995;
+
+      upperBound = curCeil;
+      bottomBound = curFloor;
+      isSwingConfirmed = true;
+
+      rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
+      minWidthPct = (minSpan / price) * 100;
+      maxWidthPct = (maxSpan / price) * 100;
     }
 
     const lastHigh = this.swingHighs[this.swingHighs.length - 1];
