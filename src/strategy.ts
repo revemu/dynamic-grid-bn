@@ -1523,6 +1523,9 @@ export class DynamicGrid {
       if (typeof data.breakdownLowPrice === "number") {
         this.breakdownLowPrice = data.breakdownLowPrice;
       }
+      if (typeof data.breakdownBuyLevel2Price === "number") {
+        this.breakdownBuyLevel2Price = data.breakdownBuyLevel2Price;
+      }
       if (typeof data.breakdownTime === "number") {
         this.breakdownTime = data.breakdownTime;
       } else if (typeof data.brokenValleyTime === "number") {
@@ -1674,6 +1677,7 @@ export class DynamicGrid {
         waitingForHigherLow: this.waitingForHigherLow,
         breakdownFloorPrice: this.breakdownFloorPrice,
         breakdownLowPrice: this.breakdownLowPrice,
+        breakdownBuyLevel2Price: this.breakdownBuyLevel2Price,
         breakdownTime: this.breakdownTime,
         lastCutLossTime: this.lastCutLossTime,
         postCutSingleTrancheOnly: this.postCutSingleTrancheOnly,
@@ -2258,11 +2262,24 @@ export class DynamicGrid {
         ? [...gridZone.sellLevels]
         : sellPcts.map((pct) => lowerBound + rawSpan * (pct / 100));
 
+      if (this.waitingForHigherLow && buyLevels.length > 1 && buyLevels[1] > 0) {
+        if (!this.breakdownBuyLevel2Price || Math.abs(this.breakdownBuyLevel2Price - buyLevels[1]) > 0.0001) {
+          this.breakdownBuyLevel2Price = buyLevels[1];
+        }
+      }
+
       if (adjustOnClosedOnly && lastClosedTime > 0) {
         if (this.confirmedChannel && this.confirmedChannel.candleTime !== lastClosedTime) {
           this.log(
             `📊 [CONFIRMED CHANNEL] Candle closed @ $${calculationPrice.toFixed(6)} — Adjusted channel bounds: [$${lowerBound.toFixed(6)} .. $${upperBound.toFixed(6)}] (Center: $${centerPrice.toFixed(6)})`,
           );
+          if (this.waitingForHigherLow && buyLevels.length > 1 && buyLevels[1] > 0) {
+            this.log(
+              `🔄 [CHANNEL SHIFT] Updated recovery Buy Level 2 to new channel L2: $${buyLevels[1].toFixed(4)} (Floor: $${lowerBound.toFixed(4)})`,
+            );
+            this.breakdownBuyLevel2Price = buyLevels[1];
+            this.saveState();
+          }
         }
         this.confirmedChannel = {
           candleTime: lastClosedTime,
@@ -2511,11 +2528,8 @@ export class DynamicGrid {
     // 1. Reclaiming & standing above Buy Level 2 (30% Zone) for >= 1 candle bar
     // 2. Trendline Breakout (2-candle confirmation)
     // 3. Confirmed Higher Low (HL)
-    // 🔒 ANCHOR TO BROKEN STRUCTURE: Never use the shifted lower grid L2 to trigger recovery while dumping!
-    const originalBrokenL2 = this.breakdownBuyLevel2Price ?? this.breakdownFloorPrice;
-    const effectiveBuyLevel2Target = originalBrokenL2 !== undefined && originalBrokenL2 > 0
-      ? originalBrokenL2
-      : (buyLevels[1] ?? (lowerBound + span * 0.30));
+    const currentBuyLevel2 = buyLevels.length > 1 && buyLevels[1] > 0 ? buyLevels[1] : undefined;
+    const effectiveBuyLevel2Target = currentBuyLevel2 ?? this.breakdownBuyLevel2Price ?? this.breakdownFloorPrice ?? (lowerBound + span * 0.32);
 
     if (this.waitingForHigherLow) {
       if (this.breakdownLowPrice === undefined || refPrice < this.breakdownLowPrice) {
@@ -2531,9 +2545,9 @@ export class DynamicGrid {
       const closedCandlesList = this.dowEngine?.getClosedCandles() ?? [];
       const confirmedLastClosed = closedCandlesList.length > 0 ? closedCandlesList[closedCandlesList.length - 1] : undefined;
 
-      // 1. Resolve via standing above Buy Level 2 (30% Zone) of the ORIGINAL broken structure
+      // 1. Resolve via standing above Buy Level 2 of the confirmed channel
       // 🔒 STRICT RULE: Only confirmed CLOSED candle body (never live-tick / unconfirmed candle)
-      // and price MUST have re-entered at or above the original broken L2 target!
+      // and price MUST have re-entered at or above the confirmed L2 target!
       const isCandleStandingAboveBuy2 = Boolean(
         confirmedLastClosed &&
         confirmedLastClosed.close >= effectiveBuyLevel2Target * 0.9995 &&
@@ -2547,7 +2561,7 @@ export class DynamicGrid {
         );
       } else if (this.cfg.enableBuyLevel2Recovery && isCandleStandingAboveBuy2) {
         this.log(
-          `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle above Original Broken L2 $${effectiveBuyLevel2Target.toFixed(6)}) — Floor breakdown resolved, resuming grid accumulation!`,
+          `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle above Buy Level 2 $${effectiveBuyLevel2Target.toFixed(6)}) — Floor breakdown resolved, resuming grid accumulation!`,
         );
         this.waitingForHigherLow = false;
         this.breakdownTime = undefined;

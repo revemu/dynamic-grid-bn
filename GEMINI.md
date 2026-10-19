@@ -1605,3 +1605,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - หากหาสวิงจริงที่เข้าเกณฑ์ไม่ได้ บอทจะเข้าสู่โหมด `[Paused: Waiting for Dow Swings]` / `⚪ ไม่มีกรอบสวิงที่เข้าเกณฑ์ (หยุดรอสวิง)` ไม่เปิดไม้ใหม่จนกว่าจะมีโครงสร้างสวิงจริง
 
 
+
+
+---
+
+### 27. Dynamic Channel Shift Buy Level 2 Target Reset & Recovery (`src/strategy.ts` & `src/db.ts`)
+- **สาเหตุของปัญหา**:
+  1. **เป้าหมาย Buy Level 2 ค้างที่ Floor เดิมเมื่อราคาหลุดกรอบ (`breakdownBuyLevel2Price` State Loss)**:
+     - เมื่อราคาหลุด Floor เดิม (เช่น $2422.5100) บอทเข้าสู่โหมด `waitingForHigherLow = true`
+     - แต่ข้อความแสดงบนสถานะและแถบควบคุมระบุ `Wait HL > $2422.2000 or Stand above Buy 2 ($2422.5100)` ซึ่งราคาเป้าหมาย Buy 2 ดันเป็นราคาเดียวกับ Floor ที่หลุด ($2422.5100)
+     - สาเหตุเกิดจาก `this.breakdownBuyLevel2Price` ไม่ได้ถูกกำหนดใน Interface `StrategyStateRecord` ใน `src/db.ts` และไม่ได้ถูกบันทึก/โหลดใน `saveState()` และ `loadState()` ของ `DynamicGrid`
+     - เมื่อค่าเป็น `undefined` โค้ดคำนวณจึงตกลงไปใช้ fallback: `originalBrokenL2 = this.breakdownBuyLevel2Price ?? this.breakdownFloorPrice` ซึ่งกลายเป็นตัวเลข Floor เดิม ($2422.5100)
+  2. **เมื่อกรอบราคาขยับ (Channel Shift) เป้าหมาย Buy Level 2 ไม่ได้ขยับตามกรอบใหม่**:
+     - เมื่อแท่งเทียนปิดและสร้างโครงสร้างกรอบราคาใหม่ (เช่น Floor: $2416.33, Ceiling: $2495.58) ระดับ Buy Level 2 ของกรอบใหม่อยู่ที่ `$2441.69`
+     - แต่ระบบเดิมไม่มีตรรกะตรวจจับการปรับกรอบเพื่ออัปเดต `this.breakdownBuyLevel2Price` ส่งผลให้เป้าหมายการ Recovery ยังคงยึดติดอยู่กับกรอบเก่า
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **Persistence & State Sync (`src/db.ts` & `src/strategy.ts`)**:
+     - เพิ่ม `breakdownBuyLevel2Price?: number;` ลงใน `StrategyStateRecord` ใน `src/db.ts`
+     - บันทึกและกู้คืน `breakdownBuyLevel2Price` ใน `loadState()` และ `saveState()` ใน `src/strategy.ts` ป้องกันการสูญหายของ State เมื่อรีสตาร์ทบอท
+  2. **Dynamic Channel Shift Reset**:
+     - ใน `src/strategy.ts`: เมื่อเกิดการปรับกรอบราคาในแท่งเทียนปิดสมบูรณ์ (`adjustOnClosedOnly` candle close) หากอยู่ในสถานะ `waitingForHigherLow` ระบบจะรีเซ็ต `this.breakdownBuyLevel2Price = buyLevels[1]` ให้ตรงกับ Buy Level 2 ของกรอบใหม่ทันที (เช่น $2441.69)
+     - มี Log แสดงชัดเจน: `🔄 [CHANNEL SHIFT] Updated recovery Buy Level 2 to new channel L2: $... (Floor: $...)` และเซฟลง DB ทันที
+  3. **New Channel Buy Level 2 Recovery Target**:
+     - ปรับปรุงการคำนวณ `effectiveBuyLevel2Target` ให้ใช้ `currentBuyLevel2 = buyLevels[1]` ของกรอบปัจจุบันเป็นอันดับแรก
+     - เมื่อแท่งเทียนที่ยืนยันแล้วปิดราคาเหนือ Buy Level 2 ของกรอบใหม่ ($2441.69) ระบบจะยืนยันการฟื้นตัว ปลดล็อก `waitingForHigherLow = false` และกลับมาเข้าซื้อสะสมในกรอบใหม่อย่างปลอดภัยตามความต้องการของผู้ใช้

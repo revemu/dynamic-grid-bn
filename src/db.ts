@@ -69,6 +69,7 @@ export interface StrategyStateRecord {
   waitingForHigherLow?: boolean;
   breakdownFloorPrice?: number;
   breakdownLowPrice?: number;
+  breakdownBuyLevel2Price?: number;
   breakdownTime?: number;
   brokenValleyTime?: number;
   brokenValleyPrice?: number;
