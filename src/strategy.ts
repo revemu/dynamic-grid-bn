@@ -3323,6 +3323,14 @@ export class DynamicGrid {
         nextTrigger: `Wait trend reversal or Higher Low`,
         severity: "warning",
       };
+    } else if (dow?.isSwingConfirmed === false) {
+      botActionState = {
+        code: "NO_VALID_CHANNEL_WARMUP",
+        title: "⏳ No Valid Channel (Standby)",
+        reason: `ไม่มีคู่ยอด-เหวที่ความกว้างอยู่ในช่วง [${(this.cfg.minChannelWidthPct ?? 1.8).toFixed(1)}%..${(this.cfg.maxChannelWidthPct ?? 6.0).toFixed(1)}%] • หยุดเล่นไปก่อน`,
+        nextTrigger: "รอแท่งเทียนยืนยันยอด/เหวใหม่ที่อยู่ในเกณฑ์ความกว้าง",
+        severity: "warning",
+      };
     } else if (this.isSqueezePaused) {
       botActionState = {
         code: "TRIANGLE_SQUEEZE_STANDBY",
@@ -3707,7 +3715,7 @@ export class DynamicGrid {
           `| Zone: ${zoneName} | Position: ${positionSummary}${openOrdersSummary}` +
           ` | Wallet: ${this.walletBaseBalance.toFixed(2)} ${this.baseAsset} / $${this.walletQuoteBalance.toFixed(2)} ${this.quoteAsset}` +
           ` | Speed: ${((this.cfg.intervalMs ?? 2000) / 1000).toFixed(1)}s` +
-          ` | Next Buy: $${buyTrigger.toFixed(6)}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${downtrendDropPaused ? ` ${downtrendDropReason}` : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
+          ` | Next Buy: $${buyTrigger.toFixed(6)}${dow?.isSwingConfirmed === false ? " [Paused: No Valid Channel]" : ""}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${downtrendDropPaused ? ` ${downtrendDropReason}` : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
           ` | Next Sell: $${sellTrigger.toFixed(6)}` +
           trendlineSummary +
           uptrendSummary +
@@ -3845,7 +3853,7 @@ export class DynamicGrid {
       this.sellOrdersActive = true;
     }
 
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive;
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive && (dow?.isSwingConfirmed !== false);
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
       await this.executeIocBracketGrid(
