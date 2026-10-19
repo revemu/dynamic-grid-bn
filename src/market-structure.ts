@@ -1476,23 +1476,14 @@ export class DowStructureEngine {
             .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
             .sort((a, b) => b.price - a.price);
 
-      // ให้ความสำคัญกับเหวในคลื่นปัจจุบัน (activeWaveBaseIndex ขึ้นไป) ที่สามารถจับคู่กับยอดต้านที่ยังไม่ถูกทำลายได้ความกว้างตามเกณฑ์ก่อน
-      // เพื่อไม่ให้ข้ามฐานคลื่นปัจจุบัน (เช่น LL $103.00) ถอยกลับไปเกาะเหวเก่าข้ามวัน (เช่น $101.56)
-      const activeWaveReachableValleys = allUnbrokenValleysBelow.filter(
-        (l) => l.index >= activeWaveBaseIndex && canReachMinSpanWithPeak(l.price)
-      );
-      const validWidthValleys = allUnbrokenValleysBelow.filter(
-        (l) => curCeil - l.price >= minSpanFromPct && curCeil - l.price <= maxSpanFromPct
-      );
+      // ยึดเหวที่ใกล้ราคาปัจจุบันที่สุดในคลื่นปัจจุบันก่อนเสมอ (Nearest Confirmed Valley in Active Wave)
+      // เพื่อให้กรอบเริ่มจากโครงสร้างที่กระชับรอบราคาที่สุด แล้วค่อยขยายออกเท่าที่จำเป็นตาม minSpan แทนการกระโดดข้ามไปหาเหวมหึมาที่อยู่ไกล
+      const activeWaveValleys = allUnbrokenValleysBelow.filter((l) => l.index >= activeWaveBaseIndex);
 
       let curFloor: number;
-      if (activeWaveReachableValleys.length > 0) {
-        curFloor = activeWaveReachableValleys[0]!.price;
-        activeValley = activeWaveReachableValleys[0]!;
-      } else if (validWidthValleys.length > 0) {
-        // เกาะเหวที่ยืนยันแล้วที่ใกล้ราคาที่สุดซึ่งมีความกว้างอยู่ในเกณฑ์ [minSpan, maxSpan]
-        curFloor = validWidthValleys[0]!.price;
-        activeValley = validWidthValleys[0]!;
+      if (activeWaveValleys.length > 0) {
+        curFloor = activeWaveValleys[0]!.price;
+        activeValley = activeWaveValleys[0]!;
       } else if (allUnbrokenValleysBelow.length > 0) {
         curFloor = allUnbrokenValleysBelow[0]!.price;
         activeValley = allUnbrokenValleysBelow[0]!;
@@ -1531,53 +1522,28 @@ export class DowStructureEngine {
       }
 
       // 2. ถ้าความกว้างระหว่างยอดและเหวยังน้อยกว่า minSpanFromPct
-      // ให้ขยาย Ceiling ขึ้นไปหายอดต้านที่ยืนยันแล้วถัดไป (LH/HH ที่ยังไม่ถูกทำลาย) ก่อน เพื่อรักษาฐานของคลื่นปัจจุบัน
+      // ให้ขยาย Ceiling ขึ้นไปหายอดต้านที่ยืนยันแล้วถัดไป (LH/HH ที่ยังไม่ถูกทำลาย) เพื่อรักษาฐานแนวรับที่ใกล้ราคาปัจจุบัน
       if (curCeil - curFloor < minSpanFromPct) {
         const higherConfirmedHighs = canonicalHighs
           .filter((h) => h.price > curCeil && isUnbrokenPeak(h, canonicalHighs))
           .sort((a, b) => a.price - b.price); // เรียงจากต่ำไปสูง
-        const lowerConfirmedLows = canonicalLows
-          .filter((l) => l.price < curFloor && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
-          .sort((a, b) => b.price - a.price); // เรียงจากสูงไปต่ำ
 
         let hIdx = 0;
-        let lIdx = 0;
-        while (curCeil - curFloor < minSpanFromPct && (hIdx < higherConfirmedHighs.length || lIdx < lowerConfirmedLows.length)) {
-          const nextH = hIdx < higherConfirmedHighs.length ? higherConfirmedHighs[hIdx]! : undefined;
-          const nextL = lIdx < lowerConfirmedLows.length ? lowerConfirmedLows[lIdx]! : undefined;
-
-          const needed = minSpanFromPct - (curCeil - curFloor);
-          const lDist = nextL !== undefined ? curFloor - nextL.price : Infinity;
-
-          // ให้ความสำคัญกับการขยาย Ceiling ขึ้นไปเกาะยอดต้านที่ยืนยันแล้ว (LH/HH ที่ยังไม่ถูกทำลาย) ก่อน
-          // เพื่อให้ฐานกรอบเกาะอยู่ที่ฐานคลื่นปัจจุบัน (เช่น LL $103.00 คู่กับ LH $106.54) โดยไม่ถอยไปเกาะเหวเก่าข้ามวัน
-          if (nextH !== undefined && (nextH.price - curFloor) <= maxSpanFromPct) {
+        while (curCeil - curFloor < minSpanFromPct && hIdx < higherConfirmedHighs.length) {
+          const nextH = higherConfirmedHighs[hIdx]!;
+          if ((nextH.price - curFloor) <= maxSpanFromPct) {
             curCeil = nextH.price;
             activePeak = nextH;
             hIdx++;
-          } else if (nextL !== undefined && (curCeil - nextL.price) <= maxSpanFromPct && lDist <= needed * 2.0) {
-            curFloor = nextL.price;
-            activeValley = nextL;
-            lIdx++;
           } else {
             break;
           }
         }
 
-        // 🔒 หากสวิงยืนยันหมดแล้วแต่ความกว้างยังไม่ถึง minSpanFromPct:
-        // ในขาลง / หลุดฐาน ให้ยึดฐาน LL เป็นหลักเสมอ (curFloor) แล้วขยับ Ceiling (curCeil) ขึ้นไปเติมเต็ม minChannelWidthPct
-        // ห้ามกด curFloor ลงไปลอยในอากาศใต้เหว LL จริง
+        // 🔒 หากสวิงต้านยืนยันหมดแล้วแต่ความกว้างยังไม่ถึง minSpanFromPct:
+        // ให้ยึดฐาน Floor ที่ใกล้ราคาไว้ แล้วขยับ Ceiling ขึ้นไปเติมเต็มความกว้างขั้นต่ำ (minChannelWidthPct)
         if (curCeil - curFloor < minSpanFromPct) {
-          const needed = minSpanFromPct - (curCeil - curFloor);
-          const higherPeaks = canonicalHighs
-            .filter((h) => h.price > curCeil && (h.price - curFloor) <= maxSpanFromPct)
-            .sort((a, b) => a.price - b.price);
-          if (higherPeaks.length > 0) {
-            curCeil = higherPeaks[0]!.price;
-            activePeak = higherPeaks[0]!;
-          } else {
-            curCeil = curFloor + minSpanFromPct;
-          }
+          curCeil = curFloor + minSpanFromPct;
         }
       }
 
