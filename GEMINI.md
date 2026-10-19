@@ -1661,3 +1661,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - 2. ราคาแท่งเทียนปิดสมบูรณ์ยืนเหนือ **Buy Level 2** ของกรอบใหม่
      - 3. เกิดการ **Breakout ทะลุเส้น Downtrend Line**
      - เมื่อเข้าเงื่อนไขใดเงื่อนไขหนึ่ง ระบบจะปลดล็อก `waitingForHigherLow = false` และเริ่มสะสมกริดบนฐานแนวรับที่มั่นคง 100%
+
+---
+
+### 29. True Swing-Pair Percentage Width Calculation & False Floor Alert Cleanup (`src/market-structure.ts` & `src/strategy.ts`)
+- **สาเหตุของปัญหา**:
+  1. **การคำนวณระยะห่างขั้นต่ำผิดพลาดโดยนำราคาปัจจุบัน (`refPrice`) ไปคูณ `%`**:
+     - ใน `src/market-structure.ts`: เดิมคำนวณ `minSpan = price * minPct` (เช่น `2396.6 * 0.03 = 71.898`) แล้วนำไปเปรียบเทียบกับความกว้างของคู่สวิง `w = p.price - v.price >= minSpan`
+     - ส่งผลให้เมื่อยอดคือ `$2433.00` และเหวคือ `$2361.18` (ระยะห่างจริง `w = 71.82 USD` ซึ่งคิดเป็น `%` จากเหวคือ `(2433 - 2361.18) / 2361.18 = 3.0417%` ซึ่งผ่านเกณฑ์ `minChannelWidthPct = 3.0%` จริงๆ)
+     - แต่เนื่องจากราคาปัจจุบันวิ่งขึ้นไปอยู่ที่ `$2396.60` ทำให้ `minSpan = 71.898 USD` ระบบจึงมองว่า `71.82 < 71.898` (ขาดไปเพียง 0.08 USD) และปฏิเสธเหว `$2361.18` แล้วไหลลงไปเลือกก้นเหวมหึมา `LL $2334.10` ด้านล่างแทน ทำให้กรอบบวมเป็น 4.24%
+  2. **การแจ้งเตือนผิดพลาด `Price < 0% Floor` ทั้งที่ราคาอยู่สูงกว่า Floor จริง**:
+     - ใน `src/strategy.ts` (เดิมบรรทัด 2599): `isBelowFloor` มีเงื่อนไขแฝง `|| (this.waitingForHigherLow && this.breakdownFloorPrice !== undefined && refPrice < this.breakdownFloorPrice)`
+     - ซึ่ง `this.breakdownFloorPrice` ยังคงเก็บค่า Floor ของรอบก่อนหน้า (`$2422.51`) ไว้ ทำให้เมื่อราคาหลุดรอบก่อนแล้วเกิดกรอบใหม่ที่ Floor `$2334.10` แม้ราคาปัจจุบัน `$2396.60` จะอยู่สูงกว่า Floor ใหม่ถึง 62.5 ดอลลาร์ แต่ระบบยังมองว่า `2396.60 < 2422.51` และขึ้นข้อความผิดพลาดว่า `Price < 0% Floor ($2334.1000)`
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **True Percentage Width Calculation Directly Between Candidate Swings (`src/market-structure.ts`)**:
+     - คำนวณ `%` ความกว้างระหว่างคู่สวิง Peak และ Valley โดยตรง:
+       `const wPct = ((p.price - v.price) / v.price) * 100;`
+       และตรวจสอบ `wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;`
+     - ยกเลิกการนำราคาปัจจุบัน (`price`) มาคูณแปลงเป็น `minSpan / maxSpan` ในการคัดเลือกคู่สวิงกรอบราคาโดยเด็ดขาด ทำให้การวัดระยะห่างสะท้อนสัดส่วนจริงของโครงสร้างสวิง 100%
+     - ส่งผลให้ยอด `$2433.00` และเหว `$2361.18` (กว้าง 3.04%) ผ่านเกณฑ์ความกว้างขั้นต่ำ (3.0%) และถูกเลือกล็อกเป็นกรอบราคาที่แคบที่สุดได้ถูกต้องทันที
+  2. **Cleanup of `isBelowFloor` Evaluation (`src/strategy.ts`)**:
+     - ปรับให้ `isBelowFloor = isChannelReady && refPrice < lowerBound;` เทียบกับ Floor ของกรอบปัจจุบันเท่านั้น ไม่นำ `this.breakdownFloorPrice` ของรอบก่อนหน้ามาปะปน
+     - ป้องกันการแจ้งเตือนผิดพลาดบนหน้าเว็บแดชบอร์ด

@@ -2596,7 +2596,7 @@ export class DynamicGrid {
 
     this.lastEvaluatedFloor = lowerBound;
     this.lastEvaluatedCeil = upperBound;
-    const isBelowFloor = isChannelReady && (refPrice < lowerBound || (this.waitingForHigherLow && this.breakdownFloorPrice !== undefined && refPrice < this.breakdownFloorPrice));
+    const isBelowFloor = isChannelReady && refPrice < lowerBound;
     const isAboveCeiling = isChannelReady && refPrice >= upperBound;
 
     // ── Broken Floor Tracking & Recovery via:

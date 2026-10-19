@@ -1436,8 +1436,10 @@ export class DowStructureEngine {
     let minWidthPct: number | undefined;
     let maxWidthPct: number | undefined;
 
-    const minPct = (options?.minChannelWidthPct ?? 1.8) / 100;
-    const maxPct = (options?.maxChannelWidthPct ?? 6.0) / 100;
+    const minChannelWidthPct = options?.minChannelWidthPct ?? 1.8;
+    const maxChannelWidthPct = options?.maxChannelWidthPct ?? 6.0;
+    const minPct = minChannelWidthPct / 100;
+    const maxPct = maxChannelWidthPct / 100;
     const minSpan = price * minPct;
     const maxSpan = price * maxPct;
 
@@ -1473,9 +1475,6 @@ export class DowStructureEngine {
       // 4. เลือกคู่ที่ความกว้างแคบที่สุดก่อน ("เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน จะโบราณก็ชั่งหัวมัน มันมีแค่ 193 จุด")
       // 5. หากหาคู่ในช่วง range ไม่ได้: ไม่สร้างกรอบเทียม หยุดเล่นไปก่อน ("ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน")
 
-      const minSpanFromPct = minSpan;
-      const maxSpanFromPct = maxSpan;
-
       const candidateHighs = confirmedHighs.filter((h) => h.price >= price);
       const candidateLows = confirmedLows.filter((l) => l.price <= price);
 
@@ -1490,22 +1489,27 @@ export class DowStructureEngine {
         mostRecentHigh && (!mostRecentLow || mostRecentHigh.index > mostRecentLow.index)
       );
 
-      let chosenPair: { valley: SwingPoint; peak: SwingPoint; width: number } | undefined;
+      let chosenPair: { valley: SwingPoint; peak: SwingPoint; width: number; widthPct: number } | undefined;
 
       if (isPeakFirst && mostRecentHigh) {
         // ── Case A: เจอยอดก่อน -> เริ่มตรวจจากยอดที่เจอก่อน แล้วสแกนยอดถัดไปหากยอดแรกหาเหวในเกณฑ์ไม่ได้ ──
         for (const p of sortedHighsByRecency) {
           const validValleys = candidateLows.filter((v) => {
             const w = p.price - v.price;
-            return w >= minSpanFromPct && w <= maxSpanFromPct;
+            if (w <= 0 || v.price <= 0) return false;
+            const wPct = (w / v.price) * 100;
+            return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
           });
           if (validValleys.length > 0) {
             // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
             validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price));
+            const bestValley = validValleys[0]!;
+            const w = p.price - bestValley.price;
             chosenPair = {
               peak: p,
-              valley: validValleys[0]!,
-              width: p.price - validValleys[0]!.price,
+              valley: bestValley,
+              width: w,
+              widthPct: (w / bestValley.price) * 100,
             };
             anchorSide = "UPPER_CEILING";
             break;
@@ -1516,15 +1520,20 @@ export class DowStructureEngine {
         for (const v of sortedLowsByRecency) {
           const validPeaks = candidateHighs.filter((p) => {
             const w = p.price - v.price;
-            return w >= minSpanFromPct && w <= maxSpanFromPct;
+            if (w <= 0 || v.price <= 0) return false;
+            const wPct = (w / v.price) * 100;
+            return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
           });
           if (validPeaks.length > 0) {
             // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
             validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price));
+            const bestPeak = validPeaks[0]!;
+            const w = bestPeak.price - v.price;
             chosenPair = {
-              peak: validPeaks[0]!,
+              peak: bestPeak,
               valley: v,
-              width: validPeaks[0]!.price - v.price,
+              width: w,
+              widthPct: (w / v.price) * 100,
             };
             anchorSide = "LOWER_FLOOR";
             break;
@@ -1540,9 +1549,9 @@ export class DowStructureEngine {
         isSwingConfirmed = true;
         clampStatus = "NATURAL_SWING";
 
-        rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
-        minWidthPct = (minSpan / price) * 100;
-        maxWidthPct = (maxSpan / price) * 100;
+        rawWidthPct = chosenPair.widthPct;
+        minWidthPct = minChannelWidthPct;
+        maxWidthPct = maxChannelWidthPct;
       } else {
         // "ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน" / "แต่ถ้าหายอดที่อยู่ใน range ไม่ได้ก็หยุดเล่นไปก่อน"
         isSwingConfirmed = false;
@@ -1553,8 +1562,8 @@ export class DowStructureEngine {
         activeValley = mostRecentLow;
         anchorSide = isPeakFirst ? "UPPER_CEILING" : (mostRecentLow ? "LOWER_FLOOR" : "NONE");
         rawWidthPct = undefined;
-        minWidthPct = (minSpan / price) * 100;
-        maxWidthPct = (maxSpan / price) * 100;
+        minWidthPct = minChannelWidthPct;
+        maxWidthPct = maxChannelWidthPct;
       }
     }
 
