@@ -2957,13 +2957,12 @@ export class DynamicGrid {
     // In MAKER_LIMIT mode: Grid sell targets (Sell Targets 1..5) are strictly handled by resting MAKER limit orders!
     // Never hijack intra-channel grid sell targets with IOC sellAll in Maker mode.
     // Full Take Profit via sellAll is ONLY for reaching true Upper Bound / Ceiling, LH Escape, or when running in IOC_BRACKET mode.
+    const hasOpenRestingSells = !isIocMode && this.openOrders.some((o) => !o.isBid);
     const realCeilingReached =
-      isAboveCeiling ||
-      refPrice >= upperBound ||
-      (bestBid !== undefined && bestBid >= upperBound) ||
+      (!hasOpenRestingSells && (isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound))) ||
       (isIocMode && tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget) ||
       (isLiveRealCeilReached && isProfitableExit) ||
-      isLhEscapeReached;
+      (isLhEscapeReached && isProfitableExit);
 
     if (
       !this.isPaused &&
@@ -2971,18 +2970,21 @@ export class DynamicGrid {
       this.lots.length > 0 &&
       realCeilingReached
     ) {
-      if (!isProfitableExit && !isLhEscapeReached) {
+      if (!isProfitableExit) {
         this.status(
-          `⏳ TAKE PROFIT STANDBY: Price $${refPrice.toFixed(6)} reached Upper Bound ($${upperBound.toFixed(6)}) but DEX Bid $${tpExecBid.toFixed(6)} is below min profit target (+${minTpProfitPct.toFixed(2)}% >= $${(avgEntryPrice * (1 + minTpProfitPct / 100)).toFixed(6)} | Avg Entry: $${avgEntryPrice.toFixed(6)}) — holding for profitable bid`,
+          `⏳ TAKE PROFIT STANDBY: Price $${refPrice.toFixed(6)} reached Upper Bound / Target ($${reachedTargetPrice.toFixed(6)}) but DEX Bid $${tpExecBid.toFixed(6)} is below min profit target (+${minTpProfitPct.toFixed(2)}% >= $${(avgEntryPrice * (1 + minTpProfitPct / 100)).toFixed(6)} | Avg Entry: $${avgEntryPrice.toFixed(6)}) — holding for profitable bid`,
         );
+        return;
       } else if (!isTpBidHealthy) {
         this.status(
           `⏳ TAKE PROFIT STANDBY: Price $${refPrice.toFixed(6)} reached Upper Bound ($${upperBound.toFixed(6)}) but DEX Bid $${tpExecBid.toFixed(6)} is discounted ${tpBidDiscountPct.toFixed(2)}% below Binance (Max allowed: ${tpMaxBidDiscountPct.toFixed(2)}%) — waiting for DEX bid liquidity to catch up`,
         );
+        return;
       } else if (!isBidAtTarget) {
         this.status(
           `⏳ TAKE PROFIT STANDBY: Price $${refPrice.toFixed(6)} reached Upper Bound ($${upperBound.toFixed(6)}) but DEX Bid $${tpExecBid.toFixed(6)} is below target price $${reachedTargetPrice.toFixed(6)} — waiting for bid to reach target`,
         );
+        return;
       } else {
         const exitPrice = tpExecBid;
         const exitTypeLabel = isLhEscapeReached ? "LH DYNAMIC ESCAPE" : "100% TAKE PROFIT";
@@ -3835,8 +3837,10 @@ export class DynamicGrid {
     }
 
     // ── 2a. Resistance IOC Exit: If price tests or touches the active resistance (Trendline or Real S/R Ceil), sell immediately ──
-    const isTlActiveForIoc = (this.cfg.enableSellBelowTrendResistance !== false) && Boolean(downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed);
-    const isRealCeilActiveForIoc = (this.cfg.enableSellAtRealCeiling !== false) && liveRealCeil !== undefined && liveRealCeil > 0 && liveRealCeil < upperBound;
+    // In MAKER_LIMIT mode: Selling at resistance is handled exclusively by resting Maker limit orders! Never execute IOC taker sells.
+    const isIocModeForRes = this.cfg.orderExecutionMode === "IOC_BRACKET";
+    const isTlActiveForIoc = isIocModeForRes && (this.cfg.enableSellBelowTrendResistance !== false) && Boolean(downtrendLine && !downtrendLine.isBroken && !dow?.downtrendBreakoutConfirmed);
+    const isRealCeilActiveForIoc = isIocModeForRes && (this.cfg.enableSellAtRealCeiling !== false) && liveRealCeil !== undefined && liveRealCeil > 0 && liveRealCeil < upperBound;
 
     if (isTlActiveForIoc || isRealCeilActiveForIoc) {
       const tlPrice = (isTlActiveForIoc && downtrendLine) ? downtrendLine.currentLinePrice : Infinity;
@@ -4852,10 +4856,10 @@ export class DynamicGrid {
           const avgEntry = this.getAvgEntryPrice();
           const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * 1.001;
 
-          // Only place resting sell if price is comfortably below resistance (not in immediate IOC execution range)
-          const isNearTL = refPrice >= effectiveTlSellPrice * 0.9995;
+          // In MAKER_LIMIT mode: Keep resting sell order active on the book right below resistance to fill as a Maker!
+          const isBelowSellPrice = refPrice < effectiveTlSellPrice;
 
-          if (isProfitOk && !isNearTL && held >= this.minQty) {
+          if (isProfitOk && isBelowSellPrice && held >= this.minQty) {
             const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
             const targetSellQty = roundToStep(held, this.stepSize || 0.0001, 4);
             const orderNotional = targetSellQty * effectiveTlSellPrice;
@@ -4895,11 +4899,6 @@ export class DynamicGrid {
                 );
               }
             }
-          } else if (isNearTL && existingTlSell) {
-            // Price reached within immediate touch distance: cancel resting order so IOC exit can execute cleanly
-            await this.cancelOrderInternal(existingTlSell, `Price touching ${resDisplayName}: cancelling resting sell for immediate IOC exit`);
-            this.openOrders = this.openOrders.filter((o) => o !== existingTlSell);
-            this.saveState();
           }
         } else {
           // Some sell levels are below resistance.
@@ -6395,10 +6394,15 @@ export class DynamicGrid {
     const now = Date.now();
 
     if (this.cfg.dryRun) {
+      const isCut = action === "CUT";
+      const isManual = action === "MANUAL";
+      const avgEntry = this.getAvgEntryPrice();
       let dryLimitPrice: number;
       if (action === "SELL") {
         const minAllowed = targetPrice * (1 - slippagePctVal / 100);
-        dryLimitPrice = roundToTick(Math.max(minAllowed, price * (1 - slippagePctVal / 100)), this.tickSize || 0.0001);
+        const minProfitMult = this.getMinProfitMultiplier();
+        const minProfitablePrice = avgEntry > 0 ? avgEntry * minProfitMult : minAllowed;
+        dryLimitPrice = roundToTick(Math.max(minProfitablePrice, Math.max(minAllowed, price * (1 - slippagePctVal / 100))), this.tickSize || 0.0001);
       } else if (action === "MANUAL") {
         dryLimitPrice = roundToTick(price, this.tickSize || 0.0001);
       } else {
@@ -6408,13 +6412,19 @@ export class DynamicGrid {
       const oldTradePnl = this.tradeRealizedPnl;
       this.closeLots(held, price);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
+      const effectiveActionLabel = isCut
+        ? "CUT LOSS (SELL ALL)"
+        : (isManual ? "MANUAL SELL ALL (EMERGENCY EXIT)" : (roundPnl >= 0 ? "100% FULL EXIT (TAKE PROFIT)" : "BREAKDOWN EXIT (LOSS)"));
+      const orderAction = isCut
+        ? "CUT"
+        : (isManual ? "EXIT" : (roundPnl >= 0 ? "TAKE_PROFIT" : "BREAKDOWN_EXIT"));
       this.log(
-        `[dry-run] 🚨 ${actionLabel}: ${held.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${dryLimitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
+        `[dry-run] 🚨 ${effectiveActionLabel}: ${held.toFixed(4)} ${this.baseAsset} @ $${price.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${dryLimitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
       );
       this.emit({
         type: "order",
         data: {
-          action: action === "CUT" ? "CUT" : (action === "MANUAL" ? "EXIT" : "TAKE_PROFIT"),
+          action: orderAction,
           status: "FILLED",
           price,
           qty: held,
@@ -6424,8 +6434,8 @@ export class DynamicGrid {
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
-          levelDesc: actionLabel,
-          reason: actionLabel,
+          levelDesc: effectiveActionLabel,
+          reason: effectiveActionLabel,
           time: now,
           dryRun: true,
           maker: false,
@@ -6506,10 +6516,10 @@ export class DynamicGrid {
         const avgEntry = this.getAvgEntryPrice();
         const slippagePct = slippagePctVal / 100;
         if (action === "SELL") {
-          // Take profit / Resistance IOC: limitPrice allows matching down to targetPrice * (1 - slippagePct), while staying above avg entry if profit required
+          // Take profit / Resistance IOC: limitPrice allows matching down to targetPrice * (1 - slippagePct), while staying strictly above avg entry
           const minAllowedBySlippage = targetPrice * (1 - slippagePct);
-          const isStrictProfitRequired = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT";
-          const minProfitablePrice = (isStrictProfitRequired && avgEntry > 0) ? avgEntry * 1.0005 : minAllowedBySlippage;
+          const minProfitMult = this.getMinProfitMultiplier();
+          const minProfitablePrice = avgEntry > 0 ? avgEntry * minProfitMult : minAllowedBySlippage;
           const minAllowedPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
           const basePrice = (price > 0) ? price : targetPrice;
           limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct));
@@ -6578,13 +6588,21 @@ export class DynamicGrid {
       this.closeLots(actualQty, actualPrice);
       const roundPnl = this.tradeRealizedPnl - oldTradePnl;
       const effectiveSlipPct = (action === "MANUAL" && limitPrice >= targetPrice) ? 0 : slippagePctVal;
+      const isCut = action === "CUT";
+      const isManual = action === "MANUAL";
+      const effectiveActionLabel = isCut
+        ? "CUT LOSS (SELL ALL)"
+        : (isManual ? "MANUAL SELL ALL (EMERGENCY EXIT)" : (roundPnl >= 0 ? "100% FULL EXIT (TAKE PROFIT)" : "BREAKDOWN EXIT (LOSS)"));
+      const orderAction = isCut
+        ? "CUT"
+        : (isManual ? "EXIT" : (roundPnl >= 0 ? "TAKE_PROFIT" : "BREAKDOWN_EXIT"));
       this.log(
-        `🚨 ON-CHAIN ${actionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${actualPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
+        `🚨 ON-CHAIN ${effectiveActionLabel}: ${actualQty.toFixed(4)} ${this.baseAsset} @ $${actualPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.emit({
         type: "order",
         data: {
-          action: action === "CUT" ? "CUT" : (action === "MANUAL" ? "EXIT" : "TAKE_PROFIT"),
+          action: orderAction,
           status: "FILLED",
           price: actualPrice,
           qty: actualQty,
@@ -6594,8 +6612,8 @@ export class DynamicGrid {
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
-          levelDesc: actionLabel,
-          reason: actionLabel,
+          levelDesc: effectiveActionLabel,
+          reason: effectiveActionLabel,
           time: now,
           dryRun: false,
           txHash: res.txHash,
@@ -6608,7 +6626,7 @@ export class DynamicGrid {
         },
       });
       if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
-        this.trackTxGas(res.txHash, actionLabel);
+        this.trackTxGas(res.txHash, effectiveActionLabel);
       }
       await this.refreshWalletBalances();
       if (this.walletBaseBalance - minGasReserveBase <= (this.minQty || 0.0001)) {

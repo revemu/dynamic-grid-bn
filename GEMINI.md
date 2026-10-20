@@ -1704,3 +1704,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - หากยอดล่าสุดไม่มีเหวที่เข้าเกณฑ์ $\rightarrow$ **"หยุดเล่นทันที (ไม่มีกรอบ / WARMUP)"** ห้ามกระโดดข้ามไปขุดเอายอดเก่าในอดีตมาเล่นเด็ดขาด
      - **กรณีเจอเหวก่อน**: ยึดเหวล่าสุด (`mostRecentLow`) เป็นตัวตั้งแนวรับหลักเท่านั้น หากไม่มีสวิงยอดใดที่เข้าเกณฑ์ $\rightarrow$ **"หยุดเล่นทันที"** ไม่ถอยหลังไปขุดเหวเก่า
 
+
+---
+
+### 31. Strict Maker Limit Execution, Elimination of Resistance IOC Hijack & Guaranteed Profitable Take Profit Architecture (`src/strategy.ts`)
+- **สาเหตุของปัญหา**:
+  1. **ปัญหาเครื่อง 3334 (Binance Spot `MAKER_LIMIT` mode)**:
+     - บอทถูกตั้งค่าเป็น `MAKER_LIMIT` เพื่อใช้สิทธิ์ค่าธรรมเนียม Maker 0% บน Binance Spot แต่เมื่อราคาเด้งขึ้นไปใกล้แนวต้าน Trendline หรือ Real S/R Ceil:
+       - ใน `syncRestingOrders` (บรรทัด 4898–4903 เดิม): มีเงื่อนไข `isNearTL && existingTlSell` ซึ่งสั่งยกเลิกออเดอร์ขาย Maker ทันทีที่ราคาแตะระดับต้าน (`cancelling resting sell for immediate IOC exit`)
+       - ใน `Resistance IOC Exit` (บรรทัด 3838–3908 เดิม): โค้ดไม่ได้ตรวจสอบ `orderExecutionMode === "MAKER_LIMIT"` ทำให้สั่งยิงคำสั่งขาย `sellAll(..., "SELL")` เป็น IOC Taker Market Order ซ้ำๆ
+       - ส่งผลให้บอทตั้งซื้อแบบ Maker สำเร็จ แต่พอขายกลับขายเป็น Taker ตลอดเวลา โดนค่าธรรมเนียม Taker Fee กินกำไรจนติดลบ (`-$4.22`)
+  2. **ปัญหาเครื่อง 3333 (DreamDEX SOMI/USDso - ซื้อแล้วขายขาดทุนแต่ติดป้าย TAKE PROFIT)**:
+     - บอทซื้อ SOMI ที่ $0.1874 จากนั้นราคาหลุดก้นกรอบลงไป $0.1862 แล้วเด้งกลับมา $0.1869 บอททำการขายออกทั้งหมดที่ $0.1869 (ขาดทุน `-$0.24`) แต่ขึ้นป้ายว่า `100% FULL EXIT (TAKE PROFIT)`:
+       - ใน `takeProfitAtUpperBound`: บรรทัด 2974 เดิมใช้เงื่อนไข `if (!isProfitableExit && !isLhEscapeReached)` เมื่อ `isLhEscapeReached` เป็นจริง ทำให้ข้ามการบล็อก `!isProfitableExit` หลุดเข้าไปในบล็อก `else` และสั่งยิง `sellAll`
+       - ใน `sellAll` (บรรทัด 6511 เดิม): มีเงื่อนไข `minProfitablePrice` คุ้มครองทุนเฉลี่ยเฉพาะเมื่อ `sellProfitMode === "PORTFOLIO_AVG_PROFIT"` เท่านั้น หากเป็นโหมดเริ่มต้น `GRID_CASHFLOW` ระบบยอมให้ขายต่ำกว่าทุนเฉลี่ยได้
+       - ในการปั๊มป้ายออเดอร์ (บรรทัด 6417 และ 6587 เดิม): คำสั่งที่ไม่ได้เป็น `CUT` หรือ `MANUAL` จะถูกปั๊มป้าย `TAKE_PROFIT` และ `100% FULL EXIT (TAKE PROFIT)` ทั้งหมดโดยไม่ดู PnL จริง
+  3. **คำถามเรื่องราคาเข้าซื้อ $0.1874 สูงกว่า Buy Level**:
+     - ออเดอร์ซื้อที่ราคา $0.1874 เกิดขึ้นขณะที่กรอบเดิมมี Floor $0.1873 และ Ceiling $0.1918 ซึ่ง Buy Level 4 ของกรอบนั้นอยู่ที่ $0.18784 (ราคา $0.1874 อยู่ต่ำกว่า Buy Level 4 จริง ณ จังหวะนั้น)
+     - แต่หลังจากนั้นราคาหลุด Floor ลงไปที่ $0.1862 ระบบจึงคำนวณกรอบใหม่โดยมี Floor ต่ำลง ทำให้ Buy Level 4 ของกรอบใหม่ขยับลงมาอยู่ที่ $0.1868 ผู้ใช้จึงมองเห็นว่าซื้อแพงกว่า Buy Level ในปัจจุบัน
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`src/strategy.ts`)**:
+  1. **Strict Maker Limit Resistance Execution (เครื่อง 3334)**:
+     - ใน `Resistance IOC Exit`: บังคับเช็ค `const isIocModeForRes = this.cfg.orderExecutionMode === "IOC_BRACKET"` ตัดระบบยิง IOC Taker Sell ออก 100% เมื่อบอทรันในโหมด `MAKER_LIMIT`
+     - ใน `syncRestingOrders`: ลบเงื่อนไขยกเลิกออเดอร์ `isNearTL && existingTlSell` ออกทั้งหมด เพื่อให้ออเดอร์ Maker Sell ที่วางไว้ใต้แนวต้านคงอยู่บน Orderbook และถูกจับคู่ (Fill) ในฐานะ Maker รับค่าธรรมเนียม 0% เสมอ
+     - ใน `takeProfitAtUpperBound`: ในโหมด `MAKER_LIMIT` หากยังมี Resting Sell Orders วางรออยู่บนกระดาน จะไม่ถูกแย่งปิดด้วย IOC `sellAll` ปล่อยให้ออเดอร์ขาย Maker ทำงานอย่างสมบูรณ์
+  2. **Guaranteed Profitable Take Profit & Elimination of Loss Bypass (เครื่อง 3333)**:
+     - ใน `takeProfitAtUpperBound`: ปรับเงื่อนไขเป็น `if (!isProfitableExit) { ... return; }` เด็ดขาด โดยไม่ให้ `isLhEscapeReached` มาเป็นข้อยกเว้น การทำ Take Profit / Dynamic Escape ทุกรูปแบบต้องได้ราคาปิดที่ทำกำไรสุทธิเหนือทุนเฉลี่ย (`avgEntryPrice * (1 + minTpProfitPct / 100)`) เสมอ
+     - ใน `sellAll`: เมื่อ `action === "SELL"` บังคับ `minProfitablePrice = avgEntry > 0 ? avgEntry * minProfitMult : minAllowedBySlippage` ครอบคลุมทุกโหมดกำไร ป้องกันไม่ให้ส่ง Limit Price ต่ำกว่าทุนเฉลี่ย
+     - **Truthful Order Action & Labeling**: ตรวจสอบ PnL จริง (`roundPnl >= 0 ? "TAKE_PROFIT" : "BREAKDOWN_EXIT"`) และป้ายกำกับ (`roundPnl >= 0 ? "100% FULL EXIT (TAKE PROFIT)" : "BREAKDOWN EXIT (LOSS)"`) หากมีคำสั่งใดที่ปิดต่ำกว่าทุน จะไม่มีการติดป้ายเท็จว่าเป็น TAKE PROFIT อีกต่อไป
