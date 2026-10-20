@@ -1680,18 +1680,23 @@ export class DowStructureEngine {
       )
     );
     // ตรวจจับขาลงจริง:
-    // A) ขาลงมาตรฐาน: ยอดล่าสุดเป็น LH และเหวล่าสุดเป็น LL (LH + LL กดตัว)
-    // B) ขาลงฉับพลันหลังยอด HH: สวิงสุดท้ายที่เพิ่งเกิดคือ LL (HH ➔ LL โดยยังไม่มี HH หรือ HL ใหม่ตามหลัง)
-    const isBearLhLl = Boolean(
-      lastCanonicalHigh?.dowLabel === "LH" &&
-      lastCanonicalLow?.dowLabel === "LL"
+    // เฉพาะเมื่อสวิงสุดท้ายที่เพิ่งเกิดคือ LL (lastCanonicalLow.index > lastCanonicalHigh.index)
+    // และราคายังไม่เคยเด้งกลับขึ้นไปปิดแท่งเทียนยืนเหนือ Buy Level 2 (32% ของกรอบ) หลังเกิด LL นั้น!
+    // หากราคาได้เด้งขึ้นไปสร้างยอดสวิง High (เช่น LH) ในกรอบแล้ว หรือเคยปิดแท่งยืนเหนือ Buy Level 2 แล้ว
+    // การย่อตัวกลับลงมาในกรอบเหนือ Floor (เช่น ย่อมาหา Buy 4 / Buy 5 เพื่อสร้างฐาน HL) ห้ามล็อกซ้ำ!
+    const buy2LevelPrice = hasValidChannel ? (bottomBound + finalSpan * 0.32) : 0;
+    const hasReclaimedBuy2SinceLl = Boolean(
+      hasValidChannel &&
+      lastCanonicalLow &&
+      candles.some((c) => c.time > lastCanonicalLow.time && c.close >= buy2LevelPrice * 0.9995)
     );
     const isFreshLlAfterPeak = Boolean(
       lastCanonicalLow?.dowLabel === "LL" &&
-      lastCanonicalLow.index > (lastCanonicalHigh?.index ?? -1)
+      lastCanonicalLow.index > (lastCanonicalHigh?.index ?? -1) &&
+      !hasReclaimedBuy2SinceLl
     );
     const isConfirmedDowntrendWave = Boolean(
-      (isBearLhLl || isFreshLlAfterPeak) &&
+      isFreshLlAfterPeak &&
       price < (activePeak?.price ?? upperBound)
     );
     const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowChannelFloor;

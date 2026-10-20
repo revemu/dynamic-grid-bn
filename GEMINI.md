@@ -1921,7 +1921,11 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **การแก้ไข (`v0.2.5`)**:
   1. ถอด `recoveryScoutPending` ออกทั้งหมดจาก `src/strategy.ts` และ `src/db.ts`
   2. บังคับให้การเข้าซื้อแบบ Grid เคารพ `enabledBuyLevels` ของผู้ใช้อย่างเคร่งครัด (ยกเว้นกรณีซื้อที่เส้น `Uptrend Support Line` เมื่อเปิด `enableBuyAboveTrendSupport`)
-  3. อัปเกรดเวอร์ชันเป็น `v0.2.5` ใน `package.json` และ `src/version.ts`
+  3. **แก้ไข `isBearLhLl` ใน `src/market-structure.ts` (`v0.2.6`) ไม่ให้บล็อกจังหวะย่อตัวลงมารับ `Buy 4 / Buy 5` ในกรอบ**:
+     - เดิม `isBearLhLl` (`lastCanonicalHigh.dowLabel === "LH" && lastCanonicalLow.dowLabel === "LL"`) เป็น `true` แม้ว่า `LL ($0.1847)` จะเกิดไปนานแล้วและราคาได้เด้งขึ้นไปทำยอด `LH ($0.1890)` ที่โซน 75% ของกรอบแล้ว ทำให้เมื่อราคาย่อตัวลงมาหา `Buy 4 (12% = $0.1854)` เพื่อสร้างฐาน `HL` บอทกลับล็อก `waitingForHigherLow` ซ้ำจนพลาดการซื้อที่ก้น `Buy 4 ($0.1853)`
+     - ปรับให้ `isConfirmedDowntrendWave` เป็นจริงเฉพาะเมื่อสวิงล่าสุดที่เพิ่งเกิดคือ `LL` (`lastCanonicalLow.index > lastCanonicalHigh.index`) และตั้งแต่เกิด `LL` นั้นยังไม่มีแท่งเทียนใดปิดยืนเหนือ `Buy Level 2 (32%)` (`!hasReclaimedBuy2SinceLl`)
+     - ทันทีที่ราคาเด้งพ้น `Buy Level 2 (32%)` หรือสร้างสวิง High ถัดมาแล้ว การย่อตัวกลับลงมาในกรอบเหนือ `0% Floor` จะไม่ถูกล็อกซ้ำ ทำให้บอทสามารถเข้าช้อนซื้อที่ `Buy 4 (12%)` และ `Buy 5 (2%)` ได้ที่ก้นเหวทันที
+  4. อัปเกรดเวอร์ชันเป็น `v0.2.6` ใน `package.json` และ `src/version.ts`
 - **📌 บันทึกประเด็นรอแก้ไขถัดไป (Pending Trendline Drawing Audit in `src/market-structure.ts`)**:
   1. **Uptrend Line ลากข้ามวัฏจักรคลื่น (Cross-Cycle)**: ปัจจุบัน `v1Candidates` ดึงเหวต่ำสุดในประวัติ 193 แท่ง (`LL $0.1790`) ข้ามคลื่นที่จบไปแล้วมาเชื่อมกับ `HL $0.1853` แทนที่จะเริ่มลากจากฐานก้นเหวของคลื่นปัจจุบัน (`activeValley / LL $0.1847` $\rightarrow$ `HL $0.1853`)
   2. **Downtrend Line ตาบอดต่อยอดที่สูงกว่า `P1`**: บรรทัด `confirmedHighs.filter(h => h.index > p1.index && h.price < p1.price)` กรองสวิงที่สูงกว่า `P1` ทิ้งก่อนเช็ค `violates` ทำให้ลากเส้นจาก `LH $0.1917` ผ่าทะลุยอด `HH $0.1918` ไปหา `$0.1904` และไม่ได้เชื่อมมายังยอด `LH $0.1890` ล่าสุดของคลื่นปัจจุบัน (ฝั่ง Uptrend บรรทัด `l.price > v1.price` ก็มีบั๊กเดียวกัน)
