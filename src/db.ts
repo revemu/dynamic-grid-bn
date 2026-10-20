@@ -90,6 +90,7 @@ export interface StrategyStateRecord {
     numSellTranches: number;
     soldStepNums: number[];
   };
+  soldSellIndices?: number[];
   lastUpdated: number;
 }
 

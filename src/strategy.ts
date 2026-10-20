@@ -147,6 +147,8 @@ export class DynamicGrid {
     numSellTranches: number;
     soldStepNums: Set<number>;
   };
+  /** Indices of Sell Targets (0..4) that have already been executed/sold in the current inventory wave */
+  private soldSellIndices = new Set<number>();
   private lastTelemetryData?: any;
   private lastHudLogTime = 0;
   private readonly hudLogIntervalMs = 5_000;
@@ -718,8 +720,9 @@ export class DynamicGrid {
    * Checks if an open lot is already held near this grid level.
    * Proximity tolerance is dynamically calculated to be well below half the distance to the nearest
    * adjacent grid level (max 35% of adjacent step, capped at 0.15%), preventing adjacent levels from falsely blocking each other.
+   * If expectedTrancheQty is provided, allows re-buying if the lot has been mostly liquidated (remaining < 40% of tranche).
    */
-  private hasLotNearLevel(levelPrice: number, levelIdx: number, levels: number[]): boolean {
+  private hasLotNearLevel(levelPrice: number, levelIdx: number, levels: number[], expectedTrancheQty?: number): boolean {
     if (this.lots.length === 0 || !levelPrice || !levels || levels.length === 0) return false;
     const prevLvl = levelIdx > 0 ? levels[levelIdx - 1] : undefined;
     const nextLvl = levelIdx < levels.length - 1 ? levels[levelIdx + 1] : undefined;
@@ -730,7 +733,50 @@ export class DynamicGrid {
     const maxProximityRatio = isFinite(distToAdjacent) && distToAdjacent > 0
       ? Math.min(0.0015, (distToAdjacent / levelPrice) * 0.35)
       : 0.0015;
-    return this.lots.some((l) => Math.abs(l.price - levelPrice) / levelPrice <= maxProximityRatio);
+
+    const lotsNearPrice = this.lots.filter((l) => Math.abs(l.price - levelPrice) / levelPrice <= maxProximityRatio);
+    if (lotsNearPrice.length === 0) return false;
+
+    if (expectedTrancheQty && expectedTrancheQty > 0) {
+      const totalQtyNear = lotsNearPrice.reduce((sum, l) => sum + l.qty, 0);
+      return totalQtyNear >= expectedTrancheQty * 0.40;
+    }
+
+    return true;
+  }
+
+  /**
+   * Helper: Match levelDesc or price to find which sell target index (0..4) is being executed.
+   */
+  private findSellLevelIndex(levelDesc?: string, price?: number): number {
+    if (levelDesc) {
+      for (let i = 0; i < 5; i++) {
+        if (
+          levelDesc.includes(`Sell Target ${i + 1}`) ||
+          levelDesc.includes(`Target ${i + 1}`) ||
+          levelDesc.includes(`Sell Level ${i + 1}`)
+        ) {
+          return i;
+        }
+      }
+    }
+    const bounds = this.confirmedChannel || this.lastDynamicBounds;
+    const sellLevels = bounds?.sellLevels ?? [];
+    if (price && sellLevels.length > 0) {
+      let closestIdx = -1;
+      let minDiff = Infinity;
+      for (let i = 0; i < sellLevels.length; i++) {
+        const diff = Math.abs(sellLevels[i] - price) / price;
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestIdx = i;
+        }
+      }
+      if (closestIdx >= 0 && minDiff <= 0.0025) {
+        return closestIdx;
+      }
+    }
+    return -1;
   }
 
   /**
@@ -781,6 +827,7 @@ export class DynamicGrid {
           while (this.cfg.enabledSellTargets.length < 5) this.cfg.enabledSellTargets.push(true);
           this.needsSellRebalance = true;
           this.iocBracketSellCycle = undefined;
+          this.soldSellIndices.clear();
           continue;
         }
         if (key === "buySizingMode") {
@@ -827,6 +874,7 @@ export class DynamicGrid {
           this.pendingConfirmedChannelUpdate = true;
           this.needsSellRebalance = true;
           this.iocBracketSellCycle = undefined;
+          this.soldSellIndices.clear();
           if (this.lastDynamicBounds && this.lastDynamicBounds.sellLevels.length > 1) {
             const dSpan = this.lastDynamicBounds.upperBound - this.lastDynamicBounds.lowerBound;
             this.lastDynamicBounds.sellLevels = this.cfg.sellLevelPcts.map((pct) => this.lastDynamicBounds!.lowerBound + dSpan * (pct / 100));
@@ -1622,12 +1670,32 @@ export class DynamicGrid {
       } else {
         this.iocBracketSellCycle = undefined;
       }
+      if (Array.isArray(data.soldSellIndices)) {
+        this.soldSellIndices = new Set<number>(data.soldSellIndices.map(Number));
+      } else {
+        this.soldSellIndices = new Set<number>();
+      }
       // Restore unified orders from database (up to 5000 items)
       const dbOrders = this.db.getOrders(5000);
       if (dbOrders.length > 0) {
         this.recentOrders = dbOrders;
       } else if (Array.isArray(data.recentOrders)) {
         this.recentOrders = data.recentOrders;
+      }
+
+      // Seed soldSellIndices from recent orders if empty (e.g. on new version startup after sell fill)
+      if (this.soldSellIndices.size === 0 && this.recentOrders.length > 0 && this.lots.length > 0) {
+        for (let i = this.recentOrders.length - 1; i >= 0; i--) {
+          const ord = this.recentOrders[i];
+          if (!ord) continue;
+          if (ord.action === "BUY_FILL" || ord.isBid) break;
+          if (ord.action === "SELL_FILL" || (!ord.isBid && ord.status === "FILLED")) {
+            const soldIdx = this.findSellLevelIndex(ord.levelDesc, ord.price);
+            if (soldIdx >= 0) {
+              this.soldSellIndices.add(soldIdx);
+            }
+          }
+        }
       }
 
       if (typeof data.sellOrdersActive === "boolean") {
@@ -1757,6 +1825,7 @@ export class DynamicGrid {
               soldStepNums: Array.from(this.iocBracketSellCycle.soldStepNums),
             }
           : undefined,
+        soldSellIndices: Array.from(this.soldSellIndices),
         sellOrdersActive: this.sellOrdersActive,
         buyOrdersActive: this.buyOrdersActive,
         isSqueezePaused: this.isSqueezePaused,
@@ -2079,6 +2148,7 @@ export class DynamicGrid {
         netPnlUsdso: this.realizedPnl,
         avgEntryPrice: avgEntry,
         lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time })),
+        soldSellIndices: Array.from(this.soldSellIndices),
         openOrders: this.openOrders.map((o) => ({
           id: o.id,
           onChainOrderId: o.onChainOrderId,
@@ -3736,6 +3806,7 @@ export class DynamicGrid {
         stuckSince: this.stuckSince,
         stuckTimeoutMs: this.cfg.stuckTimeoutMs,
         lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time })),
+        soldSellIndices: Array.from(this.soldSellIndices),
         offloadOnly,
         trendFiltered,
         trendlineFilter: this.cfg.trendlineFilter,
@@ -4133,6 +4204,10 @@ export class DynamicGrid {
     this.needsBuyRebalance = true;
     // Reset IOC Bracket Sell Cycle whenever a buy order fills to re-partition lots with new baseline
     this.iocBracketSellCycle = undefined;
+    if (this.soldSellIndices.size > 0) {
+      this.log(`🔄 [Sell Cycle] New BUY fill received — resetting sold sell targets to re-enable full ladder`);
+      this.soldSellIndices.clear();
+    }
 
     const gasCompLog = compBase > 0
       ? ` | ⛽ Gas Compensated: ${compBase.toFixed(4)} ${this.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet gas reserve`
@@ -4196,6 +4271,14 @@ export class DynamicGrid {
     this.closeLots(qty, price);
     const roundPnl = this.tradeRealizedPnl - oldTradePnl;
     this.needsBuyRebalance = true;
+
+    // Track which sell target was sold in this inventory wave
+    const soldIdx = this.findSellLevelIndex(levelDesc, price);
+    if (soldIdx >= 0) {
+      this.soldSellIndices.add(soldIdx);
+      this.log(`🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.soldSellIndices).map((i) => i + 1).join(", ")}])`);
+      this.saveState();
+    }
 
     this.log(
       `🔥 ${logPrefix}MAKER SELL FILLED: ${qty.toFixed(4)} ${this.baseAsset} ($${fillNotional.toFixed(2)} ${this.quoteAsset}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)})`,
@@ -4426,15 +4509,18 @@ export class DynamicGrid {
           // Check if disabled by user (allow idx === 0 if it is the active Uptrend Support Line entry)
           const isLevelEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
           if (!isLevelEnabled) return false;
-          // Holding Fraction Guard: If held fraction already reached or exceeded this level's target fraction, don't repeat
-          const lvlTargetFraction = buyTargets[idx] ?? 1.0;
-          const isLastActiveLevel = lvlTargetFraction >= 0.999;
-          if (isLastActiveLevel ? (currentHoldFraction >= 0.95) : (currentHoldFraction >= lvlTargetFraction - 0.05)) {
-            return false;
-          }
           // Open Lot Proximity Guard: If we already hold an open lot bought near this price level, do NOT re-buy it!
           // Note: dynamic tolerance ensures adjacent grid levels do not falsely suppress each other in narrow channels
-          if (this.hasLotNearLevel(lvl, idx, effectiveBuyLevels)) {
+          // Allows re-buying if prior lot was mostly liquidated (< 40% residue)
+          const levelWeightFrac = buyWeightFractions[idx] ?? (activeBuyCount > 0 ? (1 / activeBuyCount) : 0.2);
+          const expectedTrancheQuote = isSingleBuyLevel ? maxInv : (maxInv * levelWeightFrac);
+          const expectedTrancheQty = lvl > 0 ? (expectedTrancheQuote / lvl) : 0;
+          if (this.hasLotNearLevel(lvl, idx, effectiveBuyLevels, expectedTrancheQty)) {
+            return false;
+          }
+
+          // Total Capacity Guard: If portfolio is full (>= 95% of maxInventoryQuote), do not place any more buy orders
+          if (currentHoldFraction >= 0.95) {
             return false;
           }
           // Downtrend Trendline filter
@@ -4713,13 +4799,13 @@ export class DynamicGrid {
           // If current portfolio holding already satisfies or exceeds this level's target fraction,
           // do NOT re-place a buy order at this level while holding that inventory!
           // (Only allow subsequent lower levels, or wait until inventory is sold).
-          const levelTargetFraction = buyTargets[i] ?? 1.0;
-          const isLastActive = levelTargetFraction >= 0.999;
-          if (isLastActive ? (currentHoldFraction >= 0.95) : (currentHoldFraction >= levelTargetFraction - 0.05)) {
+          // Total Capacity Guard: If portfolio is full (>= 95% of maxInventoryQuote), do not place any more buy orders
+          if (currentHoldFraction >= 0.95) {
             continue;
           }
-          // Open Lot Proximity Guard: skip if a lot near this price is already held
-          if (this.hasLotNearLevel(lvlPrice, i, effectiveBuyLevels)) {
+          // Open Lot Proximity Guard: skip if a full lot near this price is already held
+          const expectedTrancheQty = lvlPrice > 0 ? (targetOrderQuote / lvlPrice) : 0;
+          if (this.hasLotNearLevel(lvlPrice, i, effectiveBuyLevels, expectedTrancheQty)) {
             continue;
           }
 
@@ -4984,11 +5070,12 @@ export class DynamicGrid {
             minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * 1.001);
           }
 
-          // Identify eligible levels (strictly below resistance and strictly above minAllowedSellPrice)
+          // Identify eligible levels (strictly below resistance, unsold in current wave, and strictly above minAllowedSellPrice)
           const eligibleIndices = sellLevels
             .map((lvl, idx) => ({ lvl, idx }))
             .filter(({ lvl, idx }) => {
               if (!enabledSells[idx]) return false;
+              if (this.soldSellIndices.has(idx)) return false;
               if (lvl >= effectiveResistancePrice) return false;
               // An existing resting sell order at this level is ALWAYS eligible — NEVER cancel when price reaches it!
               const hasExistingOrder = this.openOrders.some(
@@ -5250,11 +5337,29 @@ export class DynamicGrid {
         minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
       }
 
-      // Determine eligible sell levels strictly ABOVE minAllowedSellPrice
+      // Determine eligible sell levels strictly ABOVE minAllowedSellPrice and not yet sold in this wave
       const eligibleSellIndices = sellLevels
         .map((lvl, idx) => ({ lvl, idx }))
-        .filter(({ lvl, idx }) => lvl > minAllowedSellPrice && enabledSells[idx])
+        .filter(({ lvl, idx }) => {
+          if (!enabledSells[idx]) return false;
+          if (this.soldSellIndices.has(idx)) return false;
+          const hasExistingOrder = this.openOrders.some(
+            (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
+          );
+          if (hasExistingOrder) return true;
+          return lvl > minAllowedSellPrice;
+        })
         .map(({ idx }) => idx);
+
+      // Fallback: If all enabled targets above price have been marked as sold, but position remains, allow the highest enabled target
+      if (eligibleSellIndices.length === 0 && held >= (this.minQty || 0.0001)) {
+        for (let i = sellLevels.length - 1; i >= 0; i--) {
+          if (enabledSells[i]) {
+            eligibleSellIndices.push(i);
+            break;
+          }
+        }
+      }
 
       const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
       let targetTrancheCount = eligibleSellIndices.length;
@@ -6739,6 +6844,7 @@ export class DynamicGrid {
       this.lockedChannel = undefined;
       this.lastDynamicBounds = undefined;
       this.iocBracketSellCycle = undefined;
+      this.soldSellIndices.clear();
     }
   }
 

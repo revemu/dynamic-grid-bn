@@ -2025,3 +2025,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.10` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 44. Universal Wave Sell Tracking & Dynamic Buy Rebalance Architecture (`src/strategy.ts`, `src/db.ts` — `v0.2.11`)
+- **สาเหตุของปัญหา (Partial Sell Rebalance & Buy Rebalance Suppression)**:
+  1. **พฤติกรรมฝั่งขาย (Sell Rebalance ซ้ำซ้อน)**:
+     - ใน `syncMakerSellOrders` เดิมไม่มีการติดตามสถานะว่า Sell Target ใดขายสำเร็จไปแล้วในรอบคลื่นปัจจุบัน
+     - เมื่อราคาตลาดแตะขายที่ Sell Target 1 (เช่น $2403.53) และย่อตัวลงมาเล็กน้อยที่ $2398.90 บอทตรวจพบว่า Target 1 อยู่เหนือราคาตลาดและไม่มีออเดอร์ค้างอยู่ (เพราะเพิ่งขายสำเร็จ)
+     - บอทจึงนำเหรียญที่เหลือในพอร์ตมาหารเฉลี่ย 3 เป้าขายใหม่ สั่งยกเลิกออเดอร์ Target 2 และ 3 เดิม แล้วนำกลับมาตั้งขายที่ Target 1 ซ้ำอีกรอบ ส่งผลให้เหรียญที่ควรได้กำไรสูงที่เป้าบนถูกดึงลงมาเทขายต่ำซ้ำซ้อน
+  2. **พฤติกรรมฝั่งซื้อ (Buy Rebalance ถูกบล็อก ไม่ตั้งซื้อใหม่)**:
+     - เมื่อขาย Target 1 ได้เงินสดคืนเข้ากระเป๋า บอทไม่นำเงินมาตั้งรับที่ Buy Level 3 เพราะ:
+       - **Open Lot Proximity Guard**: ฝั่งขายตัดออกไป 0.0083 ETH จากไม้ซื้อเดิม 0.0111 ETH ทำให้เหลือเศษตกค้าง 0.0028 ETH (~$6.70) ฟังก์ชัน `hasLotNearLevel` มองว่ายังมี Lot อยู่ที่ราคา $2388.19 จึงบล็อกไม่ให้ตั้งซื้อซ้ำ
+       - **Holding Fraction Guard ข้ามระดับ**: การคำนวณสัดส่วนพอร์ตรวมไม้ Level 4 เข้าไปด้วย ทำให้สัดส่วนถือครองรวม (40.1%) สูงกว่าเป้าหมายโควตาของ Level 3 (26.7%) ส่งผลให้ระบบเข้าใจผิดว่า Level 3 โควตาเต็มแล้ว ทั้งที่ Level 3 เพิ่งขายออกไปและได้เงินสดคืนมา
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.11`)**:
+  1. **Universal Wave Sell Tracking (`soldSellIndices: Set<number>`)**:
+     - บันทึกสถานะว่า Sell Target ใดขายสำเร็จไปแล้วในรอบปัจจุบันผ่าน `processSellFill`
+     - ใน `syncMakerSellOrders`: คัดกรองระดับที่อยู่ใน `soldSellIndices` ออกจาก `eligibleSellIndices` อย่างเด็ดขาด ป้องกันไม่ให้นำเหรียญที่เหลือกลับมาตั้งขายที่เป้าเดิมซ้ำ และรักษาขนาดออเดอร์ที่เป้าสูงกว่า (Target 2, Target 3) ไม่ให้ถูกลดขนาดลง
+     - รีเซ็ต `soldSellIndices.clear()` อัตโนมัติเมื่อ:
+       - มีคำสั่งซื้อใหม่จับคู่สำเร็จ (`processBuyFill`) เพื่อให้เป้าขายทุกระดับพร้อมรองรับเหรียญล็อตใหม่ทันที
+       - พอร์ตคืนสู่เงินสด 100% (`closeLots` flat)
+       - มีการเปลี่ยนแปลงตั้งค่าเป้าขาย (`enabledSellTargets`, `sellLevelPcts`)
+     - รองรับการบันทึกและโหลด State ลง Database (`soldSellIndices` ใน `StrategyStateRecord` ของ `src/db.ts`) พร้อมระบบ Seed ค่าย้อนหลังอัตโนมัติตอนบอทสตาร์ตอัป
+  2. **Smart Lot Residue Clearance & Buy Rebalance**:
+     - ปรับปรุง `hasLotNearLevel`: เพิ่มพารามิเตอร์ `expectedTrancheQty` หาก Lot ที่เหลือเป็นเพียงเศษตกค้างจากการขายบางส่วน (< 40% ของขนาดไม้ปกติ) ระบบจะไม่บล็อก และอนุญาตให้ตั้งคำสั่งซื้อใหม่เพื่อเติมเต็มไม้ได้
+     - ปรับปรุงการตรวจสอบสัดส่วนพอร์ตใน `eligibleBuyIndices`: ปลดล็อกการบล็อกข้ามระดับ และอนุญาตให้ระดับที่ขายออกไปแล้วสามารถตั้งคำสั่งซื้อคืนได้ทันทีตราบใดที่พอร์ตรวมยังไม่เต็มโควตา (`currentHoldFraction < 95%`)
+  3. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.11` ใน `package.json` และ `src/version.ts`
+
+
