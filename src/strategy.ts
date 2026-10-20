@@ -2859,6 +2859,14 @@ export class DynamicGrid {
             }
             await this.sellAll(dexBid, "CUT");
             this.lastCutLossTime = Date.now();
+            this.waitingForHigherLow = true;
+            this.isFlatChannelShiftWaiting = true;
+            this.breakdownFloorPrice = lowerBound;
+            this.breakdownLowPrice = dexBid;
+            this.breakdownTime = Math.floor(Date.now() / 1000);
+            this.breakdownBuyLevel2Price = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001
+              ? buyLevels[1]
+              : (lowerBound > 0 ? lowerBound + span * 0.32 : dexBid * 1.01);
             this.bufferBreakStartTime = undefined;
             this.cutLossStage1Executed = false;
             this.cutLossStage1Price = undefined;
@@ -3876,7 +3884,7 @@ export class DynamicGrid {
         const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
         const minAllowedResPrice = effectiveResPrice * (1 - sellSlippage);
         const isBidWithinSlippage = effectiveBestBid !== undefined && effectiveBestBid >= minAllowedResPrice;
-        const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * 1.0005);
+        const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * this.getMinProfitMultiplier());
         const isPriceAtResistance = refPrice >= minAllowedResPrice || (effectiveBestBid !== undefined && effectiveBestBid >= minAllowedResPrice);
 
         if (isPriceAtResistance) {
@@ -4010,7 +4018,17 @@ export class DynamicGrid {
         );
         await this.cancelAllRestingOrders();
         await this.sellAll(bestBid, "CUT");
+        this.lastCutLossTime = Date.now();
+        this.waitingForHigherLow = true;
+        this.isFlatChannelShiftWaiting = true;
+        this.breakdownFloorPrice = lowerBound;
+        this.breakdownLowPrice = bestBid;
+        this.breakdownTime = Math.floor(Date.now() / 1000);
+        this.breakdownBuyLevel2Price = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001
+          ? buyLevels[1]
+          : (lowerBound > 0 ? lowerBound + span * 0.32 : bestBid * 1.01);
         this.stuckSince = undefined;
+        this.saveState();
       }
     } else if (this.lots.length === 0) {
       this.stuckSince = undefined;

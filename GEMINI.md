@@ -1838,3 +1838,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ปรับปรุง `effectiveBuyLevel2Target` ให้กรองเฉพาะค่า `> 0.0001` หากไม่มีกรอบจะตกไปใช้ `this.breakdownFloorPrice` ($0.1873) จริงๆ ไม่กลายเป็น $0.0000
   3. **Clean Chart Price Lines Management (`public/app.js`)**:
      - เพิ่มการตรวจสอบ `data.bottomBound && data.upperBound` สำหรับ `lineUpperBound`, `lineBottomBound`, และ `lineCenter` พร้อมคำสั่ง `removePriceLine` เมื่อไม่มีกรอบราคา เพื่อไม่ให้เส้นเก่าค้างบนหน้าจอ
+
+---
+
+### 36. Post-Cut Loss Lock & Minimum Profit Multiplier Architecture (`src/strategy.ts`)
+- **สาเหตุของปัญหา**:
+  1. **การเกิด Cut Loss ซ้ำซ้อนในเวลาไล่เลี่ยกัน (Whipsaw / Choppy Cut Loss)**:
+     - เมื่อบอททำการ Cut Loss ขายล้างพอร์ต (`sellAll(..., "CUT")`) โค้ดเดิมตั้งเฉพาะ `this.lastCutLossTime = Date.now()` แต่ไม่ได้เปิดสถานะ `this.waitingForHigherLow = true`
+     - ส่งผลให้ในแท่งเทียนถัดไป เมื่อราคาเด้งกลับเข้าโซน Buy 4 / Buy 5 บอทจะรีบส่งออเดอร์เข้าซื้อเต็มจำนวนเงินทันที ทั้งๆ ที่ตลาดยังไม่มีการตั้งฐานสวิง Higher Low (HL)
+     - และเมื่อราคาไหลหลุด Floor อีกรอบใน 1–2 ชั่วโมงต่อมา บอทจะถูกสั่ง Cut Loss ซ้ำรอบสองที่ระดับราคาเดิม (เช่น คัทที่ 0.1887 -> ซื้อ 0.1901 -> คัทซ้ำที่ 0.1888) ทำให้พอร์ตเสียหายซ้ำซ้อน
+  2. **บั๊กขายทำกำไรตัดหน้าเร็วเกินไปที่ 0.05% (`RES IOC Standby`)**:
+     - ใน `src/strategy.ts` บรรทัด 3879 มีการฮาร์ดโค้ด `isProfitableAtBid = effectiveBestBid >= avgEntry * 1.0005` (คิดกำไรเพียง 0.05%)
+     - เมื่อราคาขยับขึ้นแตะยอดสวิงย่อยหรือเส้นกด บอทจะมองว่า "มีกำไรแล้ว" และสั่ง IOC ขายล้างพอร์ตทันทีที่กำไรเพียง $0.02 (0.06%) โดยไม่สนใจค่า `minNetProfitPct` (0.50%) ทำให้ Risk:Reward เสียหายอย่างหนัก
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **Post-Cut Loss State Lock**:
+     - ทันทีที่มีการ Cut Loss เกิดขึ้น (`sellAll(..., "CUT")`) ระบบจะบังคับเปิด `this.waitingForHigherLow = true`, `this.isFlatChannelShiftWaiting = true`, `this.breakdownFloorPrice = lowerBound`, `this.breakdownLowPrice = cutPrice` และบันทึก `this.breakdownTime` ทันที
+     - บอทจะถูกบล็อกการเข้าซื้อทุกรูปแบบ (ทั้ง Limit และ IOC) อย่างเด็ดขาด จนกว่าจะมีแท่งเทียนยืนยันสร้างฐานสวิง **Higher Low (HL)** ที่สูงกว่าจุดคัทลอสจริง หรือปิดแท่งเทียนยืนเหนือ Buy Level 2 พ้นโซนอันตราย
+  2. **Strict Minimum Profit Multiplier**:
+     - ปรับ `isProfitableAtBid` ให้ใช้ `effectiveBestBid >= avgEntry * this.getMinProfitMultiplier()` เท่านั้น การันตีว่าคำสั่งขายที่จุดต้านจะต้องได้กำไรสุทธิไม่ต่ำกว่าเป้าหมายที่ตั้งไว้เสมอ (เช่น $\ge 0.5\% - 1.0\%$) ห้ามขายตัดหน้าที่กำไร 0.05% อีกต่อไป
+  3. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.2` ทั้งใน `package.json` และ `src/version.ts`
