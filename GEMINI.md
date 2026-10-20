@@ -13,6 +13,22 @@ This document is the persistent operational and architectural knowledge base for
 
 ---
 
+> [!IMPORTANT]
+> ### 🌐 LIVE PRODUCTION BOT ENDPOINTS (ตรวจสอบสถานะสดจากเซิร์ฟเวอร์จริงเสมอ)
+> บอทไม่ได้รันบนเครื่อง Local แต่รันอยู่บนเซิร์ฟเวอร์จริง 2 Instance:
+> 1. **DreamDEX Spot (DEX)**: `http://210.246.253.13:3333/`
+>    - Telemetry & State API: `http://210.246.253.13:3333/api/state`
+>    - Configuration API: `http://210.246.253.13:3333/api/config`
+>    - Version API: `http://210.246.253.13:3333/api/version`
+> 2. **Binance Spot (CEX)**: `http://210.246.253.13:3334/`
+>    - Telemetry & State API: `http://210.246.253.13:3334/api/state`
+>    - Configuration API: `http://210.246.253.13:3334/api/config`
+>    - Version API: `http://210.246.253.13:3334/api/version`
+>
+> ⚠️ **STRICT INVESTIGATION RULE**: เมื่อผู้ใช้ส่งรูปภาพปัญหา หรือแจ้งพฤติกรรมผิดปกติ **ต้องดึงข้อมูลสถานะสด (State, Config, Swings, Orders, Version) จาก Endpoints บนเซิร์ฟเวอร์ 210.246.253.13:3333 (DreamDEX) หรือ :3334 (Binance) ตามกระดานที่ผู้ใช้ระบุเสมอ** ห้ามตรวจเช็คหรือสรุปปัญหาจากไฟล์ `data/settings.db.json` หรือ `data/grid-bot.db.json` บนเครื่อง Local เด็ดขาด!
+
+---
+
 ## 1. Project Architecture (`dynamic-grid-bn`)
 
 > [!NOTE]
