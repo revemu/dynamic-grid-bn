@@ -1858,3 +1858,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ปรับ `isProfitableAtBid` ให้ใช้ `effectiveBestBid >= avgEntry * this.getMinProfitMultiplier()` เท่านั้น การันตีว่าคำสั่งขายที่จุดต้านจะต้องได้กำไรสุทธิไม่ต่ำกว่าเป้าหมายที่ตั้งไว้เสมอ (เช่น $\ge 0.5\% - 1.0\%$) ห้ามขายตัดหน้าที่กำไร 0.05% อีกต่อไป
   3. **Version Bump**:
      - อัปเกรดเป็น `v0.2.2` ทั้งใน `package.json` และ `src/version.ts`
+
+---
+
+### 37. Unified Breakdown & Downtrend Recovery Engine, Fast 2-Bar Micro-HL & Recovery Scout Entry (`v0.2.3`)
+- **สาเหตุของปัญหาและจุดบอดเดิม (4 บั๊กสำคัญ)**:
+  1. **บั๊ก `.includes("LL")` ใน `src/market-structure.ts`**:
+     - โค้ดเดิมใช้ `waveCycle.activeCycleSummary?.includes("LL")` เพื่อเช็คขาลง แต่เมื่อตลาดเด้งทำ Higher High แล้ว (`"รอบคลื่น: ไซด์เวย์ (LL ➔ HH)"`) ข้อความยังมีคำว่า `"LL"` อยู่ ทำให้ `isDowntrendDropActive` กลายเป็น `true` ผิดพลาด และไปดึงราคาหลังยอด `HH` มาบล็อกการซื้อทั้งที่เพิ่งเบรกขึ้น
+  2. **บั๊ก Tautology (`true` ตลอดกาล) ใน `Flat Cash & Channel Shift LL Guard` (`src/strategy.ts`)**:
+     - โค้ดเดิมเช็ค `dow?.waveCycle?.lastLl?.dowLabel === "LL"` ซึ่งเป็นจริงเสมอ 100% ส่งผลให้ทุกครั้งที่ขาย Take Profit หรือกรอบขยับขณะถือเงินสด บอทจะล็อก `waitingForHigherLow = true` ทันที
+  3. **Deadlock ระหว่าง `waitingForHigherLow` กับ `downtrendDropPaused`**:
+     - มีตัวล็อกขาลง 2 ตัวซ้อนทับกัน (`if (isDowntrendDropActive && !this.waitingForHigherLow)`) เมื่อปลดล็อกตัวแรกสำเร็จ บอทจะไหลไปติดตัวที่สองทันทีใน Tick เดียวกัน
+  4. **ปัญหา Adverse Selection จาก `enabledBuyLevels: [false, false, false, true, true]` หลังปลดล็อก**:
+     - เมื่อปลดล็อกฐานกลับตัวที่โซน 20%–35% ของกรอบ แต่ตั้งค่าเปิดไว้แค่ Buy 4 (12%) และ Buy 5 (2%) บอทจะไม่ซื้อไม้แรกที่โซนกลับตัว ถ้าราคาขึ้นจริงจะตกรถ 100% แต่ถ้าราคาไหลกลับลงมาแมตช์ที่ 12% แปลว่าฐานพังและกำลังจะหลุด Floor ซ้ำ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.3`)**:
+  1. **แก้ไข `isDowntrendDropActive` และ `downtrendDropLow` (`src/market-structure.ts`)**:
+     - นิยามขาลงจริงเฉพาะเมื่อราคาหลุดขอบล่างกรอบ (`isBreakingBelowChannelFloor`) หรือโครงสร้างสวิงล่าสุดเป็น `LH + LL` หรือสวิงสุดท้ายที่เพิ่งเกิดคือ `LL` (`lastCanonicalLow.index > lastCanonicalHigh.index`) โดยไม่มี `HH` หรือ `HL` ตามหลัง
+  2. **เพิ่ม Fast 2-Bar Structural Micro-HL ใน `checkForHigherLow` (`src/market-structure.ts`)**:
+     - รองรับการยืนยันฐานกลับตัวแบบ 2 แท่งเทียนหลังจุดต่ำสุด (Trough $\rightarrow$ Bounce $\ge +0.20\%$ $\rightarrow$ Higher Low Retest $> \text{Trough} \times 1.001$ $\rightarrow$ แท่งปิดเขียวยืนเหนือ High ของแท่งย่อตัวและเหนือ Floor) ลดเวลารอจาก 8.1 ชม. เหลือ ~1.5 ชม.
+  3. **Unified Breakdown & Downtrend Recovery Engine (`src/strategy.ts` & `src/db.ts`)**:
+     - รื้อบล็อก `Flat Cash & Channel Shift LL Guard` ที่มีบั๊ก Tautology ออก และยุบรวม `waitingForHigherLow` กับ `downtrendDropPaused` เข้าเป็น State Machine เดียว
+     - บันทึก `lastResolvedDumpLowPrice` เมื่อปลดล็อกสำเร็จ เพื่อป้องกันไม่ให้คลื่น `LL` ลูกเดิมกลับมาสั่งล็อกซ้ำ (จะล็อกใหม่เฉพาะเมื่อเกิดจุดต่ำสุดใหม่ต่ำกว่า `lastResolvedDumpLowPrice * 0.9985` หรือหลุด Floor)
+     - เปิดให้ปลดล็อกได้อัตโนมัติทั้งจาก **Buy Level 2 Reclaim (32%)**, **Fast 2-Bar Micro-HL / 3-Bar Dow HL**, **Trendline Breakout (2 แท่ง)** และ **Original Floor Reclaim**
+  4. **Recovery First Tranche (`recoveryScoutPending`)**:
+     - เมื่อปลดล็อกฐานสำเร็จขณะถือเงินสด 100% (`lots.length === 0`) ระบบจะเปิด `recoveryScoutPending = true` อนุญาตให้เข้าซื้อไม้แรก 1 Tranche ณ ระดับ Buy Level ที่ใกล้ราคาปัจจุบันที่สุดในโซนซื้อทันที (ทั้งโหมด `MAKER_LIMIT` และ `IOC_BRACKET`) แม้ตั้งค่าเปิดไว้เฉพาะ Buy 4–5 และปิด `recoveryScoutPending = false` ทันทีเมื่อซื้อไม้แรกสำเร็จ
+  5. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.3` ทั้งใน `package.json` และ `src/version.ts`

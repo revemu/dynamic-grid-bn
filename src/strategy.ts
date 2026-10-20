@@ -101,6 +101,8 @@ export class DynamicGrid {
   private breakdownLowPrice?: number;
   private breakdownBuyLevel2Price?: number;
   private breakdownTime?: number;
+  private lastResolvedDumpLowPrice?: number;
+  private recoveryScoutPending = false;
   private breakdownCandleTimes = new Set<number>();
   private lastCutLossTime?: number;
   private bufferBreakStartTime?: number;
@@ -425,6 +427,8 @@ export class DynamicGrid {
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
+    this.lastResolvedDumpLowPrice = undefined;
+    this.recoveryScoutPending = false;
     this.iocBracketSellCycle = undefined;
     this.bufferBreakStartTime = undefined;
     this.cutLossStage1Executed = false;
@@ -1551,6 +1555,12 @@ export class DynamicGrid {
       } else {
         this.postCutSingleTrancheOnly = false;
       }
+      if (typeof data.lastResolvedDumpLowPrice === "number") {
+        this.lastResolvedDumpLowPrice = data.lastResolvedDumpLowPrice;
+      }
+      if (typeof data.recoveryScoutPending === "boolean") {
+        this.recoveryScoutPending = this.lots.length === 0 ? data.recoveryScoutPending : false;
+      }
       if (
         data.iocBracketSellCycle &&
         typeof data.iocBracketSellCycle.baselineHeldQty === "number" &&
@@ -1692,6 +1702,8 @@ export class DynamicGrid {
         breakdownTime: this.breakdownTime,
         lastCutLossTime: this.lastCutLossTime,
         postCutSingleTrancheOnly: this.postCutSingleTrancheOnly,
+        lastResolvedDumpLowPrice: this.lastResolvedDumpLowPrice,
+        recoveryScoutPending: this.recoveryScoutPending,
         iocBracketSellCycle: this.iocBracketSellCycle
           ? {
               baselineHeldQuote: this.iocBracketSellCycle.baselineHeldQuote,
@@ -1850,6 +1862,8 @@ export class DynamicGrid {
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
+    this.lastResolvedDumpLowPrice = undefined;
+    this.recoveryScoutPending = false;
     this.breakdownCandleTimes.clear();
     this.sellOrdersActive = true;
     this.buyOrdersActive = true;
@@ -1901,6 +1915,8 @@ export class DynamicGrid {
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
+    this.lastResolvedDumpLowPrice = undefined;
+    this.recoveryScoutPending = false;
     this.breakdownCandleTimes.clear();
     this.sellOrdersActive = true;
     this.buyOrdersActive = true;
@@ -2536,65 +2552,13 @@ export class DynamicGrid {
 
     const isChannelReady = dow?.gridZone !== undefined && lowerBound > 0 && upperBound > lowerBound;
 
-    // ── Flat Cash & Channel Shift LL Guard ─────────────────────────────────
-    // When sold all (100% Cash) and channel shifts with risk of making a new LL,
-    // wait for a confirmed Higher Low (HL) or reclaiming Buy Level 2 before accumulating!
+    // ── Unified Breakdown & Downtrend Recovery Engine ────────────────────────
+    // Single unified state machine replacing the old conflicting waitingForHigherLow +
+    // downtrendDropPaused + Flat Cash LL Guard blocks.
     const isFlatCash = !isHoldingPosition && this.lots.length === 0;
-    const justSoldOut = isFlatCash && !this.wasFlatCashLastTick;
     this.wasFlatCashLastTick = isFlatCash;
-
-    const prevFloor = this.lastEvaluatedFloor;
-    const prevCeil = this.lastEvaluatedCeil;
-    const isChannelChanged = prevFloor !== undefined && (
-      Math.abs(lowerBound - prevFloor) / lowerBound > 0.001 ||
-      Math.abs(upperBound - (prevCeil ?? upperBound)) / upperBound > 0.001
-    );
-
-    if (isFlatCash && (isChannelChanged || justSoldOut) && !this.waitingForHigherLow && isChannelReady) {
-      const activeCycleSummary = dow?.waveCycle?.activeCycleSummary ?? "";
-      const annotatedLows = dow?.waveCycle?.annotatedSwings?.filter((s) => s.type === "LOW") ?? [];
-      const lastAnnotatedLow = annotatedLows[annotatedLows.length - 1];
-      const annotatedHighs = dow?.waveCycle?.annotatedSwings?.filter((s) => s.type === "HIGH") ?? [];
-      const lastAnnotatedHigh = annotatedHighs[annotatedHighs.length - 1];
-
-      const hasLlInCycle = activeCycleSummary.includes("LL") || dow?.waveCycle?.lastLl?.dowLabel === "LL" || lastAnnotatedLow?.dowLabel === "LL";
-      const isLastHighLh = lastAnnotatedHigh?.dowLabel === "LH" || dow?.waveCycle?.lastLh !== undefined;
-      const isFloorShiftedDown = prevFloor !== undefined && lowerBound < prevFloor * 0.999;
-      const isDowntrendDrop = Boolean(dow?.isDowntrendDropActive);
-      const isWaveDowntrend = dow?.regime === "DOWNTREND";
-
-      const activePeak = dow?.activePeak ?? dow?.lastSwingHigh;
-      const peakTime = activePeak?.time ?? 0;
-      const hasRecentHl = Boolean(
-        dow?.waveCycle?.lastHl &&
-        dow.waveCycle.lastHl.time >= peakTime &&
-        dow.waveCycle.lastHl.price > lowerBound * 1.0005
-      );
-
-      const hasRiskOfNewLl = Boolean(
-        hasLlInCycle ||
-        isLastHighLh ||
-        isFloorShiftedDown ||
-        isDowntrendDrop ||
-        isWaveDowntrend ||
-        (!hasRecentHl && refPrice < centerPrice)
-      );
-
-      if (hasRiskOfNewLl) {
-        this.waitingForHigherLow = true;
-        this.isFlatChannelShiftWaiting = true;
-        this.breakdownFloorPrice = lowerBound;
-        this.breakdownBuyLevel2Price = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001
-          ? buyLevels[1]
-          : (lowerBound > 0 ? lowerBound + span * 0.32 : refPrice);
-        this.breakdownLowPrice = refPrice;
-        this.breakdownTime = (this.dowEngine?.getCandles().slice(-1)[0]?.time) ?? Math.floor(Date.now() / 1000);
-        const reasonDesc = hasLlInCycle ? `รอบคลื่นมี LL (${activeCycleSummary || "LL"})` : isLastHighLh ? "ยอดล่าสุดเป็น LH" : isFloorShiftedDown ? "ขอบล่างกรอบใหม่ต่ำลง" : isDowntrendDrop ? "Downtrend Drop" : "ไม่มีฐาน HL รองรับ";
-        this.log(
-          `🛡️ [FLAT CASH & CHANNEL SHIFT] 100% Cash & Channel shift with LL risk (${reasonDesc}) — Waiting for confirmed Higher Low (HL > $${refPrice.toFixed(4)}) or Closed Candle above Buy Level 2 ($${this.breakdownBuyLevel2Price.toFixed(4)}) before accumulating! (Floor: $${lowerBound.toFixed(4)})`,
-        );
-        this.saveState();
-      }
+    if (!isFlatCash && this.recoveryScoutPending) {
+      this.recoveryScoutPending = false;
     }
 
     this.lastEvaluatedFloor = lowerBound;
@@ -2602,10 +2566,6 @@ export class DynamicGrid {
     const isBelowFloor = isChannelReady && refPrice < lowerBound;
     const isAboveCeiling = isChannelReady && refPrice >= upperBound;
 
-    // ── Broken Floor Tracking & Recovery via:
-    // 1. Reclaiming & standing above Buy Level 2 (30% Zone) for >= 1 candle bar
-    // 2. Trendline Breakout (2-candle confirmation)
-    // 3. Confirmed Higher Low (HL)
     const currentBuyLevel2 = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001 ? buyLevels[1] : undefined;
     const effectiveBuyLevel2Target =
       currentBuyLevel2 ??
@@ -2613,10 +2573,59 @@ export class DynamicGrid {
       (this.breakdownFloorPrice && this.breakdownFloorPrice > 0.0001 ? this.breakdownFloorPrice : undefined) ??
       (lowerBound > 0 ? lowerBound + span * 0.32 : refPrice);
 
+    // If a new active downtrend drop (LH + LL or fresh LL breakdown) is detected and its trough
+    // has NOT already been resolved, enter the unified waitingForHigherLow state.
+    if (Boolean(dow?.isDowntrendDropActive) && !this.waitingForHigherLow && isChannelReady) {
+      const activeDumpLow = dow?.downtrendDropLow ?? lowerBound;
+      const isNewUnresolvedDrop =
+        this.lastResolvedDumpLowPrice === undefined ||
+        activeDumpLow < this.lastResolvedDumpLowPrice * 0.9985 ||
+        isBelowFloor;
+
+      if (isNewUnresolvedDrop) {
+        const lastLl = dow?.waveCycle?.lastLl;
+        const lastHl = dow?.waveCycle?.lastHl;
+        const dumpLowTime =
+          Math.max(
+            lastLl?.time ?? 0,
+            dow?.candidateValley && dow.candidateValley.price <= activeDumpLow * 1.0005 ? dow.candidateValley.time : 0,
+          ) || (Math.floor(Date.now() / 1000) - 3600);
+
+        const isHlAfterLl = Boolean(
+          lastHl &&
+          lastLl &&
+          lastHl.index > lastLl.index &&
+          lastHl.time >= dumpLowTime &&
+          lastHl.price > activeDumpLow * 1.0005,
+        );
+        const tlBreakout = Boolean(
+          dow?.downtrendBreakoutConfirmed ||
+          (dow?.downtrendLine?.isBroken && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2),
+        );
+
+        if (!isHlAfterLl && !tlBreakout) {
+          this.waitingForHigherLow = true;
+          this.isFlatChannelShiftWaiting = false;
+          this.recoveryScoutPending = false;
+          this.breakdownFloorPrice = lowerBound;
+          this.breakdownBuyLevel2Price = effectiveBuyLevel2Target;
+          this.breakdownLowPrice = Math.min(refPrice, activeDumpLow);
+          this.breakdownTime = dumpLowTime;
+          this.log(
+            `🛡️ [UNIFIED DOWNTREND GUARD] Active bear wave / floor break detected (Low: $${this.breakdownLowPrice.toFixed(6)} | Floor: $${lowerBound.toFixed(6)}) — pausing buys until Higher Low, Micro-HL, or Buy Level 2 Reclaim ($${effectiveBuyLevel2Target.toFixed(6)})!`,
+          );
+          this.saveState();
+        }
+      }
+    }
+
     if (this.waitingForHigherLow) {
-      if (this.breakdownLowPrice === undefined || refPrice < this.breakdownLowPrice) {
-        this.breakdownLowPrice = refPrice;
-        this.breakdownTime = Math.floor(Date.now() / 1000);
+      const candidateLow = dow?.downtrendDropLow !== undefined ? Math.min(refPrice, dow.downtrendDropLow) : refPrice;
+      if (this.breakdownLowPrice === undefined || candidateLow < this.breakdownLowPrice) {
+        this.breakdownLowPrice = candidateLow;
+        if (refPrice <= candidateLow * 1.0005) {
+          this.breakdownTime = Math.floor(Date.now() / 1000);
+        }
         this.saveState();
       }
 
@@ -2626,84 +2635,79 @@ export class DynamicGrid {
 
       const closedCandlesList = this.dowEngine?.getClosedCandles() ?? [];
       const confirmedLastClosed = closedCandlesList.length > 0 ? closedCandlesList[closedCandlesList.length - 1] : undefined;
+      const trackedLow = this.breakdownLowPrice ?? (dow?.downtrendDropLow ?? lowerBound);
 
-      // 1. Resolve via standing above Buy Level 2 of the confirmed channel
-      // 🔒 STRICT RULE: Only confirmed CLOSED candle body (never live-tick / unconfirmed candle)
-      // and price MUST have re-entered at or above the confirmed L2 target!
+      // 1. Resolve via Confirmed Closed Candle reclaiming Buy Level 2 (32% Zone) above dump trough
       const isCandleStandingAboveBuy2 = Boolean(
+        !isBelowFloor &&
         confirmedLastClosed &&
         confirmedLastClosed.close >= effectiveBuyLevel2Target * 0.9995 &&
-        refPrice >= effectiveBuyLevel2Target * 0.999
+        refPrice >= effectiveBuyLevel2Target * 0.999 &&
+        refPrice >= trackedLow * 1.002,
       );
+
+      // 2. Resolve via Trendline Breakout (>= 2 confirmed candles)
+      const isTlBreakoutResolved = Boolean(
+        !isBelowFloor &&
+        (dow?.downtrendBreakoutConfirmed ||
+          (dow?.downtrendLine && (dow.downtrendLine.isBroken || dow.downtrendLine.breakoutConfirmed) && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2)),
+      );
+
+      const resolveRecovery = (logMessage: string) => {
+        this.log(logMessage);
+        this.lastResolvedDumpLowPrice = Math.min(trackedLow, dow?.downtrendDropLow ?? trackedLow);
+        this.waitingForHigherLow = false;
+        this.isFlatChannelShiftWaiting = false;
+        this.isDowntrendDropPaused = false;
+        this.breakdownTime = undefined;
+        this.breakdownFloorPrice = undefined;
+        this.breakdownLowPrice = undefined;
+        this.breakdownBuyLevel2Price = undefined;
+        if (this.lots.length === 0) {
+          this.recoveryScoutPending = true;
+        }
+        this.saveState();
+      };
 
       if (isInCutLossCooldown) {
         const remainMin = Math.ceil((cutLossCooldownMs - elapsedSinceCutMs) / 60000);
         this.status(
           `⏳ POST-CUT-LOSS COOLDOWN: Waiting ${remainMin}m before allowing floor recovery & re-entry (preventing bottom whipsaw)`,
         );
-      } else if (this.cfg.enableBuyLevel2Recovery && isCandleStandingAboveBuy2) {
-        this.log(
-          `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle above Buy Level 2 $${effectiveBuyLevel2Target.toFixed(6)}) — Floor breakdown resolved, resuming grid accumulation!`,
+      } else if (isCandleStandingAboveBuy2) {
+        resolveRecovery(
+          `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle $${confirmedLastClosed!.close.toFixed(6)} >= Buy Level 2 $${effectiveBuyLevel2Target.toFixed(6)}) — Breakdown resolved, enabling recovery entry!`,
         );
-        this.waitingForHigherLow = false;
-        this.isFlatChannelShiftWaiting = false;
-        this.breakdownTime = undefined;
-        this.breakdownFloorPrice = undefined;
-        this.breakdownLowPrice = undefined;
-        this.breakdownBuyLevel2Price = undefined;
-        this.saveState();
-      } else if (this.cfg.trendlineFilter && (dow?.downtrendBreakoutConfirmed || (dow?.downtrendLine && (dow.downtrendLine.isBroken || dow.downtrendLine.breakoutConfirmed)))) {
-        // 2. Resolve via Trendline Breakout if TRENDLINE_FILTER is active (requires 2-candle confirmation)
-        const brokenCount = dow.downtrendLine?.brokenCandleCount ?? 2;
-        const linePriceStr = dow.downtrendLine ? `TL $${dow.downtrendLine.currentLinePrice.toFixed(6)}` : "downtrend line";
-        this.log(
-          `🚀 TRENDLINE BREAKOUT CONFIRMED (${brokenCount} candles) @ $${refPrice.toFixed(6)} (Broke above ${linePriceStr}) — Floor breakdown resolved via 2-candle breakout, resuming grid accumulation!`,
+      } else if (isTlBreakoutResolved) {
+        const brokenCount = dow?.downtrendLine?.brokenCandleCount ?? 2;
+        const linePriceStr = dow?.downtrendLine ? `TL $${dow.downtrendLine.currentLinePrice.toFixed(6)}` : "downtrend line";
+        resolveRecovery(
+          `🚀 TRENDLINE BREAKOUT CONFIRMED (${brokenCount} candles) @ $${refPrice.toFixed(6)} (Broke above ${linePriceStr}) — Breakdown resolved, enabling recovery entry!`,
         );
-        this.waitingForHigherLow = false;
-        this.isFlatChannelShiftWaiting = false;
-        this.breakdownTime = undefined;
-        this.breakdownFloorPrice = undefined;
-        this.breakdownLowPrice = undefined;
-        this.breakdownBuyLevel2Price = undefined;
-        this.saveState();
-      } else if (this.breakdownFloorPrice || this.breakdownLowPrice || lowerBound > 0) {
-        // 3. Resolve via Confirmed Higher Low (HL)
+      } else if (!isBelowFloor && (this.breakdownFloorPrice || this.breakdownLowPrice || lowerBound > 0)) {
+        // 3. Resolve via Confirmed Higher Low (3-Bar Swing HL or Fast 2-Bar Micro-HL)
         const checkTime = this.breakdownTime ?? (Math.floor(Date.now() / 1000) - 3600);
         const checkFloor = this.breakdownFloorPrice ?? lowerBound;
-        const checkLow = this.breakdownLowPrice ?? (lowerBound * 0.98);
+        const checkLow = trackedLow;
 
         const hlCheck =
           this.localTrendEngine?.checkForHigherLow(checkTime, checkFloor, checkLow, refPrice) ??
           this.dowEngine?.checkForHigherLow(checkTime, checkFloor, checkLow, refPrice);
 
         if (hlCheck && hlCheck.confirmed && hlCheck.higherLow) {
-          this.log(
-            `✅ HIGHER LOW (HL) CONFIRMED @ $${hlCheck.higherLow.price.toFixed(6)} (${hlCheck.reason}) — Floor breakdown resolved, establishing new floor & resuming grid accumulation!`,
+          resolveRecovery(
+            `✅ HIGHER LOW (HL) CONFIRMED @ $${hlCheck.higherLow.price.toFixed(6)} (${hlCheck.reason}) — Breakdown resolved, enabling recovery entry!`,
           );
-          this.waitingForHigherLow = false;
-          this.isFlatChannelShiftWaiting = false;
-          this.breakdownTime = undefined;
-          this.breakdownFloorPrice = undefined;
-          this.breakdownLowPrice = undefined;
-          this.saveState();
         } else if (
           isChannelReady &&
           this.breakdownFloorPrice !== undefined &&
           lowerBound >= this.breakdownFloorPrice * 0.998 &&
           refPrice >= this.breakdownFloorPrice * 1.002 &&
-          (lastClosedCandle && lastClosedCandle.close >= this.breakdownFloorPrice)
+          (confirmedLastClosed && confirmedLastClosed.close >= this.breakdownFloorPrice)
         ) {
-          // If price has cleanly re-entered and closed above the ORIGINAL broken floor
-          // Note: If channel shifted DOWNWARDS after cut loss, it does NOT qualify as a reclaim! It MUST wait for Higher Low (HL)!
-          this.log(
-            `🚀 CHANNEL FLOOR RECLAIMED @ $${refPrice.toFixed(6)} >= Original Breakdown Floor $${this.breakdownFloorPrice.toFixed(6)} — Floor breakdown resolved, resuming normal grid operation!`,
+          resolveRecovery(
+            `🚀 CHANNEL FLOOR RECLAIMED @ $${refPrice.toFixed(6)} >= Original Breakdown Floor $${this.breakdownFloorPrice.toFixed(6)} — Breakdown resolved, enabling recovery entry!`,
           );
-          this.waitingForHigherLow = false;
-          this.isFlatChannelShiftWaiting = false;
-          this.breakdownTime = undefined;
-          this.breakdownFloorPrice = undefined;
-          this.breakdownLowPrice = undefined;
-          this.saveState();
         }
       }
     }
@@ -2860,7 +2864,9 @@ export class DynamicGrid {
             await this.sellAll(dexBid, "CUT");
             this.lastCutLossTime = Date.now();
             this.waitingForHigherLow = true;
-            this.isFlatChannelShiftWaiting = true;
+            this.isFlatChannelShiftWaiting = false;
+            this.lastResolvedDumpLowPrice = undefined;
+            this.recoveryScoutPending = false;
             this.breakdownFloorPrice = lowerBound;
             this.breakdownLowPrice = dexBid;
             this.breakdownTime = Math.floor(Date.now() / 1000);
@@ -3176,54 +3182,10 @@ export class DynamicGrid {
     const isDowntrend = activeRegime === "DOWNTREND";
     const trendFiltered = this.cfg.dowTrendFilter && isDowntrend;
 
-    // 🛡️ Downtrend Drop Guard: Pause buys when market is actively dumping (LH + LL กดตัว)
-    // Prevents catching falling knives. Resumes buying ONLY when:
-    // 1) Higher Low (HL) is confirmed (wave marked HL or higher swing low formed after dump low)
-    // 2) Downtrend Line breakout is confirmed (>= 2 candles breaking above downtrend line)
-    // Note: Never resumes merely because price is near the floor (Condition C is strictly omitted)
-    const isDowntrendDropActive = Boolean(dow?.isDowntrendDropActive);
-    let downtrendDropPaused = false;
-    let downtrendDropReason = "";
-
-    if (isDowntrendDropActive && !this.waitingForHigherLow) {
-      const dumpLow = dow?.downtrendDropLow ?? lowerBound;
-      const lastLl = dow?.waveCycle?.lastLl;
-      const lastHl = dow?.waveCycle?.lastHl;
-      const dumpLowTime =
-        Math.max(
-          lastLl?.time ?? 0,
-          dow?.candidateValley && dow.candidateValley.price <= dumpLow * 1.0005 ? dow.candidateValley.time : 0,
-        ) || (Date.now() / 1000 - 3600);
-      const isHlAfterLl = Boolean(
-        lastHl &&
-        lastLl &&
-        lastHl.index > lastLl.index &&
-        lastHl.time >= dumpLowTime &&
-        lastHl.price > dumpLow * 1.0005,
-      );
-
-      const hlCheck = this.dowEngine?.checkForHigherLow(
-        dumpLowTime,
-        lowerBound,
-        dumpLow,
-        refPrice,
-      );
-
-      const hlConfirmed = isHlAfterLl || Boolean(hlCheck?.confirmed);
-
-      const tlBreakoutConfirmed = Boolean(
-        dow?.downtrendBreakoutConfirmed ||
-        (dow?.downtrendLine?.isBroken && dow.downtrendLine.brokenCandleCount >= 2)
-      );
-
-      if (!hlConfirmed && !tlBreakoutConfirmed) {
-        downtrendDropPaused = true;
-        const channelFloorRef = dow?.activeValley?.price ?? lowerBound;
-        const lowDesc = refPrice < channelFloorRef ? `หลุดฐานกรอบ $${channelFloorRef.toFixed(6)}` : "ขาลง LH+LL";
-        downtrendDropReason = `[Paused: ${lowDesc} รอตั้งฐาน HL > $${dumpLow.toFixed(6)} หรือ Breakout]`;
-      }
-    }
-    this.isDowntrendDropPaused = downtrendDropPaused;
+    // 🛡️ Downtrend Drop Guard is now fully unified into the single waitingForHigherLow state machine above
+    const downtrendDropPaused = false;
+    const downtrendDropReason = "";
+    this.isDowntrendDropPaused = false;
 
     // Trendline Filter: Active during breakdown recovery until confirmed breakout occurs
     const downtrendLine = dow?.downtrendLine;
@@ -4020,7 +3982,9 @@ export class DynamicGrid {
         await this.sellAll(bestBid, "CUT");
         this.lastCutLossTime = Date.now();
         this.waitingForHigherLow = true;
-        this.isFlatChannelShiftWaiting = true;
+        this.isFlatChannelShiftWaiting = false;
+        this.lastResolvedDumpLowPrice = undefined;
+        this.recoveryScoutPending = false;
         this.breakdownFloorPrice = lowerBound;
         this.breakdownLowPrice = bestBid;
         this.breakdownTime = Math.floor(Date.now() / 1000);
@@ -4105,6 +4069,7 @@ export class DynamicGrid {
     // Align lot qty with exchange stepSize and precision (4 decimals for ETH/SOMI)
     const netQty = roundToStep(rawNetQty, this.stepSize || 0.0001, 4);
     this.lots.push({ price, qty: netQty, time: now });
+    this.recoveryScoutPending = false;
     this.needsSellRebalance = true;
     this.needsBuyRebalance = true;
     // Reset IOC Bracket Sell Cycle whenever a buy order fills to re-partition lots with new baseline
@@ -4334,15 +4299,21 @@ export class DynamicGrid {
         effectiveLevelNames[0] = `Buy TL Support ($${activeUptrendLine.currentLinePrice.toFixed(4)})`;
       }
 
-      // Count total active buy levels considering enabledBuys and potential trendline support at idx 0
+      const maxAllowedBuyPrice = Math.min(currentBestBid, refPrice);
+      const recoveryScoutIdx = (this.recoveryScoutPending && this.lots.length === 0 && enabledBuys.some(Boolean))
+        ? effectiveBuyLevels.findIndex((lvl) => lvl > 0 && lvl < maxAllowedBuyPrice)
+        : -1;
+      const effectiveEnabledBuys = enabledBuys.map((en, idx) => Boolean(en) || idx === recoveryScoutIdx);
+
+      // Count total active buy levels considering effectiveEnabledBuys and potential trendline support at idx 0
       const activeBuyCount = effectiveBuyLevels.reduce((cnt, _, idx) => {
-        const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
+        const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? effectiveEnabledBuys.some(Boolean) : (effectiveEnabledBuys[idx] !== false);
         return isEnabled ? cnt + 1 : cnt;
       }, 0) || (buyLevels.length || 5);
 
-      const buyWeightFractions = this.getBuyLevelWeightFractions(enabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget);
+      const buyWeightFractions = this.getBuyLevelWeightFractions(effectiveEnabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget);
       const buyTargets = effectiveBuyLevels.map((_, idx) =>
-        this.getCumulativeBuyTargetFraction(idx, enabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget)
+        this.getCumulativeBuyTargetFraction(idx, effectiveEnabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget)
       );
 
       // Clean up stale resting buy orders or correct mislabeled levelDesc to closest buyLevel
@@ -4385,9 +4356,6 @@ export class DynamicGrid {
         this.saveState();
       }
 
-      // Maintain resting Buy Limit orders at Eligible Buy Levels with automatic rebalancing
-      const maxAllowedBuyPrice = Math.min(currentBestBid, refPrice);
-
       // Rebalance Buy side: track available capacity across all buy levels
       const openBuys = this.openOrders.filter((o) => o.isBid);
       const currentAvailableCapacity = Math.max(0, maxInv - currentHeldQuote);
@@ -4395,13 +4363,13 @@ export class DynamicGrid {
       const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
 
       // Determine which buy levels are actually eligible for placing/holding orders
-      // (not disabled by user unless overridden by active Uptrend Support at idx 0, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
+      // (not disabled by user unless overridden by active Uptrend Support at idx 0 or Recovery Scout, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
       const eligibleBuyIndices = effectiveBuyLevels
         .map((lvl, idx) => ({ lvl, idx }))
         .filter(({ lvl, idx }) => {
           if (!lvl) return false;
-          // Check if disabled by user (allow idx === 0 if it is the active Uptrend Support Line entry)
-          const isLevelEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
+          // Check if disabled by user (allow idx === 0 if it is the active Uptrend Support Line entry or recoveryScoutIdx)
+          const isLevelEnabled = (idx === 0 && isTlAboveBuyTarget) ? effectiveEnabledBuys.some(Boolean) : (effectiveEnabledBuys[idx] !== false);
           if (!isLevelEnabled) return false;
           // Holding Fraction Guard: If held fraction already reached or exceeded this level's target fraction, don't repeat
           const lvlTargetFraction = buyTargets[idx] ?? 1.0;
@@ -4533,8 +4501,8 @@ export class DynamicGrid {
           const lvlPrice = effectiveBuyLevels[i];
           if (!lvlPrice) continue;
 
-          // If this buy level is disabled by user (and not overridden by active Uptrend Support at i === 0), cancel any existing order and skip
-          const isLevelEnabled = (i === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[i] !== false);
+          // If this buy level is disabled by user (and not overridden by active Uptrend Support at i === 0 or recoveryScoutIdx), cancel any existing order and skip
+          const isLevelEnabled = (i === 0 && isTlAboveBuyTarget) ? effectiveEnabledBuys.some(Boolean) : (effectiveEnabledBuys[i] !== false);
           if (!isLevelEnabled) {
             const existingDisabledBuy = this.openOrders.find(
               (o) => o.isBid && (o.levelDesc === effectiveLevelNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
@@ -5870,6 +5838,18 @@ export class DynamicGrid {
         if (activeReached > 0 && matchedLevelIndex >= 0) {
           targetTranches = activeReached;
           matchedBuyPrice = buyLevels[matchedLevelIndex];
+        } else if (this.recoveryScoutPending && this.lots.length === 0 && buyLevels.length > 0) {
+          // 3. Recovery First Tranche (Scout Entry):
+          // When base recovery just confirmed while 100% Cash and price sits in the Buy Zone above Buy 4 (12%),
+          // allow 1 initial tranche at the nearest Buy Level at/above current ask so we don't miss the V/U recovery wave.
+          for (let i = 0; i < buyLevels.length; i++) {
+            const lvlPrice = buyLevels[i];
+            if (lvlPrice !== undefined && currentBestAsk <= lvlPrice * 1.002 && refPrice <= lvlPrice * 1.002) {
+              targetTranches = 1;
+              matchedLevelIndex = i;
+              matchedBuyPrice = lvlPrice;
+            }
+          }
         }
       }
 
@@ -5879,12 +5859,13 @@ export class DynamicGrid {
       }
 
       if (targetTranches > 0 && matchedLevelIndex >= 0 && matchedBuyPrice !== undefined && baseTrancheQuote > 0) {
+        const isScoutEntry = Boolean(this.recoveryScoutPending && this.lots.length === 0 && !enabledBuys[matchedLevelIndex]);
         const firstActiveFrac = buyFractions.find((f) => f > 0) ?? (1 / activeBuyCount);
-        const targetCapacityFraction = isTlBuy
+        const targetCapacityFraction = (isTlBuy || isScoutEntry)
           ? firstActiveFrac
           : this.getCumulativeBuyTargetFraction(matchedLevelIndex, enabledBuys, buyLevels.length);
         const targetCapacityQuote = maxInv * targetCapacityFraction;
-        const levelTrancheQuote = isTlBuy
+        const levelTrancheQuote = (isTlBuy || isScoutEntry)
           ? (maxInv * firstActiveFrac)
           : (maxInv * (buyFractions[matchedLevelIndex] || firstActiveFrac));
         const deficitQuote = targetCapacityQuote - currentHeldQuote;

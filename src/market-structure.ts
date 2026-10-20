@@ -366,10 +366,6 @@ export class DowStructureEngine {
       (s) => s.time >= effectiveSinceTime && isSwingLowUnbroken(s),
     );
 
-    if (recentConfirmedLows.length === 0) {
-      return { confirmed: false, reason: "Waiting for confirmed unbroken swing low pivot after dump trough" };
-    }
-
     for (let i = recentConfirmedLows.length - 1; i >= 0; i--) {
       const candidateLow = recentConfirmedLows[i];
       if (!candidateLow) continue;
@@ -388,7 +384,79 @@ export class DowStructureEngine {
       }
     }
 
-    return { confirmed: false, reason: "Recent swing lows are not higher than the dump trough" };
+    // 3. Fast 2-Bar Structural Micro-HL (Confirmed Closed Candles)
+    // Allows faster base confirmation (2 bars after trough instead of waiting 45-60m for 3 right-hand pivot bars)
+    // Requires: Trough -> Bounce (>= +0.20%) -> Higher Low Retest (> trough * 1.001) -> Bullish Close above retest high / floor
+    const closedCandles = this.getClosedCandles();
+    if (closedCandles.length >= 4) {
+      let troughIdx = -1;
+      let troughLow = lowestDumpPrice;
+      for (let i = 0; i < closedCandles.length; i++) {
+        const c = closedCandles[i]!;
+        if (c.time >= sinceTime - 3600) {
+          const effLow = getEffectiveLow(c, this.useTrueWick, this.wickThresholdPct);
+          const barLow = Math.min(c.low, effLow);
+          if (troughIdx === -1 || barLow <= troughLow * 1.0005) {
+            troughLow = Math.min(troughLow, barLow);
+            troughIdx = i;
+          }
+        }
+      }
+
+      if (troughIdx >= 0 && closedCandles.length - 1 >= troughIdx + 2) {
+        const lastClosed = closedCandles[closedCandles.length - 1]!;
+        let maxBounceHigh = closedCandles[troughIdx]!.high;
+
+        for (let i = troughIdx + 1; i < closedCandles.length; i++) {
+          const c = closedCandles[i]!;
+          const effLow = getEffectiveLow(c, this.useTrueWick, this.wickThresholdPct);
+          const barLow = Math.min(c.low, effLow);
+
+          // Must hold strictly above dump trough (+0.10%) and have seen an initial bounce (>= +0.20%)
+          const isHigherLowRetest =
+            barLow > troughLow * 1.001 &&
+            maxBounceHigh >= troughLow * 1.002 &&
+            barLow < maxBounceHigh;
+
+          if (isHigherLowRetest) {
+            // Confirming bar (either this bar itself as a bullish pin/reversal or a subsequent bar closing above this retest bar's high)
+            const nextBarConfirmed =
+              i < closedCandles.length - 1 &&
+              lastClosed.close > lastClosed.open &&
+              lastClosed.close >= c.high &&
+              lastClosed.close >= referenceFloor * 0.998;
+
+            const selfReversalConfirmed =
+              i >= troughIdx + 2 &&
+              c.close > c.open &&
+              c.close >= maxBounceHigh &&
+              c.close >= referenceFloor * 0.998;
+
+            const isLiveHolding = !currentPrice || (currentPrice >= barLow && currentPrice >= referenceFloor * 0.998);
+
+            if ((nextBarConfirmed || selfReversalConfirmed) && isLiveHolding) {
+              const microHl: SwingPoint = {
+                index: i,
+                time: c.time,
+                price: barLow,
+                type: "LOW",
+              };
+              return {
+                confirmed: true,
+                higherLow: microHl,
+                reason: `Fast 2-Bar Micro-HL at $${barLow.toFixed(6)} > Dump Trough $${troughLow.toFixed(6)} (Closed @ $${lastClosed.close.toFixed(6)})`,
+              };
+            }
+          }
+
+          if (c.high > maxBounceHigh) {
+            maxBounceHigh = c.high;
+          }
+        }
+      }
+    }
+
+    return { confirmed: false, reason: "Waiting for confirmed Higher Low or 2-bar Micro-HL after dump trough" };
   }
 
   private recalculateSwings(): void {
@@ -1766,43 +1834,51 @@ export class DowStructureEngine {
       waveCycle.annotatedSwings,
     );
     // Active downtrend drop detection:
-    // 1) Confirmed LH + LL wave sequence (รอบคลื่นกดตัว), OR
-    // 2) Real-time breakdown below the active channel floor / confirmed support valley (หลุดฐานกรอบ):
-    //    NOTE: A normal pullback inside the channel (price >= bottomBound) when the wave peak is HH
-    //    must NOT be flagged as a breakdown, otherwise it blocks Buy Levels inside the channel!
-    const activeFloorPrice = activeValley?.price ?? bottomBound;
+    // 1) Confirmed active bear wave where the latest low is LL and no subsequent HH or HL has broken the bear structure, OR
+    // 2) Real-time breakdown below the active channel floor (หลุดฐานกรอบ):
+    //    NOTE: A normal pullback inside the channel (price >= bottomBound) after forming an HH (e.g. "LL ➔ HH")
+    //    must NEVER be flagged as a downtrend drop!
+    const activeFloorPrice = bottomBound > 0 ? bottomBound : (activeValley?.price ?? 0);
     const isBreakingBelowChannelFloor = Boolean(
-      price < bottomBound ||
-      price < activeFloorPrice ||
-      (candidateValley && candidateValley.price < bottomBound)
+      hasValidChannel && (
+        price < activeFloorPrice ||
+        (candidateValley && candidateValley.price < activeFloorPrice)
+      )
     );
-    // ตรวจจับขาลงทั้ง 2 รูปแบบ:
-    // A) ขาลงมาตรฐาน: LH + LL กดตัว
-    // B) ขาลงฉับพลันหลังทำยอด HH: ยอดล่าสุดเป็น HH แต่ตามด้วยสวิง Low ที่รูดทำ LL หลุดฐานเหวก่อนหน้า (HH + LL breakdown)
-    const isHhThenLlBreakdown = Boolean(
-      lastCanonicalHigh?.dowLabel === "HH" &&
+    // ตรวจจับขาลงจริง:
+    // A) ขาลงมาตรฐาน: ยอดล่าสุดเป็น LH และเหวล่าสุดเป็น LL (LH + LL กดตัว)
+    // B) ขาลงฉับพลันหลังยอด HH: สวิงสุดท้ายที่เพิ่งเกิดคือ LL (HH ➔ LL โดยยังไม่มี HH หรือ HL ใหม่ตามหลัง)
+    const isBearLhLl = Boolean(
+      lastCanonicalHigh?.dowLabel === "LH" &&
+      lastCanonicalLow?.dowLabel === "LL"
+    );
+    const isFreshLlAfterPeak = Boolean(
       lastCanonicalLow?.dowLabel === "LL" &&
-      lastCanonicalLow.index > lastCanonicalHigh.index &&
-      price < (activePeak?.price ?? upperBound)
+      lastCanonicalLow.index > (lastCanonicalHigh?.index ?? -1)
     );
     const isConfirmedDowntrendWave = Boolean(
-      (waveCycle.activeCycleSummary?.includes("LH + LL") ||
-       waveCycle.activeCycleSummary?.includes("LL") ||
-       (lastCanonicalHigh?.dowLabel === "LH" && lastCanonicalLow?.dowLabel === "LL") ||
-       isHhThenLlBreakdown) &&
+      (isBearLhLl || isFreshLlAfterPeak) &&
       price < (activePeak?.price ?? upperBound)
     );
     const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowChannelFloor;
 
-    const dropAnchorPeak = activePeak ?? macroPeak;
-    const dropPostPeakLows = canonicalLows.filter((l) => dropAnchorPeak && l.index > dropAnchorPeak.index);
-    const postPeakPrices = dropPostPeakLows.map((l) => l.price);
-    if (candidateValley && (!dropAnchorPeak || candidateValley.index > dropAnchorPeak.index)) {
-      postPeakPrices.push(candidateValley.price);
+    const dropPrices: number[] = [];
+    if (lastCanonicalLow?.dowLabel === "LL") {
+      dropPrices.push(lastCanonicalLow.price);
+      for (const c of candles) {
+        if (c.time >= lastCanonicalLow.time) {
+          dropPrices.push(getEffectiveLow(c, useTrueWick, this.wickThresholdPct));
+        }
+      }
     }
-    postPeakPrices.push(price);
-    const downtrendDropLow = postPeakPrices.length > 0
-      ? Math.min(...postPeakPrices)
+    if (candidateValley && (!lastCanonicalLow || candidateValley.time >= lastCanonicalLow.time)) {
+      dropPrices.push(candidateValley.price);
+    }
+    if (isBreakingBelowChannelFloor || dropPrices.length === 0) {
+      dropPrices.push(price);
+    }
+    const downtrendDropLow = dropPrices.length > 0
+      ? Math.min(...dropPrices)
       : (lastCanonicalLow?.price ?? bottomBound);
 
     return {
