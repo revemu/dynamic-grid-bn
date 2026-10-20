@@ -1731,3 +1731,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ใน `takeProfitAtUpperBound`: ปรับเงื่อนไขเป็น `if (!isProfitableExit) { ... return; }` เด็ดขาด โดยไม่ให้ `isLhEscapeReached` มาเป็นข้อยกเว้น การทำ Take Profit / Dynamic Escape ทุกรูปแบบต้องได้ราคาปิดที่ทำกำไรสุทธิเหนือทุนเฉลี่ย (`avgEntryPrice * (1 + minTpProfitPct / 100)`) เสมอ
      - ใน `sellAll`: เมื่อ `action === "SELL"` บังคับ `minProfitablePrice = avgEntry > 0 ? avgEntry * minProfitMult : minAllowedBySlippage` ครอบคลุมทุกโหมดกำไร ป้องกันไม่ให้ส่ง Limit Price ต่ำกว่าทุนเฉลี่ย
      - **Truthful Order Action & Labeling**: ตรวจสอบ PnL จริง (`roundPnl >= 0 ? "TAKE_PROFIT" : "BREAKDOWN_EXIT"`) และป้ายกำกับ (`roundPnl >= 0 ? "100% FULL EXIT (TAKE PROFIT)" : "BREAKDOWN EXIT (LOSS)"`) หากมีคำสั่งใดที่ปิดต่ำกว่าทุน จะไม่มีการติดป้ายเท็จว่าเป็น TAKE PROFIT อีกต่อไป
+
+---
+
+### 32. Accurate Candidate Swing Confirmation Counting on Confirmed Candles (`src/market-structure.ts`)
+- **สาเหตุของปัญหา**:
+  1. **การนับแท่งยืนยัน Candidate ผิดพลาดเป็น `0/3` แทนที่จะเป็น `1/3`**:
+     - ใน `src/market-structure.ts` ฟังก์ชัน `getStructure()`: เมื่อเปิดใช้งานสถาปัตยกรรม `adjustChannelOnClosedOnly: true` อาร์เรย์ `candles` ถูกส่งมาจาก `getClosedCandles()` ซึ่งได้ตัดแท่งเทียนที่ยังไม่ปิดออกไปแล้ว 1 แท่ง
+     - แต่ในลูปตรวจจับ Candidate Swings (บรรทัด 1188 เดิม): เขียนฮาร์ดโค้ดไว้ว่า `const followingClosedCandles = Math.max(0, (n - 2) - idx);` เพราะตั้งสมมติฐานเดิมว่าแท่งสุดท้าย `n - 1` เป็นแท่งเปิดที่ยังไม่ปิดเสมอ
+     - ส่งผลให้เกิดการหักลบซ้ำสองครั้ง (`- 2`) ตัดแท่งเทียนที่เพิ่งปิดสมบูรณ์ (`08:15`) ทิ้งไป ทำให้แท่ง Candidate (`08:00` ไส้ยาว Low `$2,376.94`) คำนวณได้ `(301 - 2) - 299 = 0` และแสดงผลเป็น `⏳ 0/3` ทั้งๆ ที่แท่ง `08:15` ปิดแท่งยืนยันไปแล้ว
+     - ในลูปตรวจสอบขอบขวา (บรรทัด 1201 และ 1233 เดิม) ใช้ `Math.min(n - 2, idx + k)` ข้ามการตรวจสอบแท่ง `n - 1` ที่ปิดแล้วไปด้วย
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`src/market-structure.ts`)**:
+  1. **Dynamic `lastClosedIdx` Resolution**:
+     - คำนวณดัชนีแท่งปิดล่าสุดตามความเป็นจริง:
+       `const lastClosedIdx = (options?.useOnlyClosedCandles || candles[n - 1]?.isClosed === true) ? n - 1 : n - 2;`
+  2. **Accurate Following Closed Candles Count**:
+     - คำนวณ `const followingClosedCandles = Math.max(0, lastClosedIdx - idx);`
+     - ทำให้เมื่อแท่งถัดมาปิดสมบูรณ์ 1 แท่ง จะนับได้ 1 และแสดงผลเป็น **`⏳ 1/3`** ถูกต้องทันที และเมื่อปิดครบ 2 แท่งจะแสดง **`⏳ 2/3`** จนกระทั่งครบ 3 แท่งจึงยืนยันเป็นสวิงถาวร
+  3. **Full Right-Side Closed Candle Scan & Live Candle Guard**:
+     - วนลูปตรวจสอบแท่งปิดด้านขวาครบถึง `Math.min(lastClosedIdx, idx + k)`
+     - ตรวจสอบแท่งเทียนที่กำลังวิ่งอยู่ (`liveCandle`) ว่าหากไส้เทียนปัจจุบันทะลุราคา Candidate จะไม่อนุมัติเป็น Candidate ทันที

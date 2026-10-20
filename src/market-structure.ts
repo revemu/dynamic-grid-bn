@@ -1178,14 +1178,22 @@ export class DowStructureEngine {
       .sort((a, b) => a.index - b.index); // chronological order
 
     // ── 1. Detect Candidate Peaks & Valleys in the unconfirmed tail (last candles) ──
-    if (n >= k + 1) {
-      const startCandidateIdx = Math.max(k, n - 1 - k);
-      for (let idx = startCandidateIdx; idx < n; idx++) {
+    const lastClosedIdx = (options?.useOnlyClosedCandles || candles[n - 1]?.isClosed === true)
+      ? n - 1
+      : n - 2;
+
+    const liveCandle = (candles[n - 1] && candles[n - 1].isClosed === false)
+      ? candles[n - 1]
+      : (this.candles[this.candles.length - 1]?.isClosed === false ? this.candles[this.candles.length - 1] : undefined);
+
+    if (lastClosedIdx >= k) {
+      const startCandidateIdx = Math.max(k, (lastClosedIdx + 1) - k);
+      for (let idx = startCandidateIdx; idx <= lastClosedIdx; idx++) {
         const c = candles[idx];
         if (!c) continue;
 
-        // Number of fully closed candles formed strictly after idx (candle n - 1 is currently open/live)
-        const followingClosedCandles = Math.max(0, (n - 2) - idx);
+        // Number of fully closed candles formed strictly after idx
+        const followingClosedCandles = Math.max(0, lastClosedIdx - idx);
         const candEffHigh = getEffectiveHigh(c, useTrueWick, this.wickThresholdPct);
         const candEffLow = getEffectiveLow(c, useTrueWick, this.wickThresholdPct);
 
@@ -1198,12 +1206,15 @@ export class DowStructureEngine {
           }
         }
         if (isCandHigh) {
-          for (let j = idx + 1; j <= Math.min(n - 2, idx + k); j++) {
+          for (let j = idx + 1; j <= Math.min(lastClosedIdx, idx + k); j++) {
             const next = candles[j];
             if (next && getEffectiveHigh(next, useTrueWick, this.wickThresholdPct) > candEffHigh) {
               isCandHigh = false;
               break;
             }
+          }
+          if (isCandHigh && liveCandle && getEffectiveHigh(liveCandle, useTrueWick, this.wickThresholdPct) > candEffHigh) {
+            isCandHigh = false;
           }
         }
 
@@ -1230,12 +1241,15 @@ export class DowStructureEngine {
           }
         }
         if (isCandLow) {
-          for (let j = idx + 1; j <= Math.min(n - 2, idx + k); j++) {
+          for (let j = idx + 1; j <= Math.min(lastClosedIdx, idx + k); j++) {
             const next = candles[j];
             if (next && getEffectiveLow(next, useTrueWick, this.wickThresholdPct) < candEffLow) {
               isCandLow = false;
               break;
             }
+          }
+          if (isCandLow && liveCandle && getEffectiveLow(liveCandle, useTrueWick, this.wickThresholdPct) < candEffLow) {
+            isCandLow = false;
           }
         }
 
