@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Candle } from "./market-structure.js";
 import { BotDatabase, getDatabase } from "./db.js";
+import { APP_VERSION_INFO } from "./version.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -78,7 +79,7 @@ export class DashboardServer {
     });
 
     this.server.listen(this.opts.port, () => {
-      this.opts.log(`web dashboard live at http://localhost:${this.opts.port}`);
+      this.opts.log(`web dashboard live at http://localhost:${this.opts.port} (version: ${APP_VERSION_INFO.version}, commit: ${APP_VERSION_INFO.commit})`);
     });
 
     this.server.on("error", (err: any) => {
@@ -163,6 +164,9 @@ export class DashboardServer {
   }
 
   updateTick(tickData: any): void {
+    if (tickData && typeof tickData === "object" && !tickData.versionInfo) {
+      tickData.versionInfo = APP_VERSION_INFO;
+    }
     this.latestTick = tickData;
     this.broadcast("tick", tickData);
   }
@@ -216,11 +220,19 @@ export class DashboardServer {
       return;
     }
 
+    // Version info API
+    if (pathname === "/api/version") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(APP_VERSION_INFO));
+      return;
+    }
+
     // Snapshot state
     if (pathname === "/api/state") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
+          versionInfo: APP_VERSION_INFO,
           candles: this.candles,
           orders: this.recentOrders.slice(0, 150),
           latestTick: this.latestTick,

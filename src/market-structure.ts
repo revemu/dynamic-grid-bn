@@ -394,16 +394,21 @@ export class DowStructureEngine {
   private recalculateSwings(): void {
     const n = this.candles.length;
     const k = Math.max(2, this.pivotWindow || 3);
-    // Need at least k preceding closed bars + pivot bar + k following closed bars + 1 live bar
-    if (n < k * 2 + 2) return;
+    // Need at least k preceding closed bars + pivot bar + k following closed bars
+    if (n < k * 2 + 1) return;
 
     this.swingHighs = [];
     this.swingLows = [];
 
     // Scan for true structural swing pivots with k-bar window
-    // Candle n - 1 is the currently open/live candle; fully closed candles are 0 .. n - 2.
-    // For candle i to have k closed candles strictly AFTER it, i + k <= n - 2 => i <= n - 2 - k.
-    const maxConfirmedIdx = n - 2 - k;
+    // Determine the last fully closed candle index:
+    // If candle n - 1 is already closed, lastClosedIdx is n - 1. Otherwise candle n - 1 is live/open, so lastClosedIdx is n - 2.
+    const lastClosedIdx = this.candles[n - 1]?.isClosed === true
+      ? n - 1
+      : n - 2;
+
+    // For candle i to have k closed candles strictly AFTER it, i + k <= lastClosedIdx => i <= lastClosedIdx - k.
+    const maxConfirmedIdx = lastClosedIdx - k;
 
     for (let i = k; i <= maxConfirmedIdx; i++) {
       const c = this.candles[i];
@@ -423,7 +428,7 @@ export class DowStructureEngine {
         if (getEffectiveLow(other, this.useTrueWick, this.wickThresholdPct) < cEffLow) isLow = false;
       }
 
-      // Check right side (strictly k following CLOSED candles: i + 1 .. i + k <= n - 2)
+      // Check right side (strictly k following CLOSED candles: i + 1 .. i + k <= lastClosedIdx)
       if (isHigh || isLow) {
         for (let j = i + 1; j <= i + k; j++) {
           const other = this.candles[j];
@@ -1170,11 +1175,11 @@ export class DowStructureEngine {
 
     // Filter confirmed swing points (pivots with at least k following closed bars)
     const confirmedLows = this.swingLows
-      .filter((s) => s.index < n - 1)
+      .filter((s) => s.index < n)
       .sort((a, b) => a.index - b.index); // chronological order
 
     const confirmedHighs = this.swingHighs
-      .filter((s) => s.index < n - 1)
+      .filter((s) => s.index < n)
       .sort((a, b) => a.index - b.index); // chronological order
 
     // ── 1. Detect Candidate Peaks & Valleys in the unconfirmed tail (last candles) ──

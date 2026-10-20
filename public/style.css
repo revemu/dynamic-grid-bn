@@ -3060,7 +3060,8 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .nav-system-pills .status-pill,
-.nav-system-pills .dry-badge {
+.nav-system-pills .dry-badge,
+.nav-system-pills .version-pill {
   height: 28px;
   display: inline-flex;
   align-items: center;
@@ -3071,6 +3072,22 @@ input:checked + .slider:before { transform: translateX(20px); }
   border-radius: 7px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.version-pill {
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #c084fc;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.version-pill:hover {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: rgba(139, 92, 246, 0.6);
+  transform: translateY(-1px);
 }
 
 .pill-sep {

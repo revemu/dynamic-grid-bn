@@ -30,6 +30,23 @@
   const elRegimeBadge = document.getElementById("regimeBadge");
   const elDryRunBadge = document.getElementById("dryRunBadge");
   const elTickSpeedText = document.getElementById("tickSpeedText");
+  const elBotVersionBadge = document.getElementById("botVersionBadge");
+  const elBotVersionText = document.getElementById("botVersionText");
+
+  function updateVersionBadge(info) {
+    if (!info || !elBotVersionText) return;
+    const vStr = info.version ? `v${info.version}` : "";
+    const cStr = info.commit && info.commit !== "unknown" ? ` (${info.commit})` : "";
+    elBotVersionText.textContent = `${vStr}${cStr}`.trim() || "v...";
+    if (elBotVersionBadge) {
+      const fullDate = info.commitDate ? `\nCommit Date: ${info.commitDate}` : "";
+      const build = info.buildTime ? `\nBooted: ${new Date(info.buildTime).toLocaleString()}` : "";
+      elBotVersionBadge.title = `Dynamic Grid ${vStr}\nCommit: ${info.commit || "local"}${fullDate}${build}\n(คลิกเพื่อดูรายละเอียด /api/version)`;
+      elBotVersionBadge.onclick = () => {
+        window.open(`${API_BASE}/api/version`, "_blank");
+      };
+    }
+  }
 
   // Bot Status & Waiting Reason Banner Elements
   const elBotStatusBanner = document.getElementById("botStatusBanner");
@@ -1340,6 +1357,9 @@
 
   function updateTick(data) {
     if (!data) return;
+    if (data.versionInfo) {
+      updateVersionBadge(data.versionInfo);
+    }
 
     // Symbol Display
     const rawSymbol = data.symbol || (data.binanceSymbol ? `${data.binanceSymbol.toUpperCase()}` : "SOMI:USDso");
@@ -3006,6 +3026,9 @@
       })
       .then((data) => {
         initialLoaded = true;
+        if (data.versionInfo) {
+          updateVersionBadge(data.versionInfo);
+        }
         if (data.candles && data.candles.length > 0) {
           updateCandles(data.candles);
         } else {

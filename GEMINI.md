@@ -1751,3 +1751,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. **Full Right-Side Closed Candle Scan & Live Candle Guard**:
      - วนลูปตรวจสอบแท่งปิดด้านขวาครบถึง `Math.min(lastClosedIdx, idx + k)`
      - ตรวจสอบแท่งเทียนที่กำลังวิ่งอยู่ (`liveCandle`) ว่าหากไส้เทียนปัจจุบันทะลุราคา Candidate จะไม่อนุมัติเป็น Candidate ทันที
+
+---
+
+### 33. Immediate Structural Swing Confirmation on 3rd Closed Candle & Automated Version Tracking Architecture
+- **สาเหตุของปัญหา**:
+  1. **สวิงยืนยัน (LL, HL, HH, LH) ล่าช้าไป 1 แท่ง (15 นาที) หลังแท่งที่ 3 ปิดสมบูรณ์**:
+     - ใน `src/market-structure.ts` ฟังก์ชัน `recalculateSwings()`: มีการฮาร์ดโค้ดสูตร `const maxConfirmedIdx = n - 2 - k;` โดยตั้งสมมติฐานว่าแท่ง `n - 1` เป็นแท่งที่ยังไม่ปิดเสมอ
+     - เมื่อแท่งที่ 3 (เช่น แท่ง 09:00 น.) เพิ่งปิดสมบูรณ์และถูกบันทึกลงฐานข้อมูล `this.candles[n - 1].isClosed === true` อาร์เรย์ `this.candles` มีความยาว `n = 301` ทำให้สูตรคำนวณ `301 - 2 - 3 = 296`
+     - แท่งต่ำสุด (08:15 น. Low `$0.1847` ดัชนี 297) จึงไม่ถูกยืนยัน (`297 <= 296` เป็นเท็จ) ส่งผลให้เกิด **"หลุมดำ (No Man's Land)"** คือไม่เป็นทั้ง Candidate (เพราะปิดครบ 3 แท่งแล้ว) และยังไม่เป็น Confirmed Swing จนกว่าจะมีแท่งใหม่วิ่งเข้ามาอีก 15 นาที
+     - ตัวกรองสวิงใน `getStructure()` เดิมใช้ `.filter((s) => s.index < n - 1)` เผลอตัดสวิงที่ยืนยันบนแท่งปิดล่าสุดทิ้งไปอีกชั้นหนึ่ง
+  2. **ไม่มีการแสดง Version และ Git Commit Hash บนบอทและหน้าแดชบอร์ด**:
+     - ทำให้เมื่อผู้ใช้หรือผู้พัฒนาเข้าไปตรวจสอบบอทที่รันอยู่บนเซิร์ฟเวอร์ (เช่น Port 3333 / 3334) ไม่สามารถระบุได้ทันทีว่าโค้ดที่รันอยู่เป็น Commit เดียวกันกับ Git ล่าสุดหรือไม่
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **Immediate Swing Confirmation on 3rd Closed Candle (`src/market-structure.ts`)**:
+     - ปรับการคำนวณ `lastClosedIdx` ใน `recalculateSwings()` ให้ตรวจสถานะแท่งเทียนปิดจริง:
+       ```typescript
+       const lastClosedIdx = this.candles[n - 1]?.isClosed === true ? n - 1 : n - 2;
+       const maxConfirmedIdx = lastClosedIdx - k;
+       ```
+     - ตรวจสอบขอบขวาของสวิงยืนยันจนถึง `Math.min(lastClosedIdx, i + k)` และปรับตัวกรองใน `getStructure()` เป็น `.filter((s) => s.index < n)`
+     - ทันทีที่แท่งที่ 3 ปิดสมบูรณ์ สวิงจะเปลี่ยนสถานะจาก Candidate สู่การติดป้าย `LL` / `HL` / `HH` / `LH` ทันทีในระดับมิลลิวินาที ไม่มีความล่าช้า 15 นาทีอีกต่อไป
+  2. **Automated Version & Git Commit Tracking Architecture (`src/version.ts`, `src/server.ts`, `public/index.html`, `public/app.js`)**:
+     - สร้างโมดูล `src/version.ts` ดึง Git Commit Hash สั้น (`git rev-parse --short HEAD`), วันที่ Commit ล่าสุด และเวอร์ชันจาก `package.json` (อัปเกรดเป็น `v0.2.0`) อัตโนมัติ พร้อมระบบ Fallback
+     - เพิ่ม API Endpoint `GET /api/version` และผนวก `versionInfo` เข้าใน `GET /api/state` และ WebSocket / SSE Telemetry Tick
+     - เพิ่มป้าย Badge `🏷️ v0.2.0 (commit)` บน Header แถบนำทางด้านบนของหน้าเว็บแดชบอร์ด พร้อม Tooltip แสดงวันที่อัปเดตและสามารถคลิกเพื่อเปิดดู `/api/version` ได้ทันที
