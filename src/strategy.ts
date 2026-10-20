@@ -3067,48 +3067,62 @@ export class DynamicGrid {
       latestLhPrice !== undefined && latestLhPrice > 0 ? latestLhPrice : Infinity,
       liveCalculatedCeil !== undefined && liveCalculatedCeil > 0 ? liveCalculatedCeil : Infinity,
     );
-    const lhDynamicEscapePrice = (
-      (this.cfg.enableLhDynamicEscape !== false) &&
-      Number.isFinite(candidateLhEscape) &&
+    const isIocMode = this.cfg.orderExecutionMode === "IOC_BRACKET";
+    const isPriceStuckBelowFirstSell = refPrice < firstActiveSellTarget * 0.999;
+    const isLhNearPrice = Number.isFinite(candidateLhEscape) &&
       candidateLhEscape < firstActiveSellTarget &&
-      candidateLhEscape >= minNetProfitTargetPrice
+      candidateLhEscape >= minNetProfitTargetPrice;
+
+    // LH Dynamic Escape: ONLY active in IOC mode when price is genuinely stuck below first sell target,
+    // and price has not blown past the LH level
+    const lhDynamicEscapePrice = (
+      isIocMode &&
+      (this.cfg.enableLhDynamicEscape !== false) &&
+      isPriceStuckBelowFirstSell &&
+      isLhNearPrice &&
+      refPrice <= candidateLhEscape * 1.002
     ) ? candidateLhEscape : undefined;
 
-    const liveRealCeil = lhDynamicEscapePrice !== undefined && liveCalculatedCeil !== undefined
-      ? Math.min(liveCalculatedCeil, lhDynamicEscapePrice)
-      : (lhDynamicEscapePrice ?? liveCalculatedCeil);
+    const liveRealCeil = (isIocMode && this.cfg.enableSellAtRealCeiling !== false)
+      ? (lhDynamicEscapePrice !== undefined && liveCalculatedCeil !== undefined
+          ? Math.min(liveCalculatedCeil, lhDynamicEscapePrice)
+          : (lhDynamicEscapePrice ?? liveCalculatedCeil))
+      : undefined;
 
-    const isLiveRealCeilReached = liveRealCeil !== undefined && liveRealCeil > 0 && (
+    const isLiveRealCeilReached = isIocMode && liveRealCeil !== undefined && liveRealCeil > 0 && (
       refPrice >= liveRealCeil ||
       (bestBid !== undefined && bestBid >= liveRealCeil)
     );
-    const isLhEscapeReached = lhDynamicEscapePrice !== undefined && (
+    const isLhEscapeReached = isIocMode && lhDynamicEscapePrice !== undefined && (
       refPrice >= lhDynamicEscapePrice ||
       (bestBid !== undefined && bestBid >= lhDynamicEscapePrice)
     ) && tpExecBid >= minNetProfitTargetPrice;
 
-    const isIocMode = this.cfg.orderExecutionMode === "IOC_BRACKET";
     const reachedTargetPrice = isIocMode
       ? Math.min(
           upperBound,
           liveRealCeil && isLiveRealCeilReached ? liveRealCeil : upperBound,
           highestActiveSellTarget,
         )
-      : Math.min(
-          upperBound,
-          liveRealCeil && isLiveRealCeilReached ? liveRealCeil : upperBound,
-        );
+      : upperBound;
     const isBidAtTarget = tpExecBid >= reachedTargetPrice * (isLhEscapeReached ? (1 - (this.cfg.iocSlippagePct ?? 0.2) / 100) : 1.0);
 
     // In MAKER_LIMIT mode: Grid sell targets (Sell Targets 1..5) are strictly handled by resting MAKER limit orders!
     // Never hijack intra-channel grid sell targets with IOC sellAll in Maker mode.
-    // Full Take Profit via sellAll is ONLY for reaching true Upper Bound / Ceiling, LH Escape, or when running in IOC_BRACKET mode.
+    // In MAKER_LIMIT mode, sellAll Take Profit is ONLY permitted if price reached true Upper Bound (Ceiling 100%) AND all resting sells are clear.
     const hasOpenRestingSells = !isIocMode && this.openOrders.some((o) => !o.isBid);
-    const realCeilingReached =
-      (!hasOpenRestingSells && (isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound))) ||
-      (isIocMode && tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget) ||
-      (isLiveRealCeilReached && isProfitableExit) ||
-      (isLhEscapeReached && isProfitableExit);
+    const realCeilingReached = isIocMode
+      ? (
+          (tpExecBid >= highestActiveSellTarget && refPrice >= highestActiveSellTarget) ||
+          (isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound)) ||
+          (isLiveRealCeilReached && isProfitableExit) ||
+          (isLhEscapeReached && isProfitableExit)
+        )
+      : (
+          !hasOpenRestingSells &&
+          (isAboveCeiling || refPrice >= upperBound || (bestBid !== undefined && bestBid >= upperBound)) &&
+          isProfitableExit
+        );
 
     if (
       !this.isPaused &&
@@ -3400,7 +3414,7 @@ export class DynamicGrid {
         `🔺 [TRIANGLE SQUEEZE] Support ($${uptrendLine!.currentLinePrice.toFixed(6)}) & Resistance ($${downtrendLine!.currentLinePrice.toFixed(6)}) converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%) — Liquidating all ${this.baseHeld().toFixed(4)} SOMI to cash and standing by for channel expansion!`,
       );
       await this.cancelAllRestingOrders(undefined, "Triangle squeeze: trendlines converging — liquidating and pausing");
-      if (this.baseHeld() > 0 && !isBelowFloor) {
+      if (this.baseHeld() > 0 && !isBelowFloor && this.cfg.orderExecutionMode === "IOC_BRACKET") {
         await this.sellAll(refPrice, "SELL");
       }
       this.saveState();
@@ -4811,7 +4825,7 @@ export class DynamicGrid {
 
           // On DreamDEX: ถ้า currentBestAsk <= lvlPrice มีสภาพคล่องฝั่ง Ask ที่ราคาเท่ากับหรือถูกกว่า Buy Level
           // สามารถเข้าซื้อ (IOC Fill) คว้าสภาพคล่องไม้ Buy Level นั้นได้ทันที ไม่ต้องรอราคาแท่งเทียน
-          const isDexAskAtOrBelowLevel = !isCexExchange && currentBestAsk > 0 && currentBestAsk <= lvlPrice;
+          const isDexAskAtOrBelowLevel = !isCexExchange && this.cfg.orderExecutionMode === "IOC_BRACKET" && currentBestAsk > 0 && currentBestAsk <= lvlPrice;
           if (isDexAskAtOrBelowLevel && canBuy && targetOrderQuote > 0) {
             const availableBudget = this.cfg.dryRun
               ? targetOrderQuote
@@ -5153,11 +5167,11 @@ export class DynamicGrid {
               ? 0.0
               : (activeSellIndices.length - 1 - activeRank) / activeSellIndices.length;
 
-            // ── IOC Sell when market price has reached or exceeded this sell target under TL ──
+            // ── IOC Sell when market price has reached or exceeded this sell target under TL (IOC_BRACKET mode only) ──
             if (!currentOpenSellAtLvl) {
               const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
               const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= lvlPrice * (1 - sellSlippage)) || (refPrice >= lvlPrice && currentBestBid >= lvlPrice * (1 - sellSlippage));
-              if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
+              if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false) && this.cfg.orderExecutionMode === "IOC_BRACKET") {
                 const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
                 const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
                 if (isLevelAlreadyFulfilled) {
@@ -5431,11 +5445,11 @@ export class DynamicGrid {
           ? 0.0
           : (activeSellIndices.length - 1 - activeRank) / activeSellIndices.length;
 
-        // ── IOC Sell when market price has reached or exceeded this sell target ──
+        // ── IOC Sell when market price has reached or exceeded this sell target (IOC_BRACKET mode only) ──
         if (!currentOpenSellAtLvl) {
           const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
           const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= originalLvlPrice * (1 - sellSlippage)) || (refPrice >= originalLvlPrice && currentBestBid >= originalLvlPrice * (1 - sellSlippage));
-          if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false)) {
+          if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false) && this.cfg.orderExecutionMode === "IOC_BRACKET") {
             const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
             const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
             if (isLevelAlreadyFulfilled) {

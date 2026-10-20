@@ -2052,4 +2052,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. **Version Bump**:
      - อัปเกรดเป็น `v0.2.11` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 45. Strict Maker Limit Mode Isolation & LH Dynamic Escape De-coupling (`src/strategy.ts` — `v0.2.12`)
+- **สาเหตุของปัญหาคำสั่งขายแบบ IOC หลุดมาทำงานในโหมด MAKER_LIMIT**:
+  1. **LH Dynamic Escape ทริกเกอร์ผิดจังหวะ**:
+     - ตรรกะ `isLhEscapeReached` เดิมตรวจสอบเพียง `refPrice >= lhDynamicEscapePrice` และพอร์ตมีกำไร
+     - เมื่อราคาตลาดวิ่งทะลุยอดสวิง Lower High (LH) ในอดีต (เช่น $2395.04) ขึ้นไปแตะและขายทำกำไรที่ Sell Target 1 ($2403.53) สำเร็จ และราคาขยับไปที่ $2403.79 ระบบกลับเข้าใจผิดว่า "ราคาแตะจุดหนีตาย LH แล้ว"
+  2. **ไม่มีการตรวจสอบโหมด `MAKER_LIMIT` ใน `realCeilingReached`**:
+     - ในบรรทัด 3108 เดิม เงื่อนไข `(isLhEscapeReached && isProfitableExit)` และ `(isLiveRealCeilReached && isProfitableExit)` ไม่ได้ตรวจสอบ `isIocMode` และไม่ได้ตรวจสอบ `!hasOpenRestingSells`
+     - ส่งผลให้ในโหมด `MAKER_LIMIT` ที่มีออเดอร์ Maker Limit วางขายรออยู่ที่ Target 2 และ Target 3 โดนคำสั่ง `cancelAllRestingOrders()` ยกเลิกออเดอร์ทั้งหมด และถูกคำสั่ง `sellAll(..., "SELL")` ยิงขายแบบ IOC Market Sell ล้างพอร์ตเหรียญที่เหลือ 100% ทันที
+  3. **`enableIocSellWhenExceeded` ใน `syncMakerSellOrders`**:
+     - เมื่อราคาตลาดวิ่งเลยเป้าขาย ฟังก์ชันเดิมยอมให้ยิง `sellTrancheIOC` แม้จะรันอยู่ในโหมด `MAKER_LIMIT`
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.12`)**:
+  1. **Strict Maker Limit Isolation ใน `realCeilingReached`**:
+     - หากรันโหมด `MAKER_LIMIT` (`!isIocMode`): การขายทำกำไรทุกระดับภายในกริด (Target 1 ถึง 5) จะต้องเป็น **Maker Limit Order บน Order Book เท่านั้น**
+     - ปิดกั้นไม่ให้ `LH Dynamic Escape` หรือ `Live Real Ceiling` ภายในกริดสั่งยิง IOC `sellAll()` ในโหมด Maker โดยเด็ดขาด
+     - คำสั่ง `sellAll()` ในโหมด Maker จะยอมให้ทำงานเฉพาะ 3 กรณีเท่านั้น:
+       1. ผู้ใช้กดปุ่มขายล้างพอร์ตเอง (`MANUAL`)
+       2. คัทลอสฉุกเฉินเมื่อราคาหลุด Floor ด้านล่าง (`CUT LOSS`)
+       3. ราคาหลุดทะลุเพดานบนสุด 100% (`upperBound`) และไม่มีออเดอร์ Maker ค้างอยู่ (`!hasOpenRestingSells`)
+  2. **ปรับตรรกะ LH Dynamic Escape ให้สมบูรณ์**:
+     - อนุญาตให้ทำงานเฉพาะในโหมด `IOC_BRACKET` (`isIocMode`)
+     - กำหนดให้ทำงานได้เฉพาะกรณีที่ราคาติดแนวต้านต่ำกว่าเป้าขายแรกจริง (`refPrice < firstActiveSellTarget * 0.999`) และราคายังไม่ทะลุยอด LH ขึ้นไป (`refPrice <= candidateLhEscape * 1.002`) หากราคาวิ่งทะลุยอด LH ไปแล้วให้ถือว่าไม่ใช่แนวต้านอีกต่อไป
+  3. **จำกัดคำสั่ง IOC ทั้งหมดให้อยู่เฉพาะในโหมด `IOC_BRACKET`**:
+     - ปิดการทำงานของ `enableIocSellWhenExceeded` (`sellTrancheIOC`) ใน `syncMakerSellOrders` เมื่อรันโหมด `MAKER_LIMIT` โดยจะตั้งเป็น Maker Limit Order ที่ราคา Best Ask เสมอ
+     - ปิดการทำงานของ `isDexAskAtOrBelowLevel` (`buyTrancheIOC`) ในโหมด `MAKER_LIMIT`
+     - ปิดการทำงานของ `sellAll` ใน Triangle Squeeze เมื่อรันโหมด `MAKER_LIMIT`
+  4. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.12` ใน `package.json` และ `src/version.ts`
+
+
 
