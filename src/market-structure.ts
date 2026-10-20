@@ -567,11 +567,23 @@ export class DowStructureEngine {
     const latestCandle = this.candles[n - 1];
     const latestTime = latestCandle?.time ?? 0;
 
-    // ── 1. Downtrend Resistance Line: Supports 2+ confirmed swing highs (P1 -> LH) with candle touch scoring ──
+    const macroPeak = confirmedHighs.length > 0
+      ? confirmedHighs.reduce((max, h) => (h.price >= max.price ? h : max), confirmedHighs[0]!)
+      : undefined;
+    const macroLow = confirmedLows.length > 0
+      ? confirmedLows.reduce((min, l) => (l.price <= min.price ? l : min), confirmedLows[0]!)
+      : undefined;
+
+    // ── 1. Downtrend Resistance Line: Strict Outer Envelope & Active Wave Priority ──
     if (confirmedHighs.length >= 2) {
-      // Candidate P1 anchors: top 3 highest swings in the lookback window + activePeak/lastHh
-      const sortedByPriceDesc = [...confirmedHighs].sort((a, b) => b.price - a.price);
-      const p1Candidates = sortedByPriceDesc.slice(0, 4);
+      // P1 must not be broken upward by any subsequent confirmed swing high
+      // (prevents drawing a line from a lower peak like $0.1917 straight through a higher peak like $0.1918!)
+      const downWaveStartIdx = (macroLow && macroPeak && macroPeak.index > macroLow.index) ? macroLow.index : minIndex;
+      const p1Candidates = confirmedHighs.filter(
+        (h) =>
+          h.index >= downWaveStartIdx &&
+          !confirmedHighs.some((later) => later.index > h.index && later.price > h.price)
+      );
 
       let bestP1: SwingPoint | undefined;
       let bestP2: SwingPoint | undefined;
@@ -579,9 +591,8 @@ export class DowStructureEngine {
       let bestScore = -Infinity;
 
       for (const p1 of p1Candidates) {
-        const candidateSubHighs = confirmedHighs.filter(
-          (h) => h.index > p1.index && h.price < p1.price && h.time > p1.time
-        );
+        const allLaterHighs = confirmedHighs.filter((h) => h.index > p1.index && h.time > p1.time);
+        const candidateSubHighs = allLaterHighs.filter((h) => h.price < p1.price);
 
         for (const p2 of candidateSubHighs) {
           const timeDiff = p2.time - p1.time;
@@ -600,10 +611,10 @@ export class DowStructureEngine {
           let violates = false;
           let swingTouches = 0;
 
-          for (const midHigh of candidateSubHighs) {
+          // Check ALL subsequent confirmed swing highs (including any high >= p1.price)
+          for (const midHigh of allLaterHighs) {
             const lineVal = p1.price + slope * (midHigh.time - p1.time);
-            // Any subsequent swing high exceeding the line by > 0.12% violates the outer envelope
-            if (midHigh.price > lineVal * 1.0012) {
+            if (midHigh.price > lineVal * 1.001) {
               violates = true;
               break;
             }
@@ -623,8 +634,9 @@ export class DowStructureEngine {
             const c = this.candles[i];
             if (!c) continue;
             const lineVal = p1.price + slope * (c.time - p1.time);
-            // Before p2, no candle close should deeply violate the line (> 0.20%)
-            if (i <= p2.index && c.close > lineVal * 1.002) {
+            const effHigh = getEffectiveHigh(c, this.useTrueWick, this.wickThresholdPct);
+            // Between P1 and P2, no candle close or effective high may pierce above the resistance envelope
+            if (i <= p2.index && (c.close > lineVal * 1.0015 || effHigh > lineVal * 1.002)) {
               violates = true;
               break;
             }
@@ -645,12 +657,18 @@ export class DowStructureEngine {
           if (violates) continue;
 
           const isUnbroken = maxConsecutiveBroken < 2 && postP2BrokenCandles < 2;
-          // Prioritize unbroken active lines, more swing touches, candle touches, and recency
+          const isActiveWaveAnchor = Boolean(
+            (activePeak && p1.index >= activePeak.index) ||
+            (activeValley && p2.index > activeValley.index)
+          );
+          // Prioritize unbroken active lines, active channel wave alignment, recency of P2/P1, and touches
           const score =
             (isUnbroken ? 1000 : 0) +
+            (isActiveWaveAnchor ? 250 : 0) +
             swingTouches * 120 +
             Math.min(candleTouches, 8) * 25 +
-            (p2.index / Math.max(1, n)) * 80;
+            (p2.index / Math.max(1, n)) * 200 +
+            (p1.index / Math.max(1, n)) * 100;
 
           if (score > bestScore) {
             bestScore = score;
@@ -717,16 +735,24 @@ export class DowStructureEngine {
       }
     }
 
-    // ── 2. Uptrend Support Line: Supports 2+ confirmed swing lows (V1 -> HL) with candle touch scoring ──
+    // ── 2. Uptrend Support Line: Active Wave Base Scoping & Strict Outer Envelope ──
     if (confirmedLows.length >= 2) {
-      // Candidate V1 anchors: lowest swings in the lookback window + recent major valleys
-      const sortedByPriceAsc = [...confirmedLows].sort((a, b) => a.price - b.price);
-      const recentLows = confirmedLows.slice(-6);
-      const v1Map = new Map<number, SwingPoint>();
-      for (const l of [...sortedByPriceAsc.slice(0, 4), ...recentLows]) {
-        v1Map.set(l.index, l);
-      }
-      const v1Candidates = Array.from(v1Map.values()).sort((a, b) => a.index - b.index);
+      // Determine the start of the active recovery wave:
+      // Must NOT jump backwards across a completed rise-and-fall cycle (e.g. must start at or after the lowest valley post-macroPeak / activeValley)
+      const postPeakLows = macroPeak ? confirmedLows.filter((l) => l.index > macroPeak.index) : [];
+      const postPeakLowest = postPeakLows.length > 0
+        ? postPeakLows.reduce((min, l) => (l.price <= min.price ? l : min), postPeakLows[0]!)
+        : undefined;
+      const upWaveStartIdx = activeValley
+        ? activeValley.index
+        : (postPeakLowest ? postPeakLowest.index : minIndex);
+
+      // V1 must be within the active wave and must not be broken downward by any subsequent confirmed swing low
+      const v1Candidates = confirmedLows.filter(
+        (l) =>
+          l.index >= upWaveStartIdx &&
+          !confirmedLows.some((later) => later.index > l.index && later.price < l.price)
+      );
 
       let bestV1: SwingPoint | undefined;
       let bestV2: SwingPoint | undefined;
@@ -734,9 +760,8 @@ export class DowStructureEngine {
       let bestScore = -Infinity;
 
       for (const v1 of v1Candidates) {
-        const candidateSubLows = confirmedLows.filter(
-          (l) => l.index > v1.index && l.price > v1.price && l.time > v1.time
-        );
+        const allLaterLows = confirmedLows.filter((l) => l.index > v1.index && l.time > v1.time);
+        const candidateSubLows = allLaterLows.filter((l) => l.price > v1.price);
 
         for (const v2 of candidateSubLows) {
           const timeDiff = v2.time - v1.time;
@@ -755,9 +780,9 @@ export class DowStructureEngine {
           let violates = false;
           let swingTouches = 0;
 
-          for (const midLow of candidateSubLows) {
+          // Check ALL subsequent confirmed swing lows (including any low <= v1.price)
+          for (const midLow of allLaterLows) {
             const lineVal = v1.price + slope * (midLow.time - v1.time);
-            // Any subsequent confirmed swing low breaking below the line by > 0.12% violates the support envelope
             if (midLow.price < lineVal * 0.9988) {
               violates = true;
               break;
@@ -778,8 +803,9 @@ export class DowStructureEngine {
             const c = this.candles[i];
             if (!c) continue;
             const lineVal = v1.price + slope * (c.time - v1.time);
-            // Allow minor intra-bar wick pierces if candle closes above line, but reject deep close violations before v2
-            if (i <= v2.index && c.close < lineVal * 0.998) {
+            const effLow = getEffectiveLow(c, this.useTrueWick, this.wickThresholdPct);
+            // Between V1 and V2, no candle close or effective low may deeply violate the support envelope
+            if (i <= v2.index && (c.close < lineVal * 0.9985 || effLow < lineVal * 0.998)) {
               violates = true;
               break;
             }
@@ -800,13 +826,15 @@ export class DowStructureEngine {
           if (violates) continue;
 
           const isUnbroken = maxConsecutiveBroken < 2 && postV2BrokenCandles < 2 && currentPrice >= currentLinePrice * 0.998;
-          // Prioritize unbroken active lines, recent active wave (v2 recency), swing touches, and candle touches
+          const isActiveFloorAnchor = Boolean(activeValley && v1.index === activeValley.index);
+          // Prioritize unbroken active lines, activeValley anchor, recent v2, swing touches, and candle touches
           const score =
             (isUnbroken ? 1000 : 0) +
+            (isActiveFloorAnchor ? 250 : 0) +
             swingTouches * 120 +
             Math.min(candleTouches, 8) * 30 +
-            (v2.index / Math.max(1, n)) * 150 +
-            (v1.index / Math.max(1, n)) * 80;
+            (v2.index / Math.max(1, n)) * 200 +
+            (v1.index / Math.max(1, n)) * 120;
 
           if (score > bestScore) {
             bestScore = score;

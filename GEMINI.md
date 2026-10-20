@@ -1926,6 +1926,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ปรับให้ `isConfirmedDowntrendWave` เป็นจริงเฉพาะเมื่อสวิงล่าสุดที่เพิ่งเกิดคือ `LL` (`lastCanonicalLow.index > lastCanonicalHigh.index`) และตั้งแต่เกิด `LL` นั้นยังไม่มีแท่งเทียนใดปิดยืนเหนือ `Buy Level 2 (32%)` (`!hasReclaimedBuy2SinceLl`)
      - ทันทีที่ราคาเด้งพ้น `Buy Level 2 (32%)` หรือสร้างสวิง High ถัดมาแล้ว การย่อตัวกลับลงมาในกรอบเหนือ `0% Floor` จะไม่ถูกล็อกซ้ำ ทำให้บอทสามารถเข้าช้อนซื้อที่ `Buy 4 (12%)` และ `Buy 5 (2%)` ได้ที่ก้นเหวทันที
   4. อัปเกรดเวอร์ชันเป็น `v0.2.6` ใน `package.json` และ `src/version.ts`
-- **📌 บันทึกประเด็นรอแก้ไขถัดไป (Pending Trendline Drawing Audit in `src/market-structure.ts`)**:
-  1. **Uptrend Line ลากข้ามวัฏจักรคลื่น (Cross-Cycle)**: ปัจจุบัน `v1Candidates` ดึงเหวต่ำสุดในประวัติ 193 แท่ง (`LL $0.1790`) ข้ามคลื่นที่จบไปแล้วมาเชื่อมกับ `HL $0.1853` แทนที่จะเริ่มลากจากฐานก้นเหวของคลื่นปัจจุบัน (`activeValley / LL $0.1847` $\rightarrow$ `HL $0.1853`)
-  2. **Downtrend Line ตาบอดต่อยอดที่สูงกว่า `P1`**: บรรทัด `confirmedHighs.filter(h => h.index > p1.index && h.price < p1.price)` กรองสวิงที่สูงกว่า `P1` ทิ้งก่อนเช็ค `violates` ทำให้ลากเส้นจาก `LH $0.1917` ผ่าทะลุยอด `HH $0.1918` ไปหา `$0.1904` และไม่ได้เชื่อมมายังยอด `LH $0.1890` ล่าสุดของคลื่นปัจจุบัน (ฝั่ง Uptrend บรรทัด `l.price > v1.price` ก็มีบั๊กเดียวกัน)
+
+---
+
+### 40. Active Wave Cycle Scoping & Strict Outer Envelope Trendline Architecture (`src/market-structure.ts` — `v0.2.7`)
+- **สาเหตุของปัญหาการวาด Trendline ผิดหลักการเดิม**:
+  1. **Uptrend Line ลากข้ามวัฏจักรคลื่น (Cross-Cycle)**:
+     - โค้ดเดิมนำเหวต่ำสุดในประวัติ 193 แท่ง (`LL $0.1790` เมื่อ 34 ชม. ก่อน) ข้ามคลื่นขาขึ้น `$0.1933` และคลื่นขาลงที่ทำก้นเหวใหม่ `LL $0.1847` มาเชื่อมกับ `HL $0.1853` ของวันนี้
+  2. **Downtrend Line ตาบอดต่อยอดที่สูงกว่า `P1` และลากตัดผ่ายอดคลื่น**:
+     - โค้ดเดิมกรอง `confirmedHighs.filter(h => h.index > p1.index && h.price < p1.price)` ก่อนเข้าลูปเช็ค `violates` ทำให้เมื่อเลือก `P1 = $0.1917` จึงมองไม่เห็นยอด `HH $0.1918` ที่สูงกว่า `P1` และลากเส้นตัดผ่าทะลุยอด `$0.1918` ไปหา `$0.1904` (ฝั่ง Uptrend ก็มีบั๊กเดียวกันคือกรอง `l.price > v1.price` ก่อนเช็ค `violates`)
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.7`)**:
+  1. **Active Wave Base Scoping สำหรับ `Uptrend Support Line` (`V1 -> V2`)**:
+     - บังคับให้ `V1` เริ่มตั้งแต่ก้นเหวต่ำสุดของคลื่นปัจจุบัน (`activeValley` หรือเหวต่ำสุดหลัง `macroPeak`) และต้องเป็นเหวที่ไม่ถูกสวิงถัดมาทุบหลุด (`!confirmedLows.some(later => later.index > l.index && later.price < l.price)`)
+     - ส่งผลให้เส้นเขียวเริ่มลากจากฐานคลื่นปัจจุบัน (`$0.1847` $\rightarrow$ `$0.1853`) เท่านั้น ไม่กระโดดข้ามคลื่นไปดึงเหวโบราณ `$0.1790`
+  2. **Unbroken Peak Scoping สำหรับ `Downtrend Resistance Line` (`P1 -> P2`)**:
+     - บังคับให้ `P1` เริ่มตั้งแต่รอบคลื่นหลัง `macroLow` และต้องไม่ถูกยอดสวิงถัดมาเบรกทะลุขึ้นไป (`!confirmedHighs.some(later => later.index > h.index && later.price > h.price)`) ตัดยอด `$0.1917` ที่ถูก `$0.1918` เบรกไปแล้วออกทันที
+  3. **Strict Outer Envelope Validation (`allLaterHighs` / `allLaterLows`)**:
+     - ตรวจสอบสวิงทุกตัวและแท่งเทียนทุกแท่งหลังจุดเริ่มต้น (`allLaterHighs` / `allLaterLows` โดยไม่กรองราคาทิ้งก่อน) ห้ามมีสวิงหรือแท่งเทียนระหว่าง `P1 -> P2` หรือ `V1 -> V2` ทะลุออกนอกกรอบเส้นเทรนด์ไลน์เด็ดขาด พร้อมให้คะแนนความสำคัญกับสวิงในกรอบปัจจุบัน (`activePeak` / `activeValley`)
+  4. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.7` ทั้งใน `package.json` และ `src/version.ts`
