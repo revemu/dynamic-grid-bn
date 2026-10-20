@@ -1688,7 +1688,8 @@
     const baseSym = activeBaseAsset;
     const quoteSym = activeQuoteAsset;
     const walletAddr = data.walletAddress || "";
-    const shortAddr = walletAddr ? `${walletAddr.slice(0, 6)}...${walletAddr.slice(-4)}` : "Binance Spot";
+    const isEvmAddr = typeof walletAddr === "string" && walletAddr.startsWith("0x") && walletAddr.length > 12;
+    const shortAddr = isEvmAddr ? `${walletAddr.slice(0, 6)}...${walletAddr.slice(-4)}` : (walletAddr || "Binance Spot");
     const somiBal = data.walletBaseBalance !== undefined ? data.walletBaseBalance : (data.walletSomiBalance !== undefined ? data.walletSomiBalance : 0);
     const usdsoBal = data.walletQuoteBalance !== undefined ? data.walletQuoteBalance : (data.walletUsdsoBalance !== undefined ? data.walletUsdsoBalance : 0);
     const somiVal = somiBal * (data.mid || 0);

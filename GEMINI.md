@@ -2002,3 +2002,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ปัดเศษตัวเลข Target ในกล่องด้านบนขวาให้เป็นทศนิยม 1 ตำแหน่งอย่างสวยงาม เช่น `Target 26.7% ($27)`
   3. **Version Bump**:
      - อัปเกรดเป็น `v0.2.9` ทั้งใน `package.json` และ `src/version.ts`
+
+---
+
+### 43. UI Layout Refinement: Symbol Display, Grid Ladder Height Expansion & Redundancy Removal (`public/app.js` & `public/index.html` — `v0.2.10`)
+- **สาเหตุและจุดที่ต้องปรับปรุง**:
+  1. **ป้าย Symbol บน Wallet Card แสดงผลมีจุดไข่ปลา (`ETH/FD...DUSD`)**:
+     - ใน `public/app.js` เดิมตัด Wallet Address ด้วย `walletAddr.slice(0, 6) + "..." + walletAddr.slice(-4)` เสมอ สำหรับ EVM Address (เช่น DreamDEX `0x...`)
+     - แต่เมื่อรันบน Binance Spot ตัวแปร `walletAddress` ถูกตั้งค่าเป็นชื่อคู่เหรียญ เช่น `"ETH/FDUSD"` (9 ตัวอักษร) ทำให้ถูกตัดกลายเป็น `"ETH/FD...DUSD"`
+  2. **ความสูงของแถบ Grid Ladder ถูกจำกัดจนแถวล่างๆ (L4-L5, Floor) โดนเบียด**:
+     - กล่อง `.ladder-active-summary` ("โซนราคาปัจจุบัน" และ "เป้าหมายการถือครอง") กินพื้นที่แนวตั้งประมาณ 45px ทำให้บันไดกริดแนวตั้งด้านล่างแสดงได้ไม่เต็มที่
+  3. **ข้อความแสดงความกว้าง Channel ซ้ำซ้อน**:
+     - หัวการ์ด Grid Ladder มีแท็ก `#channelClampSub` แสดง `Width: ...% • 🔒 100% Locked • Real Ceil: ...` ซึ่งซ้ำซ้อนกับการ์ด Channel & Dow Trend ฝั่งซ้าย
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.10`)**:
+  1. **แก้ไขการจัดรูปแบบ Symbol / Wallet Address ใน `public/app.js`**:
+     - เพิ่มการตรวจสอบ `isEvmAddr = typeof walletAddr === "string" && walletAddr.startsWith("0x") && walletAddr.length > 12;`
+     - หากเป็น EVM address ให้ตัดย่อตามเดิม (`0x1234...5678`) หากไม่ใช่ (เช่น CEX Symbol `"ETH/FDUSD"`) ให้แสดงค่าเต็มอย่างถูกต้องโดยไม่มี `...`
+  2. **เพิ่มพื้นที่แนวตั้งให้ Grid Ladder ใน `public/index.html`**:
+     - นำบล็อก `<div class="ladder-active-summary">` ออก ช่วยให้ Vertical Ladder มีพื้นที่ขยายตัวในแนวตั้งได้เต็มที่ บันไดระดับราคาตั้งแต่ Ceiling, S1-S4, Center, B1-B5, จนถึง Floor แสดงผลชัดเจนโดยไม่ถูกบีบ
+  3. **ลบข้อความซ้ำซ้อนในหัวการ์ด Grid Ladder**:
+     - นำ `<span class="sub-label-dim" id="channelClampSub">` ออก ทำให้หัวการ์ดสะอาด คลีนตา
+  4. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.10` ใน `package.json` และ `src/version.ts`
+
