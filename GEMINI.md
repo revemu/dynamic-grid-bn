@@ -1945,3 +1945,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบสวิงทุกตัวและแท่งเทียนทุกแท่งหลังจุดเริ่มต้น (`allLaterHighs` / `allLaterLows` โดยไม่กรองราคาทิ้งก่อน) ห้ามมีสวิงหรือแท่งเทียนระหว่าง `P1 -> P2` หรือ `V1 -> V2` ทะลุออกนอกกรอบเส้นเทรนด์ไลน์เด็ดขาด พร้อมให้คะแนนความสำคัญกับสวิงในกรอบปัจจุบัน (`activePeak` / `activeValley`)
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.7` ทั้งใน `package.json` และ `src/version.ts`
+
+---
+
+### 41. Dynamic Grid Level Lot Proximity Guard Architecture (`src/strategy.ts` — `v0.2.8`)
+- **สาเหตุของปัญหา Buy Level 4 หาย/ถูกยกเลิก (Missing / Cancelled Buy Level 4)**:
+  1. เมื่อบอทวางออเดอร์ Buy Level 3 ($2388.19), Level 4 ($2383.08) และ Level 5 ($2377.96) ครบทุกระดับตามที่เปิดใช้งาน
+  2. เมื่อราคาแตะ Buy Level 3 จนเกิด `BUY_FILL` ($26.51 / 0.0111 ETH) ทำให้บอทมี Lot ถืออยู่ที่ราคา $2388.19
+  3. ในรอบถัดไป `src/strategy.ts` ตรวจสอบเงื่อนไข `Open Lot Proximity Guard` ในการคัดเลือก `eligibleBuyIndices`:
+     ```ts
+     const hasExistingLotNearPrice = this.lots.some(
+       (l) => Math.abs(l.price - lvl) / lvl <= 0.0025,
+     );
+     ```
+  4. ในสภาวะกรอบราคาปกติ/แคบ (เช่น `ETHFDUSD` มีความกว้างกรอบ `~2.14%`):
+     - ระยะห่างระหว่างชั้น Buy Level 3 (22%) กับ Buy Level 4 (12%) ต่างกัน 10% ของกรอบ ซึ่งคิดเป็นเพียง `$5.11 / $2383.08 = 0.214%`
+     - แต่เกณฑ์เดิมฮาร์ดโค้ดไว้ที่ `0.0025` (0.25%) ซึ่ง**กว้างกว่าระยะห่างระหว่างชั้นกริดจริง (0.214%)**
+  5. ส่งผลให้ Lot ที่ซื้อมาที่ Buy Level 3 ($2388.19) ถูกระบบเข้าใจผิดว่าเป็น Lot ของ Buy Level 4 ($2383.08) ระบบจึงตัดสินว่า Buy Level 4 "ถูกซื้อไปแล้ว / ได้รับการเติมเต็มแล้ว" (`target fulfilled`) และสั่งยกเลิกออเดอร์ L4 ทันทีด้วยเหตุผล:
+     `Level allocation target fulfilled (Buy Level 4 (12%)) — releasing locked budget ($33.12) for remaining eligible levels`
+  6. ส่วน Buy Level 5 ($2377.96) มีระยะห่างจาก Level 3 ถึง `0.43%` (> 0.25%) จึงไม่ถูกผลกระทบและคงออเดอร์ไว้ได้
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.8`)**:
+  1. **สร้างเมธอด `hasLotNearLevel(levelPrice, levelIdx, levels)`**:
+     - คำนวณระยะห่างไปยัง Grid Level ข้างเคียง (`distToAdjacent = Math.min(|prevLvl - lvl|, |nextLvl - lvl|)`)
+     - กำหนดให้ Proximity Tolerance ต้องไม่เกิน 35% ของระยะห่างไปยังชั้นกริดข้างเคียง (`(distToAdjacent / lvl) * 0.35`) และแคปสูงสุดไม่เกิน 0.15% (`0.0015`):
+       ```ts
+       const maxProximityRatio = isFinite(distToAdjacent) && distToAdjacent > 0
+         ? Math.min(0.0015, (distToAdjacent / levelPrice) * 0.35)
+         : 0.0015;
+       ```
+     - ส่งผลให้ในกรอบ 2.14% เกณฑ์ความใกล้เคียงของ L4 อยู่ที่เพียง `0.075%` ทำให้ Lot ของ L3 ที่ห่าง `0.214%` ไม่มาบล็อก L4 อีกต่อไป
+  2. **ปรับใช้ทั้ง 2 จุดใน `src/strategy.ts`**:
+     - จุดที่ 1: ขั้นตอนคัดเลือก `eligibleBuyIndices` (บรรทัด ~4375)
+     - จุดที่ 2: ขั้นตอนตรวจสอบก่อนวางออเดอร์ใหม่ `placeRestingOrder` (บรรทัด ~4660)
+  3. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.8` ใน `package.json` และ `src/version.ts`

@@ -714,6 +714,25 @@ export class DynamicGrid {
     return 1 + pct / 100;
   }
 
+  /**
+   * Checks if an open lot is already held near this grid level.
+   * Proximity tolerance is dynamically calculated to be well below half the distance to the nearest
+   * adjacent grid level (max 35% of adjacent step, capped at 0.15%), preventing adjacent levels from falsely blocking each other.
+   */
+  private hasLotNearLevel(levelPrice: number, levelIdx: number, levels: number[]): boolean {
+    if (this.lots.length === 0 || !levelPrice || !levels || levels.length === 0) return false;
+    const prevLvl = levelIdx > 0 ? levels[levelIdx - 1] : undefined;
+    const nextLvl = levelIdx < levels.length - 1 ? levels[levelIdx + 1] : undefined;
+    const distToAdjacent = Math.min(
+      prevLvl ? Math.abs(prevLvl - levelPrice) : Infinity,
+      nextLvl ? Math.abs(nextLvl - levelPrice) : Infinity,
+    );
+    const maxProximityRatio = isFinite(distToAdjacent) && distToAdjacent > 0
+      ? Math.min(0.0015, (distToAdjacent / levelPrice) * 0.35)
+      : 0.0015;
+    return this.lots.some((l) => Math.abs(l.price - levelPrice) / levelPrice <= maxProximityRatio);
+  }
+
   public updateRuntimeSettings(newSettings: Record<string, any>): Record<string, any> {
     for (const [key, val] of Object.entries(newSettings)) {
       if (key in this.cfg && val !== undefined) {
@@ -4356,10 +4375,8 @@ export class DynamicGrid {
             return false;
           }
           // Open Lot Proximity Guard: If we already hold an open lot bought near this price level, do NOT re-buy it!
-          const hasExistingLotNearPrice = this.lots.some(
-            (l) => Math.abs(l.price - lvl) / lvl <= 0.0025,
-          );
-          if (hasExistingLotNearPrice) {
+          // Note: dynamic tolerance ensures adjacent grid levels do not falsely suppress each other in narrow channels
+          if (this.hasLotNearLevel(lvl, idx, effectiveBuyLevels)) {
             return false;
           }
           // Downtrend Trendline filter
@@ -4644,7 +4661,7 @@ export class DynamicGrid {
             continue;
           }
           // Open Lot Proximity Guard: skip if a lot near this price is already held
-          if (this.lots.some((l) => Math.abs(l.price - lvlPrice) / lvlPrice <= 0.0025)) {
+          if (this.hasLotNearLevel(lvlPrice, i, effectiveBuyLevels)) {
             continue;
           }
 
