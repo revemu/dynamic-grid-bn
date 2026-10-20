@@ -1342,180 +1342,12 @@ export class DowStructureEngine {
       }
     }
 
-    // ── 2. Determine Active Wave Key Swings (Active Valley & Active Peak) ──
-    // The active wave represents the current price cycle / consolidation structure.
-    // Swings MUST strictly alternate (Peak -> Valley -> Peak -> Valley) per Dow Theory!
-    // A valley can ONLY exist if there is a preceding peak to the left.
+    // ── 2. Determine Wave Cycles & Channel Bounds ─────────────────────────
     const waveCycle = this.calculateWaveCycles();
     const canonicalLows = waveCycle.annotatedSwings.filter((s) => s.type === "LOW");
     const canonicalHighs = waveCycle.annotatedSwings.filter((s) => s.type === "HIGH");
-
-    const macroPeak = canonicalHighs.length > 0
-      ? canonicalHighs.reduce((max, h) => (!max || h.price > max.price ? h : max), canonicalHighs[0]!)
-      : undefined;
-    const macroLow = canonicalLows.length > 0
-      ? canonicalLows.reduce((min, l) => (!min || l.price < min.price ? l : min), canonicalLows[0]!)
-      : undefined;
-
-    // Detect active wave cycle base index:
-    // If macroPeak occurred after macroLow, the market launched from a base valley up to macroPeak,
-    // and is currently in a downwave/correction.
-    // In a downwave after macroPeak:
-    // If post-peak lows exist (canonicalLows after macroPeak.index), the true floor of the active downwave
-    // is the lowest confirmed valley of this downwave (postPeakLows), provided the channel width meets minSpanRequired!
-    // If no post-peak low exists yet or postPeakLows width is insufficient, fallback to prePeak launchpad base.
-    let activeWaveBaseIndex = 0;
-    const postPeakLows = macroPeak ? canonicalLows.filter((l) => l.index > macroPeak.index) : [];
-
-    if (macroPeak && macroLow) {
-      if (macroPeak.index > macroLow.index) {
-        if (postPeakLows.length > 0) {
-          // มีเหวที่เกิดขึ้นหลังยอด macroPeak ในรอบคลื่นทุบปัจจุบัน
-          // ให้ยึดจุดต่ำสุดของรอบทุบนี้เป็น activeWaveBaseIndex
-          const lowestPostPeak = postPeakLows.reduce((min, l) => (l.price < min.price ? l : min), postPeakLows[0]!);
-          activeWaveBaseIndex = lowestPostPeak.index;
-        } else {
-          const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
-          const launchpadLow = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]! : macroLow;
-          const baseClusterLows = prePeakLows.filter((l) => l.index >= launchpadLow.index - 10);
-          const lowestLaunchpad = baseClusterLows.length > 0
-            ? baseClusterLows.reduce((min, l) => (l.price < min.price ? l : min), launchpadLow)
-            : launchpadLow;
-          activeWaveBaseIndex = lowestLaunchpad.index;
-        }
-      } else {
-        // macroPeak เกิดก่อน macroLow: ตลาดทุบลงมาทำ macroLow แล้ว
-        // ยึด macroLow.index เป็นจุดเริ่มต้นของคลื่นเสมอ เพื่อให้ activeCycleLows มีทั้งฐาน macroLow (LL)
-        // และเหว HL ถัดมาครบถ้วน โดยเหว HL จะยกฐานได้ต่อเมื่อผ่านเกณฑ์ isValleyEligibleForFloor (เบรกยอดก่อนหน้า) แล้วเท่านั้น
-        activeWaveBaseIndex = macroLow.index;
-      }
-    } else if (macroLow) {
-      activeWaveBaseIndex = macroLow.index;
-    } else if (macroPeak) {
-      if (postPeakLows.length > 0) {
-        const lowestPostPeak = postPeakLows.reduce((min, l) => (l.price < min.price ? l : min), postPeakLows[0]!);
-        activeWaveBaseIndex = lowestPostPeak.index;
-      } else {
-        const prePeakLows = canonicalLows.filter((l) => l.index < macroPeak.index);
-        activeWaveBaseIndex = prePeakLows.length > 0 ? prePeakLows[prePeakLows.length - 1]!.index : macroPeak.index;
-      }
-    }
-
-    const cycleHighsStartIndex = (macroPeak && macroLow && macroPeak.index < macroLow.index)
-      ? macroLow.index
-      : activeWaveBaseIndex;
-    const activeCycleHighs = canonicalHighs.filter((h) => h.index >= cycleHighsStartIndex);
-    const activeCycleLows = canonicalLows.filter((l) => l.index >= activeWaveBaseIndex);
-
-    let baseValley: SwingPoint | undefined;
-    // Helper: A confirmed valley is unbroken if no subsequent confirmed valley, candidate valley, or subsequent candle dropped below it
-    const isUnbrokenValley = (v: SwingPoint, pool: SwingPoint[]) =>
-      !pool.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
-      !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price) &&
-      !candles.some((c) => c.time > v.time && getEffectiveLow(c, useTrueWick, this.wickThresholdPct) < v.price);
-
-    // Helper: A confirmed peak is unbroken if no subsequent confirmed peak, candidate peak, or subsequent candle rose above it
-    const isUnbrokenPeak = (p: SwingPoint, pool: SwingPoint[]) =>
-      !pool.some((later) => (later.index > p.index || later.time > p.time) && later.price > p.price) &&
-      !(candidatePeak && candidatePeak.time > p.time && candidatePeak.price > p.price) &&
-      !candles.some((c) => c.time > p.time && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > p.price);
-
-    // Helper (Dow Theory Recovery & Breakout HL Confirmation):
-    // 1) A wave base / Lower Low (LL) is immediately eligible.
-    // 2) An unbroken confirmed Higher Low (HL) in the active cycle is eligible to lift the Floor immediately
-    //    if price is holding above it (in recovery wave 'ฟื้นตัว (ยก HL ฐานสูงขึ้น)'), OR
-    // 3) Price (or a subsequent candle/peak) breaks above the preceding peak (classic trend continuation).
-    const isValleyEligibleForFloor = (v: SwingPoint): boolean => {
-      const vPos = canonicalLows.findIndex((l) => l.index === v.index && l.time === v.time);
-      const prevValley = vPos > 0 ? canonicalLows[vPos - 1] : canonicalLows.filter((l) => l.index < v.index).pop();
-      if (!prevValley || v.price <= prevValley.price || (v as DowSwingPoint).dowLabel === "LL") {
-        return true;
-      }
-
-      // In active wave recovery, an unbroken confirmed Higher Low that price is currently holding above
-      // serves as the immediate higher support floor without waiting for HH breakout:
-      if (v.index >= activeWaveBaseIndex && price >= v.price && isUnbrokenValley(v, canonicalLows)) {
-        return true;
-      }
-
-      const interveningPeaks = canonicalHighs.filter((h) => h.index > prevValley.index && h.index < v.index);
-      const precedingPeak = interveningPeaks.length > 0
-        ? interveningPeaks.reduce((max, h) => (h.price >= max.price ? h : max), interveningPeaks[0]!)
-        : canonicalHighs.filter((h) => h.index < v.index).pop();
-      if (!precedingPeak) return true;
-
-      const brokenByPrice = price > precedingPeak.price;
-      const brokenByPeak = canonicalHighs.some((h) => h.index > v.index && h.price > precedingPeak.price);
-      const brokenByCandidate = Boolean(
-        candidatePeak && candidatePeak.time > v.time && candidatePeak.price > precedingPeak.price
-      );
-      const brokenByCandle = candles.some(
-        (c) => c.time > v.time && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > precedingPeak.price
-      );
-      return brokenByPrice || brokenByPeak || brokenByCandidate || brokenByCandle;
-    };
-
-    const lowsPool = activeCycleLows.length > 0 ? activeCycleLows : canonicalLows;
-    const eligibleLowsBelowPrice = lowsPool
-      .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows) && isValleyEligibleForFloor(l))
-      .sort((a, b) => b.price - a.price);
-    const unbrokenLowsBelowPrice = eligibleLowsBelowPrice.length > 0
-      ? eligibleLowsBelowPrice
-      : lowsPool
-          .filter((l) => l.price <= price && isUnbrokenValley(l, canonicalLows))
-          .sort((a, b) => b.price - a.price); // Nearest (highest) unbroken confirmed valley below price first
-
-    if (unbrokenLowsBelowPrice.length > 0) {
-      baseValley = unbrokenLowsBelowPrice[0]!;
-    } else if (postPeakLows.length > 0 && macroPeak && macroLow && macroPeak.index > macroLow.index) {
-      baseValley = postPeakLows.reduce((min, l) => (l.price < min.price ? l : min), postPeakLows[0]!);
-    } else if (activeCycleLows.length > 0) {
-      baseValley = activeCycleLows.reduce((min, l) => (l.price < min.price ? l : min), activeCycleLows[0]!);
-    } else if (canonicalLows.length > 0) {
-      baseValley = canonicalLows.reduce((min, l) => (l.price < min.price ? l : min), canonicalLows[0]!);
-    }
-
-    activeValley = baseValley;
-    const waveStartIndex = activeWaveBaseIndex > 0 ? activeWaveBaseIndex : (baseValley?.index ?? 0);
-
-    // Highs formed in the active wave (post-valley or post-macroLow)
-    const highsInActiveWave = canonicalHighs.filter((s) => s.index >= waveStartIndex);
-
-    // 🔒 Dow Theory Rule ("ถ้ายอดในราคาปัจจุบันทำ Lower high สามารถปรับลดกรอบลงมาได้" / "ถ้าทำ HH ปรับขึ้นตามยอดใหม่"):
-    const lastCanonicalHigh = activeCycleHighs.length > 0
-      ? activeCycleHighs[activeCycleHighs.length - 1]
-      : (canonicalHighs.length > 0 ? canonicalHighs[canonicalHighs.length - 1] : undefined);
-    const lastCanonicalLow = activeCycleLows.length > 0
-      ? activeCycleLows[activeCycleLows.length - 1]
-      : (canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined);
-
-    const isLatestHighHh = Boolean(
-      lastCanonicalHigh &&
-      (lastCanonicalHigh.dowLabel === "HH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price >= activeCycleHighs[activeCycleHighs.length - 2]!.price))
-    );
-    const isLatestHighLh = Boolean(
-      lastCanonicalHigh &&
-      (lastCanonicalHigh.dowLabel === "LH" || (activeCycleHighs.length >= 2 && lastCanonicalHigh.price < activeCycleHighs[activeCycleHighs.length - 2]!.price)) &&
-      price <= lastCanonicalHigh.price * 1.0005
-    );
-
-    const highsPool = activeCycleHighs.length > 0 ? activeCycleHighs : highsInActiveWave;
-
-    // 🔒 Pure Dow Theory Rule:
-    // Anchor activePeak to the highest confirmed structural swing peak (maxHigh) of the active cycle!
-    // NEVER collapse activePeak down to an unconfirmed candle or a prior high that was already broken upward.
-    if (highsPool.length > 0) {
-      let maxHigh = highsPool[0]!;
-      for (const h of highsPool) {
-        if (h.price >= maxHigh.price) maxHigh = h;
-      }
-      activePeak = maxHigh;
-    } else if (canonicalHighs.length > 0) {
-      activePeak = canonicalHighs.reduce((max, h) => (h.price >= max.price ? h : max), canonicalHighs[0]!);
-    }
-
-    // 🔒 ยึดยอดสวิงสูงสุดที่ยืนยันแล้วของคลื่นปัจจุบัน (activePeak) เป็นแนวต้าน (activeCeilingPoint) โดยตรง
-    const activeCeilingPoint = activePeak;
+    const lastCanonicalHigh = canonicalHighs.length > 0 ? canonicalHighs[canonicalHighs.length - 1] : undefined;
+    const lastCanonicalLow = canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined;
 
     let clampStatus: GridZone["clampStatus"] = "NATURAL_SWING";
     let anchorSide: GridZone["anchorSide"] = "NONE";
@@ -1553,137 +1385,139 @@ export class DowStructureEngine {
       minWidthPct = (minSpan / price) * 100;
       maxWidthPct = (maxSpan / price) * 100;
     } else {
-      // 🔒 Proximity-First & Minimum-Width Channel Anchoring (Dow Theory & 193-Bar History):
-      // กฎหลัก:
-      // 1. ค้นหายอด (Highs) เหนือราคา และเหว (Lows) ใต้ราคาจากประวัติทั้งหมด (193 แท่ง)
-      // 2. กฎ HL vs LL ในคลื่นเดียวกัน: ถ้าสวิง Low เป็น HL ที่ห่างจาก LL ในคลื่นเดียวกันเกิน minChannelWidthPct
-      //    ห้ามเลือก HL นั้น ให้ไปเลือก LL แทน ("ถ้าคุณเลือก HL ที่ห่างจาก LL มากไป คุณไม่ควรเลือก HL นั้นให้ไปเลือก LL แทน")
-      // 3. หาคู่ (Valley, Peak) ที่ความกว้าง W = Peak - Valley อยู่ในช่วง [minSpan, maxSpan]
-      // 4. เลือกคู่ที่ความกว้างแคบที่สุดก่อน ("เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน จะโบราณก็ชั่งหัวมัน มันมีแค่ 193 จุด")
-      // 5. หากหาคู่ในช่วง range ไม่ได้: ไม่สร้างกรอบเทียม หยุดเล่นไปก่อน ("ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน")
+      // 🔒 Active Wave Support-First + Sub-Wave Peak Bypass + Unobstructed Wave Box Architecture:
+      // 1. กรองเฉพาะเหวยืนยันใต้ราคาที่ยังไม่ถูกทุบหลุด (unbrokenValleys) และยอดยืนยันเหนือราคาที่ยังไม่ถูกเบรกทะลุ (unbrokenPeaks)
+      // 2. Tier 1 (Pure Unobstructed Wave Box): ค้นหาคู่ (valley, peak) ที่อยู่ในช่วง [minChannelWidthPct, maxChannelWidthPct]
+      //    ซึ่งตลอดช่วงเวลาตั้งแต่จุดเริ่มต้นของกรอบ (min(valley.time, peak.time)) จนถึงปัจจุบัน:
+      //    - ไม่มีแท่งเทียนหรือสวิงใดหลุดต่ำกว่า valley.price (Floor Invariant)
+      //    - ไม่มีแท่งเทียนหรือสวิงใดทะลุสูงกว่า peak.price (Ceiling Invariant)
+      //    これにより ยอดสวิงย่อย (Sub-wave bounce) ที่แคบกว่า minChannelWidthPct จะถูกข้ามไปจับคู่กับยอดคลื่นหลักของมันโดยอัตโนมัติ
+      //    โดยไม่กระโดดข้ามคลื่นไปจับเหวโบราณคนละรอบ!
+      // 3. Tier 2 (Support-First Unbroken Staircase): หาก Tier 1 ไม่พบคู่ในระยะ (เช่น คลื่นหลักกว้างเกิน maxChannelWidthPct
+      //    แล้วราคาสร้างฐาน HL ใหม่ด้านใน) ให้ยึดเหวที่ยังไม่ถูกทำลายที่ใกล้ราคาที่สุด (unbrokenValleys[0]) เป็นฐานหลักก่อนเสมอ
+      //    แล้วจับคู่กับยอดที่ยังไม่ถูกทำลาย (unbrokenPeaks) ที่แคบที่สุดในช่วง [minChannelWidthPct, maxChannelWidthPct]
+      // 4. Tier 3 (Fallback to Confirmed Highs): หากยังไม่พบ ให้จับคู่ unbrokenValleys กับ candidateHighs ที่อยู่ในช่วงความกว้าง
+      // 5. หากไม่พบคู่ที่อยู่ในเกณฑ์ความกว้างเลย ให้เข้าโหมด WARMUP (หยุดวางกริดชั่วคราวโดยไม่สร้างกรอบเทียม)
 
       const candidateHighs = confirmedHighs.filter((h) => h.price >= price);
       const candidateLows = confirmedLows.filter((l) => l.price <= price);
 
-      const sortedHighsByRecency = [...candidateHighs].sort((a, b) => b.index - a.index);
-      const sortedLowsByRecency = [...candidateLows].sort((a, b) => b.index - a.index);
+      const isUnbrokenValley = (v: SwingPoint): boolean =>
+        !confirmedLows.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
+        !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price) &&
+        !candles.some((c) => c.time > v.time && getEffectiveLow(c, useTrueWick, this.wickThresholdPct) < v.price);
 
-      const mostRecentHigh = sortedHighsByRecency[0];
-      const mostRecentLow = sortedLowsByRecency[0];
+      const isUnbrokenPeak = (p: SwingPoint): boolean =>
+        !confirmedHighs.some((later) => (later.index > p.index || later.time > p.time) && later.price > p.price) &&
+        !(candidatePeak && candidatePeak.time > p.time && candidatePeak.price > p.price) &&
+        !candles.some((c) => c.time > p.time && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > p.price);
 
-      // 2. "จุดสำคัญเจอ ยอดก่อน หรือ เหวก่อน เวลามองไปทางซ้าย" (Scan backwards in time)
-      const isPeakFirst = Boolean(
-        mostRecentHigh && (!mostRecentLow || mostRecentHigh.index > mostRecentLow.index)
-      );
+      const isPureWaveBox = (v: SwingPoint, p: SwingPoint): boolean => {
+        const startTime = Math.min(v.time, p.time);
+        const startIdx = Math.min(v.index, p.index);
+        const floorIntact =
+          !confirmedLows.some((l) => (l.index >= startIdx || l.time >= startTime) && l.price < v.price) &&
+          !(candidateValley && candidateValley.time >= startTime && candidateValley.price < v.price) &&
+          !candles.some((c) => c.time >= startTime && getEffectiveLow(c, useTrueWick, this.wickThresholdPct) < v.price);
+        if (!floorIntact) return false;
 
-      let chosenPair: { valley: SwingPoint; peak: SwingPoint; width: number; widthPct: number } | undefined;
+        const ceilingIntact =
+          !confirmedHighs.some((h) => (h.index >= startIdx || h.time >= startTime) && h.price > p.price) &&
+          !(candidatePeak && candidatePeak.time >= startTime && candidatePeak.price > p.price) &&
+          !candles.some((c) => c.time >= startTime && getEffectiveHigh(c, useTrueWick, this.wickThresholdPct) > p.price);
+        return ceilingIntact;
+      };
 
-      if (isPeakFirst && mostRecentHigh) {
-        // ── Case A: เจอยอดก่อน -> ยึดยอดล่าสุด (mostRecentHigh) เป็นแนวต้านหลักเท่านั้น ──
-        const p = mostRecentHigh;
-        const validValleys = candidateLows.filter((v) => {
-          const w = p.price - v.price;
-          if (w <= 0 || v.price <= 0) return false;
-          const wPct = (w / v.price) * 100;
-          return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
-        });
-        if (validValleys.length > 0) {
-          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน! (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
-          validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price) || (b.index - a.index));
-          const bestValley = validValleys[0]!;
-          const w = p.price - bestValley.price;
-          chosenPair = {
-            peak: p,
-            valley: bestValley,
-            width: w,
-            widthPct: (w / bestValley.price) * 100,
-          };
-          anchorSide = "UPPER_CEILING";
-        } else {
-          // ── Case A Fallback: เจอยอดแล้วหากรอบล่างไม่เจอ ให้มองย้อนไปทางซ้ายต่อจากยอดนั้น ──
-          // "กรณีที่มองไปทางซ้าย เจอยอด แล้วหากรอบล่างไม่เจอ ให้มองต่อไป เจอเหวหรือยอดก่อน
-          //  ถ้าเจอเหวก่อนให้ปรับมาใช้กรอบล่างที่เหวนั้นได้ แล้วขยายไปหายอดตามกฎเดิม"
-          const priorSwings = [...confirmedHighs, ...confirmedLows]
-            .filter((s) => s.index < p.index)
-            .sort((a, b) => b.index - a.index);
+      const isWidthValid = (v: SwingPoint, p: SwingPoint): boolean => {
+        const w = p.price - v.price;
+        if (w <= 0 || v.price <= 0) return false;
+        const wPct = (w / v.price) * 100;
+        return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
+      };
 
-          // ค้นหาสวิงเหวแรกก่อนหน้า (ข้ามยอดสวิงย่อยในคลื่นขึ้นเดียวกัน) ที่อยู่ต่ำกว่าหรือเท่ากับราคาปัจจุบันเพื่อเป็นแนวรับจริง (Floor)
-          const priorValley = priorSwings.find((s) => s.type === "LOW" && s.price <= price);
-          if (priorValley) {
-            const v = priorValley;
-            const validPeaks = candidateHighs.filter((peak) => {
-              const w = peak.price - v.price;
-              if (w <= 0 || v.price <= 0) return false;
-              const wPct = (w / v.price) * 100;
-              return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
+      // เรียงจากใกล้ราคาปัจจุบัน/ล่าสุดที่สุดออกไปหาเก่าที่สุด
+      const unbrokenValleys = candidateLows
+        .filter(isUnbrokenValley)
+        .sort((a, b) => b.price - a.price || b.index - a.index);
+      const unbrokenPeaks = candidatePeaksSort(candidateHighs.filter(isUnbrokenPeak));
+
+      function candidatePeaksSort(peaks: SwingPoint[]): SwingPoint[] {
+        return [...peaks].sort((a, b) => a.price - b.price || b.index - a.index);
+      }
+
+      type ChannelPair = { valley: SwingPoint; peak: SwingPoint; width: number; widthPct: number };
+      let chosenPair: ChannelPair | undefined;
+
+      // ── Tier 1: Pure Unobstructed Wave Box (Telescoping [minLow, maxHigh] box) ──
+      const tier1Pairs: ChannelPair[] = [];
+      for (const v of unbrokenValleys) {
+        for (const p of unbrokenPeaks) {
+          if (isWidthValid(v, p) && isPureWaveBox(v, p)) {
+            const w = p.price - v.price;
+            tier1Pairs.push({
+              valley: v,
+              peak: p,
+              width: w,
+              widthPct: (w / v.price) * 100,
             });
-
-            if (validPeaks.length > 0) {
-              // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อนตามกฎเดิม (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
-              validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price) || (b.index - a.index));
-              const bestPeak = validPeaks[0]!;
-              const w = bestPeak.price - v.price;
-              chosenPair = {
-                peak: bestPeak,
-                valley: v,
-                width: w,
-                widthPct: (w / v.price) * 100,
-              };
-              anchorSide = "LOWER_FLOOR";
-            }
           }
         }
-      } else if (mostRecentLow) {
-        // ── Case B: เจอเหวก่อน -> ยึดเหวล่าสุด (mostRecentLow) เป็นแนวรับหลักเท่านั้น ──
-        const v = mostRecentLow;
-        const validPeaks = candidateHighs.filter((p) => {
-          const w = p.price - v.price;
-          if (w <= 0 || v.price <= 0) return false;
-          const wPct = (w / v.price) * 100;
-          return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
-        });
-        if (validPeaks.length > 0) {
-          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน! (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
-          validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price) || (b.index - a.index));
-          const bestPeak = validPeaks[0]!;
-          const w = bestPeak.price - v.price;
-          chosenPair = {
-            peak: bestPeak,
-            valley: v,
-            width: w,
-            widthPct: (w / v.price) * 100,
-          };
-          anchorSide = "LOWER_FLOOR";
-        } else {
-          // ── Case B Fallback: เจอเหวแล้วหากรอบบนไม่เจอ ให้มองย้อนไปทางซ้ายต่อจากเหวนั้น ──
-          const priorSwings = [...confirmedHighs, ...confirmedLows]
-            .filter((s) => s.index < v.index)
-            .sort((a, b) => b.index - a.index);
+      }
 
-          // ค้นหาสวิงยอดแรกก่อนหน้า (ข้ามเหวสวิงย่อยในคลื่นลงเดียวกัน) ที่อยู่สูงกว่าหรือเท่ากับราคาปัจจุบันเพื่อเป็นแนวต้านจริง (Ceiling)
-          const priorPeak = priorSwings.find((s) => s.type === "HIGH" && s.price >= price);
-          if (priorPeak) {
-            const p = priorPeak;
-            const validValleys = candidateLows.filter((valley) => {
-              const w = p.price - valley.price;
-              if (w <= 0 || valley.price <= 0) return false;
-              const wPct = (w / valley.price) * 100;
-              return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
-            });
+      if (tier1Pairs.length > 0) {
+        // เลือกกล่องคลื่นที่แคบที่สุด (และเริ่มต้นล่าสุดที่สุด) ก่อนเสมอ
+        tier1Pairs.sort(
+          (a, b) =>
+            a.width - b.width ||
+            Math.min(b.valley.index, b.peak.index) - Math.min(a.valley.index, a.peak.index) ||
+            b.valley.index - a.valley.index
+        );
+        chosenPair = tier1Pairs[0]!;
+      }
 
-            if (validValleys.length > 0) {
-              // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อนตามกฎเดิม (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
-              validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price) || (b.index - a.index));
-              const bestValley = validValleys[0]!;
-              const w = p.price - bestValley.price;
-              chosenPair = {
-                peak: p,
-                valley: bestValley,
-                width: w,
-                widthPct: (w / bestValley.price) * 100,
-              };
-              anchorSide = "UPPER_CEILING";
+      // ── Tier 2: Support-First Unbroken Staircase (ยึดฐาน unbrokenValleys[0] ที่ใกล้ราคาที่สุดก่อน) ──
+      if (!chosenPair) {
+        for (const v of unbrokenValleys) {
+          const validPeaks = unbrokenPeaks.filter((p) => {
+            if (!isWidthValid(v, p)) return false;
+            // ห้ามจับคู่เหวเก่ากับยอดสวิงย่อยที่อยู่ต่ำกว่ายอดคลื่นระหว่างกลาง (ป้องกัน Cross-Wave Mismatch)
+            if (v.index < p.index) {
+              const brokenBetween = confirmedHighs.some(
+                (h) => h.index > v.index && h.index < p.index && h.price > p.price
+              );
+              if (brokenBetween) return false;
             }
+            return true;
+          });
+          if (validPeaks.length > 0) {
+            const bestPeak = validPeaks[0]!;
+            const w = bestPeak.price - v.price;
+            chosenPair = {
+              valley: v,
+              peak: bestPeak,
+              width: w,
+              widthPct: (w / v.price) * 100,
+            };
+            break;
+          }
+        }
+      }
+
+      // ── Tier 3: Unbroken Support + Confirmed Highs Fallback ──
+      if (!chosenPair) {
+        const sortedCandidateHighs = candidatePeaksSort(candidateHighs);
+        for (const v of unbrokenValleys) {
+          const validPeaks = sortedCandidateHighs.filter((p) => isWidthValid(v, p));
+          if (validPeaks.length > 0) {
+            const bestPeak = validPeaks[0]!;
+            const w = bestPeak.price - v.price;
+            chosenPair = {
+              valley: v,
+              peak: bestPeak,
+              width: w,
+              widthPct: (w / v.price) * 100,
+            };
+            break;
           }
         }
       }
@@ -1695,19 +1529,19 @@ export class DowStructureEngine {
         activeValley = chosenPair.valley;
         isSwingConfirmed = true;
         clampStatus = "NATURAL_SWING";
+        anchorSide = chosenPair.valley.index >= chosenPair.peak.index ? "LOWER_FLOOR" : "UPPER_CEILING";
 
         rawWidthPct = chosenPair.widthPct;
         minWidthPct = minChannelWidthPct;
         maxWidthPct = maxChannelWidthPct;
       } else {
-        // "ถ้าหาไม่ได้จริง ก็ไม่ต้องมีกรอบ หยุดเล่นไปก่อน" / "แต่ถ้าหายอดที่อยู่ใน range ไม่ได้ก็หยุดเล่นไปก่อน"
         isSwingConfirmed = false;
         clampStatus = "WARMUP";
         upperBound = 0;
         bottomBound = 0;
-        activePeak = mostRecentHigh;
-        activeValley = mostRecentLow;
-        anchorSide = isPeakFirst ? "UPPER_CEILING" : (mostRecentLow ? "LOWER_FLOOR" : "NONE");
+        activePeak = unbrokenPeaks[0] ?? candidateHighs[candidateHighs.length - 1];
+        activeValley = unbrokenValleys[0] ?? candidateLows[candidateLows.length - 1];
+        anchorSide = "NONE";
         rawWidthPct = undefined;
         minWidthPct = minChannelWidthPct;
         maxWidthPct = maxChannelWidthPct;
