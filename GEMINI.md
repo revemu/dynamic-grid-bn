@@ -1776,3 +1776,19 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - สร้างโมดูล `src/version.ts` ดึง Git Commit Hash สั้น (`git rev-parse --short HEAD`), วันที่ Commit ล่าสุด และเวอร์ชันจาก `package.json` (อัปเกรดเป็น `v0.2.0`) อัตโนมัติ พร้อมระบบ Fallback
      - เพิ่ม API Endpoint `GET /api/version` และผนวก `versionInfo` เข้าใน `GET /api/state` และ WebSocket / SSE Telemetry Tick
      - เพิ่มป้าย Badge `🏷️ v0.2.0 (commit)` บน Header แถบนำทางด้านบนของหน้าเว็บแดชบอร์ด พร้อม Tooltip แสดงวันที่อัปเดตและสามารถคลิกเพื่อเปิดดู `/api/version` ได้ทันที
+
+---
+
+### 34. Historical Lookback Swapping when Peak/Valley Fails Range Criteria (`src/market-structure.ts`)
+- **สาเหตุของปัญหา**:
+  1. เมื่อมองย้อนไปทางซ้ายจากราคาปัจจุบัน แล้วเจอยอด (Peak) ก่อน (`isPeakFirst`): บอทจะค้นหาเหว (Valley) ใต้ราคาเพื่อจับคู่สร้างกรอบ `[minChannelWidthPct, maxChannelWidthPct]`
+  2. หากระยะห่างจากยอดนั้นไปยังเหวทุกตัวกว้างเกิน `maxChannelWidthPct` (หรือแคบเกิน `minChannelWidthPct`): โค้ดเดิมจะยอมแพ้ทันที (`chosenPair = undefined`) และขึ้นสถานะ "ไม่มีกรอบที่เข้าเกณฑ์ (หยุดสร้าง)" ทันที ทั้งๆ ที่ก่อนหน้านั้นโครงสร้างคลื่นมีเหวที่สามารถใช้เป็นฐานแนวรับได้
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **Lookback Further Left from Peak (Case A Fallback)**:
+     - เมื่อมองซ้ายเจอยอด (`p = mostRecentHigh`) แล้วหากรอบล่างไม่เจอ (`validValleys.length === 0`): ระบบจะไม่ยอมแพ้ทันที แต่จะมองย้อนไปทางซ้ายต่อจากยอดนั้น (`index < p.index`) เพื่อตรวจสอบสวิงยืนยันก่อนหน้า
+     - หากสวิงถัดไปทางซ้ายเจอ **"เหว (Valley)"** ก่อน และเหวนั้นอยู่ต่ำกว่าราคาปัจจุบัน (`v.price <= price`):
+       - ปรับสิทธิ์ให้เหวนั้นทำหน้าที่เป็น **"กรอบล่างหลัก (LOWER_FLOOR)"** ทันที
+       - จากนั้น **"ขยายไปหายอดตามกฎเดิม"**: นำเหวนี้ไปค้นหายอดเหนือราคา (`candidateHighs`) ที่ให้ความกว้างอยู่ในเกณฑ์ `[minWidth, maxWidth]` และเลือกยอดที่แคบที่สุดก่อน
+     - หากเจอ "ยอด (Peak)" ซ้อนกัน หรือเหวที่เจออยู่สูงกว่าราคาปัจจุบัน (ราคาหลุดเหวไปแล้ว) ให้คงการหยุดเล่นไปก่อน (WARMUP) เพื่อความปลอดภัย
+  2. **Symmetrical Fallback for Valley (Case B Fallback)**:
+     - รองรับแบบสมมาตรในกรณีมองซ้ายเจอเหว (`v = mostRecentLow`) ก่อน แต่หากรอบบนไม่เจอ: มองย้อนไปทางซ้ายต่อ หากเจอยอดก่อนและยอด `>= price` ให้ปรับยอดนั้นเป็นเพดานหลัก แล้วขยายไปหาเหวใต้ราคาที่แคบที่สุดในเกณฑ์ความกว้างตามกฎเดิม
