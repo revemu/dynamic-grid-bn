@@ -84,7 +84,6 @@ export interface StrategyStateRecord {
   lastCutLossTime?: number;
   postCutSingleTrancheOnly?: boolean;
   lastResolvedDumpLowPrice?: number;
-  recoveryScoutPending?: boolean;
   iocBracketSellCycle?: {
     baselineHeldQuote: number;
     baselineHeldQty: number;

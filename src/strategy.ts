@@ -102,7 +102,6 @@ export class DynamicGrid {
   private breakdownBuyLevel2Price?: number;
   private breakdownTime?: number;
   private lastResolvedDumpLowPrice?: number;
-  private recoveryScoutPending = false;
   private breakdownCandleTimes = new Set<number>();
   private lastCutLossTime?: number;
   private bufferBreakStartTime?: number;
@@ -428,7 +427,6 @@ export class DynamicGrid {
     this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
     this.lastResolvedDumpLowPrice = undefined;
-    this.recoveryScoutPending = false;
     this.iocBracketSellCycle = undefined;
     this.bufferBreakStartTime = undefined;
     this.cutLossStage1Executed = false;
@@ -1558,9 +1556,6 @@ export class DynamicGrid {
       if (typeof data.lastResolvedDumpLowPrice === "number") {
         this.lastResolvedDumpLowPrice = data.lastResolvedDumpLowPrice;
       }
-      if (typeof data.recoveryScoutPending === "boolean") {
-        this.recoveryScoutPending = this.lots.length === 0 ? data.recoveryScoutPending : false;
-      }
       if (
         data.iocBracketSellCycle &&
         typeof data.iocBracketSellCycle.baselineHeldQty === "number" &&
@@ -1703,7 +1698,6 @@ export class DynamicGrid {
         lastCutLossTime: this.lastCutLossTime,
         postCutSingleTrancheOnly: this.postCutSingleTrancheOnly,
         lastResolvedDumpLowPrice: this.lastResolvedDumpLowPrice,
-        recoveryScoutPending: this.recoveryScoutPending,
         iocBracketSellCycle: this.iocBracketSellCycle
           ? {
               baselineHeldQuote: this.iocBracketSellCycle.baselineHeldQuote,
@@ -1863,7 +1857,6 @@ export class DynamicGrid {
     this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
     this.lastResolvedDumpLowPrice = undefined;
-    this.recoveryScoutPending = false;
     this.breakdownCandleTimes.clear();
     this.sellOrdersActive = true;
     this.buyOrdersActive = true;
@@ -1916,7 +1909,6 @@ export class DynamicGrid {
     this.breakdownBuyLevel2Price = undefined;
     this.breakdownTime = undefined;
     this.lastResolvedDumpLowPrice = undefined;
-    this.recoveryScoutPending = false;
     this.breakdownCandleTimes.clear();
     this.sellOrdersActive = true;
     this.buyOrdersActive = true;
@@ -2557,9 +2549,6 @@ export class DynamicGrid {
     // downtrendDropPaused + Flat Cash LL Guard blocks.
     const isFlatCash = !isHoldingPosition && this.lots.length === 0;
     this.wasFlatCashLastTick = isFlatCash;
-    if (!isFlatCash && this.recoveryScoutPending) {
-      this.recoveryScoutPending = false;
-    }
 
     this.lastEvaluatedFloor = lowerBound;
     this.lastEvaluatedCeil = upperBound;
@@ -2606,7 +2595,6 @@ export class DynamicGrid {
         if (!isHlAfterLl && !tlBreakout) {
           this.waitingForHigherLow = true;
           this.isFlatChannelShiftWaiting = false;
-          this.recoveryScoutPending = false;
           this.breakdownFloorPrice = lowerBound;
           this.breakdownBuyLevel2Price = effectiveBuyLevel2Target;
           this.breakdownLowPrice = Math.min(refPrice, activeDumpLow);
@@ -2663,9 +2651,6 @@ export class DynamicGrid {
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
         this.breakdownBuyLevel2Price = undefined;
-        if (this.lots.length === 0) {
-          this.recoveryScoutPending = true;
-        }
         this.saveState();
       };
 
@@ -2866,7 +2851,6 @@ export class DynamicGrid {
             this.waitingForHigherLow = true;
             this.isFlatChannelShiftWaiting = false;
             this.lastResolvedDumpLowPrice = undefined;
-            this.recoveryScoutPending = false;
             this.breakdownFloorPrice = lowerBound;
             this.breakdownLowPrice = dexBid;
             this.breakdownTime = Math.floor(Date.now() / 1000);
@@ -3984,7 +3968,6 @@ export class DynamicGrid {
         this.waitingForHigherLow = true;
         this.isFlatChannelShiftWaiting = false;
         this.lastResolvedDumpLowPrice = undefined;
-        this.recoveryScoutPending = false;
         this.breakdownFloorPrice = lowerBound;
         this.breakdownLowPrice = bestBid;
         this.breakdownTime = Math.floor(Date.now() / 1000);
@@ -4069,7 +4052,6 @@ export class DynamicGrid {
     // Align lot qty with exchange stepSize and precision (4 decimals for ETH/SOMI)
     const netQty = roundToStep(rawNetQty, this.stepSize || 0.0001, 4);
     this.lots.push({ price, qty: netQty, time: now });
-    this.recoveryScoutPending = false;
     this.needsSellRebalance = true;
     this.needsBuyRebalance = true;
     // Reset IOC Bracket Sell Cycle whenever a buy order fills to re-partition lots with new baseline
@@ -4300,20 +4282,16 @@ export class DynamicGrid {
       }
 
       const maxAllowedBuyPrice = Math.min(currentBestBid, refPrice);
-      const recoveryScoutIdx = (this.recoveryScoutPending && this.lots.length === 0 && enabledBuys.some(Boolean))
-        ? effectiveBuyLevels.findIndex((lvl) => lvl > 0 && lvl < maxAllowedBuyPrice)
-        : -1;
-      const effectiveEnabledBuys = enabledBuys.map((en, idx) => Boolean(en) || idx === recoveryScoutIdx);
 
-      // Count total active buy levels considering effectiveEnabledBuys and potential trendline support at idx 0
+      // Count total active buy levels considering enabledBuys and potential trendline support at idx 0
       const activeBuyCount = effectiveBuyLevels.reduce((cnt, _, idx) => {
-        const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? effectiveEnabledBuys.some(Boolean) : (effectiveEnabledBuys[idx] !== false);
+        const isEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
         return isEnabled ? cnt + 1 : cnt;
       }, 0) || (buyLevels.length || 5);
 
-      const buyWeightFractions = this.getBuyLevelWeightFractions(effectiveEnabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget);
+      const buyWeightFractions = this.getBuyLevelWeightFractions(enabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget);
       const buyTargets = effectiveBuyLevels.map((_, idx) =>
-        this.getCumulativeBuyTargetFraction(idx, effectiveEnabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget)
+        this.getCumulativeBuyTargetFraction(idx, enabledBuys, effectiveBuyLevels.length, isTlAboveBuyTarget)
       );
 
       // Clean up stale resting buy orders or correct mislabeled levelDesc to closest buyLevel
@@ -4363,13 +4341,13 @@ export class DynamicGrid {
       const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
 
       // Determine which buy levels are actually eligible for placing/holding orders
-      // (not disabled by user unless overridden by active Uptrend Support at idx 0 or Recovery Scout, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
+      // (not disabled by user unless overridden by active Uptrend Support at idx 0, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
       const eligibleBuyIndices = effectiveBuyLevels
         .map((lvl, idx) => ({ lvl, idx }))
         .filter(({ lvl, idx }) => {
           if (!lvl) return false;
-          // Check if disabled by user (allow idx === 0 if it is the active Uptrend Support Line entry or recoveryScoutIdx)
-          const isLevelEnabled = (idx === 0 && isTlAboveBuyTarget) ? effectiveEnabledBuys.some(Boolean) : (effectiveEnabledBuys[idx] !== false);
+          // Check if disabled by user (allow idx === 0 if it is the active Uptrend Support Line entry)
+          const isLevelEnabled = (idx === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[idx] !== false);
           if (!isLevelEnabled) return false;
           // Holding Fraction Guard: If held fraction already reached or exceeded this level's target fraction, don't repeat
           const lvlTargetFraction = buyTargets[idx] ?? 1.0;
@@ -4501,8 +4479,8 @@ export class DynamicGrid {
           const lvlPrice = effectiveBuyLevels[i];
           if (!lvlPrice) continue;
 
-          // If this buy level is disabled by user (and not overridden by active Uptrend Support at i === 0 or recoveryScoutIdx), cancel any existing order and skip
-          const isLevelEnabled = (i === 0 && isTlAboveBuyTarget) ? effectiveEnabledBuys.some(Boolean) : (effectiveEnabledBuys[i] !== false);
+          // If this buy level is disabled by user (and not overridden by active Uptrend Support at i === 0), cancel any existing order and skip
+          const isLevelEnabled = (i === 0 && isTlAboveBuyTarget) ? enabledBuys.some(Boolean) : (enabledBuys[i] !== false);
           if (!isLevelEnabled) {
             const existingDisabledBuy = this.openOrders.find(
               (o) => o.isBid && (o.levelDesc === effectiveLevelNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
@@ -5838,18 +5816,6 @@ export class DynamicGrid {
         if (activeReached > 0 && matchedLevelIndex >= 0) {
           targetTranches = activeReached;
           matchedBuyPrice = buyLevels[matchedLevelIndex];
-        } else if (this.recoveryScoutPending && this.lots.length === 0 && buyLevels.length > 0) {
-          // 3. Recovery First Tranche (Scout Entry):
-          // When base recovery just confirmed while 100% Cash and price sits in the Buy Zone above Buy 4 (12%),
-          // allow 1 initial tranche at the nearest Buy Level at/above current ask so we don't miss the V/U recovery wave.
-          for (let i = 0; i < buyLevels.length; i++) {
-            const lvlPrice = buyLevels[i];
-            if (lvlPrice !== undefined && currentBestAsk <= lvlPrice * 1.002 && refPrice <= lvlPrice * 1.002) {
-              targetTranches = 1;
-              matchedLevelIndex = i;
-              matchedBuyPrice = lvlPrice;
-            }
-          }
         }
       }
 
@@ -5859,13 +5825,12 @@ export class DynamicGrid {
       }
 
       if (targetTranches > 0 && matchedLevelIndex >= 0 && matchedBuyPrice !== undefined && baseTrancheQuote > 0) {
-        const isScoutEntry = Boolean(this.recoveryScoutPending && this.lots.length === 0 && !enabledBuys[matchedLevelIndex]);
         const firstActiveFrac = buyFractions.find((f) => f > 0) ?? (1 / activeBuyCount);
-        const targetCapacityFraction = (isTlBuy || isScoutEntry)
+        const targetCapacityFraction = isTlBuy
           ? firstActiveFrac
           : this.getCumulativeBuyTargetFraction(matchedLevelIndex, enabledBuys, buyLevels.length);
         const targetCapacityQuote = maxInv * targetCapacityFraction;
-        const levelTrancheQuote = (isTlBuy || isScoutEntry)
+        const levelTrancheQuote = isTlBuy
           ? (maxInv * firstActiveFrac)
           : (maxInv * (buyFractions[matchedLevelIndex] || firstActiveFrac));
         const deficitQuote = targetCapacityQuote - currentHeldQuote;

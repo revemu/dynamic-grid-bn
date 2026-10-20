@@ -1911,3 +1911,17 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - หาก Tier 1 ไม่พบคู่ในระยะ (เช่น คลื่นหลักกว้างเกิน `maxChannelWidthPct` แล้วราคาสร้างฐาน `HL` ใหม่ด้านใน) จะยึดเหวที่ยังไม่ถูกทำลายที่ใกล้ราคาที่สุด (`unbrokenValleys[0]`) เป็นฐานหลักก่อนเสมอ แล้วจับคู่กับยอดที่แคบที่สุดในช่วง `[minChannelWidthPct, maxChannelWidthPct]` โดยห้ามจับคู่เหวเก่ากับยอดย่อยที่มียอดสูงกว่าคั่นกลาง
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.4` ทั้งใน `package.json` และ `src/version.ts`
+
+---
+
+### 39. Strict `enabledBuyLevels` Enforcement (Removal of `recoveryScoutPending`) & Trendline Audit Notes (`v0.2.5`)
+- **สาเหตุของปัญหาการเข้าซื้อ `IOC Buy Level 1` ทั้งที่ตั้งค่าเปิดเฉพาะ Buy 4 และ Buy 5**:
+  1. ใน `v0.2.3` มีการเพิ่มฟีเจอร์ `recoveryScoutPending` ซึ่งเมื่อปลดล็อก `waitingForHigherLow` ขณะถือเงินสด 100% จะอนุญาตให้ซื้อไม้แรกที่ Buy Level ที่ใกล้ราคาปัจจุบันที่สุด (เช่น `Buy Level 1 @ 42%`) แม้ว่าผู้ใช้จะปิดสวิตช์ `L1, L2, L3` ไว้ (`enabledBuyLevels: [false, false, false, true, true]`)
+  2. ส่งผลให้เมื่อ `v0.2.4` ปรับกรอบมาที่ `[$0.1847 – $0.1904]` ซึ่ง `Buy Level 1` อยู่ที่ `$0.1871` บอทจึงยิง `IOC Buy Level 1` ทันทีโดยไม่รอให้ราคาย่อลงมาที่ `Buy Level 4 ($0.1854)` หรือ `Buy Level 5 ($0.1848)`
+- **การแก้ไข (`v0.2.5`)**:
+  1. ถอด `recoveryScoutPending` ออกทั้งหมดจาก `src/strategy.ts` และ `src/db.ts`
+  2. บังคับให้การเข้าซื้อแบบ Grid เคารพ `enabledBuyLevels` ของผู้ใช้อย่างเคร่งครัด (ยกเว้นกรณีซื้อที่เส้น `Uptrend Support Line` เมื่อเปิด `enableBuyAboveTrendSupport`)
+  3. อัปเกรดเวอร์ชันเป็น `v0.2.5` ใน `package.json` และ `src/version.ts`
+- **📌 บันทึกประเด็นรอแก้ไขถัดไป (Pending Trendline Drawing Audit in `src/market-structure.ts`)**:
+  1. **Uptrend Line ลากข้ามวัฏจักรคลื่น (Cross-Cycle)**: ปัจจุบัน `v1Candidates` ดึงเหวต่ำสุดในประวัติ 193 แท่ง (`LL $0.1790`) ข้ามคลื่นที่จบไปแล้วมาเชื่อมกับ `HL $0.1853` แทนที่จะเริ่มลากจากฐานก้นเหวของคลื่นปัจจุบัน (`activeValley / LL $0.1847` $\rightarrow$ `HL $0.1853`)
+  2. **Downtrend Line ตาบอดต่อยอดที่สูงกว่า `P1`**: บรรทัด `confirmedHighs.filter(h => h.index > p1.index && h.price < p1.price)` กรองสวิงที่สูงกว่า `P1` ทิ้งก่อนเช็ค `violates` ทำให้ลากเส้นจาก `LH $0.1917` ผ่าทะลุยอด `HH $0.1918` ไปหา `$0.1904` และไม่ได้เชื่อมมายังยอด `LH $0.1890` ล่าสุดของคลื่นปัจจุบัน (ฝั่ง Uptrend บรรทัด `l.price > v1.price` ก็มีบั๊กเดียวกัน)
