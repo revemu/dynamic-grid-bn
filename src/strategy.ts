@@ -733,6 +733,38 @@ export class DynamicGrid {
     return this.lots.some((l) => Math.abs(l.price - levelPrice) / levelPrice <= maxProximityRatio);
   }
 
+  /**
+   * Rounds a price to exchange tickSize and pricePrecision.
+   */
+  public roundPrice(price: number): number {
+    if (!price || !Number.isFinite(price)) return 0;
+    const tick = this.tickSize && this.tickSize > 0 ? this.tickSize : (1 / Math.pow(10, this.pricePrecision || 2));
+    return roundToTick(price, tick, this.pricePrecision);
+  }
+
+  /**
+   * Rounds a quantity to exchange stepSize and qtyPrecision.
+   */
+  public roundQty(qty: number): number {
+    if (!qty || !Number.isFinite(qty)) return 0;
+    const step = this.stepSize && this.stepSize > 0 ? this.stepSize : (1 / Math.pow(10, this.qtyPrecision || 4));
+    return roundToStep(qty, step, this.qtyPrecision);
+  }
+
+  /**
+   * Formats a price to exchange pricePrecision string.
+   */
+  public formatPrice(price: number): string {
+    return this.roundPrice(price).toFixed(this.pricePrecision);
+  }
+
+  /**
+   * Formats a quantity to exchange qtyPrecision string.
+   */
+  public formatQty(qty: number): string {
+    return this.roundQty(qty).toFixed(this.qtyPrecision);
+  }
+
   public updateRuntimeSettings(newSettings: Record<string, any>): Record<string, any> {
     for (const [key, val] of Object.entries(newSettings)) {
       if (key in this.cfg && val !== undefined) {
@@ -2062,6 +2094,12 @@ export class DynamicGrid {
         })),
         baseAsset: this.symbolInfo.baseAsset,
         quoteAsset: this.symbolInfo.quoteAsset,
+        pricePrecision: this.pricePrecision,
+        qtyPrecision: this.qtyPrecision,
+        tickSize: this.tickSize && this.tickSize > 0 ? this.tickSize : (1 / Math.pow(10, this.pricePrecision || 2)),
+        stepSize: this.stepSize && this.stepSize > 0 ? this.stepSize : (1 / Math.pow(10, this.qtyPrecision || 4)),
+        minQty: this.minQty,
+        minNotional: this.minNotional,
         symbol: this.symbol,
         walletAddress: this.walletAddress,
         walletBaseBalance: this.walletBaseBalance,
@@ -2303,6 +2341,14 @@ export class DynamicGrid {
         ? [...gridZone.sellLevels]
         : (hasRealChannel ? sellPcts.map((pct) => lowerBound + rawSpan * (pct / 100)) : []);
 
+      lowerBound = this.roundPrice(lowerBound);
+      upperBound = this.roundPrice(upperBound);
+      centerPrice = this.roundPrice(centerPrice);
+      cutLossBound = this.roundPrice(cutLossBound);
+      rawFloorPrice = this.roundPrice(rawFloorPrice);
+      buyLevels = buyLevels.map((p) => this.roundPrice(p));
+      sellLevels = sellLevels.map((p) => this.roundPrice(p));
+
       if (this.waitingForHigherLow && hasRealChannel && buyLevels.length > 1 && buyLevels[1] > 0.0001) {
         if (!this.breakdownBuyLevel2Price || Math.abs(this.breakdownBuyLevel2Price - buyLevels[1]) > 0.0001) {
           this.breakdownBuyLevel2Price = buyLevels[1];
@@ -2529,12 +2575,18 @@ export class DynamicGrid {
             this.lastDynamicBounds.sellLevels = curSellPcts.map((pct) => lowerBound + dSpan * (pct / 100));
           }
 
-          buyLevels = this.lastDynamicBounds.buyLevels;
-          sellLevels = this.lastDynamicBounds.sellLevels;
+          buyLevels = this.lastDynamicBounds.buyLevels.map((p) => this.roundPrice(p));
+          sellLevels = this.lastDynamicBounds.sellLevels.map((p) => this.roundPrice(p));
+          this.lastDynamicBounds.buyLevels = buyLevels;
+          this.lastDynamicBounds.sellLevels = sellLevels;
         } else {
+          buyLevels = buyLevels.map((p) => this.roundPrice(p));
+          sellLevels = sellLevels.map((p) => this.roundPrice(p));
           this.lastDynamicBounds = { lowerBound, upperBound, centerPrice, buyLevels: [...buyLevels], sellLevels: [...sellLevels] };
         }
       } else {
+        buyLevels = buyLevels.map((p) => this.roundPrice(p));
+        sellLevels = sellLevels.map((p) => this.roundPrice(p));
         this.lastDynamicBounds = { lowerBound, upperBound, centerPrice, buyLevels: [...buyLevels], sellLevels: [...sellLevels] };
       }
 
@@ -3432,8 +3484,8 @@ export class DynamicGrid {
       botActionState = {
         code: "UPTREND_SUPPORT_BROKEN",
         title: "🟢 Grid Buy (Below TL)",
-        reason: `Price ($${refPrice.toFixed(4)}) < Support TL (${supPriceStr}) • Accumulating at grid levels based on held position`,
-        nextTrigger: `Wait to buy at Buy Level $${buyTrigger.toFixed(4)}`,
+        reason: `Price ($${refPrice.toFixed(this.pricePrecision)}) < Support TL (${supPriceStr}) • Accumulating at grid levels based on held position`,
+        nextTrigger: `Wait to buy at Buy Level $${buyTrigger.toFixed(this.pricePrecision)}`,
         severity: "info",
       };
     } else if (trendlineFiltered && downtrendLine) {
@@ -3441,10 +3493,10 @@ export class DynamicGrid {
       botActionState = {
         code: "TRENDLINE_DESCENDING_ACTIVE",
         title: count === 1 ? "⏳ TL Breakout (1/2 bars)" : "📉 Under Trendline",
-        reason: `Under TL ($${downtrendLine.currentLinePrice.toFixed(4)})${count === 1 ? " [1/2 bars breaking]" : ""}`,
+        reason: `Under TL ($${downtrendLine.currentLinePrice.toFixed(this.pricePrecision)})${count === 1 ? " [1/2 bars breaking]" : ""}`,
         nextTrigger: count === 1
-          ? `Wait 2nd candle confirm > $${downtrendLine.currentLinePrice.toFixed(4)}`
-          : `Wait breakout > $${downtrendLine.currentLinePrice.toFixed(4)}`,
+          ? `Wait 2nd candle confirm > $${downtrendLine.currentLinePrice.toFixed(this.pricePrecision)}`
+          : `Wait breakout > $${downtrendLine.currentLinePrice.toFixed(this.pricePrecision)}`,
         severity: "warning",
       };
     } else if (laggardGuardActive) {
@@ -3481,8 +3533,8 @@ export class DynamicGrid {
           title: `📦 Capacity Full (${currentHoldPct.toFixed(0)}%)`,
           reason: `Holding $${inventoryQuote.toFixed(1)} / $${this.cfg.maxInventoryQuote.toFixed(0)} • Buying full`,
           nextTrigger: isTlSellTrigger
-            ? `IOC Sell @ Trendline ($${sellTrigger.toFixed(4)})`
-            : `Sell target: >$${sellTrigger.toFixed(4)}`,
+            ? `IOC Sell @ Trendline ($${sellTrigger.toFixed(this.pricePrecision)})`
+            : `Sell target: >$${sellTrigger.toFixed(this.pricePrecision)}`,
           severity: "info",
         };
       } else if (isTlSellTrigger && this.baseHeld() > 0 && openBuys.length === 0) {
@@ -3490,16 +3542,16 @@ export class DynamicGrid {
         botActionState = {
           code: "WAITING_TRENDLINE_EXIT",
           title: "📉 Waiting TL Sell Exit",
-          reason: `Sells paused below TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
-          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)} • slip ${tlSlipPct.toFixed(2)}%)`,
+          reason: `Sells paused below TL ($${sellTrigger.toFixed(this.pricePrecision)}) • Holding $${inventoryQuote.toFixed(1)}`,
+          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(this.pricePrecision)} • slip ${tlSlipPct.toFixed(2)}%)`,
           severity: "info",
         };
       } else if (openBuys.length > 0) {
         botActionState = {
           code: "MAKER_BUY_RESTING",
           title: `📋 ${openBuys.length} Buys Resting`,
-          reason: openBuys.map((o) => `$${o.price.toFixed(4)}`).join(", "),
-          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(4)} • Sell: >$${sellTrigger.toFixed(4)}`,
+          reason: openBuys.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", "),
+          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
           severity: "success",
         };
       } else {
@@ -3507,7 +3559,7 @@ export class DynamicGrid {
           code: "BUY_ZONE_TARGET_MET",
           title: "🎯 Level Target Met",
           reason: `Holding $${inventoryQuote.toFixed(1)} (Target $${targetInventoryQuote.toFixed(0)} for ${activeLevelName})`,
-          nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(4)} • Sell: >$${sellTrigger.toFixed(4)}`,
+          nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(this.pricePrecision)} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
           severity: "info",
         };
       }
@@ -3520,9 +3572,9 @@ export class DynamicGrid {
         botActionState = {
           code: "MAKER_SELL_RESTING",
           title: `💎 ${openSells.length} Sells Resting`,
-          reason: openSells.map((o) => `$${o.price.toFixed(4)}`).join(", "),
+          reason: openSells.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", "),
           nextTrigger: openSells.length === 1
-            ? `Resting Limit Sell placed @ $${openSells[0].price.toFixed(4)}`
+            ? `Resting Limit Sell placed @ $${openSells[0].price.toFixed(this.pricePrecision)}`
             : `${openSells.length} Resting Limit Sells placed`,
           severity: "success",
         };
@@ -3531,8 +3583,8 @@ export class DynamicGrid {
         botActionState = {
           code: "WAITING_TRENDLINE_EXIT",
           title: "📉 Waiting TL Sell Exit",
-          reason: `Sells suppressed by TL ($${sellTrigger.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
-          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(4)} • slip ${tlSlipPct.toFixed(2)}%)`,
+          reason: `Sells suppressed by TL ($${sellTrigger.toFixed(this.pricePrecision)}) • Holding $${inventoryQuote.toFixed(1)}`,
+          nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(this.pricePrecision)} • slip ${tlSlipPct.toFixed(2)}%)`,
           severity: "info",
         };
       } else {
@@ -3718,6 +3770,12 @@ export class DynamicGrid {
         binanceSymbol: this.cfg.binanceSymbol,
         baseAsset: this.symbolInfo.baseAsset,
         quoteAsset: this.symbolInfo.quoteAsset,
+        pricePrecision: this.pricePrecision,
+        qtyPrecision: this.qtyPrecision,
+        tickSize: this.tickSize && this.tickSize > 0 ? this.tickSize : (1 / Math.pow(10, this.pricePrecision || 2)),
+        stepSize: this.stepSize && this.stepSize > 0 ? this.stepSize : (1 / Math.pow(10, this.qtyPrecision || 4)),
+        minQty: this.minQty,
+        minNotional: this.minNotional,
         dowTimeframe: this.cfg.dowTimeframe,
         tradingTimeframe: this.cfg.tradingTimeframe,
         trendTimeframe: this.cfg.trendTimeframe,

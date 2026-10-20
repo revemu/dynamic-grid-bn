@@ -1979,3 +1979,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - จุดที่ 2: ขั้นตอนตรวจสอบก่อนวางออเดอร์ใหม่ `placeRestingOrder` (บรรทัด ~4660)
   3. **Version Bump**:
      - อัปเกรดเป็น `v0.2.8` ใน `package.json` และ `src/version.ts`
+
+---
+
+### 42. Universal Precision & Tick-Size Rounding Architecture (`src/strategy.ts` & `public/app.js` — `v0.2.9`)
+- **สาเหตุของปัญหาทศนิยมไม่ตรงกับระบบ CEX / DEX และเกิดเส้นราคาซ้ำซ้อน**:
+  1. ตัวเลขระดับราคาใน Grid State Machine (`buyLevels`, `sellLevels`, `centerPrice`, `upperBound`, `lowerBound`, `cutLossBound`, `rawFloorPrice`) ถูกคำนวณผ่านคณิตศาสตร์ทศนิยมลอยตัว (Floating-point) ดิบๆ โดยไม่ได้ปัดเศษให้ตรงกับ `tickSize` / `pricePrecision` ของ Exchange Symbol Info
+  2. ทำให้ระดับราคาในกริดมีเศษทศนิยมเกินออกมา เช่น `2383.0756`, `2403.5276` เมื่อส่งออเดอร์เข้า Exchange โค้ดส่งคำสั่งจะปัดให้เป็น `2383.08`, `2403.53` ส่งผลให้หน้าจอ Dashboard วาดเส้นกริดซ้อนกัน 2 เส้นที่ราคาเกือบชิดกัน (`2383.0756` กับ `2383.0800`)
+  3. ข้อความสถานะ Action Banner ด้านบนถูกฮาร์ดโค้ด `.toFixed(4)` ทำให้ขึ้น `$2377.9600, $2383.0800` (มี 0 ห้อยท้ายเกินสำหรับคู่เหรียญทศนิยม 2 ตำแหน่ง)
+  4. หน้าต่าง Dashboard (`public/app.js`) ฮาร์ดโค้ด `.toFixed(6)` สำหรับราคา และ `.toFixed(4)` สำหรับจำนวนในทุกองค์ประกอบ รวมถึง TradingView Lightweight Charts ที่ฮาร์ดโค้ด `precision: 6, minMove: 0.000001` ตายตัว ไม่ปรับตามคู่เหรียญ
+  5. กล่อง Target บน Grid Ladder แสดงเศษดิบยาวเหยียด เช่น `Target 26.666666666666668% ($27)` แทนที่จะปัดเป็น `Target 26.7% ($27)`
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.9`)**:
+  1. **Backend Dynamic Precision Rounding (`src/strategy.ts`)**:
+     - สร้างเมธอดช่วย `roundPrice(price)`, `roundQty(qty)`, `formatPrice(price)`, `formatQty(qty)` อ้างอิงจาก `symbolInfo.tickSize`, `symbolInfo.stepSize`, `pricePrecision`, `qtyPrecision` ของ Exchange นั้นๆ โดยตรง
+     - ปัดเศษตัวเลขกริดทั้งหมด (`buyLevels`, `sellLevels`, `centerPrice`, `upperBound`, `lowerBound`, `cutLossBound`, `rawFloorPrice`) ด้วย `roundPrice` ก่อนจัดเก็บและกระจายข้อมูล
+     - เพิ่มฟิลด์ `pricePrecision`, `qtyPrecision`, `tickSize`, `stepSize`, `minQty`, `minNotional` เข้าไปใน Telemetry Data (`merged` และ `telemetryData`)
+     - ปรับการฟอร์แมตข้อความใน `botActionState` ด้านบน ให้แสดงทศนิยมตรงตาม `this.pricePrecision`
+  2. **Frontend Dynamic Precision & Chart Synchronization (`public/app.js`)**:
+     - สร้างฟังก์ชันกลาง `fmtPrice(p, prec = activePricePrecision)` และ `fmtQty(q, prec = activeQtyPrecision)`
+     - ฟังก์ชัน `updateChartPrecision(precision, minMove)` เรียกใช้ `applyOptions` อัปเดต `priceFormat` ของทุก Series บน TradingView Chart (`candleSeries`, `downtrendLineSeries`, `uptrendLineSeries`, `waveCycleLineSeries`) และ `localization.priceFormatter` ให้ตรงกับ CEX/DEX แบบ Real-time ทันทีที่รับข้อมูลคู่เหรียญ
+     - ปรับการแสดงผลทุกจุด (แกนราคาในกราฟ, Grid Ladder Table, Legend, Best Bid/Ask, History & Orders Feed, Open Lots, Toast) ให้แสดงทศนิยมตาม `pricePrecision` และ `qtyPrecision`
+     - ปัดเศษตัวเลข Target ในกล่องด้านบนขวาให้เป็นทศนิยม 1 ตำแหน่งอย่างสวยงาม เช่น `Target 26.7% ($27)`
+  3. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.9` ทั้งใน `package.json` และ `src/version.ts`

@@ -184,6 +184,43 @@
   let pendingTick = null;
   let activeBaseAsset = "BASE";
   let activeQuoteAsset = "USDT";
+  let activePricePrecision = 2;
+  let activeQtyPrecision = 4;
+  let activeTickSize = 0.01;
+  let activeStepSize = 0.0001;
+
+  function fmtPrice(p, prec = activePricePrecision) {
+    if (typeof p !== "number" || !Number.isFinite(p)) return "";
+    return p.toFixed(prec);
+  }
+
+  function fmtQty(q, prec = activeQtyPrecision) {
+    if (typeof q !== "number" || !Number.isFinite(q)) return "";
+    return q.toFixed(prec);
+  }
+
+  function updateChartPrecision(precision, minMove) {
+    if (!chart) return;
+    const pFormat = {
+      type: "price",
+      precision: precision,
+      minMove: minMove || (1 / Math.pow(10, precision)),
+    };
+    try {
+      if (candleSeries) candleSeries.applyOptions({ priceFormat: pFormat });
+      if (downtrendLineSeries) downtrendLineSeries.applyOptions({ priceFormat: pFormat });
+      if (uptrendLineSeries) uptrendLineSeries.applyOptions({ priceFormat: pFormat });
+      if (waveCycleLineSeries) waveCycleLineSeries.applyOptions({ priceFormat: pFormat });
+      chart.applyOptions({
+        localization: {
+          priceFormatter: (price) =>
+            typeof price === "number" && Number.isFinite(price) ? fmtPrice(price, precision) : "",
+        },
+      });
+    } catch (e) {
+      console.warn("Failed to apply chart precision", e);
+    }
+  }
   let isHoldingActivePosition = false;
   const ordersByCandleTime = new Map();
   const elChartOrderTooltip = document.getElementById("chartOrderTooltip");
@@ -256,11 +293,11 @@
             </div>
             <div class="cot-card-row">
               <span class="cot-label">Price:</span>
-              <span class="cot-val-price">$${price.toFixed(6)}</span>
+              <span class="cot-val-price">$${fmtPrice(price)}</span>
             </div>
             <div class="cot-card-row">
               <span class="cot-label">Amount:</span>
-              <span class="cot-val-qty">${qty.toFixed(4)} ${activeBaseAsset} <span class="cot-dim">($${notional.toFixed(2)})</span></span>
+              <span class="cot-val-qty">${fmtQty(qty)} ${activeBaseAsset} <span class="cot-dim">($${notional.toFixed(2)})</span></span>
             </div>
             ${pnlHtml ? `
             <div class="cot-card-row">
@@ -283,7 +320,7 @@
         <div class="cot-summary-bar">
           <div class="cot-card-row">
             <span class="cot-label">Total (${sorted.length} fills):</span>
-            <span class="cot-val-qty">${totalQty.toFixed(4)} ${activeBaseAsset} ($${totalNotional.toFixed(2)})</span>
+            <span class="cot-val-qty">${fmtQty(totalQty)} ${activeBaseAsset} ($${totalNotional.toFixed(2)})</span>
           </div>
           ${hasAnyPnl ? `
           <div class="cot-card-row">
@@ -649,7 +686,7 @@
         },
         localization: {
           priceFormatter: (price) =>
-            typeof price === "number" && Number.isFinite(price) ? price.toFixed(6) : "",
+            typeof price === "number" && Number.isFinite(price) ? fmtPrice(price) : "",
           timeFormatter: (time) => {
             const timestamp = typeof time === "number" ? time : (time?.timestamp || time);
             if (!timestamp) return "";
@@ -718,8 +755,8 @@
         wickDownColor: "#f43f5e",
         priceFormat: {
           type: "price",
-          precision: 6,
-          minMove: 0.000001,
+          precision: activePricePrecision,
+          minMove: activeTickSize || (1 / Math.pow(10, activePricePrecision)),
         },
       });
 
@@ -733,8 +770,8 @@
         priceLineVisible: false,
         priceFormat: {
           type: "price",
-          precision: 6,
-          minMove: 0.000001,
+          precision: activePricePrecision,
+          minMove: activeTickSize || (1 / Math.pow(10, activePricePrecision)),
         },
       });
 
@@ -748,8 +785,8 @@
         priceLineVisible: false,
         priceFormat: {
           type: "price",
-          precision: 6,
-          minMove: 0.000001,
+          precision: activePricePrecision,
+          minMove: activeTickSize || (1 / Math.pow(10, activePricePrecision)),
         },
       });
 
@@ -763,8 +800,8 @@
         priceLineVisible: false,
         priceFormat: {
           type: "price",
-          precision: 6,
-          minMove: 0.000001,
+          precision: activePricePrecision,
+          minMove: activeTickSize || (1 / Math.pow(10, activePricePrecision)),
         },
       });
 
@@ -896,10 +933,10 @@
     const high = Number(bar.high || 0);
     const low = Number(bar.low || 0);
     const close = Number(bar.close || 0);
-    if (elLegendO) elLegendO.textContent = open.toFixed(6);
-    if (elLegendH) elLegendH.textContent = high.toFixed(6);
-    if (elLegendL) elLegendL.textContent = low.toFixed(6);
-    if (elLegendC) elLegendC.textContent = close.toFixed(6);
+    if (elLegendO) elLegendO.textContent = fmtPrice(open);
+    if (elLegendH) elLegendH.textContent = fmtPrice(high);
+    if (elLegendL) elLegendL.textContent = fmtPrice(low);
+    if (elLegendC) elLegendC.textContent = fmtPrice(close);
 
     if (open > 0 && elLegendChange) {
       const diffPct = ((close - open) / open) * 100;
@@ -1017,22 +1054,25 @@
     const elPctSell5 = document.getElementById("stepPctSell5");
     if (elPctSell5) elPctSell5.textContent = `${sellPcts[4]}%`;
 
+    const bLevels = Array.isArray(data.buyLevels) && data.buyLevels.length >= 5 ? data.buyLevels : null;
+    const sLevels = Array.isArray(data.sellLevels) && data.sellLevels.length >= 5 ? data.sellLevels : null;
+
     // 1. Update prices on each vertical step (from top 100% to bottom 0%)
-    if (elStepPriceCeil) elStepPriceCeil.textContent = ceil.toFixed(6);
-    if (elStepPriceSell5) elStepPriceSell5.textContent = (floor + span * (sellPcts[4] / 100)).toFixed(6);
-    if (elStepPriceSell4) elStepPriceSell4.textContent = (floor + span * (sellPcts[3] / 100)).toFixed(6);
-    if (elStepPriceSell3) elStepPriceSell3.textContent = (floor + span * (sellPcts[2] / 100)).toFixed(6);
-    if (elStepPriceSell2) elStepPriceSell2.textContent = (floor + span * (sellPcts[1] / 100)).toFixed(6);
-    if (elStepPriceSell1) elStepPriceSell1.textContent = (floor + span * (sellPcts[0] / 100)).toFixed(6);
-    if (elStepPriceCenter) elStepPriceCenter.textContent = center.toFixed(6);
-    if (elStepPriceBuy1) elStepPriceBuy1.textContent = (floor + span * (buyPcts[0] / 100)).toFixed(6);
-    if (elStepPriceBuy2) elStepPriceBuy2.textContent = (floor + span * (buyPcts[1] / 100)).toFixed(6);
-    if (elStepPriceBuy3) elStepPriceBuy3.textContent = (floor + span * (buyPcts[2] / 100)).toFixed(6);
-    if (elStepPriceBuy4) elStepPriceBuy4.textContent = (floor + span * (buyPcts[3] / 100)).toFixed(6);
-    if (elStepPriceBuy5) elStepPriceBuy5.textContent = (floor + span * (buyPcts[4] / 100)).toFixed(6);
+    if (elStepPriceCeil) elStepPriceCeil.textContent = fmtPrice(ceil);
+    if (elStepPriceSell5) elStepPriceSell5.textContent = fmtPrice(sLevels ? sLevels[4] : (floor + span * (sellPcts[4] / 100)));
+    if (elStepPriceSell4) elStepPriceSell4.textContent = fmtPrice(sLevels ? sLevels[3] : (floor + span * (sellPcts[3] / 100)));
+    if (elStepPriceSell3) elStepPriceSell3.textContent = fmtPrice(sLevels ? sLevels[2] : (floor + span * (sellPcts[2] / 100)));
+    if (elStepPriceSell2) elStepPriceSell2.textContent = fmtPrice(sLevels ? sLevels[1] : (floor + span * (sellPcts[1] / 100)));
+    if (elStepPriceSell1) elStepPriceSell1.textContent = fmtPrice(sLevels ? sLevels[0] : (floor + span * (sellPcts[0] / 100)));
+    if (elStepPriceCenter) elStepPriceCenter.textContent = fmtPrice(center);
+    if (elStepPriceBuy1) elStepPriceBuy1.textContent = fmtPrice(bLevels ? bLevels[0] : (floor + span * (buyPcts[0] / 100)));
+    if (elStepPriceBuy2) elStepPriceBuy2.textContent = fmtPrice(bLevels ? bLevels[1] : (floor + span * (buyPcts[1] / 100)));
+    if (elStepPriceBuy3) elStepPriceBuy3.textContent = fmtPrice(bLevels ? bLevels[2] : (floor + span * (buyPcts[2] / 100)));
+    if (elStepPriceBuy4) elStepPriceBuy4.textContent = fmtPrice(bLevels ? bLevels[3] : (floor + span * (buyPcts[3] / 100)));
+    if (elStepPriceBuy5) elStepPriceBuy5.textContent = fmtPrice(bLevels ? bLevels[4] : (floor + span * (buyPcts[4] / 100)));
     if (elStepPriceFloor) {
-      elStepPriceFloor.textContent = floor.toFixed(6);
-      elStepPriceFloor.title = `0% Grid Base (Structural Valley: $${floor.toFixed(6)})`;
+      elStepPriceFloor.textContent = fmtPrice(floor);
+      elStepPriceFloor.title = `0% Grid Base (Structural Valley: $${fmtPrice(floor)})`;
     }
 
     // 2. Define ladder steps with dynamic Pyramid / Equal percentage targets
@@ -1104,7 +1144,7 @@
           }
         }
       }
-      if (step.priceEl) step.priceEl.textContent = step.price.toFixed(6);
+      if (step.priceEl) step.priceEl.textContent = fmtPrice(step.price);
     });
 
     // 3. Match each resting order strictly to its corresponding grid zone
@@ -1187,7 +1227,7 @@
       if (matchedStep && matchedStep.el) {
         usedSteps.add(matchedStep);
         matchedStep.el.classList.add(isBid ? "has-resting-buy" : "has-resting-sell");
-        if (matchedStep.priceEl) matchedStep.priceEl.textContent = order.price.toFixed(6);
+        if (matchedStep.priceEl) matchedStep.priceEl.textContent = fmtPrice(order.price);
 
         const actionEl = matchedStep.el.querySelector(".step-action");
         if (actionEl) {
@@ -1201,8 +1241,8 @@
             expPill = remH > 0 ? `<span style="opacity:0.8; font-size:7.5px; margin-left:3px; font-weight:600;">⏳${remH}h</span>` : "";
           }
           const orderTitle = isRealCeilOrder
-            ? `Real Ceiling Exit Limit Order @ $${order.price.toFixed(6)}`
-            : (isTlExitOrder ? `Trendline Exit Limit Order @ $${order.price.toFixed(6)}` : `Limit Order @ $${order.price.toFixed(6)}`);
+            ? `Real Ceiling Exit Limit Order @ $${fmtPrice(order.price)}`
+            : (isTlExitOrder ? `Trendline Exit Limit Order @ $${fmtPrice(order.price)}` : `Limit Order @ $${fmtPrice(order.price)}`);
           actionEl.innerHTML = `<span class="step-order-tag ${tagClass}" title="${orderTitle}"><span class="order-pulse-dot"></span> ${sideTag} ${notional}${expPill}</span>`;
         }
       }
@@ -1342,8 +1382,12 @@
     if (elLadderTargetAlloc) {
       if (typeof data.targetHoldingPct === "number" && typeof data.targetInventoryQuote === "number") {
         const allocQuoteStr = `$${data.targetInventoryQuote.toFixed(0)}`;
+        const targetHoldingPctNum = Number(data.targetHoldingPct);
+        const targetHoldingPctStr = Number.isFinite(targetHoldingPctNum)
+          ? targetHoldingPctNum.toFixed(1).replace(/\.0$/, "")
+          : "0";
         const fracNote = (data.targetHoldingPct === 0 && pos < 50) ? " (Waiting Dip)" : (data.targetHoldingPct === 100 ? " (Max Inv)" : "");
-        elLadderTargetAlloc.textContent = `Target ${data.targetHoldingPct}% (${allocQuoteStr})${fracNote}`;
+        elLadderTargetAlloc.textContent = `Target ${targetHoldingPctStr}% (${allocQuoteStr})${fracNote}`;
       } else {
         elLadderTargetAlloc.textContent = targetText;
       }
@@ -1361,6 +1405,22 @@
       updateVersionBadge(data.versionInfo);
     }
 
+    if (typeof data.pricePrecision === "number" && data.pricePrecision >= 0) {
+      if (activePricePrecision !== data.pricePrecision || activeTickSize !== data.tickSize) {
+        activePricePrecision = data.pricePrecision;
+        activeTickSize = (typeof data.tickSize === "number" && data.tickSize > 0)
+          ? data.tickSize
+          : (1 / Math.pow(10, activePricePrecision));
+        updateChartPrecision(activePricePrecision, activeTickSize);
+      }
+    }
+    if (typeof data.qtyPrecision === "number" && data.qtyPrecision >= 0) {
+      activeQtyPrecision = data.qtyPrecision;
+      activeStepSize = (typeof data.stepSize === "number" && data.stepSize > 0)
+        ? data.stepSize
+        : (1 / Math.pow(10, activeQtyPrecision));
+    }
+
     // Symbol Display
     const rawSymbol = data.symbol || (data.binanceSymbol ? `${data.binanceSymbol.toUpperCase()}` : "SOMI:USDso");
     const displaySymbol = rawSymbol.replace(":", " / ").toUpperCase();
@@ -1371,7 +1431,7 @@
     if (elChartSymbolBadge) elChartSymbolBadge.textContent = displaySymbol;
     if (elLegendSymbol) elLegendSymbol.textContent = displaySymbol;
     if (elLegendTf) elLegendTf.textContent = macroTf;
-    if (elLegendLivePrice && data.mid !== undefined) elLegendLivePrice.textContent = `$${data.mid.toFixed(6)}`;
+    if (elLegendLivePrice && data.mid !== undefined) elLegendLivePrice.textContent = `$${fmtPrice(data.mid)}`;
 
     // Top Brand Logo Badge (Exchange indicator)
     const elLogoBadge = document.getElementById("logoBadge");
@@ -1419,12 +1479,12 @@
       }
     }
 
-    // Mid Price & 50% Center (6 decimals)
+    // Mid Price & 50% Center
     if (data.mid !== undefined) {
-      if (elMidPrice) elMidPrice.textContent = data.mid.toFixed(6);
-      document.title = `$${data.mid.toFixed(6)} ${displaySymbol} | Dynamic Grid`;
+      if (elMidPrice) elMidPrice.textContent = fmtPrice(data.mid);
+      document.title = `$${fmtPrice(data.mid)} ${displaySymbol} | Dynamic Grid`;
     }
-    if (data.centerPrice !== undefined && elAnchorPrice) elAnchorPrice.textContent = data.centerPrice.toFixed(6);
+    if (data.centerPrice !== undefined && elAnchorPrice) elAnchorPrice.textContent = fmtPrice(data.centerPrice);
 
     // Spread in % and $
     if (data.spreadPct !== undefined && elSpreadBpsBadge) {
@@ -1433,13 +1493,13 @@
 
     // HUD overlays in chart
     if (data.upperBound !== undefined && elHudUpperBound) {
-      elHudUpperBound.textContent = data.upperBound.toFixed(6);
+      elHudUpperBound.textContent = fmtPrice(data.upperBound);
     }
     if (data.bottomBound !== undefined && elHudBottomBound) {
-      elHudBottomBound.textContent = data.bottomBound.toFixed(6);
+      elHudBottomBound.textContent = fmtPrice(data.bottomBound);
     }
     if (data.centerPrice !== undefined && elHudCenter) {
-      elHudCenter.textContent = data.centerPrice.toFixed(6);
+      elHudCenter.textContent = fmtPrice(data.centerPrice);
     }
     if (data.zoneWidthPct !== undefined && elHudChannelWidth) {
       elHudChannelWidth.textContent = `${data.zoneWidthPct.toFixed(2)}%`;
@@ -1459,10 +1519,10 @@
 
     if (data.isChannelLocked) {
       const realCeilStr = data.liveCalculatedUpperBound
-        ? ` • Real Ceil: $${data.liveCalculatedUpperBound.toFixed(4)}`
+        ? ` • Real Ceil: $${fmtPrice(data.liveCalculatedUpperBound)}`
         : "";
       const realFloorStr = data.liveCalculatedBottomBound && Math.abs(data.liveCalculatedBottomBound - data.bottomBound) / data.bottomBound > 0.001
-        ? ` • Real Floor: $${data.liveCalculatedBottomBound.toFixed(4)}`
+        ? ` • Real Floor: $${fmtPrice(data.liveCalculatedBottomBound)}`
         : "";
       clampStr = `🔒 100% Locked${realCeilStr}${realFloorStr} • ${clampStr}`;
     }
@@ -1476,7 +1536,7 @@
     }
     const elLegendPillBottomText = document.getElementById("legendPillBottomText");
     if (elLegendPillBottomText && data.bottomBound) {
-      elLegendPillBottomText.textContent = `0% Lower (Floor): $${data.bottomBound.toFixed(6)}`;
+      elLegendPillBottomText.textContent = `0% Lower (Floor): $${fmtPrice(data.bottomBound)}`;
     }
     const elLegendPillCutLoss = document.getElementById("legendPillCutLoss");
     const elLegendPillCutLossText = document.getElementById("legendPillCutLossText");
@@ -1485,7 +1545,7 @@
         const bufDelta = data.bottomBound - data.cutLossBound;
         const bufPct = (bufDelta / data.bottomBound) * 100;
         elLegendPillCutLoss.style.display = "inline-flex";
-        elLegendPillCutLossText.textContent = `Cut Loss Buffer: $${data.cutLossBound.toFixed(6)} (-${bufPct.toFixed(2)}%)`;
+        elLegendPillCutLossText.textContent = `Cut Loss Buffer: $${fmtPrice(data.cutLossBound)} (-${bufPct.toFixed(2)}%)`;
       } else {
         elLegendPillCutLoss.style.display = "none";
       }
@@ -1639,15 +1699,15 @@
 
     if (elNavWalletAddr) elNavWalletAddr.textContent = shortAddr;
     if (elNavWalletSomi) {
-      elNavWalletSomi.textContent = `${somiBal.toFixed(4)} ${baseSym}`;
-      elNavWalletSomi.title = `Spot Wallet: ${somiBal.toFixed(4)} ${baseSym}\n• Trading: ${tradingSomi.toFixed(4)} ${baseSym}`;
+      elNavWalletSomi.textContent = `${fmtQty(somiBal)} ${baseSym}`;
+      elNavWalletSomi.title = `Spot Wallet: ${fmtQty(somiBal)} ${baseSym}\n• Trading: ${fmtQty(tradingSomi)} ${baseSym}`;
     }
     if (elNavWalletUsdso) elNavWalletUsdso.textContent = `$${usdsoBal.toFixed(2)} ${quoteSym}`;
 
     if (elTopWalletAddrBadge) elTopWalletAddrBadge.textContent = shortAddr;
     if (elTopWalletSomi) {
-      elTopWalletSomi.textContent = `${somiBal.toFixed(4)} ${baseSym}`;
-      elTopWalletSomi.title = `Total: ${somiBal.toFixed(4)} ${baseSym} (Trading: ${tradingSomi.toFixed(4)})`;
+      elTopWalletSomi.textContent = `${fmtQty(somiBal)} ${baseSym}`;
+      elTopWalletSomi.title = `Total: ${fmtQty(somiBal)} ${baseSym} (Trading: ${fmtQty(tradingSomi)})`;
     }
     if (elTopWalletUsdso) elTopWalletUsdso.textContent = `$${usdsoBal.toFixed(2)} ${quoteSym}`;
     if (elTopWalletTotalVal) {
@@ -1657,7 +1717,7 @@
 
     // 1. Top KPI: Position Allocation
     if (elTopPosBadge) elTopPosBadge.textContent = lots.length > 0 ? `${holdPct.toFixed(1)}% (${lots.length} ไม้)` : `${holdPct.toFixed(1)}%`;
-    if (elTopPosBase) elTopPosBase.textContent = `${totalBase.toFixed(4)} ${baseSym}`;
+    if (elTopPosBase) elTopPosBase.textContent = `${fmtQty(totalBase)} ${baseSym}`;
     if (elTopPosUsd) elTopPosUsd.textContent = `$${invUsd.toFixed(2)}`;
     if (elTopMaxInv) elTopMaxInv.textContent = maxInvUsd.toFixed(0);
 
@@ -1687,7 +1747,7 @@
       elTopUnrealizedBadge.className = "kpi-badge " + (upnl > 0 ? "badge-buy-pill" : upnl < 0 ? "badge-sell-pill" : "badge-neutral");
     }
 
-    const avgPrice = data.avgEntryPrice && data.avgEntryPrice > 0 ? `$${data.avgEntryPrice.toFixed(6)}` : "--.------";
+    const avgPrice = data.avgEntryPrice && data.avgEntryPrice > 0 ? `$${fmtPrice(data.avgEntryPrice)}` : "--.--";
     if (elPosAvgEntry) elPosAvgEntry.textContent = avgPrice;
     if (elPosAvgEntrySub) elPosAvgEntrySub.textContent = avgPrice;
 
@@ -1749,10 +1809,10 @@
 
     // 5. Exchange Orderbook: Best Bid & Ask
     if (elHudBestBid && data.bestBid !== undefined && data.bestBid > 0) {
-      elHudBestBid.textContent = `$${data.bestBid.toFixed(6)}`;
+      elHudBestBid.textContent = `$${fmtPrice(data.bestBid)}`;
     }
     if (elHudBestAsk && data.bestAsk !== undefined && data.bestAsk > 0) {
-      elHudBestAsk.textContent = `$${data.bestAsk.toFixed(6)}`;
+      elHudBestAsk.textContent = `$${fmtPrice(data.bestAsk)}`;
     }
     if (elTopBookSpread && data.bestBid && data.bestAsk && data.bestBid > 0 && data.bestAsk > 0) {
       const spPct = ((data.bestAsk - data.bestBid) / data.bestBid) * 100;
@@ -1770,7 +1830,7 @@
 
     // Fallback: Next Buy Trigger
     if (data.buyTrigger !== undefined && elHudBuyTrigger) {
-      elHudBuyTrigger.textContent = `$${data.buyTrigger.toFixed(6)}`;
+      elHudBuyTrigger.textContent = `$${fmtPrice(data.buyTrigger)}`;
       const isCapacityFull = (data.currentHoldPct !== undefined && data.currentHoldPct >= 95) ||
         (data.inventoryUsdso !== undefined && data.maxInventoryUsdso !== undefined && data.inventoryUsdso >= data.maxInventoryUsdso - 1.0);
       const isUnderTrendline = (data.trendlineFilter || data.trendlineFiltered) && data.downtrendLine && !data.downtrendLine.isBroken;
@@ -1789,7 +1849,7 @@
 
     // Fallback: Next Sell Trigger
     if (data.sellTrigger !== undefined && elHudSellTrigger) {
-      elHudSellTrigger.textContent = `$${data.sellTrigger.toFixed(6)}`;
+      elHudSellTrigger.textContent = `$${fmtPrice(data.sellTrigger)}`;
       let sellStatus = lots.length > 0 ? "Profit-Taking Level" : "No Position Held";
       if (data.isTlSellTrigger) {
         sellStatus = "TL Exit (Active 🔴)";
@@ -2184,7 +2244,7 @@
               const isHH = s.dowLabel === "HH";
               icon = "⛰️"; label = isHH ? "HH" : "LH";
               cssClass = isHH ? "badge-hh" : "badge-lh";
-              title = `${label} @ ${s.price?.toFixed ? s.price.toFixed(6) : s.price}`;
+              title = `${label} @ ${fmtPrice(s.price)}`;
             }
             pushSwingBadge(s.time, s.price, label, icon, cssClass, false, title);
             swingBadgeTimes.add(s.time);
@@ -2208,7 +2268,7 @@
               const isHL = s.dowLabel === "HL";
               icon = "🌊"; label = isHL ? "HL" : "LL";
               cssClass = isHL ? "badge-hl" : "badge-ll";
-              title = `${label} @ ${s.price?.toFixed ? s.price.toFixed(6) : s.price}`;
+              title = `${label} @ ${fmtPrice(s.price)}`;
             }
             if (!swingBadgeTimes.has(s.time)) {
               pushSwingBadge(s.time, s.price, label, icon, cssClass, true, title);
@@ -2288,14 +2348,14 @@
       html += `
         <tr>
           <td>Entry #${idx + 1}</td>
-          <td>$${lot.price.toFixed(6)}</td>
+          <td>$${fmtPrice(lot.price)}</td>
           <td>$${lotVal.toFixed(2)}</td>
           <td style="color: #38bdf8;">${weightPct.toFixed(0)}%</td>
         </tr>`;
     });
 
     elLotsTableBody.innerHTML = html;
-    elLotsTotalBase.textContent = `${totalBase.toFixed(4)} ${activeBaseAsset} ($${totalValue.toFixed(2)})`;
+    elLotsTotalBase.textContent = `${fmtQty(totalBase)} ${activeBaseAsset} ($${totalValue.toFixed(2)})`;
   }
 
   function renderOpenOrdersTable(openOrders, mid) {
@@ -2361,8 +2421,8 @@
         <tr>
           <td class="${sideClass}" style="font-weight: 700;">${sideText}</td>
           <td>${o.levelDesc || "-"}</td>
-          <td style="font-family: var(--font-mono);">$${o.price.toFixed(6)}</td>
-          <td>${o.qty.toFixed(2)}</td>
+          <td style="font-family: var(--font-mono);">$${fmtPrice(o.price)}</td>
+          <td>${fmtQty(o.qty)}</td>
           <td style="font-family: var(--font-mono);">$${notional.toFixed(2)}</td>
           ${expCell}
         </tr>`;
@@ -2461,7 +2521,7 @@
       : "100% TAKE PROFIT EXIT";
     const timeStr = new Date(order.time || Date.now()).toLocaleTimeString();
     const notional = (order.notionalQuote || order.notionalUsdso) ? `$${(order.notionalQuote || order.notionalUsdso).toFixed(2)}` : "";
-    const qtyStr = order.qty ? `${order.qty.toFixed(4)} ${activeBaseAsset}` : "";
+    const qtyStr = order.qty ? `${fmtQty(order.qty)} ${activeBaseAsset}` : "";
     const pnlStr = order.pnl !== undefined
       ? `<span class="${order.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight:700;">${order.pnl >= 0 ? '+$' : '-$'}${Math.abs(order.pnl).toFixed(2)}</span>`
       : "";
@@ -2478,7 +2538,7 @@
         <span class="toast-time">${timeStr}</span>
       </div>
       <div class="toast-body">
-        <span class="toast-price">$${(order.price || 0).toFixed(6)}</span>
+        <span class="toast-price">$${fmtPrice(order.price || 0)}</span>
         <span class="toast-qty">${notional ? notional + ' • ' : ''}${qtyStr}</span>
         ${pnlStr}
       </div>
@@ -2730,7 +2790,7 @@
 
     // IOC Telemetry badge: display Target, Slippage %, Limit Price sent, and Final Fill Price
     const iocBadge = (order.targetPrice !== undefined || order.limitPrice !== undefined)
-      ? `<span class="act-ioc-badge" style="padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); margin-left: 2px;" title="IOC Order Telemetry:&#10;🎯 Target: $${order.targetPrice !== undefined ? Number(order.targetPrice).toFixed(6) : 'N/A'}&#10;📉 Slippage: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : '0.2'}%&#10;🛑 Limit Sent: $${order.limitPrice !== undefined ? Number(order.limitPrice).toFixed(6) : 'N/A'}&#10;⚡ Final Executed: $${Number(order.price || 0).toFixed(6)}">🎯 Target: $${Number(order.targetPrice || order.price).toFixed(4)} | Slip: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : "0.2"}% (Sent: $${Number(order.limitPrice || order.price).toFixed(4)}) ➔ Fill: $${Number(order.price || 0).toFixed(4)}</span>`
+      ? `<span class="act-ioc-badge" style="padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); margin-left: 2px;" title="IOC Order Telemetry:&#10;🎯 Target: $${order.targetPrice !== undefined ? fmtPrice(order.targetPrice) : 'N/A'}&#10;📉 Slippage: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : '0.2'}%&#10;🛑 Limit Sent: $${order.limitPrice !== undefined ? fmtPrice(order.limitPrice) : 'N/A'}&#10;⚡ Final Executed: $${fmtPrice(order.price || 0)}">🎯 Target: $${fmtPrice(order.targetPrice || order.price)} | Slip: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : "0.2"}% (Sent: $${fmtPrice(order.limitPrice || order.price)}) ➔ Fill: $${fmtPrice(order.price || 0)}</span>`
       : "";
 
     // Compact Tx badge: display compact ...3e27 with full hash tooltip
@@ -2753,8 +2813,8 @@
     div.innerHTML = `
       <div class="act-left">
         <span class="act-badge ${badgeClass}">${badgeText}</span>
-        <span class="act-price">$${(order.price || 0).toFixed(6)}</span>
-        <span style="color: #94a3b8; font-size: 10.5px;">(${notionalStr}${order.qty ? Number(order.qty).toFixed(4) : ""} ${activeBaseAsset}${orderIdStr})</span>
+        <span class="act-price">$${fmtPrice(order.price || 0)}</span>
+        <span style="color: #94a3b8; font-size: 10.5px;">(${notionalStr}${order.qty ? fmtQty(order.qty) : ""} ${activeBaseAsset}${orderIdStr})</span>
         <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">${targetStr}${subDesc}${expStr}${reasonStr}</span>
         ${iocBadge}
         ${txBadge}
@@ -4493,8 +4553,8 @@
     const avgPrice = totalQty > 0 ? totalCost / totalQty : 0;
 
     if (elTmSummaryLotsCount) elTmSummaryLotsCount.textContent = totalLots;
-    if (elTmSummaryLotsQty) elTmSummaryLotsQty.textContent = `${totalQty.toFixed(4)} ${activeBaseAsset}`;
-    if (elTmSummaryLotsAvgPrice) elTmSummaryLotsAvgPrice.textContent = `$${avgPrice.toFixed(5)}`;
+    if (elTmSummaryLotsQty) elTmSummaryLotsQty.textContent = `${fmtQty(totalQty)} ${activeBaseAsset}`;
+    if (elTmSummaryLotsAvgPrice) elTmSummaryLotsAvgPrice.textContent = `$${fmtPrice(avgPrice)}`;
 
     if (tmLots.length === 0) {
       elTmLotsGrid.innerHTML = '<div class="tm-empty-row" style="grid-column: 1 / -1;">📦 ไม่มี Holding Lot ในระบบ (ยอดคงเหลือ 0)</div>';
@@ -4520,11 +4580,11 @@
           <div class="tm-lot-body">
             <div class="tm-lot-field">
               <span class="tm-lot-label">Entry Price (ราคาต้นทุน)</span>
-              <span class="tm-lot-val" style="color: #4ade80;">$${p.toFixed(5)}</span>
+              <span class="tm-lot-val" style="color: #4ade80;">$${fmtPrice(p)}</span>
             </div>
             <div class="tm-lot-field">
               <span class="tm-lot-label">Quantity (จำนวน)</span>
-              <span class="tm-lot-val" style="color: #38bdf8;">${q.toFixed(4)} ${activeBaseAsset}</span>
+              <span class="tm-lot-val" style="color: #38bdf8;">${fmtQty(q)} ${activeBaseAsset}</span>
             </div>
             <div class="tm-lot-field">
               <span class="tm-lot-label">Est. Value (มูลค่า)</span>
@@ -4693,16 +4753,16 @@
             ${statusBadge}
           </td>
           <td style="text-align: right;">
-            <div class="round-buy-val">${r.buyQty.toFixed(4)} ${activeBaseAsset}</div>
-            <span class="round-dim-info">$${buyCost.toFixed(2)} @ $${r.avgBuyPrice.toFixed(4)} (${r.buyCount} ไม้)</span>
+            <div class="round-buy-val">${fmtQty(r.buyQty)} ${activeBaseAsset}</div>
+            <span class="round-dim-info">$${buyCost.toFixed(2)} @ $${fmtPrice(r.avgBuyPrice)} (${r.buyCount} ไม้)</span>
           </td>
           <td style="text-align: right;">
-            <div class="round-sell-val">${r.sellQty.toFixed(4)} ${activeBaseAsset}</div>
-            <span class="round-dim-info">$${sellProceeds.toFixed(2)} @ $${r.avgSellPrice.toFixed(4)} (${r.sellCount} ไม้)</span>
+            <div class="round-sell-val">${fmtQty(r.sellQty)} ${activeBaseAsset}</div>
+            <span class="round-dim-info">$${sellProceeds.toFixed(2)} @ $${fmtPrice(r.avgSellPrice)} (${r.sellCount} ไม้)</span>
           </td>
           <td style="text-align: right;">
             <span style="font-weight: 600; ${r.holdingQty > 0.0001 ? "color: #38bdf8;" : "color: #64748b;"}">
-              ${r.holdingQty.toFixed(4)} ${activeBaseAsset}
+              ${fmtQty(r.holdingQty)} ${activeBaseAsset}
             </span>
           </td>
           <td style="text-align: right;">
@@ -4733,7 +4793,7 @@
                 <div class="round-sub-card">
                   <div class="round-sub-header header-buy">
                     <span>🟢 ไม้เข้าซื้อ (Buys Accumulation - ${r.buyTrades.length} ไม้)</span>
-                    <span>รวม: $${buyCost.toFixed(2)} ${activeQuoteAsset} (${r.buyQty.toFixed(4)} ${activeBaseAsset})</span>
+                    <span>รวม: $${buyCost.toFixed(2)} ${activeQuoteAsset} (${fmtQty(r.buyQty)} ${activeBaseAsset})</span>
                   </div>
                   <table class="round-subtable">
                     <thead>
@@ -4756,8 +4816,8 @@
                         <tr>
                           <td>${formatShortDate(b.time)}</td>
                           <td><span class="tm-badge tm-badge-buy">${b.action}</span></td>
-                          <td style="text-align: right; color: #34d399;">$${b.price.toFixed(5)}</td>
-                          <td style="text-align: right;">${b.qty.toFixed(4)}</td>
+                          <td style="text-align: right; color: #34d399;">$${fmtPrice(b.price)}</td>
+                          <td style="text-align: right;">${fmtQty(b.qty)}</td>
                           <td style="text-align: right;">$${(b.notionalQuote || b.notionalUsdso || 0).toFixed(2)}</td>
                           <td style="text-align: center; font-size: 10.5px; color: #94a3b8;">
                             ${b.orderId || "-"}
@@ -4775,7 +4835,7 @@
                 <div class="round-sub-card">
                   <div class="round-sub-header header-sell">
                     <span>🔴 ไม้ขายออก (Sells Distribution - ${r.sellTrades.length} ไม้)</span>
-                    <span>รวม: $${sellProceeds.toFixed(2)} ${activeQuoteAsset} (${r.sellQty.toFixed(4)} ${activeBaseAsset})</span>
+                    <span>รวม: $${sellProceeds.toFixed(2)} ${activeQuoteAsset} (${fmtQty(r.sellQty)} ${activeBaseAsset})</span>
                   </div>
                   <table class="round-subtable">
                     <thead>
@@ -4802,8 +4862,8 @@
                         <tr>
                           <td>${formatShortDate(s.time)}</td>
                           <td><span class="tm-badge tm-badge-sell">${s.action}</span></td>
-                          <td style="text-align: right; color: #fb923c;">$${s.price.toFixed(5)}</td>
-                          <td style="text-align: right;">${s.qty.toFixed(4)}</td>
+                          <td style="text-align: right; color: #fb923c;">$${fmtPrice(s.price)}</td>
+                          <td style="text-align: right;">${fmtQty(s.qty)}</td>
                           <td style="text-align: right;">$${(s.notionalQuote || s.notionalUsdso || 0).toFixed(2)}</td>
                           <td style="text-align: right; font-weight: 600; ${trPnlColor}">${trPnlSign}$${trPnl.toFixed(4)}</td>
                           <td style="text-align: center; font-size: 10.5px; color: #94a3b8;">
