@@ -1824,7 +1824,7 @@
     // ── Update Price Lines on Chart ──────────────────────────────────────────
     if (candleSeries) {
       // 1. 100% Upper Bound (Full Exit) - Solid Fuchsia / Magenta
-      if (data.upperBound) {
+      if (data.upperBound && data.bottomBound) {
         lineUpperBound = setPriceLine(lineUpperBound, {
           price: data.upperBound,
           color: "#d946ef",
@@ -1833,6 +1833,9 @@
           axisLabelVisible: true,
           title: "",
         });
+      } else if (lineUpperBound) {
+        try { candleSeries.removePriceLine(lineUpperBound); } catch (_) {}
+        lineUpperBound = null;
       }
 
       // 1.1 Real Current Calculated Resistance Bound (Dashed Fuchsia / Magenta Line)
@@ -1873,7 +1876,7 @@
       }
 
       // 2. 50% Channel Center (Midline) - Dashed Amber
-      if (data.centerPrice) {
+      if (data.centerPrice && data.bottomBound && data.upperBound) {
         lineCenter = setPriceLine(lineCenter, {
           price: data.centerPrice,
           color: "#fbbf24",
@@ -1882,10 +1885,13 @@
           axisLabelVisible: true,
           title: "",
         });
+      } else if (lineCenter) {
+        try { candleSeries.removePriceLine(lineCenter); } catch (_) {}
+        lineCenter = null;
       }
 
       // 3. 0% Lower Bound (Structural Grid Floor) - Solid Purple
-      if (data.bottomBound) {
+      if (data.bottomBound && data.upperBound) {
         lineBottomBound = setPriceLine(lineBottomBound, {
           price: data.bottomBound,
           color: "#c084fc",
@@ -1894,6 +1900,9 @@
           axisLabelVisible: true,
           title: "",
         });
+      } else if (lineBottomBound) {
+        try { candleSeries.removePriceLine(lineBottomBound); } catch (_) {}
+        lineBottomBound = null;
       }
 
       // 3.1 Cut Loss Trigger Buffer Line - Dashed Slate Silver

@@ -1792,3 +1792,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - หากเจอ "ยอด (Peak)" ซ้อนกัน หรือเหวที่เจออยู่สูงกว่าราคาปัจจุบัน (ราคาหลุดเหวไปแล้ว) ให้คงการหยุดเล่นไปก่อน (WARMUP) เพื่อความปลอดภัย
   2. **Symmetrical Fallback for Valley (Case B Fallback)**:
      - รองรับแบบสมมาตรในกรณีมองซ้ายเจอเหว (`v = mostRecentLow`) ก่อน แต่หากรอบบนไม่เจอ: มองย้อนไปทางซ้ายต่อ หากเจอยอดก่อนและยอด `>= price` ให้ปรับยอดนั้นเป็นเพดานหลัก แล้วขยายไปหาเหวใต้ราคาที่แคบที่สุดในเกณฑ์ความกว้างตามกฎเดิม
+
+---
+
+### 35. Multi-Swing Wave Lookback & Zero-Bounds Protection Architecture (`src/market-structure.ts`, `src/strategy.ts` & `public/app.js`)
+- **สาเหตุของปัญหา**:
+  1. **สวิงย่อยคั่นกลางทำลายตรรกะ Fallback ใน `src/market-structure.ts`**:
+     - เมื่อยอดล่าสุด `p = 0.1890` กว้างจากเหว $0.1847$ เพียง $2.33\%$ (แคบกว่าเกณฑ์ $3\%$) ระบบเข้าสู่ Fallback สแกนย้อนทางซ้าย
+     - โค้ดเดิมตรวจเฉพาะสวิงตัวแรกสุดติดกับยอดนั้น (`priorSwings[0]`) ซึ่งบังเอิญเป็นยอดสวิงย่อย **High $0.1880$** ที่เกิดตอนราคาดีดตัวขึ้นจากเหว $0.1847$
+     - ทำให้ `priorSwings[0].type === "LOW"` เป็นเท็จ ระบบจึงหยุดทำงานทันที ไม่ยอมมองข้าม High ย่อยนี้ไปหาเหว **$0.1847$** ที่อยู่ถัดไปเพียง 1 สเต็ป และยอมแพ้ตัดเข้าสู่ `WARMUP` ("ไม่มีกรอบที่เข้าเกณฑ์ (หยุดสร้าง)")
+  2. **ระดับกริดและเป้าหมาย Buy 2 กลายเป็นตัวเลขขยะติดศูนย์ (`$0.0000`) ใน `src/strategy.ts`**:
+     - เมื่อไม่มีกรอบราคา (`dow.isSwingConfirmed === false` / `lowerBound = 0` / `upperBound = 0`) โค้ดเดิมนำ `lowerBound = 0` และ `rawSpan = 0.000001` ไปคูณเปอร์เซ็นต์ ทำให้ได้ `buyLevels = [0.00000042, 0.00000032, ...]`
+     - เงื่อนไข `buyLevels[1] > 0` เป็นจริงเพราะค่ามากกว่าศูนย์เล็กน้อย จึงบันทึกทับ `this.breakdownBuyLevel2Price` เป็น `0.00000032`
+     - ส่งผลให้แดชบอร์ดแสดง `Stand above Buy 2 ($0.0000)` และ Sell Targets บนแผงขวาแสดงเป็น `$0.000001`
+  3. **เส้นประ Center สีเหลือง และ Floor ค้างบนกราฟใน `public/app.js`**:
+     - เมื่อ `bottomBound === 0` ไม่มีการสั่ง `removePriceLine` สำหรับ `lineCenter` และ `lineBottomBound` ทำให้เส้นประสีเหลือง 50% Center และเส้นแนวรับเดิมยังคงค้างอยู่บนกราฟ
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **Multi-Swing Wave Lookback (`src/market-structure.ts`)**:
+     - ปรับให้ค้นหาเหวแท้จริงที่เป็นฐานแนวรับใต้ราคา:
+       `const priorValley = priorSwings.find(s => s.type === "LOW" && s.price <= price);`
+       ข้ามยอดสวิงย่อยในคลื่นเดียวกันไปเจอก้นเหวแท้จริง ($0.1847) แล้วขยายไปจับคู่กับยอด $0.1904 (`🚀 HH`) ได้ความกว้าง 3.09% กรอบทำงานต่อเนื่อง
+     - ฝั่ง Case B ปรับแบบสมมาตร:
+       `const priorPeak = priorSwings.find(s => s.type === "HIGH" && s.price >= price);`
+     - เพิ่ม tie-breaker `|| (b.index - a.index)` ใน `validPeaks.sort` และ `validValleys.sort` เพื่อให้เลือกล่าสุดเสมอหากราคาหรือความกว้างเท่ากัน
+  2. **Zero-Bounds & Real Channel Protection (`src/strategy.ts`)**:
+     - สร้างตัวแปร `hasRealChannel = Boolean(dow?.isSwingConfirmed && lowerBound > 0 && upperBound > lowerBound)`
+     - กำหนดให้สร้าง `buyLevels` / `sellLevels` และอัปเดต `breakdownBuyLevel2Price` เฉพาะเมื่อ `hasRealChannel` เป็นจริงเท่านั้น หากไม่มีกรอบให้คงเป็น `[]`
+     - ปรับปรุง `effectiveBuyLevel2Target` ให้กรองเฉพาะค่า `> 0.0001` หากไม่มีกรอบจะตกไปใช้ `this.breakdownFloorPrice` ($0.1873) จริงๆ ไม่กลายเป็น $0.0000
+  3. **Clean Chart Price Lines Management (`public/app.js`)**:
+     - เพิ่มการตรวจสอบ `data.bottomBound && data.upperBound` สำหรับ `lineUpperBound`, `lineBottomBound`, และ `lineCenter` พร้อมคำสั่ง `removePriceLine` เมื่อไม่มีกรอบราคา เพื่อไม่ให้เส้นเก่าค้างบนหน้าจอ

@@ -1533,7 +1533,7 @@ export class DynamicGrid {
       if (typeof data.breakdownLowPrice === "number") {
         this.breakdownLowPrice = data.breakdownLowPrice;
       }
-      if (typeof data.breakdownBuyLevel2Price === "number") {
+      if (typeof data.breakdownBuyLevel2Price === "number" && data.breakdownBuyLevel2Price > 0.0001) {
         this.breakdownBuyLevel2Price = data.breakdownBuyLevel2Price;
       }
       if (typeof data.breakdownTime === "number") {
@@ -2267,15 +2267,16 @@ export class DynamicGrid {
       const buyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
       const sellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
 
+      const hasRealChannel = Boolean(dow?.isSwingConfirmed && lowerBound > 0 && upperBound > lowerBound);
       buyLevels = gridZone?.buyLevels && gridZone.buyLevels.length > 0
         ? [...gridZone.buyLevels]
-        : buyPcts.map((pct) => lowerBound + rawSpan * (pct / 100));
+        : (hasRealChannel ? buyPcts.map((pct) => lowerBound + rawSpan * (pct / 100)) : []);
 
       sellLevels = gridZone?.sellLevels && gridZone.sellLevels.length > 0
         ? [...gridZone.sellLevels]
-        : sellPcts.map((pct) => lowerBound + rawSpan * (pct / 100));
+        : (hasRealChannel ? sellPcts.map((pct) => lowerBound + rawSpan * (pct / 100)) : []);
 
-      if (this.waitingForHigherLow && buyLevels.length > 1 && buyLevels[1] > 0) {
+      if (this.waitingForHigherLow && hasRealChannel && buyLevels.length > 1 && buyLevels[1] > 0.0001) {
         if (!this.breakdownBuyLevel2Price || Math.abs(this.breakdownBuyLevel2Price - buyLevels[1]) > 0.0001) {
           this.breakdownBuyLevel2Price = buyLevels[1];
         }
@@ -2286,7 +2287,7 @@ export class DynamicGrid {
           this.log(
             `📊 [CONFIRMED CHANNEL] Candle closed @ $${calculationPrice.toFixed(6)} — Adjusted channel bounds: [$${lowerBound.toFixed(6)} .. $${upperBound.toFixed(6)}] (Center: $${centerPrice.toFixed(6)})`,
           );
-          if (this.waitingForHigherLow && buyLevels.length > 1 && buyLevels[1] > 0) {
+          if (this.waitingForHigherLow && hasRealChannel && buyLevels.length > 1 && buyLevels[1] > 0.0001) {
             this.log(
               `🔄 [CHANNEL SHIFT] Updated recovery Buy Level 2 to new channel L2: $${buyLevels[1].toFixed(4)} (Floor: $${lowerBound.toFixed(4)})`,
             );
@@ -2583,7 +2584,9 @@ export class DynamicGrid {
         this.waitingForHigherLow = true;
         this.isFlatChannelShiftWaiting = true;
         this.breakdownFloorPrice = lowerBound;
-        this.breakdownBuyLevel2Price = buyLevels.length > 1 ? buyLevels[1] : (lowerBound + span * 0.32);
+        this.breakdownBuyLevel2Price = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001
+          ? buyLevels[1]
+          : (lowerBound > 0 ? lowerBound + span * 0.32 : refPrice);
         this.breakdownLowPrice = refPrice;
         this.breakdownTime = (this.dowEngine?.getCandles().slice(-1)[0]?.time) ?? Math.floor(Date.now() / 1000);
         const reasonDesc = hasLlInCycle ? `รอบคลื่นมี LL (${activeCycleSummary || "LL"})` : isLastHighLh ? "ยอดล่าสุดเป็น LH" : isFloorShiftedDown ? "ขอบล่างกรอบใหม่ต่ำลง" : isDowntrendDrop ? "Downtrend Drop" : "ไม่มีฐาน HL รองรับ";
@@ -2603,8 +2606,12 @@ export class DynamicGrid {
     // 1. Reclaiming & standing above Buy Level 2 (30% Zone) for >= 1 candle bar
     // 2. Trendline Breakout (2-candle confirmation)
     // 3. Confirmed Higher Low (HL)
-    const currentBuyLevel2 = buyLevels.length > 1 && buyLevels[1] > 0 ? buyLevels[1] : undefined;
-    const effectiveBuyLevel2Target = currentBuyLevel2 ?? this.breakdownBuyLevel2Price ?? this.breakdownFloorPrice ?? (lowerBound + span * 0.32);
+    const currentBuyLevel2 = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001 ? buyLevels[1] : undefined;
+    const effectiveBuyLevel2Target =
+      currentBuyLevel2 ??
+      (this.breakdownBuyLevel2Price && this.breakdownBuyLevel2Price > 0.0001 ? this.breakdownBuyLevel2Price : undefined) ??
+      (this.breakdownFloorPrice && this.breakdownFloorPrice > 0.0001 ? this.breakdownFloorPrice : undefined) ??
+      (lowerBound > 0 ? lowerBound + span * 0.32 : refPrice);
 
     if (this.waitingForHigherLow) {
       if (this.breakdownLowPrice === undefined || refPrice < this.breakdownLowPrice) {

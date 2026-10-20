@@ -1520,8 +1520,8 @@ export class DowStructureEngine {
           return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
         });
         if (validValleys.length > 0) {
-          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
-          validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price));
+          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน! (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
+          validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price) || (b.index - a.index));
           const bestValley = validValleys[0]!;
           const w = p.price - bestValley.price;
           chosenPair = {
@@ -1539,31 +1539,29 @@ export class DowStructureEngine {
             .filter((s) => s.index < p.index)
             .sort((a, b) => b.index - a.index);
 
-          const immediatePriorSwing = priorSwings[0];
-          if (immediatePriorSwing && immediatePriorSwing.type === "LOW") {
-            const v = immediatePriorSwing;
-            // ต้องเป็นเหวที่อยู่ต่ำกว่าหรือเท่ากับราคาปัจจุบันเพื่อเป็นแนวรับจริง (Floor)
-            if (v.price <= price) {
-              const validPeaks = candidateHighs.filter((peak) => {
-                const w = peak.price - v.price;
-                if (w <= 0 || v.price <= 0) return false;
-                const wPct = (w / v.price) * 100;
-                return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
-              });
+          // ค้นหาสวิงเหวแรกก่อนหน้า (ข้ามยอดสวิงย่อยในคลื่นขึ้นเดียวกัน) ที่อยู่ต่ำกว่าหรือเท่ากับราคาปัจจุบันเพื่อเป็นแนวรับจริง (Floor)
+          const priorValley = priorSwings.find((s) => s.type === "LOW" && s.price <= price);
+          if (priorValley) {
+            const v = priorValley;
+            const validPeaks = candidateHighs.filter((peak) => {
+              const w = peak.price - v.price;
+              if (w <= 0 || v.price <= 0) return false;
+              const wPct = (w / v.price) * 100;
+              return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
+            });
 
-              if (validPeaks.length > 0) {
-                // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อนตามกฎเดิม
-                validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price));
-                const bestPeak = validPeaks[0]!;
-                const w = bestPeak.price - v.price;
-                chosenPair = {
-                  peak: bestPeak,
-                  valley: v,
-                  width: w,
-                  widthPct: (w / v.price) * 100,
-                };
-                anchorSide = "LOWER_FLOOR";
-              }
+            if (validPeaks.length > 0) {
+              // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อนตามกฎเดิม (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
+              validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price) || (b.index - a.index));
+              const bestPeak = validPeaks[0]!;
+              const w = bestPeak.price - v.price;
+              chosenPair = {
+                peak: bestPeak,
+                valley: v,
+                width: w,
+                widthPct: (w / v.price) * 100,
+              };
+              anchorSide = "LOWER_FLOOR";
             }
           }
         }
@@ -1577,8 +1575,8 @@ export class DowStructureEngine {
           return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
         });
         if (validPeaks.length > 0) {
-          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน!
-          validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price));
+          // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อน! (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
+          validPeaks.sort((a, b) => (a.price - v.price) - (b.price - v.price) || (b.index - a.index));
           const bestPeak = validPeaks[0]!;
           const w = bestPeak.price - v.price;
           chosenPair = {
@@ -1594,31 +1592,29 @@ export class DowStructureEngine {
             .filter((s) => s.index < v.index)
             .sort((a, b) => b.index - a.index);
 
-          const immediatePriorSwing = priorSwings[0];
-          if (immediatePriorSwing && immediatePriorSwing.type === "HIGH") {
-            const p = immediatePriorSwing;
-            // ต้องเป็นยอดที่อยู่สูงกว่าหรือเท่ากับราคาปัจจุบันเพื่อเป็นแนวต้านจริง (Ceiling)
-            if (p.price >= price) {
-              const validValleys = candidateLows.filter((valley) => {
-                const w = p.price - valley.price;
-                if (w <= 0 || valley.price <= 0) return false;
-                const wPct = (w / valley.price) * 100;
-                return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
-              });
+          // ค้นหาสวิงยอดแรกก่อนหน้า (ข้ามเหวสวิงย่อยในคลื่นลงเดียวกัน) ที่อยู่สูงกว่าหรือเท่ากับราคาปัจจุบันเพื่อเป็นแนวต้านจริง (Ceiling)
+          const priorPeak = priorSwings.find((s) => s.type === "HIGH" && s.price >= price);
+          if (priorPeak) {
+            const p = priorPeak;
+            const validValleys = candidateLows.filter((valley) => {
+              const w = p.price - valley.price;
+              if (w <= 0 || valley.price <= 0) return false;
+              const wPct = (w / valley.price) * 100;
+              return wPct >= minChannelWidthPct && wPct <= maxChannelWidthPct;
+            });
 
-              if (validValleys.length > 0) {
-                // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อนตามกฎเดิม
-                validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price));
-                const bestValley = validValleys[0]!;
-                const w = p.price - bestValley.price;
-                chosenPair = {
-                  peak: p,
-                  valley: bestValley,
-                  width: w,
-                  widthPct: (w / bestValley.price) * 100,
-                };
-                anchorSide = "UPPER_CEILING";
-              }
+            if (validValleys.length > 0) {
+              // เลือกความกว้างที่แคบที่สุดที่เป็นไปได้ก่อนตามกฎเดิม (และเลือกอันล่าสุดเสมอถ้าความกว้างเท่ากัน)
+              validValleys.sort((a, b) => (p.price - a.price) - (p.price - b.price) || (b.index - a.index));
+              const bestValley = validValleys[0]!;
+              const w = p.price - bestValley.price;
+              chosenPair = {
+                peak: p,
+                valley: bestValley,
+                width: w,
+                widthPct: (w / bestValley.price) * 100,
+              };
+              anchorSide = "UPPER_CEILING";
             }
           }
         }
