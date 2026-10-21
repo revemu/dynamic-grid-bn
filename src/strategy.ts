@@ -4287,10 +4287,16 @@ export class DynamicGrid {
     this.needsBuyRebalance = true;
 
     // Track which sell target was sold in this inventory wave
+    const remainingHeldAfterFill = this.baseHeld();
     const soldIdx = this.findSellLevelIndex(levelDesc, price);
     if (soldIdx >= 0) {
-      this.soldSellIndices.add(soldIdx);
-      this.log(`🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.soldSellIndices).map((i) => i + 1).join(", ")}])`);
+      if (remainingHeldAfterFill < (this.minQty || 0.0001)) {
+        // Entire held position exited — clear sold targets for next accumulation wave
+        this.soldSellIndices.clear();
+      } else {
+        this.soldSellIndices.add(soldIdx);
+        this.log(`🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.soldSellIndices).map((i) => i + 1).join(", ")}])`);
+      }
       this.saveState();
     }
 
@@ -4942,8 +4948,16 @@ export class DynamicGrid {
         // All standard sell names that should be cancelled when resistance override is active
         const allSellNames = [...sellNames, "Sell TL Exit (Trendline)", "Sell Real Ceil Exit"];
 
-        // Determine which standard sell levels are below the effective resistance
-        const levelsUnderTL = sellLevels.filter((lvl, idx) => lvl < effectiveResistancePrice && enabledSells[idx]);
+        // Determine which standard sell levels are below the effective resistance and not yet completed
+        const levelsUnderTL = sellLevels.filter((lvl, idx) => {
+          if (lvl >= effectiveResistancePrice || !enabledSells[idx]) return false;
+          // An existing resting sell order at this level means it is actively resting/filling on the book
+          const hasExistingOrder = this.openOrders.some(
+            (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
+          );
+          if (hasExistingOrder) return true;
+          return !this.soldSellIndices.has(idx);
+        });
 
         if (levelsUnderTL.length === 0) {
           if (isIocMode) {
@@ -5051,17 +5065,6 @@ export class DynamicGrid {
           // IMPORTANT: ALL inventory must be covered by sell orders.
           // The LAST eligible level below resistance is treated as a full-exit level (targetFraction = 0),
           // so the remaining inventory not sold by earlier tranches is fully captured there.
-          const tlExitOrders = this.openOrders.filter(
-            (o) => !o.isBid && o.levelDesc && (o.levelDesc === "Sell TL Exit (Trendline)" || o.levelDesc === "Sell Real Ceil Exit"),
-          );
-          if (tlExitOrders.length > 0) {
-            for (const o of tlExitOrders) {
-              await this.cancelOrderInternal(o, `${resDisplayName} override: valid targets below resistance now exist — reverting to grid levels`);
-            }
-            this.openOrders = this.openOrders.filter((o) => !tlExitOrders.includes(o));
-            this.saveState();
-          }
-
           // Cancel sell orders that sit AT or ABOVE resistance (price >= effectiveResistancePrice)
           const suppressedSells = this.openOrders.filter(
             (o) => !o.isBid && o.levelDesc && sellNames.includes(o.levelDesc) && o.price >= effectiveResistancePrice,
@@ -5089,17 +5092,83 @@ export class DynamicGrid {
             .map((lvl, idx) => ({ lvl, idx }))
             .filter(({ lvl, idx }) => {
               if (!enabledSells[idx]) return false;
-              if (this.soldSellIndices.has(idx)) return false;
               if (lvl >= effectiveResistancePrice) return false;
-              // An existing resting sell order at this level is ALWAYS eligible — NEVER cancel when price reaches it!
+              // An existing resting sell order at this level is ALWAYS eligible — NEVER cancel when price reaches it or when partially filled!
               const hasExistingOrder = this.openOrders.some(
                 (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
               );
               if (hasExistingOrder) return true;
+              if (this.soldSellIndices.has(idx)) return false;
               // For placing NEW orders, price must be strictly above minAllowedSellPrice
               return lvl > minAllowedSellPrice;
             })
             .map(({ idx }) => idx);
+
+          // If valid grid targets below resistance exist, clean up any previous resistance exit orders
+          const tlExitOrders = this.openOrders.filter(
+            (o) => !o.isBid && o.levelDesc && (o.levelDesc === "Sell TL Exit (Trendline)" || o.levelDesc === "Sell Real Ceil Exit"),
+          );
+          if (tlExitOrders.length > 0 && eligibleIndices.length > 0) {
+            for (const o of tlExitOrders) {
+              await this.cancelOrderInternal(o, `${resDisplayName} override: valid targets below resistance now exist — reverting to grid levels`);
+            }
+            this.openOrders = this.openOrders.filter((o) => !tlExitOrders.includes(o));
+            this.saveState();
+          }
+
+          // Fallback: If no standard grid levels below resistance are eligible (already sold or below minAllowedSellPrice),
+          // but we still hold inventory, place/maintain 100% exit resting Maker limit order at the resistance price!
+          if (eligibleIndices.length === 0 && held >= (this.minQty || 0.0001)) {
+            const tlSellName = resSellName;
+            const frontRunRatio = isUsingRealCeil ? 0.0003 : 0.0008;
+            const rawTargetSellPrice = effectiveResistancePrice * (1 - frontRunRatio);
+            const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, rawTargetSellPrice), this.tickSize || 0.0001);
+            const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * 1.001;
+
+            if (isProfitOk && refPrice < effectiveTlSellPrice) {
+              const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
+              const targetSellQty = roundToStep(held, this.stepSize || 0.0001, 4);
+              const orderNotional = targetSellQty * effectiveTlSellPrice;
+              if (targetSellQty >= this.minQty && orderNotional >= minOrderNotional) {
+                let existingTlSell = this.openOrders.find((o) => !o.isBid && (
+                  o.levelDesc === resSellName ||
+                  o.levelDesc === "Sell TL Exit (Trendline)" ||
+                  o.levelDesc === "Sell Real Ceil Exit" ||
+                  Math.abs(o.price - effectiveResistancePrice) / effectiveResistancePrice <= 0.005
+                ));
+                if (existingTlSell) {
+                  const tlPriceDiffRatio = Math.abs(existingTlSell.price - effectiveTlSellPrice) / effectiveTlSellPrice;
+                  const qtyDiffRatio = Math.abs(existingTlSell.qty - targetSellQty) / targetSellQty;
+                  if (tlPriceDiffRatio > 0.001 || qtyDiffRatio > 0.05) {
+                    await this.cancelOrderInternal(
+                      existingTlSell,
+                      `${resDisplayName} price updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`,
+                    );
+                    this.openOrders = this.openOrders.filter((o) => o !== existingTlSell);
+                    this.saveState();
+                    await this.placeRestingOrder(
+                      false,
+                      effectiveTlSellPrice,
+                      targetSellQty,
+                      0.0,
+                      orderNotional,
+                      tlSellName,
+                    );
+                  }
+                } else {
+                  await this.placeRestingOrder(
+                    false,
+                    effectiveTlSellPrice,
+                    targetSellQty,
+                    0.0,
+                    orderNotional,
+                    tlSellName,
+                  );
+                }
+                return;
+              }
+            }
+          }
 
           const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
           let targetTrancheCount = eligibleIndices.length;
@@ -5356,11 +5425,12 @@ export class DynamicGrid {
         .map((lvl, idx) => ({ lvl, idx }))
         .filter(({ lvl, idx }) => {
           if (!enabledSells[idx]) return false;
-          if (this.soldSellIndices.has(idx)) return false;
+          // An existing resting sell order at this level is ALWAYS eligible — NEVER cancel when price reaches it or when partially filled!
           const hasExistingOrder = this.openOrders.some(
             (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
           );
           if (hasExistingOrder) return true;
+          if (this.soldSellIndices.has(idx)) return false;
           return lvl > minAllowedSellPrice;
         })
         .map(({ idx }) => idx);
