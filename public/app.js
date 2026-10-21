@@ -1248,6 +1248,77 @@
       }
     });
 
+    // 3b. In IOC mode (zero resting limit orders on book), render virtual IOC triggers, sold status, and TL Capping directly on the ladder
+    const isIocExecution = (data.orderExecutionMode === "IOC_BRACKET") || (!openOrders.length && data.exchange === "dreamdex");
+    if (isIocExecution) {
+      const soldSet = new Set(Array.isArray(data.soldSellIndices) ? data.soldSellIndices : []);
+      const tl = data.downtrendLine && !data.downtrendLine.isBroken ? data.downtrendLine : null;
+      const tlPrice = tl?.currentLinePrice;
+      const isTlActive = Boolean(tlPrice && (data.enableSellBelowTrendResistance !== false));
+      const hasPosition = (data.baseHeld > 0) || (data.lots && data.lots.length > 0) || ((data.positionQuote || data.positionUsdso) > 0.05);
+
+      // Sell targets (0 to 4)
+      [0, 1, 2, 3, 4].forEach((idx) => {
+        const step = ladderSteps.find((s) => s.pct === sellPcts[idx]);
+        if (!step || !step.el || !step.enabled) return;
+        const actionEl = step.el.querySelector(".step-action");
+        if (!actionEl) return;
+
+        const lvlPrice = (sLevels && sLevels[idx] !== undefined) ? sLevels[idx] : step.price;
+        const isCappedByTl = isTlActive && tlPrice !== undefined && lvlPrice >= tlPrice;
+        const isSold = soldSet.has(idx);
+        const isCurrentSellTrigger = Boolean(data.sellTrigger && Math.abs(lvlPrice - data.sellTrigger) < (span * 0.02));
+
+        if (isSold) {
+          actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" style="background:rgba(34,197,94,0.15); border-color:rgba(34,197,94,0.4); color:#4ade80;" title="Sell Target ${idx + 1} ($${fmtPrice(lvlPrice)}) sold in this cycle"><span style="color:#4ade80; font-weight:700;">✓ SOLD</span></span>`;
+          step.el.classList.add("has-resting-sell");
+        } else if (isCappedByTl) {
+          actionEl.innerHTML = `<span class="step-order-tag" style="background:rgba(239,68,68,0.12); border:1px dashed rgba(239,68,68,0.4); color:#fca5a5; font-size:9.5px;" title="Capped by Trendline ($${fmtPrice(tlPrice)})"><span style="color:#f87171; font-weight:600;">🚫 TL CAP</span></span>`;
+        } else if (isCurrentSellTrigger && hasPosition) {
+          actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" title="Active IOC Sell Trigger @ $${fmtPrice(lvlPrice)}"><span class="order-pulse-dot"></span> • IOC SELL</span>`;
+          step.el.classList.add("has-resting-sell");
+        } else if (hasPosition) {
+          actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" style="opacity:0.75;" title="IOC Sell Target @ $${fmtPrice(lvlPrice)}">IOC SELL</span>`;
+        }
+      });
+
+      // Trendline Exit Trigger if active
+      if (data.isTlSellTrigger && tlPrice && hasPosition) {
+        let closestTlStep = null;
+        let minTlDiff = Infinity;
+        ladderSteps.filter((s) => s.pct >= 51 && s.pct < 100 && s.enabled).forEach((s) => {
+          const d = Math.abs(s.price - tlPrice);
+          if (d < minTlDiff) { minTlDiff = d; closestTlStep = s; }
+        });
+        if (closestTlStep && closestTlStep.el) {
+          const act = closestTlStep.el.querySelector(".step-action");
+          if (act) {
+            act.innerHTML = `<span class="step-order-tag sell-order-tag" title="IOC Sell @ Trendline ($${fmtPrice(tlPrice)})"><span class="order-pulse-dot"></span> 📉 IOC TL</span>`;
+            closestTlStep.el.classList.add("has-resting-sell");
+          }
+        }
+      }
+
+      // Buy levels (0 to 4)
+      [0, 1, 2, 3, 4].forEach((idx) => {
+        const step = ladderSteps.find((s) => s.pct === buyPcts[idx]);
+        if (!step || !step.el || !step.enabled) return;
+        const actionEl = step.el.querySelector(".step-action");
+        if (!actionEl) return;
+
+        const lvlPrice = (bLevels && bLevels[idx] !== undefined) ? bLevels[idx] : step.price;
+        const isCurrentBuyTrigger = Boolean(data.buyTrigger && Math.abs(lvlPrice - data.buyTrigger) < (span * 0.02));
+        const trancheQuote = (maxInv * (buyFractions[idx] || 0.2)).toFixed(0);
+
+        if (isCurrentBuyTrigger) {
+          actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" title="Active IOC Buy Trigger @ $${fmtPrice(lvlPrice)}"><span class="order-pulse-dot"></span> • IOC BUY $${trancheQuote}</span>`;
+          step.el.classList.add("has-resting-buy");
+        } else {
+          actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.75;" title="IOC Buy Level ${idx + 1} @ $${fmtPrice(lvlPrice)}">IOC BUY $${trancheQuote}</span>`;
+        }
+      });
+    }
+
     // 4. Highlight the active current price step from top to bottom
     let activeStep = null;
     let levelName = "";

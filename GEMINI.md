@@ -2091,5 +2091,49 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.12` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 46. Maker Limit Partial Fill Preservation & Trendline Limit Order Exit (`v0.2.13`)
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.13`)**:
+  1. **Preserve Resting Maker Orders on Partial Fill**:
+     - เมื่อ Maker Limit Order บน Binance Spot โดนเคาะแบบ Partial Fill (เช่น Target 2 แมตช์ 0.0076 จาก 0.0213 ETH) บอทจะไม่นำ index เข้า `soldSellIndices` และจะไม่สั่ง Cancel ออเดอร์ที่ยังเหลืออยู่ (`hasExistingOrder` precedence) ทำให้เศษที่เหลือยังคงตั้งขายเป็น Maker ต่อไปจนเต็มจำนวน
+  2. **Trendline Capped 100% Inventory Allocation**:
+     - เมื่อเป้าหมายด้านบนถูก Trendline Resistance Capped ไว้ เหรียญที่เหลือทั้งหมดจะถูกนำมาจัดสรรตั้งขายใต้เส้น Trendline 100%
+  3. **Resting Trendline Exit Limit Order**:
+     - หากระดับกริดใต้ Trendline ถูกขายไปหมดแล้ว แต่ยังมีเหรียญค้างในพอร์ต บอทจะวางคำสั่งขายแบบ Maker Limit Order รอไว้ที่ใต้เส้น Trendline (`effectiveResPrice * 0.9998`) โดยไม่ใช้ IOC ในโหมด `MAKER_LIMIT`
+
+---
+
+### 47. IOC Sell Trigger Strict Best Bid Equality, Trendline 100% Exit & Ladder UI Badging (`v0.2.14`)
+- **สาเหตุของปัญหาและข้อเรียกร้อง**:
+  1. **IOC Sell Trigger ก่อนเวลาที่ราคาหักลด Slippage**:
+     - ใน `executeIocBracketGrid` และเงื่อนไขขาย IOC อื่นๆ โค้ดเดิมตรวจเงื่อนไขด้วย `currentBestBid >= lvlPrice * (1 - sellSlippage)` (เช่น Target 2 ที่ $0.19050 มี slippage 0.15% กลายเป็น $0.19020)
+     - ส่งผลให้เมื่อ Best Bid วิ่งมาแตะแค่ $0.19020 บอทก็ยิงคำสั่งขาย IOC ทันที ทั้งๆ ที่ราคายังไม่แตะ $0.19050 จริง
+  2. **ของค้างเติ่ง 50% รอเส้น Trendline ในสภาวะ Downtrend**:
+     - เมื่อ Target 4 และ 5 อยู่เหนือ Trendline และถูก Capped ไว้ แต่บอทยังคงแบ่งขายเป็น 4 ไม้ ทำให้หลังขาย Target 3 มีของเหลือถึง 50% ไปรอขายที่ Trendline
+     - ในสภาวะ Downtrend ราคาชนไม่ถึง Trendline และรูดกลับลงมา ทำให้ของค้างและกำไรลดลง
+  3. **Grid Meter UI ขาดการแสดงผลในโหมด IOC**:
+     - โหมด IOC ไม่มีออเดอร์ค้างบน Order Book (`openOrders = []`) ทำให้ Grid Ladder แสดงเฉพาะข้อความเริ่มต้น (`Hold 50%`, `Hold 75%`) ขาดข้อมูลว่ารอ IOC ที่ราคาใด ระดับใดขายไปแล้ว และระดับใดติด Trendline Cap
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.14`)**:
+  1. **Strict Best Bid Equality Trigger (`currentBestBid >= lvlPrice`)**:
+     - ใน `src/strategy.ts`: บังคับให้เงื่อนไขการส่งคำสั่งขาย IOC ทุกจุด (`executeIocBracketGrid`, บรรทัด 5261, บรรทัด 5541, และ Resistance IOC) ต้องรอให้ `currentBestBid >= lvlPrice` (Best Bid ต้องขึ้นมาแตะหรือสูงกว่าราคา Target จริงๆ) เท่านั้นจึงจะทริกเกอร์
+     - เมื่อทริกเกอร์แล้ว จึงส่งคำสั่ง IOC ด้วยราคา `limitPrice = roundToTick(basePrice * (1 - slippagePct), tickSize)` เป็น Worst Acceptable Price เพื่อป้องกัน Smart Contract Revert บน DEX
+  2. **Trendline Capping & Full Exit at Last Target under Trendline**:
+     - ใน `executeIocBracketGrid`: คัดกรอง `activeSellIndices` ไม่ให้รวมระดับที่ $\ge \text{tlPrice}$ เมื่อเปิดใช้งานการขายใต้ Trendline
+     - ทำให้เป้าหมายขายตัวสุดท้ายที่อยู่ใต้เส้น Trendline (เช่น Target 3 ใน SOMI:USDSO) ได้รับสถานะ `isFinal = true` และ `targetRemainingFraction = 0.0` รวบขาย 100% Exit ปิดรอบทันทีเมื่อราคาแตะเป้าหมาย ไม่ทิ้งของค้างพอร์ตไปเสี่ยงรอ Trendline
+  3. **Grid Meter Real-Time IOC Badges (`public/app.js`)**:
+     - อัปเกรด `updateLadder()` ใน `public/app.js` รองรับโหมด `IOC_BRACKET`:
+       - ระดับที่ขายสำเร็จแล้วในรอบปัจจุบัน: แสดงป้ายเขียว `✓ SOLD`
+       - ระดับที่ติด Trendline Resistance: แสดงป้าย `🚫 TL CAP`
+       - ระดับที่เป็น Active Sell Trigger: แสดงป้ายกะพริบ `• IOC SELL`
+       - ระดับที่เป็น Trendline Exit: แสดงป้ายกะพริบ `📉 IOC TL`
+       - ระดับที่เป็น Active Buy Trigger: แสดงป้ายกะพริบ `• IOC BUY $...`
+       - ระดับ Buy อื่นๆ: แสดงขนาดเงินที่จะเข้าซื้อ `IOC BUY $...`
+  4. **Telemetry Export**:
+     - ส่ง `orderExecutionMode` และ `iocBracketSellCycle` ใน `emitTelemetryTick` และ `telemetryData` ไปยังแดชบอร์ดอย่างครบถ้วน
+  5. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.14` ใน `package.json` และ `src/version.ts`
+
+
 
 

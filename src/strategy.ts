@@ -2149,6 +2149,15 @@ export class DynamicGrid {
         avgEntryPrice: avgEntry,
         lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time })),
         soldSellIndices: Array.from(this.soldSellIndices),
+        orderExecutionMode: this.cfg.orderExecutionMode ?? "IOC_BRACKET",
+        iocBracketSellCycle: this.iocBracketSellCycle
+          ? {
+              baselineHeldQuote: this.iocBracketSellCycle.baselineHeldQuote,
+              baselineHeldQty: this.iocBracketSellCycle.baselineHeldQty,
+              numSellTranches: this.iocBracketSellCycle.numSellTranches,
+              soldStepNums: Array.from(this.iocBracketSellCycle.soldStepNums),
+            }
+          : undefined,
         openOrders: this.openOrders.map((o) => ({
           id: o.id,
           onChainOrderId: o.onChainOrderId,
@@ -3821,6 +3830,15 @@ export class DynamicGrid {
         stuckTimeoutMs: this.cfg.stuckTimeoutMs,
         lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time })),
         soldSellIndices: Array.from(this.soldSellIndices),
+        orderExecutionMode: this.cfg.orderExecutionMode ?? "IOC_BRACKET",
+        iocBracketSellCycle: this.iocBracketSellCycle
+          ? {
+              baselineHeldQuote: this.iocBracketSellCycle.baselineHeldQuote,
+              baselineHeldQty: this.iocBracketSellCycle.baselineHeldQty,
+              numSellTranches: this.iocBracketSellCycle.numSellTranches,
+              soldStepNums: Array.from(this.iocBracketSellCycle.soldStepNums),
+            }
+          : undefined,
         offloadOnly,
         trendFiltered,
         trendlineFilter: this.cfg.trendlineFilter,
@@ -3991,17 +4009,18 @@ export class DynamicGrid {
         const avgEntry = this.getAvgEntryPrice();
         const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
         const minAllowedResPrice = effectiveResPrice * (1 - sellSlippage);
-        const isBidWithinSlippage = effectiveBestBid !== undefined && effectiveBestBid >= minAllowedResPrice;
+        // Strictly require Best Bid to match or exceed resistance price (no premature selling below resistance)
+        const isBidAtResistance = effectiveBestBid !== undefined && effectiveBestBid >= effectiveResPrice;
         const isProfitableAtBid = avgEntry <= 0 || (effectiveBestBid !== undefined && effectiveBestBid >= avgEntry * this.getMinProfitMultiplier());
-        const isPriceAtResistance = refPrice >= minAllowedResPrice || (effectiveBestBid !== undefined && effectiveBestBid >= minAllowedResPrice);
+        const isPriceAtResistance = (effectiveBestBid !== undefined && effectiveBestBid >= effectiveResPrice) || (refPrice >= effectiveResPrice);
 
         if (isPriceAtResistance) {
-          if (effectiveBestBid !== undefined && !isBidWithinSlippage) {
-            // Bid is below slippage floor -> hold off to avoid selling below target
+          if (effectiveBestBid !== undefined && !isBidAtResistance) {
+            // Bid has not reached resistance yet -> hold off to avoid selling below resistance
             if (Date.now() - (this.orderCooldowns.get("res_ioc_bid_warn") ?? 0) > 30_000) {
               this.orderCooldowns.set("res_ioc_bid_warn", Date.now());
               this.log(
-                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} reached ${resDisplayName} ($${effectiveResPrice.toFixed(6)}, slip ${(sellSlippage * 100).toFixed(2)}%: $${minAllowedResPrice.toFixed(6)}) but Best Bid $${effectiveBestBid.toFixed(6)} is below slippage floor — waiting for bid to reach level`,
+                `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} reached ${resDisplayName} ($${effectiveResPrice.toFixed(6)}) but Best Bid $${effectiveBestBid.toFixed(6)} has not reached resistance — waiting for bid to match level`,
               );
             }
           } else if (effectiveBestBid !== undefined && !isProfitableAtBid) {
@@ -4012,7 +4031,7 @@ export class DynamicGrid {
                 `⏳ [RES IOC STANDBY] Price $${refPrice.toFixed(6)} reached ${resDisplayName} $${effectiveResPrice.toFixed(6)} but Best Bid $${effectiveBestBid.toFixed(6)} is below Avg Entry $${avgEntry.toFixed(6)} — holding for profit`,
               );
             }
-          } else if (effectiveBestBid !== undefined && isBidWithinSlippage && isProfitableAtBid) {
+          } else if (effectiveBestBid !== undefined && isBidAtResistance && isProfitableAtBid) {
             const iocCooldownKey = `res_ioc_sell`;
             const lastIocTime = this.orderCooldowns.get(iocCooldownKey) ?? 0;
             const iocCooldownMs = 30_000; // 30-second cooldown to prevent rapid re-triggers
@@ -5239,7 +5258,8 @@ export class DynamicGrid {
             // ── IOC Sell when market price has reached or exceeded this sell target under TL (IOC_BRACKET mode only) ──
             if (!currentOpenSellAtLvl) {
               const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
-              const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= lvlPrice * (1 - sellSlippage)) || (refPrice >= lvlPrice && currentBestBid >= lvlPrice * (1 - sellSlippage));
+              // Strictly require currentBestBid to reach or exceed lvlPrice before triggering IOC sell
+              const isPriceExceeded = currentBestBid > 0 && currentBestBid >= lvlPrice;
               if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false) && this.cfg.orderExecutionMode === "IOC_BRACKET") {
                 const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
                 const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
@@ -5518,7 +5538,8 @@ export class DynamicGrid {
         // ── IOC Sell when market price has reached or exceeded this sell target (IOC_BRACKET mode only) ──
         if (!currentOpenSellAtLvl) {
           const sellSlippage = (this.cfg.iocSlippagePct ?? 0.2) / 100;
-          const isPriceExceeded = (currentBestBid > 0 && currentBestBid >= originalLvlPrice * (1 - sellSlippage)) || (refPrice >= originalLvlPrice && currentBestBid >= originalLvlPrice * (1 - sellSlippage));
+          // Strictly require currentBestBid to reach or exceed originalLvlPrice before triggering IOC sell
+          const isPriceExceeded = currentBestBid > 0 && currentBestBid >= originalLvlPrice;
           if (isPriceExceeded && (this.cfg.enableIocSellWhenExceeded !== false) && this.cfg.orderExecutionMode === "IOC_BRACKET") {
             const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
             const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
@@ -6155,8 +6176,14 @@ export class DynamicGrid {
     const held = this.cfg.dryRun ? this.baseHeld() : Math.min(this.baseHeld(), availableTradingBase);
     const minNotional = Math.max(this.minNotional || 5.0, 5.0);
     const totalHeldQuote = held * currentBestBid;
+
+    // Trendline Resistance Capping: filter out targets that are at or above descending trendline
+    const isTlActive = (this.cfg.enableSellBelowTrendResistance !== false) &&
+      Boolean(activeDowntrendLine && !activeDowntrendLine.isBroken);
+    const tlPrice = (isTlActive && activeDowntrendLine) ? activeDowntrendLine.currentLinePrice : Infinity;
+
     const activeSellIndices = (sellLevels.length > 0 ? sellLevels.map((_, idx) => idx) : [0, 1, 2, 3, 4]).filter(
-      (idx) => enabledSells[idx] && sellLevels[idx] !== undefined,
+      (idx) => enabledSells[idx] && sellLevels[idx] !== undefined && (!isTlActive || sellLevels[idx]! < tlPrice),
     );
 
     // Ceiling / Upper Bound Guard: If price reached or exceeded Upper Bound, do NOT execute stepped ladder tranches.
@@ -6173,7 +6200,7 @@ export class DynamicGrid {
         !this.iocBracketSellCycle ||
         held > this.iocBracketSellCycle.baselineHeldQty * 1.05
       ) {
-        let numSellTranches = Math.min(activeSellIndices.length, Math.max(1, sellLevels.length));
+        let numSellTranches = Math.max(1, activeSellIndices.length);
         while (numSellTranches > 1 && (totalHeldQuote / numSellTranches) < minNotional) {
           numSellTranches--;
         }
@@ -6212,8 +6239,8 @@ export class DynamicGrid {
       let matchedStep: SellStep | undefined;
       for (const step of activeSteps) {
         const lvlPrice = sellLevels[step.levelIndex];
-        const minAllowedBid = lvlPrice !== undefined ? lvlPrice * (1 - sellSlippage) : undefined;
-        if (lvlPrice !== undefined && minAllowedBid !== undefined && (currentBestBid >= minAllowedBid || refPrice >= lvlPrice)) {
+        // Strictly require currentBestBid to reach or exceed the sell target price (no premature selling below target)
+        if (lvlPrice !== undefined && currentBestBid > 0 && currentBestBid >= lvlPrice) {
           if (!cycle.soldStepNums.has(step.stepNum)) {
             matchedStep = step;
             // Pick the lowest unsold reached step (ladder upwards)
