@@ -3259,17 +3259,40 @@ export class DynamicGrid {
     const avgEntry = this.getAvgEntryPrice();
     const unrealizedPnl = this.baseHeld() > 0 && avgEntry > 0 ? (valuationBid - avgEntry) * this.baseHeld() : 0;
 
-    // Active Buy Trigger in Buy Zone
+    // Active Buy Trigger in Buy Zone:
+    // 1. Identify the first active buy level whose cumulative capacity quota is not yet satisfied
+    let firstUnsatisfiedBuyPrice: number | undefined;
+    for (let i = 0; i < buyLevels.length; i++) {
+      if (!enabledBuys[i]) continue;
+      const lvlPrice = buyLevels[i];
+      if (lvlPrice === undefined || lvlPrice <= 0) continue;
+      const capFraction = this.getCumulativeBuyTargetFraction(i, enabledBuys, buyLevels.length, false);
+      const capQuote = capFraction * this.cfg.maxInventoryQuote;
+      if (inventoryQuote < capQuote - 1.0) {
+        firstUnsatisfiedBuyPrice = lvlPrice;
+        break;
+      }
+    }
+
     let buyTrigger: number;
     const enabledBuyLvlPrices = buyLevels.filter((_, idx) => enabledBuys[idx]);
     const effectivePriceForBuyTrigger = (!isCexExchange && currentBestAsk > 0) ? Math.min(refPrice, currentBestAsk) : refPrice;
+    const halfTick = (this.tickSize || 0.0001) * 0.5;
+
     if (enabledBuyLvlPrices.length === 0) {
       buyTrigger = 0;
-    } else if (inventoryQuote < targetInventoryQuote - 1.0) {
-      const activeZoneCeiling = enabledBuyLvlPrices.find((lvl) => lvl >= effectivePriceForBuyTrigger * 0.9995) ?? enabledBuyLvlPrices[0] ?? (lowerBound + span * ((buyPcts[0] ?? 42) / 100));
-      buyTrigger = activeZoneCeiling;
+    } else if (firstUnsatisfiedBuyPrice !== undefined) {
+      // Anchor buyTrigger to the first unsatisfied buy level.
+      // If price has dipped below it, use strict half-tick comparison without arbitrary percentage buffers
+      if (effectivePriceForBuyTrigger < firstUnsatisfiedBuyPrice - halfTick) {
+        const deeperLevel = enabledBuyLvlPrices.find((lvl) => lvl <= effectivePriceForBuyTrigger + halfTick);
+        buyTrigger = deeperLevel ?? firstUnsatisfiedBuyPrice;
+      } else {
+        buyTrigger = firstUnsatisfiedBuyPrice;
+      }
     } else {
-      const nextBuyLevel = enabledBuyLvlPrices.find((lvl) => lvl < effectivePriceForBuyTrigger * 0.999);
+      // All enabled buy levels have reached capacity
+      const nextBuyLevel = enabledBuyLvlPrices.find((lvl) => lvl < effectivePriceForBuyTrigger - halfTick);
       buyTrigger = nextBuyLevel ?? (enabledBuyLvlPrices[enabledBuyLvlPrices.length - 1] ?? (lowerBound + span * ((buyPcts[buyPcts.length - 1] ?? 2) / 100)));
     }
 
@@ -3640,19 +3663,23 @@ export class DynamicGrid {
           severity: "info",
         };
       } else if (openBuys.length > 0) {
+        const buyLvlIdx = buyLevels.findIndex((lvl) => Math.abs(lvl - buyTrigger) <= ((this.tickSize || 0.0001) * 0.5));
+        const buyLvlTag = buyLvlIdx >= 0 ? ` (Buy L${buyLvlIdx + 1})` : "";
         botActionState = {
           code: "MAKER_BUY_RESTING",
           title: `📋 ${openBuys.length} Buys Resting`,
           reason: openBuys.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", "),
-          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
+          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
           severity: "success",
         };
       } else {
+        const buyLvlIdx = buyLevels.findIndex((lvl) => Math.abs(lvl - buyTrigger) <= ((this.tickSize || 0.0001) * 0.5));
+        const buyLvlTag = buyLvlIdx >= 0 ? ` (Buy L${buyLvlIdx + 1})` : "";
         botActionState = {
           code: "BUY_ZONE_TARGET_MET",
           title: "🎯 Level Target Met",
           reason: `Holding $${inventoryQuote.toFixed(1)} (Target $${targetInventoryQuote.toFixed(0)} for ${activeLevelName})`,
-          nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(this.pricePrecision)} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
+          nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
           severity: "info",
         };
       }
@@ -6089,8 +6116,9 @@ export class DynamicGrid {
         for (let i = 0; i < buyLevels.length; i++) {
           const lvlPrice = buyLevels[i];
           if (lvlPrice !== undefined) {
-            // Strict trigger: currentBestAsk and refPrice must strictly reach or drop below lvlPrice
-            const isLevelTriggered = currentBestAsk > 0 && currentBestAsk <= lvlPrice && refPrice <= lvlPrice;
+            // Strict trigger: currentBestAsk and refPrice must reach or drop below lvlPrice (with float epsilon)
+            const floatEps = (this.tickSize || 0.0001) * 0.1;
+            const isLevelTriggered = currentBestAsk > 0 && currentBestAsk <= (lvlPrice + floatEps) && refPrice <= (lvlPrice + floatEps);
 
             if (isLevelTriggered && enabledBuys[i]) {
               activeReached++;

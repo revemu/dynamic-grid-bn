@@ -2168,6 +2168,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
   5. **Version Bump**:
      - อัปเกรดเป็น `v0.2.16` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 50. Capacity Deficit Buy Trigger Anchoring & Premature Buffer Skipping Fix (`v0.2.17`)
+- **สาเหตุของปัญหา**:
+  1. **การกระโดดข้าม Buy Level 2 ไปยัง Buy Level 3 บนแถบสถานะและ `buyTrigger`**:
+     - ใน `src/strategy.ts`: เมื่อพอร์ตมีเหรียญ $25 (ซึ่งเต็มโควตาของ Buy Level 1 ที่ $20 แล้ว) ระบบเข้าสู่กิ่ง `else` เพื่อค้นหาเลเวลถัดไป
+     - โค้ดเดิมใช้ `nextBuyLevel = enabledBuyLvlPrices.find((lvl) => lvl < effectivePriceForBuyTrigger * 0.999)` โดยคูณ Buffer ลบออก 0.10% (10 bps) จากราคา
+     - เมื่อราคาอยู่ที่ `0.18860`: ตัวเปรียบเทียบกลายเป็น `0.18860 * 0.999 = 0.18841` ซึ่งต่ำกว่า `Buy Level 2 ($0.18844)` ส่งผลให้ `find()` ข้าม Buy Level 2 ไปเลือก `Buy Level 3 ($0.18774)` ทันที ทั้งๆ ที่ Buy Level 2 ยังไม่ได้ถูกซื้อและยังมีโควตาสะสมค้างอยู่อีก $25
+  2. **สเปรดบน DEX และ Floating Point Precision ในการส่ง IOC Buy**:
+     - ในคำสั่ง `executeIocBracketGrid`: การส่งคำสั่งซื้อแบบ IOC บนกระดาน On-Chain (DreamDEX) ตรวจสอบเงื่อนไข `currentBestAsk <= lvlPrice && refPrice <= lvlPrice`
+     - หากเกิดความคลาดเคลื่อนทางทศนิยมของตัวเลข floating-point เช่น `0.18844000000000002 <= 0.18844` อาจประเมินเป็น `false`
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.17`)**:
+  1. **Capacity Deficit First-Unsatisfied Buy Level Tracking (`src/strategy.ts`)**:
+     - คำนวณหา `firstUnsatisfiedBuyPrice` โดยไล่หา Buy Level แรกที่เปิดใช้งานและโควตาสะสมยังไม่เต็ม (`inventoryQuote < capQuote - 1.0`)
+     - กำหนดให้ `buyTrigger` ล็อกอยู่ที่เลเวลที่ยังขาดอยู่นี้ (เช่น Buy Level 2 = $0.18844) ตราบใดที่ราคายังอยู่เหนือหรือเท่ากับเลเวลนั้น
+     - หากราคาหลุดลงต่ำกว่าเลเวลนั้นจริงๆ จะขยับหาระดับที่ลึกกว่าด้วยระยะห่างครึ่ง Tick (`halfTick = tickSize * 0.5`) โดยตัดตัวคูณ `* 0.999` ออกทั้งหมด
+  2. **Level Badge Identifier in Operational Banner (`nextTrigger`)**:
+     - แสดงป้ายระบุเลเวลที่กำลังรอซื้อในแถบสถานะด้านบนอย่างชัดเจน เช่น `Buy next dip: <$0.18844 (Buy L2) • Sell: >$0.19054`
+  3. **Float Epsilon Guard on Level Execution**:
+     - เพิ่ม `floatEps = tickSize * 0.1` ในการเปรียบเทียบ `isLevelTriggered` เพื่อป้องกันความคลาดเคลื่อนของทศนิยม
+  4. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.17` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
