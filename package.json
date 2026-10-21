@@ -1,6 +1,6 @@
 {
   "name": "dynamic-grid",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "private": true,
   "type": "module",
   "scripts": {

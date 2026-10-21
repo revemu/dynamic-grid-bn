@@ -188,10 +188,17 @@
   let activeQtyPrecision = 4;
   let activeTickSize = 0.01;
   let activeStepSize = 0.0001;
+  let latestGridData = null;
 
   function fmtPrice(p, prec = activePricePrecision) {
     if (typeof p !== "number" || !Number.isFinite(p)) return "";
-    return p.toFixed(prec);
+    let effectivePrec = prec;
+    if (effectivePrec === 2 && typeof p === "number" && p > 0) {
+      if (p < 0.01) effectivePrec = 6;
+      else if (p < 1) effectivePrec = 5;
+      else if (p < 10) effectivePrec = 4;
+    }
+    return p.toFixed(effectivePrec);
   }
 
   function fmtQty(q, prec = activeQtyPrecision) {
@@ -1018,6 +1025,7 @@
   }
 
   function updateZoneLevelBars(data) {
+    latestGridData = data;
     const pos = data.positionPct !== undefined ? data.positionPct : 50;
     const floor = data.bottomBound ?? 0;
     const ceil = data.upperBound ?? 0;
@@ -2847,70 +2855,42 @@
         : "";
 
     const timeInfo = formatActivityTime(order.time || Date.now());
-    const notionalStr = order.notionalUsdso ? `$${order.notionalUsdso.toFixed(2)} • ` : "";
-    const targetStr = order.targetPct !== undefined ? `Target: ${order.targetPct}%` : "";
+    const baseSym = order.baseAsset || (order.symbol ? order.symbol.split(/[:\-_]/)[0] : "") || activeBaseAsset || "BASE";
+    const quoteVal = order.notionalQuote !== undefined ? order.notionalQuote : (order.notionalUsdso !== undefined ? order.notionalUsdso : (order.price && order.qty ? order.price * order.qty : 0));
+    const notionalStr = quoteVal > 0 ? `$${quoteVal.toFixed(2)}` : "";
+    const qtyStr = order.qty ? `${fmtQty(order.qty)} ${baseSym}` : "";
 
-    // ── Clean & Compact Level Description & Reason ──
+    // ── Clean & Compact Level Description & Target Name ──
     let cleanLevelDesc = (order.levelDesc || "").trim();
-    // Filter out redundant generic action names
     if (["TAKE_PROFIT", "SELL", "BUY", "CUT_LOSS", "CUT", "EXIT", "SNIPE_BUY", "SNIPE_SELL"].includes(cleanLevelDesc.toUpperCase())) {
       cleanLevelDesc = "";
     }
-    // Strip trailing target if any (e.g. "Target: $0.212030")
     cleanLevelDesc = cleanLevelDesc.replace(/\s*\(Target:[^)]+\)/i, "").trim();
-    // Strip redundant nested wrappers e.g. "IOC BUY [IOC Buy Level 1]" -> "IOC Buy Level 1"
     cleanLevelDesc = cleanLevelDesc.replace(/^IOC\s+(?:BUY|TAKE PROFIT|Sell)\s*\[(.*)\]$/i, "$1");
-    cleanLevelDesc = cleanLevelDesc.replace(/^IOC\s+(?:BUY|TAKE PROFIT|Sell)\s*\[(.*)\]$/i, "$1");
+    cleanLevelDesc = cleanLevelDesc.replace(/^IOC\s+(?:BUY|TAKE PROFIT|Sell)\s+/i, "");
     cleanLevelDesc = cleanLevelDesc.replace(/^\[(.*)\]$/, "$1").trim();
-    // Compact aggregated targets: e.g. "IOC Sell (Aggregated 4 targets up to Target 4)" -> "IOC Sell T1-T4 (4x)"
     cleanLevelDesc = cleanLevelDesc.replace(/Aggregated\s+(\d+)\s+targets\s+up\s+to\s+Target\s+(\d+)/i, "T1-T$2 ($1x)");
     cleanLevelDesc = cleanLevelDesc.replace(/Aggregated\s+(\d+)\s+tranches/i, "Aggregated ($1x)");
-    cleanLevelDesc = cleanLevelDesc.trim();
 
-    let cleanReason = (order.reason || "").trim();
-    if (cleanReason) {
-      if (["TAKE_PROFIT", "SELL", "BUY", "CUT_LOSS", "CUT", "EXIT", "SNIPE_BUY", "SNIPE_SELL"].includes(cleanReason.toUpperCase())) {
-        cleanReason = "";
+    // Convert legacy "Sell Step X/Y" or "Step X/Y" to clean Target name
+    let displayLevelName = cleanLevelDesc;
+    if (displayLevelName.toLowerCase().startsWith("sell step") || displayLevelName.toLowerCase().startsWith("step")) {
+      if (order.targetPrice && latestGridData?.sellLevels) {
+        const matchedIdx = latestGridData.sellLevels.findIndex((p) => Math.abs(p - order.targetPrice) < (order.targetPrice * 0.005));
+        if (matchedIdx >= 0) {
+          displayLevelName = `Sell Target ${matchedIdx + 1}`;
+        }
       }
-      cleanReason = cleanReason.replace(/\s*\(Target:[^)]+\)/i, "").trim();
-      cleanReason = cleanReason.replace(/^IOC\s+(?:BUY|TAKE PROFIT|Sell)\s*\[(.*)\]$/i, "$1");
-      cleanReason = cleanReason.replace(/^IOC\s+(?:BUY|TAKE PROFIT|Sell)\s*\[(.*)\]$/i, "$1");
-      cleanReason = cleanReason.replace(/^\[(.*)\]$/, "$1").trim();
-      cleanReason = cleanReason.replace(/Aggregated\s+(\d+)\s+targets\s+up\s+to\s+Target\s+(\d+)/i, "T1-T$2 ($1x)");
-      cleanReason = cleanReason.replace(/Aggregated\s+(\d+)\s+tranches/i, "Aggregated ($1x)");
-
-      // Remove gas comp substring if gasCompBadge is already rendered or gasCompSomi > 0
-      const compAmount = Number(order.gasCompSomi || order.gasCompBase || 0);
-      if (compAmount > 0) {
-        cleanReason = cleanReason.replace(/\s*\(Gas Comp:[^)]+\)/i, "").trim();
-        cleanReason = cleanReason.replace(/\s*\(Comp:[^)]+\)/i, "").trim();
-      }
-      // If reason is redundant with cleanLevelDesc or starts with it, suppress duplicate
-      const ldLower = cleanLevelDesc.toLowerCase();
-      const rLower = cleanReason.toLowerCase();
-      if (
-        rLower === ldLower ||
-        (rLower === "ioc fill" && ldLower.includes("ioc")) ||
-        (ldLower && rLower.includes(ldLower)) ||
-        (cleanLevelDesc && cleanReason.startsWith(cleanLevelDesc))
-      ) {
-        cleanReason = "";
+      if (displayLevelName.toLowerCase().startsWith("sell step") || displayLevelName.toLowerCase().startsWith("step")) {
+        displayLevelName = displayLevelName.replace(/(?:Sell\s+)?Step\s+(\d+)\/(\d+)(?:\s*\([^)]+\))?/i, "Sell Target $1");
       }
     }
+    // Clean redundant trailing dollar amounts e.g. "Sell Target 2 ($12.64)" -> "Sell Target 2"
+    displayLevelName = displayLevelName.replace(/\s*\(\$\d+(?:\.\d+)?\)$/, "").trim();
 
-    const isTradeFill = order.status === "FILLED" || (order.status !== "CANCELLED" && order.status !== "OPEN" && ["BUY", "SELL", "BUY_FILL", "SELL_FILL", "CUT", "EXIT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(order.action));
-    const isRestingOpen = !isTradeFill && (order.status === "OPEN" || order.action === "CREATE_BUY" || order.action === "CREATE_SELL");
-    const expHoursLeft = order.expireHours ? order.expireHours : (order.expireTime ? Math.max(0, Math.round((order.expireTime - (order.time || Date.now())) / 3600000)) : 0);
-    const expStr = isRestingOpen && expHoursLeft > 0 ? ` [Expires: ${expHoursLeft}h]` : "";
-
-    const subDesc = cleanLevelDesc ? ` (${cleanLevelDesc})` : "";
-    const reasonStr = cleanReason ? ` [${cleanReason}]` : "";
-    const isNumericOrderId = order.orderId && /^\d+$/.test(String(order.orderId)) && !String(order.orderId).startsWith("0x");
-    const orderIdStr = isNumericOrderId ? ` #${order.orderId}` : "";
-
-    // IOC Telemetry badge: display Target, Slippage %, Limit Price sent, and Final Fill Price
+    // IOC Telemetry badge: compact Target & Limit Sent with true price precision
     const iocBadge = (order.targetPrice !== undefined || order.limitPrice !== undefined)
-      ? `<span class="act-ioc-badge" style="padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); margin-left: 2px;" title="IOC Order Telemetry:&#10;🎯 Target: $${order.targetPrice !== undefined ? fmtPrice(order.targetPrice) : 'N/A'}&#10;📉 Slippage: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : '0.2'}%&#10;🛑 Limit Sent: $${order.limitPrice !== undefined ? fmtPrice(order.limitPrice) : 'N/A'}&#10;⚡ Final Executed: $${fmtPrice(order.price || 0)}">🎯 Target: $${fmtPrice(order.targetPrice || order.price)} | Slip: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : "0.2"}% (Sent: $${fmtPrice(order.limitPrice || order.price)}) ➔ Fill: $${fmtPrice(order.price || 0)}</span>`
+      ? `<span class="act-ioc-badge" style="padding: 1px 5px; border-radius: 4px; font-size: 9.5px; font-weight: 600; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);" title="IOC Telemetry:&#10;🎯 Target: $${fmtPrice(order.targetPrice || order.price)}&#10;📉 Slippage: ${order.slippagePct !== undefined ? Number(order.slippagePct).toFixed(2) : '0.15'}%&#10;🛑 Sent: $${fmtPrice(order.limitPrice || order.price)}&#10;⚡ Fill: $${fmtPrice(order.price || 0)}">🎯 Target: $${fmtPrice(order.targetPrice || order.price)}${order.limitPrice && Math.abs(order.limitPrice - (order.targetPrice || order.price)) > 0.00001 ? ` (Sent: $${fmtPrice(order.limitPrice)})` : ""}</span>`
       : "";
 
     // Compact Tx badge: display compact ...3e27 with full hash tooltip
@@ -2932,15 +2912,19 @@
 
     div.innerHTML = `
       <div class="act-left">
-        <span class="act-badge ${badgeClass}">${badgeText}</span>
-        <span class="act-price">$${fmtPrice(order.price || 0)}</span>
-        <span style="color: #94a3b8; font-size: 10.5px;">(${notionalStr}${order.qty ? fmtQty(order.qty) : ""} ${activeBaseAsset}${orderIdStr})</span>
-        <span style="color: #38bdf8; font-size: 10px; font-weight: 600;">${targetStr}${subDesc}${expStr}${reasonStr}</span>
-        ${iocBadge}
-        ${txBadge}
-        ${gasBadge}
-        ${gasCompBadge}
-        ${pnlHtml}
+        <div style="display: flex; align-items: center; gap: 5px; flex-wrap: wrap;">
+          <span class="act-badge ${badgeClass}">${badgeText}</span>
+          ${displayLevelName ? `<span style="color: #38bdf8; font-size: 11px; font-weight: 700;">${displayLevelName}</span>` : ""}
+          <span class="act-price" style="font-weight: 800; font-family: var(--font-mono); font-size: 11.5px;">$${fmtPrice(order.price || 0)}</span>
+          ${pnlHtml}
+        </div>
+        <div style="display: flex; align-items: center; gap: 5px; margin-top: 3px; font-size: 10px; color: #94a3b8; flex-wrap: wrap;">
+          <span>${notionalStr ? `${notionalStr} • ` : ""}${qtyStr}</span>
+          ${iocBadge}
+          ${txBadge}
+          ${gasBadge}
+          ${gasCompBadge}
+        </div>
       </div>
       <div class="act-time">
         ${order.id ? `<button class="feed-item-edit-btn" data-trade-id="${order.id}" title="แก้ไขหรือลบรายการนี้">✏️</button>` : ""}

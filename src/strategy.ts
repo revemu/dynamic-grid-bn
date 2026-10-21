@@ -6282,9 +6282,11 @@ export class DynamicGrid {
 
                 const sellNotional = sellQty * currentBestBid;
                 if (sellQty >= this.minQty && sellNotional >= minNotional) {
-                  const actionLabel = numSellTranches === 1
-                    ? `IOC Sell 100% Exit ($${sellNotional.toFixed(2)})`
-                    : `IOC Sell Step ${matchedStep.stepNum}/${numSellTranches} ($${sellNotional.toFixed(2)})`;
+                  const isLastTranche = matchedStep.targetRemainingFraction === 0;
+                  const targetName = `Sell Target ${matchedStep.levelIndex + 1}`;
+                  const actionLabel = isLastTranche || numSellTranches === 1
+                    ? `IOC ${targetName} (100% Exit)`
+                    : `IOC ${targetName} (${matchedStep.stepNum}/${numSellTranches})`;
 
                   this.log(
                     `🎯 [IOC BRACKET] Bid $${currentBestBid.toFixed(6)} >= Sell Target ${matchedStep.levelIndex + 1} ($${matchedSellPrice.toFixed(6)}) — executing ${actionLabel} for ${sellQty.toFixed(4)} ${this.baseAsset}`,

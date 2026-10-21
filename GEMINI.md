@@ -2150,6 +2150,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.15` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 49. Activity Feed Trade Card Compact Redesign & Smart Precision (`v0.2.16`)
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.16`)**:
+  1. **IOC Sell Action Labeling with Target Level Names (`src/strategy.ts`)**:
+     - ใน `executeIocBracketGrid`: เปลี่ยนชื่อ `actionLabel` จากเดิม `IOC Sell Step 1/4` หรือ `IOC Sell Step 2/4` เป็น `IOC Sell Target 2` หรือ `IOC Sell Target 3 (100% Exit)` ให้ตรงกับชื่อเป้าหมายจริงบนหน้ากระดาน
+  2. **Smart Dynamic Price Formatting (`fmtPrice` in `public/app.js`)**:
+     - ปรับปรุง `fmtPrice()` หากราคามีน้อยกว่า $1 (เช่น $0.19090) จะใช้ความละเอียดอย่างน้อย 5 ตำแหน่งทศนิยมเสมอ ป้องกันไม่ให้ปัดเศษเหลือ 2 ตำแหน่ง (`$0.19`) แม้หน้าเว็บจะเพิ่งเปิดก่อนที่ข้อมูล `pricePrecision` จะมาถึง
+  3. **Symbol-Aware Activity Cards (`public/app.js`)**:
+     - ดึงชื่อเหรียญจริงจาก `order.baseAsset` (เช่น `SOMI` หรือ `ETH`) แทนการแสดงค่าตั้งต้น `"BASE"`
+     - ลบ Order ID ตัวเลขยาว 22 หลัก (`#1586...`) ออกจากหน้าจอเพื่อความสะอาดตา
+  4. **Compact 2-Row Layout in Trade Log**:
+     - จัดระเบียบการ์ดกิจกรรมเป็น 2 บรรทัด:
+       - บรรทัดที่ 1: `[IOC SELL]` `Sell Target 3 (100% Exit)` `$0.19090` `+$0.14`
+       - บรรทัดที่ 2: `$12.67 • 66.36 SOMI` `🎯 Target: $0.19120 (Sent: $0.19090)` `⛓️ ...404a` `⛽ 0.00330 SOMI`
+  5. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.16` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
