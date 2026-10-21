@@ -1256,8 +1256,19 @@
       const tlPrice = tl?.currentLinePrice;
       const isTlActive = Boolean(tlPrice && (data.enableSellBelowTrendResistance !== false));
       const hasPosition = (data.baseHeld > 0) || (data.lots && data.lots.length > 0) || ((data.positionQuote || data.positionUsdso) > 0.05);
+      const heldBase = data.baseHeld || 0;
+      const heldQuote = (data.inventoryQuote ?? data.inventoryUsdso) || (heldBase * (data.refPrice || 0));
 
-      // Sell targets (0 to 4)
+      // ── SELL TARGETS (0 to 4) ──────────────────────────────────────────────
+      // Find valid sell targets that are enabled and not capped by Trendline
+      const validSellIndices = [0, 1, 2, 3, 4].filter((i) => {
+        if (enabledSells[i] === false) return false;
+        const p = (sLevels && sLevels[i] !== undefined) ? sLevels[i] : (floor + span * (sellPcts[i] / 100));
+        return !isTlActive || tlPrice === undefined || p < tlPrice;
+      });
+      const unsoldValidIndices = validSellIndices.filter((i) => !soldSet.has(i));
+      const numUnsold = unsoldValidIndices.length;
+
       [0, 1, 2, 3, 4].forEach((idx) => {
         const step = ladderSteps.find((s) => s.pct === sellPcts[idx]);
         if (!step || !step.el || !step.enabled) return;
@@ -1268,6 +1279,27 @@
         const isCappedByTl = isTlActive && tlPrice !== undefined && lvlPrice >= tlPrice;
         const isSold = soldSet.has(idx);
         const isCurrentSellTrigger = Boolean(data.sellTrigger && Math.abs(lvlPrice - data.sellTrigger) < (span * 0.02));
+        const isFinalTargetBelowTl = (unsoldValidIndices.length > 0 && idx === unsoldValidIndices[unsoldValidIndices.length - 1]);
+
+        // Calculate estimated tranche sell value
+        let estSellQuote = 0;
+        let estSellQty = 0;
+        let isFullExit = false;
+
+        if (hasPosition && numUnsold > 0) {
+          if (isFinalTargetBelowTl || numUnsold === 1) {
+            isFullExit = true;
+            estSellQuote = heldQuote;
+            estSellQty = heldBase;
+          } else {
+            const frac = 1 / numUnsold;
+            estSellQuote = heldQuote * frac;
+            estSellQty = heldBase * frac;
+          }
+        }
+
+        const sellValStr = estSellQuote > 0 ? `$${estSellQuote.toFixed(estSellQuote >= 10 ? 1 : 2)}` : "";
+        const exitBadge = isFullExit ? " [Exit]" : "";
 
         if (isSold) {
           actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" style="background:rgba(34,197,94,0.15); border-color:rgba(34,197,94,0.4); color:#4ade80;" title="Sell Target ${idx + 1} ($${fmtPrice(lvlPrice)}) sold in this cycle"><span style="color:#4ade80; font-weight:700;">✓ SOLD</span></span>`;
@@ -1275,10 +1307,12 @@
         } else if (isCappedByTl) {
           actionEl.innerHTML = `<span class="step-order-tag" style="background:rgba(239,68,68,0.12); border:1px dashed rgba(239,68,68,0.4); color:#fca5a5; font-size:9.5px;" title="Capped by Trendline ($${fmtPrice(tlPrice)})"><span style="color:#f87171; font-weight:600;">🚫 TL CAP</span></span>`;
         } else if (isCurrentSellTrigger && hasPosition) {
-          actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" title="Active IOC Sell Trigger @ $${fmtPrice(lvlPrice)}"><span class="order-pulse-dot"></span> • IOC SELL</span>`;
+          const title = `Active IOC Sell Trigger @ $${fmtPrice(lvlPrice)}: Sell ~${sellValStr} (~${fmtQty(estSellQty)} ${activeBaseAsset})${isFullExit ? " (100% Full Exit)" : ""}`;
+          actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" title="${title}"><span class="order-pulse-dot"></span> IOC SELL ${sellValStr}${exitBadge}</span>`;
           step.el.classList.add("has-resting-sell");
-        } else if (hasPosition) {
-          actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" style="opacity:0.75;" title="IOC Sell Target @ $${fmtPrice(lvlPrice)}">IOC SELL</span>`;
+        } else if (hasPosition && estSellQuote > 0) {
+          const title = `IOC Sell Target ${idx + 1} @ $${fmtPrice(lvlPrice)}: Sell ~${sellValStr} (~${fmtQty(estSellQty)} ${activeBaseAsset})${isFullExit ? " (100% Full Exit)" : ""}`;
+          actionEl.innerHTML = `<span class="step-order-tag sell-order-tag" style="opacity:0.85;" title="${title}">IOC SELL ${sellValStr}${exitBadge}</span>`;
         }
       });
 
@@ -1293,13 +1327,14 @@
         if (closestTlStep && closestTlStep.el) {
           const act = closestTlStep.el.querySelector(".step-action");
           if (act) {
-            act.innerHTML = `<span class="step-order-tag sell-order-tag" title="IOC Sell @ Trendline ($${fmtPrice(tlPrice)})"><span class="order-pulse-dot"></span> 📉 IOC TL</span>`;
+            act.innerHTML = `<span class="step-order-tag sell-order-tag" title="IOC Sell @ Trendline ($${fmtPrice(tlPrice)}): ~$${heldQuote.toFixed(1)} (${fmtQty(heldBase)} ${activeBaseAsset})"><span class="order-pulse-dot"></span> 📉 IOC TL $${heldQuote.toFixed(1)}</span>`;
             closestTlStep.el.classList.add("has-resting-sell");
           }
         }
       }
 
-      // Buy levels (0 to 4)
+      // ── BUY LEVELS (0 to 4) ────────────────────────────────────────────────
+      let runningCumFrac = 0;
       [0, 1, 2, 3, 4].forEach((idx) => {
         const step = ladderSteps.find((s) => s.pct === buyPcts[idx]);
         if (!step || !step.el || !step.enabled) return;
@@ -1308,13 +1343,26 @@
 
         const lvlPrice = (bLevels && bLevels[idx] !== undefined) ? bLevels[idx] : step.price;
         const isCurrentBuyTrigger = Boolean(data.buyTrigger && Math.abs(lvlPrice - data.buyTrigger) < (span * 0.02));
-        const trancheQuote = (maxInv * (buyFractions[idx] || 0.2)).toFixed(0);
+        const frac = buyFractions[idx] || 0.2;
+        runningCumFrac += frac;
+        const targetCumulativeQuote = maxInv * runningCumFrac;
+        const deficitQuote = targetCumulativeQuote - heldQuote;
 
-        if (isCurrentBuyTrigger) {
-          actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" title="Active IOC Buy Trigger @ $${fmtPrice(lvlPrice)}"><span class="order-pulse-dot"></span> • IOC BUY $${trancheQuote}</span>`;
-          step.el.classList.add("has-resting-buy");
+        if (heldQuote >= targetCumulativeQuote) {
+          // Level target already met/exceeded
+          actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.65; background:rgba(59,130,246,0.15); border-color:rgba(59,130,246,0.35); color:#93c5fd;" title="Level Capacity Met (Holding $${heldQuote.toFixed(1)} >= Target $${targetCumulativeQuote.toFixed(0)})">HOLD $${targetCumulativeQuote.toFixed(0)} ✓</span>`;
         } else {
-          actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.75;" title="IOC Buy Level ${idx + 1} @ $${fmtPrice(lvlPrice)}">IOC BUY $${trancheQuote}</span>`;
+          // Level has deficit to buy
+          const toSpendQuote = Math.max(0, Math.min(deficitQuote, maxInv - heldQuote));
+          const spendStr = `+$${Math.round(toSpendQuote)}`;
+          const title = `IOC Buy Level ${idx + 1} @ $${fmtPrice(lvlPrice)}: Target Capacity $${targetCumulativeQuote.toFixed(0)} (Will buy ${spendStr})`;
+
+          if (isCurrentBuyTrigger) {
+            actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" title="${title}"><span class="order-pulse-dot"></span> IOC BUY ${spendStr}</span>`;
+            step.el.classList.add("has-resting-buy");
+          } else {
+            actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.8;" title="${title}">IOC BUY ${spendStr}</span>`;
+          }
         }
       });
     }

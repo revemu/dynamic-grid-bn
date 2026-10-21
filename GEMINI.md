@@ -2134,6 +2134,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
   5. **Version Bump**:
      - อัปเกรดเป็น `v0.2.14` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 48. Grid Meter IOC Sell Notional & Actual Buy Deficit Sizing (`public/app.js` — `v0.2.15`)
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.15`)**:
+  1. **Estimated Sell Dollar Notional & Quantity on Ladder (`public/app.js`)**:
+     - ใน `updateLadder()`: คำนวณมูลค่าที่จะขายจริงสำหรับแต่ละเป้าหมาย เช่น `IOC SELL $12.5` และสำหรับเป้าหมายสุดท้ายใต้ Trendline แสดงป้ายชัดเจนว่า `IOC SELL $25.1 [Exit]` (100% Full Exit)
+     - ใน Tooltip แสดงมูลค่าเงินพร้อมจำนวนเหรียญที่จะขาย (เช่น `Sell ~$25.10 (~132.74 SOMI) @ $0.19124 (100% Full Exit)`)
+  2. **Actual Buy Deficit Sizing & Met Status (`public/app.js`)**:
+     - คำนวณสัดส่วนสะสม `runningCumFrac` และเป้าหมายเงินสะสม `targetCumulativeQuote = maxInv * runningCumFrac`
+     - หากพอร์ตมีเหรียญเกินเป้าหมายของระดับนั้นแล้ว (เช่น Buy Level 1 ถืออยู่ $25.1 เกินเป้า $20) ให้แสดงป้าย `HOLD $20 ✓` (Level Capacity Met)
+     - หากยังไม่ถึงเป้าสะสม (เช่น Buy Level 2 เป้าสะสม $50 ขาดอีก $24.9) ให้คำนวณยอดที่จะเข้าซื้อจริง (Deficit) แสดงป้าย `IOC BUY +$25` ไม่แสดงยอดเต็มโควตา $30 ที่ทำให้ผู้ใช้เข้าใจผิดว่างบซื้อเกินพอร์ต
+  3. **Clean Pulse Dot Rendering**:
+     - ลบตัวอักษร bullet `•` ที่ซ้ำซ้อนกับไฟกะพริบ `<span class="order-pulse-dot"></span>` ทำให้แสดงผลเป็นจุดกะพริบจุดเดียวสวยงาม ไม่ขึ้นซ้อน `• •`
+  4. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.15` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
