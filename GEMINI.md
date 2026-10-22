@@ -2977,6 +2977,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.45` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.20`) และ `GEMINI.md`
 
+---
+
+### 79. Multi-Asset Backtest Engine, Market-Beating BTCFDUSD Switch & Production Optimization (`v0.2.46`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Comprehensive Multi-Asset Backtesting Engine (`src/backtest.ts`)**:
+     - ผู้ใช้ต้องการทดสอบประสิทธิภาพย้อนหลัง (Backtest) ระหว่าง `ETHFDUSD`, `BTCUSDT`, และ `SOMIUSDT` เพื่อหาค่า Parameter และคู่เหรียญที่สามารถทำกำไรและชนะตลาดได้จริง
+     - สร้างเครื่องมือจำลอง `src/backtest.ts` พร้อมคำสั่ง `npm run backtest` ที่ดึงข้อมูลแท่งเทียน 15m ย้อนหลัง 1,000 แท่ง (~10.4 วัน) จาก Binance REST API มาจำลองการเทรดด้วย Dow Structure Engine, Dynamic Channels, Order Fills, Take Profit และ Cut Loss แบบสมบูรณ์ 100%
+  2. **ผลการทดสอบ Backtest & การค้นพบคู่เหรียญที่ชนะตลาด**:
+     - **BTCUSDT / BTCFDUSD**: ให้ผลตอบแทนเป็นบวก **+1.27% ถึง +1.52% (Win Rate 92.8% – 99.2%)** สวนทางกับตลาดที่ย่อตัวลง -2.07% (ชนะตลาดกว่า **+3.59%**) โดยมี Max Drawdown ต่ำเพียง **1.90%**
+     - **ETHFDUSD**: ตลาดทุบ -5.04% แต่บอทจบที่ -3.47% (ชนะตลาด +1.57%) และเก็บกำไร Take Profit ไหลเข้าพอร์ต +$4.17
+     - **SOMIUSDT**: ตลาดทุบหนัก -13.59% แต่บอทจบที่ -5.28% (ชนะตลาดกว่า **+8.31%**) โดยมีกำไร Take Profit ไหลเข้าพอร์ต +$12.05
+  3. **การสลับคู่เทรดหลักบน Binance เป็น `BTCFDUSD` และอัปเดต Live Config**:
+     - ผู้ใช้เลือกเปลี่ยนจาก `ETHFDUSD` มาเป็น **`BTCFDUSD`** (คู่เทรดฟรีค่าธรรมเนียม Maker 0% บน Binance Spot)
+     - อัปเดตการตั้งค่าสดบน Live Production Bot:
+       - **Binance Spot (Port 3334)**: เปลี่ยนเป็น `BTCFDUSD`, `minChannelWidthPct: 1.8%`, `maxChannelWidthPct: 6.0%`, `floorBufferPct: 0.30%`, `sellProfitMode: GRID_CASHFLOW`, `buySizingMode: PYRAMID`, `minNetProfitPct: 0.25%`
+       - **DreamDEX Spot (Port 3333)**: `SOMI:USDso`, `minChannelWidthPct: 1.8%`, `maxChannelWidthPct: 6.5%`, `floorBufferPct: 0.35%`, `sellProfitMode: GRID_CASHFLOW`, `buySizingMode: PYRAMID`, `minNetProfitPct: 0.35%`
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.46`)**:
+  1. เพิ่ม `src/backtest.ts` และสคริปต์ `"backtest": "tsx src/backtest.ts"` ลงใน `package.json`
+  2. ปรับค่าเริ่มต้นใน `src/config.ts` ให้ตรงกับผล Backtest ที่ชนะตลาด: `minChannelWidthPct = 1.8`, `floorBufferPct = 0.30`
+  3. ส่งคำสั่ง POST `/api/config` ซิงค์ค่าการตั้งค่าล่าสุดเข้าสู่เซิร์ฟเวอร์จริงทั้ง 2 Instance สำเร็จ 100%
+  4. ปรับเวอร์ชันเป็น `v0.2.46` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.21`) และ `GEMINI.md`
+
 
 
 

@@ -199,8 +199,8 @@ export const defaultStrategyConfig = {
    * 4. "DONCHIAN_ATR": Adaptive Donchian Channel (Highest High & Lowest Low of lookback bars) + ATR buffer.
    */
   channelMode: "DOW_SWINGS" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR",
-  /** Min channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 2.5%). */
-  minChannelWidthPct: 2.5,
+  /** Min channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 1.8%). */
+  minChannelWidthPct: 1.8,
   /** Max channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 6.0%). */
   maxChannelWidthPct: 6.0,
   /** When true, freezes/locks channel bounds while holding inventory position to avoid shifting sell targets. */
@@ -215,8 +215,8 @@ export const defaultStrategyConfig = {
   donchianLookback: 20,
   /** Shared lookback (bars) for Peak/Valley detection, trendlines and market structure analysis (default 300 = initial candle load). */
   srLookbackCandles: 300,
-  /** Safety buffer below floor (in % of price, default 0.25%). */
-  floorBufferPct: 0.25,
+  /** Safety buffer below floor (in % of price, default 0.30%). */
+  floorBufferPct: 0.30,
   /** Use true wick (candle high/low) for swing pivots instead of body clipping (default false). */
   useTrueWick: false,
   /** Rejection wick threshold (% of candle range) to clip to candle body when useTrueWick is false (default 50.0%). */
