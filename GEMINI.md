@@ -2620,5 +2620,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.32` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.6`) และ `GEMINI.md`
 
+---
+
+### 66. DreamDEX Gas Accounting Hardening, Multi-Asset Pricing Guard & Inverted Order History Healing (`v0.2.33`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Double-Counting Gas Fees on DreamDEX (`src/strategy/index.ts` & `src/strategy/order-executor.ts`)**:
+     - เมื่อส่งคำสั่งหรือกดยกเลิกบน DreamDEX (Approval, Limit, IOC, Cancel) ใน `src/exchange/dreamdex/client.ts` มีการเรียก `this.onGasSpent` ส่งค่าแก๊สเข้า Strategy อัตโนมัติอยู่แล้ว
+     - แต่ใน `src/strategy/order-executor.ts` (เช่น `sellTrancheIOC`, `placeOrder`, `cancelOrder`) มีการเรียก `this.trackTxGas(res.txHash)` ซ้ำอีกรอบ ซึ่งดึง Receipt จากบล็อกเชนมาบวกเข้า `accumulatedGasBase`, `accumulatedGasQuote`, `totalGasSpentBase`, `totalGasSpentQuote`, และ `totalTxCount++` อีกรอบ ทำให้แก๊สและจำนวน tx ถูกนับเบิ้ล 2 เท่าทุกธุรกรรม
+  2. **Severe Gas Valuation Inflation & Base Asset Mixing for Non-SOMI Pairs (`WBTC:USDso`, `WETH:USDso`)**:
+     - บนเครือข่าย Somnia Network ค่าแก๊สจ่ายเป็นเหรียญ SOMI เสมอ
+     - เมื่อผู้ใช้เทรดคู่เหรียญอื่น เช่น `WBTC:USDso` หรือ `WETH:USDso` ตัวแปร `baseAsset` จะเป็น `WBTC` หรือ `WETH`
+     - โค้ดเดิมนำค่าแก๊ส SOMI (เช่น `0.05 SOMI`) ไปบวกเข้า `accumulatedGasBase` โดยตรง ทำให้บอทเข้าใจว่าเสียแก๊สไป `0.05 WBTC` (มูลค่ากว่า $3,250)
+     - โค้ดเดิมคำนวณมูลค่าแก๊ส `feeQuote = feeSomi * refPrice` โดยที่ `refPrice` คือราคาของ WBTC ($65,000) ทำให้แก๊ส 0.05 SOMI ถูกประเมินค่าเป็น $3,250 USDso แทนที่จะเป็น ~$0.01 ส่งผลให้สถิติค่าแก๊สในพอร์ตบวมมหาศาล
+  3. **Inverted Order Processing in Seed `soldSellIndices` & `recentOrders.slice(-500)` (`src/strategy/index.ts`)**:
+     - ใน `db.ts` ออเดอร์ถูกจัดเก็บแบบใหม่สุดอยู่ที่ Index 0 (`unshift`) แต่ในบรรทัด 1662 โค้ดที่ใช้กู้คืน `soldSellIndices` กลับวนลูป `for (let i = this.recentOrders.length - 1; i >= 0; i--)` (วนจากอดีตที่เก่าที่สุด) และเจอ `BUY_FILL` ทำให้ออกจากลูปทันทีตั้งแต่ออเดอร์แรกในอดีต ส่งผลให้บอทไม่เคยจำเป้าขายที่ขายไปแล้วในคลื่นปัจจุบันได้เลย
+     - ในบรรทัด 1809 โค้ดเซฟ `recentOrders: this.recentOrders.slice(-500)` ทำให้ดึง 500 ออเดอร์ที่เก่าที่สุดในอดีตไปเซฟลง State แทนที่จะเป็น 500 ออเดอร์ล่าสุด
+  4. **Unfiltered Symbol & Hardcoded 0.21 Fallback in Inventory Adoption (`src/strategy/index.ts:1460-1465`)**:
+     - ใน `reconcileInventory` โค้ดค้นหา `lastBuyFill` โดยไม่ได้กรองตาม `symbol` หรือ `baseAsset` หากเพิ่งสลับมาจาก SOMI มาเทรด BTC อาจดึงราคาซื้อของ SOMI ($0.205) มา Adopt เข้า Lot ของ BTC พร้อมมี Fallback ฮาร์ดโค้ด `0.21`
+  5. **API Trade Rounds Ignoring Symbol Query (`src/server.ts:274`)**:
+     - Route `GET /api/db/rounds` เรียก `this.db.getTradeRounds()` โดยไม่ได้ส่งค่า `symbol` จาก URL Query Parameter ทำให้เมื่อ Dashboard ขอข้อมูลรอบเทรดของคู่เหรียญอื่นจะได้เฉพาะรอบของคู่ Default เสมอ
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.33`)**:
+  1. **ระบบ Transaction Hash De-duplication สำหรับค่าแก๊ส**:
+     - เพิ่ม `processedGasTxHashes = new Set<string>()` ใน `IStrategyHost` และ `DynamicGrid` ดักจับ Transaction Hash เพื่อป้องกันไม่ให้ hash เดียวกันถูกประมวลผลซ้ำใน `wireExchangeGasListener`, `trackTxGas` หรือ `buyTrancheIOC`
+  2. **แยกแยะการคำนวณแก๊สตามคู่เหรียญ SOMI vs Non-SOMI**:
+     - ตรวจสอบ `isSomiBase = (this.baseAsset.toUpperCase() === "SOMI")`
+     - บันทึกเข้า `accumulatedGasBase` และ `totalGasSpentBase` เฉพาะเมื่อเทรดเหรียญ SOMI เท่านั้น
+     - สำหรับคู่เหรียญ Non-SOMI (WBTC, WETH, USDC.e) คิดมูลค่าแก๊ส `feeQuote` จากราคา SOMI (~$0.20) คูณกับ `feeSomi` แทนที่จะเอาราคา WBTC/WETH มาคูณ
+  3. **แก้ไขทิศทางการวนลูป `recentOrders` ให้ถูกต้องตามลำดับ Newest-First**:
+     - ปรับลูปกู้คืน `soldSellIndices` ให้วนจาก `i = 0` (ออเดอร์ล่าสุด) ย้อนหลังไปจนเจอ `BUY_FILL` ของรอบปัจจุบัน พร้อมกรองเฉพาะเหรียญปัจจุบัน
+     - เปลี่ยน `this.recentOrders.slice(-500)` ใน `saveState` เป็น `this.recentOrders.slice(0, 500)`
+  4. **ปลอดภัยด้วยการกรองคู่เหรียญและตัดฮาร์ดโค้ด 0.21 ใน Inventory Adoption**:
+     - กรอง `lastBuyFill` ให้ตรงกับเหรียญปัจจุบัน และใช้ `lastRefPrice` หรือราคา Best Bid/Ask และหากราคา <= 0 ให้ยกเลิกการ Adopt พร้อมแจ้งเตือน
+  5. **ส่งผ่าน `symbol` ให้ API Trade Rounds & Trade Manager**:
+     - ส่ง `parsedUrl.searchParams.get("symbol") || undefined` เข้า `this.db.getTradeRounds(...)` และ `this.db.getState(...)`
+  6. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.33` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.8`) และ `GEMINI.md`
+
+
 
 

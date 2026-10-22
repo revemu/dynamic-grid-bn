@@ -44,6 +44,7 @@ export class DynamicGrid implements IStrategyHost {
   public handledExitOrderIds = new Map<string, number>(); // orderId → timestamp of exit/IOC execution
   public inFlightOrders = new Set<string>();
   public orderCooldowns = new Map<string, number>();
+  public processedGasTxHashes = new Set<string>();
   public realizedPnl = 0;
   public tradeRealizedPnl = 0;
   public totalGasDeductedBase = 0;
@@ -254,15 +255,34 @@ export class DynamicGrid implements IStrategyHost {
     // DreamDEX (DEX): Wire authoritative gas listener for all on-chain transactions
     client.onGasSpent = (feeSomi: number, label: string, txHash?: string) => {
       if (!feeSomi || feeSomi <= 0) return;
-      this.accumulatedGasBase += feeSomi;
-      this.totalGasSpentBase += feeSomi;
-      const refP = this.lastRefPrice || this.getAvgEntryPrice() || 0.20;
-      const feeQuote = feeSomi * refP;
+
+      const normTx = (txHash || "").trim().toLowerCase();
+      if (normTx && this.processedGasTxHashes.has(normTx)) {
+        return;
+      }
+      if (normTx) {
+        this.processedGasTxHashes.add(normTx);
+        if (this.processedGasTxHashes.size > 2000) {
+          const first = this.processedGasTxHashes.values().next().value;
+          if (first) this.processedGasTxHashes.delete(first);
+        }
+      }
+
+      const isSomiBase = this.baseAsset.toUpperCase() === "SOMI";
+      if (isSomiBase) {
+        this.accumulatedGasBase += feeSomi;
+        this.totalGasSpentBase += feeSomi;
+      }
+      // For non-SOMI base assets (e.g. WBTC, WETH, USDC.e), gas is paid in SOMI, not base asset.
+      // Use SOMI price (~$0.20) rather than multiplying SOMI fee by base asset price ($65,000 for WBTC).
+      const somiPrice = isSomiBase ? (this.lastRefPrice || this.getAvgEntryPrice() || 0.20) : 0.20;
+      const feeQuote = feeSomi * somiPrice;
       this.accumulatedGasQuote += feeQuote;
       this.totalGasSpentQuote += feeQuote;
       this.totalTxCount++;
+
       this.log(
-        `⛽ [DEX GAS TRACKED] ${label || "On-Chain Op"}${txHash ? ` (${txHash.slice(0, 10)}...)` : ""}: Spent ${feeSomi.toFixed(5)} SOMI (~$${feeQuote.toFixed(4)}) | Total uncompensated gas: ${this.accumulatedGasBase.toFixed(5)} SOMI`,
+        `⛽ [DEX GAS TRACKED] ${label || "On-Chain Op"}${txHash ? ` (${txHash.slice(0, 10)}...)` : ""}: Spent ${feeSomi.toFixed(5)} SOMI (~$${feeQuote.toFixed(4)}) | Total uncompensated gas: ${this.accumulatedGasBase.toFixed(5)} ${isSomiBase ? "SOMI" : this.baseAsset}`,
       );
       if (txHash && typeof (this.db as any).updateTxGas === "function") {
         try {
@@ -280,7 +300,7 @@ export class DynamicGrid implements IStrategyHost {
           type: "order_gas",
           data: {
             txHash,
-            gasFeeBase: feeSomi,
+            gasFeeBase: isSomiBase ? feeSomi : 0,
             gasFeeQuote: feeQuote,
             gasFeeSomi: feeSomi,
             gasFeeUsdso: feeQuote,
@@ -1457,9 +1477,22 @@ export class DynamicGrid implements IStrategyHost {
         const rawUnallocated = maxAllowedTradingBase - memoryHeld;
         const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || 0.0001, this.qtyPrecision);
         if (unallocatedQty >= this.minQty) {
-          const recentOrders = this.db.getOrders(10);
-          const lastBuyFill = recentOrders.find((o) => o.action === "BUY_FILL" && o.price > 0);
-          const adoptPrice = lastBuyFill?.price || this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : 0.21);
+          const recentOrders = this.db.getOrders(50);
+          const currentSymNorm = (this.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+          const currentBaseNorm = (this.baseAsset || "").toUpperCase();
+          const lastBuyFill = recentOrders.find((o) => {
+            if (o.action !== "BUY_FILL" || !o.price || o.price <= 0) return false;
+            if (o.baseAsset && o.baseAsset.toUpperCase() !== currentBaseNorm) return false;
+            if (o.symbol && o.symbol.toUpperCase().replace(/[\/\-_:]/g, "") !== currentSymNorm) return false;
+            return true;
+          });
+          const adoptPrice = lastBuyFill?.price || this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : (this.lastBestBid || this.lastBestAsk || 0));
+          if (adoptPrice <= 0) {
+            this.log(
+              `⚠️ [INVENTORY RECONCILE] Skipped adopting ${unallocatedQty.toFixed(4)} ${this.baseAsset}: Market price cannot be reliably determined.`,
+            );
+            return;
+          }
           this.log(
             `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} ${this.baseAsset} > memory ${memoryHeld.toFixed(4)} ${this.baseAsset}). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
           );
@@ -1658,10 +1691,15 @@ export class DynamicGrid implements IStrategyHost {
       }
 
       // Seed soldSellIndices from recent orders if empty (e.g. on new version startup after sell fill)
+      // Note: recentOrders is ordered newest first (index 0 = most recent)
       if (this.soldSellIndices.size === 0 && this.recentOrders.length > 0 && this.lots.length > 0) {
-        for (let i = this.recentOrders.length - 1; i >= 0; i--) {
+        const currentSymNorm = (this.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+        for (let i = 0; i < this.recentOrders.length; i++) {
           const ord = this.recentOrders[i];
           if (!ord) continue;
+          if (ord.symbol && ord.symbol.toUpperCase().replace(/[\/\-_:]/g, "") !== currentSymNorm) {
+            continue;
+          }
           if (ord.action === "BUY_FILL" || ord.isBid) break;
           if (ord.action === "SELL_FILL" || (!ord.isBid && ord.status === "FILLED")) {
             const soldIdx = this.findSellLevelIndex(ord.levelDesc, ord.price);
@@ -1806,7 +1844,7 @@ export class DynamicGrid implements IStrategyHost {
         buyOrdersActive: this.buyOrdersActive,
         isSqueezePaused: this.isSqueezePaused,
         isPaused: this.isPaused,
-        recentOrders: this.recentOrders.slice(-500),
+        recentOrders: this.recentOrders.slice(0, 500),
         lockedChannel: this.lockedChannel,
         lastUpdated: Date.now(),
       };

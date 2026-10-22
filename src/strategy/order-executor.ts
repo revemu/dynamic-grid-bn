@@ -58,6 +58,11 @@ export class OrderExecutor {
     if (this.host.cfg.dryRun) return;
     if (this.host.binance.exchangeName !== "dreamdex") return;
 
+    const normTx = txHash.trim().toLowerCase();
+    if (this.host.processedGasTxHashes.has(normTx)) {
+      return;
+    }
+
     try {
       const getFeeFn = (this.host.binance as any).getTransactionFee;
       let feeSomi: number | undefined;
@@ -65,16 +70,28 @@ export class OrderExecutor {
         feeSomi = await (this.host.binance as any).getTransactionFee(txHash);
       }
       if (feeSomi !== undefined && feeSomi > 0) {
-        this.host.accumulatedGasBase += feeSomi;
-        this.host.totalGasSpentBase += feeSomi;
-        const refPrice = this.host.lastRefPrice || this.lotTracker.getAvgEntryPrice() || 0.20;
-        const feeQuote = feeSomi * refPrice;
+        if (this.host.processedGasTxHashes.has(normTx)) {
+          return;
+        }
+        this.host.processedGasTxHashes.add(normTx);
+        if (this.host.processedGasTxHashes.size > 2000) {
+          const first = this.host.processedGasTxHashes.values().next().value;
+          if (first) this.host.processedGasTxHashes.delete(first);
+        }
+
+        const isSomiBase = this.host.baseAsset.toUpperCase() === "SOMI";
+        if (isSomiBase) {
+          this.host.accumulatedGasBase += feeSomi;
+          this.host.totalGasSpentBase += feeSomi;
+        }
+        const somiPrice = isSomiBase ? (this.host.lastRefPrice || this.lotTracker.getAvgEntryPrice() || 0.20) : 0.20;
+        const feeQuote = feeSomi * somiPrice;
         this.host.accumulatedGasQuote += feeQuote;
         this.host.totalGasSpentQuote += feeQuote;
         this.host.totalTxCount++;
 
         this.host.log(
-          `⛽ [GAS TRACKED] ${label || "Tx"} (${txHash.slice(0, 10)}...): Spent ${feeSomi.toFixed(5)} SOMI (~$${feeQuote.toFixed(4)}) | Total uncompensated gas: ${this.host.accumulatedGasBase.toFixed(5)} SOMI`,
+          `⛽ [GAS TRACKED] ${label || "Tx"} (${txHash.slice(0, 10)}...): Spent ${feeSomi.toFixed(5)} SOMI (~$${feeQuote.toFixed(4)}) | Total uncompensated gas: ${this.host.accumulatedGasBase.toFixed(5)} ${isSomiBase ? "SOMI" : this.host.baseAsset}`,
         );
 
         if (typeof (this.host.db as any).updateTxGas === "function") {
@@ -963,12 +980,20 @@ export class OrderExecutor {
       }
 
       if (res.gasFee !== undefined && res.gasFee > 0) {
-        if (!this.host.binance.onGasSpent) {
-          this.host.accumulatedGasBase += res.gasFee;
-          this.host.totalGasSpentBase += res.gasFee;
-          const refP = effectivePrice || 0.20;
-          this.host.accumulatedGasQuote += res.gasFee * refP;
-          this.host.totalGasSpentQuote += res.gasFee * refP;
+        const txKey = (res.txHash || "").trim().toLowerCase();
+        const alreadyTracked = txKey ? this.host.processedGasTxHashes.has(txKey) : false;
+        if (!alreadyTracked && !this.host.binance.onGasSpent) {
+          if (txKey) {
+            this.host.processedGasTxHashes.add(txKey);
+          }
+          const isSomiBase = this.host.baseAsset.toUpperCase() === "SOMI";
+          if (isSomiBase) {
+            this.host.accumulatedGasBase += res.gasFee;
+            this.host.totalGasSpentBase += res.gasFee;
+          }
+          const somiPrice = isSomiBase ? (effectivePrice || 0.20) : 0.20;
+          this.host.accumulatedGasQuote += res.gasFee * somiPrice;
+          this.host.totalGasSpentQuote += res.gasFee * somiPrice;
           this.host.totalTxCount++;
         }
         this.host.log(`⛽ [GAS ON BUY] Spent ${res.gasFee.toFixed(5)} SOMI on this IOC buy transaction. Included in uncompensated gas.`);

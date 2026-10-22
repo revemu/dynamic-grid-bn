@@ -92,6 +92,7 @@ export interface IStrategyHost {
   handledExitOrderIds: Map<string, number>;
   inFlightOrders: Set<string>;
   orderCooldowns: Map<string, number>;
+  processedGasTxHashes: Set<string>;
 
   // PnL & Gas
   realizedPnl: number;

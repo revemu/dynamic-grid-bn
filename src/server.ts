@@ -271,7 +271,8 @@ export class DashboardServer {
 
     // Database: Trade Rounds Summary API (Buy Accumulation & Sell Distribution Cycles)
     if (pathname === "/api/db/rounds") {
-      const roundsData = this.db.getTradeRounds();
+      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      const roundsData = this.db.getTradeRounds(symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, ...roundsData }));
       return;
@@ -279,9 +280,10 @@ export class DashboardServer {
 
     // Database: Trade & Lot Manager Overview API
     if (pathname === "/api/db/trade-manager") {
+      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
       const trades = this.db.getTrades(5000);
       const allOrders = this.db.getOrders(5000);
-      const state = this.db.getState();
+      const state = this.db.getState(symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
