@@ -1423,6 +1423,22 @@ export class OrderExecutor {
 
     // SELL SIDE
     const held = this.lotTracker.baseHeld();
+
+    // If Stage 1 Cut Loss is active and price bounced back to or above Floor, execute IOC full bounce exit
+    if (this.host.cutLossStage1Executed && held >= this.host.minQty && currentBestBid > 0 && currentBestBid >= lowerBound) {
+      this.host.log(
+        `🎉 [IOC BOUNCE EXIT] Price ($${currentBestBid.toFixed(6)}) bounced to Channel Floor ($${lowerBound.toFixed(6)}) after Stage 1 de-risk — executing IOC bounce exit for ${held.toFixed(4)} ${this.host.baseAsset}!`,
+      );
+      const ok = await this.sellTrancheIOC(held, currentBestBid, "Cut Loss Bounce Exit (50%)", lowerBound, true);
+      if (ok) {
+        this.host.cutLossStage1Executed = false;
+        this.host.cutLossStage1Price = undefined;
+        this.host.cutLossStage1CandleTime = undefined;
+        this.host.saveState();
+      }
+      return;
+    }
+
     const isCeilingZone = refPrice >= upperBound || (currentBestBid > 0 && currentBestBid >= upperBound);
     if (isCeilingZone && this.host.cfg.takeProfitAtUpperBound) {
       return;

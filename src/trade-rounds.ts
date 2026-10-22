@@ -192,9 +192,11 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     // Only split into a new round if previous round has completely closed its inventory or was sell-only
     if (currentRound && isBuy) {
       const remainingHeld = currentRound.buyQty - currentRound.sellQty;
-      const isInventoryFlat = currentRound.buyQty > 0 && (
-        remainingHeld <= 0.5 ||
-        currentRound.sellQty >= currentRound.buyQty * 0.98
+      const remainingQuote = remainingHeld * (currentRound.avgBuyPrice || price);
+      const isInventoryFlat = currentRound.buyQty > 0 && currentRound.sellCount > 0 && (
+        currentRound.sellQty >= currentRound.buyQty * 0.98 ||
+        remainingHeld <= 1e-6 ||
+        remainingQuote < 1.0
       );
       const isSellOnly = currentRound.buyQty === 0 && currentRound.sellCount > 0;
 
@@ -297,6 +299,7 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
 
       // Check if this SELL completely closed out the inventory
       const remainingHeld = currentRound.buyQty - currentRound.sellQty;
+      const remainingQuote = remainingHeld * (currentRound.avgBuyPrice || price);
       const isFullExit = ["CUT", "EXIT"].includes(f.action) ||
         f.reason?.includes("100% FULL EXIT") ||
         f.reason?.includes("CUT LOSS") ||
@@ -304,8 +307,9 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
         f.levelDesc?.includes("100% FULL EXIT");
 
       const isInventoryFlat = currentRound.buyQty > 0 && (
-        remainingHeld <= 0.5 ||
-        currentRound.sellQty >= currentRound.buyQty * 0.98
+        currentRound.sellQty >= currentRound.buyQty * 0.98 ||
+        remainingHeld <= 1e-6 ||
+        remainingQuote < 1.0
       );
 
       if (isInventoryFlat || isFullExit) {
@@ -475,10 +479,16 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
 function finalizeRound(r: TradeRound, isLatestRound: boolean): void {
   r.durationMs = Math.max(0, r.endTime - r.startTime);
   r.holdingQty = Math.max(0, r.buyQty - r.sellQty);
+  const holdingValueQuote = r.holdingQty * (r.avgBuyPrice || 0);
+  const isInventoryFlat = r.buyQty > 0 && (
+    r.sellQty >= r.buyQty * 0.98 ||
+    r.holdingQty <= 1e-6 ||
+    (holdingValueQuote < 1.0 && r.sellCount > 0)
+  );
 
   if (r.sellCount > 0 && r.buyCount === 0) {
     r.status = "SELL_ONLY";
-  } else if (r.holdingQty <= 0.5 || (r.buyQty > 0 && r.sellQty >= r.buyQty * 0.98)) {
+  } else if (isInventoryFlat) {
     r.status = "CLOSED";
   } else if (r.buyCount > 0 && r.sellCount === 0) {
     r.status = "HOLDING";

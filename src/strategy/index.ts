@@ -2095,6 +2095,15 @@ export class DynamicGrid implements IStrategyHost {
     const remaining = this.baseHeld();
     const soldQty = Math.max(0, prevHeld - remaining);
 
+    if (soldQty <= 0 && !this.cfg.dryRun) {
+      return {
+        success: false,
+        soldQty: 0,
+        price: execPrice,
+        error: "Sell order was not filled on exchange. Lots kept intact.",
+      };
+    }
+
     return {
       success: true,
       soldQty: soldQty > 0 ? soldQty : prevHeld,

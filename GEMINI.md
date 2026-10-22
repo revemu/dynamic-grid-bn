@@ -2595,5 +2595,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.31` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.5`) และ `GEMINI.md`
 
+---
+
+### 65. Multi-Asset Trade Rounds Flattening Guard & Emergency Sell All Hardening (`v0.2.32`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Hardcoded Base Unit `0.5` in Trade Rounds Segmentation (`src/trade-rounds.ts`)**:
+     - ใน `src/trade-rounds.ts` การตรวจสอบว่าพอร์ตว่างหรือยังเพื่อตัดรอบการเทรด (`isInventoryFlat`) เดิมใช้ `remainingHeld <= 0.5`
+     - เงื่อนไขนี้เดิมเขียนสำหรับเหรียญ SOMI (~$0.15) แต่เมื่อนำมารันบน BTC ($68,000) หรือ ETH ($2,500) ที่มีขนาด Lot เพียง 0.001 - 0.05 เหรียญ จะทำให้ `remainingHeld <= 0.5` เป็นจริงเสมอตั้งแต่การซื้อไม้แรก
+     - ส่งผลให้ทุกไม้ซื้อถูกตัดจบเป็นรอบใหม่แยกจากกันทันที และใน `finalizeRound()` รอบที่กำลังถือครองอยู่ถูกตีตราผิดเป็น `"CLOSED"` แทนที่จะเป็น `"HOLDING"`
+  2. **False Success in `sellAllUser()` on Order Rejection (`src/strategy/index.ts`)**:
+     - ใน `sellAllUser()` หากคำสั่งขายบน Exchange เกิด Rejected หรือ Unfilled ในโหมด Live ตัวแปร `soldQty` จะเป็น `0` แต่โค้ดเดิมคืนค่า `soldQty: soldQty > 0 ? soldQty : prevHeld` พร้อม `success: true` ทำให้แดชบอร์ดเข้าใจผิดว่าขายสำเร็จ
+  3. **Missing IOC Bounce Exit in Two-Stage Cut Loss (`src/strategy/order-executor.ts`)**:
+     - ในโหมด `IOC_BRACKET` ไม่มีคำสั่งตั้งรอ (Resting order) เมื่อเกิด Stage 1 Cut Loss (ลดพอร์ต 50%) และราคาดีดตัวกลับมาชน Channel Floor (`currentBestBid >= lowerBound`) ระบบไม่มีการดักยิงขาย IOC 50% ที่เหลือออกตามแผน Bounce Exit
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.32`)**:
+  1. **ปรับปรุง Trade Rounds ด้วยมูลค่า Quote Value และสถานะการขาย (`src/trade-rounds.ts`)**:
+     - เปลี่ยนจากการตรวจจำนวนเหรียญแข็ง `remainingHeld <= 0.5` เป็นการตรวจมูลค่าเงินจริง `remainingQuote = remainingHeld * price < 1.0` หรือสัดส่วนขาย `sellQty >= buyQty * 0.98` หรือ `remainingHeld <= 1e-6`
+     - กำหนดให้การเริ่มรอบใหม่ระหว่างฝั่งซื้อต้องมี `sellCount > 0` เท่านั้น ป้องกันไม่ให้การสะสมหลายไม้ (DCA Accumulation) ถูกตัดจบรอบก่อนเวลาอันควร
+     - ใน `finalizeRound()`: กำหนดสถานะ `"CLOSED"` เมื่อ `isInventoryFlat` เป็นจริง และระบุ `"HOLDING"` ตราบใดที่ยังถือครองเหรียญอยู่
+  2. **ป้องกันรายงานผลสำเร็จเท็จใน `sellAllUser()` (`src/strategy/index.ts`)**:
+     - หาก `soldQty <= 0` ในโหมด Live ให้คืนค่า `success: false` พร้อมระบุ Error ชัดเจนว่าคำสั่งขายไม่ถูก Fill บนกระดาน
+  3. **เพิ่ม IOC Bounce Exit ใน `executeIocBracketGrid()` (`src/strategy/order-executor.ts`)**:
+     - ดักจับเงื่อนไข `cutLossStage1Executed && currentBestBid >= lowerBound` แล้วยิงคำสั่ง `sellTrancheIOC(held, currentBestBid, "Cut Loss Bounce Exit (50%)", lowerBound, true)` ทันที และรีเซ็ต `cutLossStage1Executed = false` หลังขายสำเร็จ
+  4. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.32` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.6`) และ `GEMINI.md`
+
 
 
