@@ -2906,6 +2906,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.42` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.17`) และ `GEMINI.md`
 
+---
+
+### 76. Budget-Capped Inventory Reconciliation, Micro-HL Dump Recovery & Real-Time CEX Locked Balances (`v0.2.43`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Uncapped Inventory Adoption Beyond `maxInventoryQuote` (`src/strategy/index.ts:1495`)**:
+     - ใน `reconcileInventory()` เมื่อยอดเหรียญในกระเป๋ามากกว่า Lots ในระบบ โค้ดเดิมจะ Adopt ยอดส่วนเกินทั้งหมดเข้าสู่ `this.lots` โดยไม่มีการจำกัดเพดานงบประมาณ
+     - หากผู้ใช้มีเหรียญ HODL หรือเหรียญอื่นคงค้างอยู่ในกระเป๋า (เช่น 5 ETH ในกระเป๋า Binance แต่อนุมัติงบเทรดแค่ $100) ระบบจะฮุบเอา 5 ETH ทั้งหมดเข้ามาเป็น Lots ส่งผลให้สัดส่วนพอร์ตเกิน 100% บอทหยุดเข้าซื้อถาวร และพยายามตั้งคำสั่งขายเหรียญส่วนตัวของผู้ใช้
+     - นอกจากนี้ หากราคาอยู่ต่ำกว่า Floor หรือบอทอยู่ในสถานะ Pause/Downtrend Drop Pause ระบบกลับยังยอม Adopt เหรียญเข้ามา ทำให้ถูกสั่ง Cut Loss เทขายทิ้งทันทีในรอบถัดไปเป็นลูปซ้ำซาก
+  2. **Fast 2-Bar Micro-HL Blocked Below Channel Floor (`src/market-structure/dow-engine.ts:448, 454, 456`)**:
+     - ในฟังก์ชัน `checkForHigherLow` ส่วนที่ 3 (Fast 2-Bar Structural Micro-HL) โค้ดเดิมบังคับเงื่อนไข `lastClosed.close >= referenceFloor * 0.998`, `c.close >= referenceFloor * 0.998`, และ `currentPrice >= referenceFloor * 0.998`
+     - ในเมื่อ `referenceFloor` คือราคาขอบล่างของกรอบก่อนเกิดการทุบ การบังคับให้ราคาต้องกลับขึ้นไปแตะ Floor เดิม ทำให้ตรรกะ 2-Bar Micro-HL กลายเป็น Dead Code ไม่สามารถทำงานที่ก้นเหวใต้ Floor ได้เลย
+  3. **WebSocket Account Update Omits Locked & Total Balances on Binance CEX (`src/strategy/index.ts:490-496`)**:
+     - เมื่อ Binance ส่งอีเวนต์ `outboundAccountPosition` ฟังก์ชัน `handleWsAccountUpdate` อัปเดตเฉพาะ `this.walletBaseBalance = b.free` แต่ไม่ได้อัปเดต `walletBaseLocked`, `walletBaseTotal`, `walletQuoteLocked`, และ `walletQuoteTotal` ส่งผลให้มูลค่าพอร์ตโดยรวมบนแดชบอร์ดและ Telemetry ค้าง ไม่อัปเดตตามสถานะ Free/Locked ล่าสุด
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.43`)**:
+  1. **Budget-Capped Inventory Adoption & Breakdown Guard**:
+     - ใน `reconcileInventory()`: จำกัดเพดานการ Adopt ไม่ให้เกินงบ `maxBudgetBase = maxInventoryQuote / refPrice` ป้องกันไม่ให้บอทแตะต้องเหรียญ HODL นอกงบประมาณของผู้ใช้
+     - เพิ่ม Guard ระงับการ Adopt เด็ดขาดหากบอทกำลัง Pause (`isPaused`), รอตั้งฐานขาลง (`isDowntrendDropPaused`), หรือราคาอยู่ต่ำกว่าขอบล่าง (`refPrice < lowerBound`) ป้องกันลูปดึงเหรียญมา Cut Loss ซ้ำซาก
+  2. **Pure Trough-Relative 2-Bar Micro-HL Recovery**:
+     - ใน `src/market-structure/dow-engine.ts`: ปลดเงื่อนไข `referenceFloor * 0.998` ใน Section 3 ออก เพื่อให้การตรวจจับ Micro-HL อ้างอิงการยกฐานและเบรกแท่งเทียนกลับตัวเหนือจุดต่ำสุดของการทุบ (`troughLow`) อย่างแท้จริง ตรวจจับการกลับตัวที่ก้นเหวใต้ Floor ได้อย่างแม่นยำ
+  3. **Real-time CEX Free, Locked & Total Balances Sync**:
+     - ใน `handleWsAccountUpdate`: อัปเดต `walletBaseLocked`, `walletBaseTotal`, `walletQuoteLocked`, และ `walletQuoteTotal` จาก WebSocket Stream แบบเรียลไทม์ ทำให้มูลค่าพอร์ตโฟลิโอถูกต้องสม่ำเสมอ
+  4. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.43` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.18`) และ `GEMINI.md`
+
 
 
 

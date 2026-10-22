@@ -444,16 +444,14 @@ export class DowEngine {
             const nextBarConfirmed =
               i < closedCandles.length - 1 &&
               lastClosed.close > lastClosed.open &&
-              lastClosed.close >= c.high &&
-              lastClosed.close >= referenceFloor * 0.998;
+              lastClosed.close >= c.high;
 
             const selfReversalConfirmed =
               i >= troughIdx + 2 &&
               c.close > c.open &&
-              c.close >= maxBounceHigh &&
-              c.close >= referenceFloor * 0.998;
+              c.close >= maxBounceHigh;
 
-            const isLiveHolding = !currentPrice || (currentPrice >= barLow && currentPrice >= referenceFloor * 0.998);
+            const isLiveHolding = !currentPrice || currentPrice >= barLow;
 
             if ((nextBarConfirmed || selfReversalConfirmed) && isLiveHolding) {
               const microHl: SwingPoint = {

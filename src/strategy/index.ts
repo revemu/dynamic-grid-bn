@@ -488,10 +488,14 @@ export class DynamicGrid implements IStrategyHost {
     for (const b of update.balances) {
       if (b.asset.toUpperCase() === this.baseAsset.toUpperCase()) {
         this.walletBaseBalance = b.free;
+        this.walletBaseLocked = b.locked;
+        this.walletBaseTotal = b.free + b.locked;
         this.lastObservedBaseBalance = b.free;
         updated = true;
       } else if (b.asset.toUpperCase() === this.quoteAsset.toUpperCase()) {
         this.walletQuoteBalance = b.free;
+        this.walletQuoteLocked = b.locked;
+        this.walletQuoteTotal = b.free + b.locked;
         this.lastObservedQuoteBalance = b.free;
         updated = true;
       }
@@ -1490,13 +1494,27 @@ export class DynamicGrid implements IStrategyHost {
         }
       } else if (maxAllowedTradingBase > memoryHeld + dustThreshold) {
         // 2. Adopt Unallocated Trading Inventory: If physical trading capacity exceeds memory lots, adopt difference into lots
-        // SAFETY GUARD: NEVER adopt unallocated inventory when price is below floor / cut-loss zone or waiting for Higher Low!
-        // This prevents re-adopting wallet balance and triggering repetitive 30s cut-loss dump loops.
-        if (this.waitingForHigherLow) {
-          // Skip adopting during breakdown recovery to protect remaining wallet assets
+        // SAFETY GUARD: NEVER adopt unallocated inventory when paused, during downtrend pause, or when below floor!
+        // This prevents re-adopting wallet balance and triggering repetitive cut-loss dump loops.
+        if (
+          this.isPaused ||
+          this.waitingForHigherLow ||
+          this.isDowntrendDropPaused ||
+          (this.lastRefPrice && this.lastEvaluatedFloor && this.lastRefPrice < this.lastEvaluatedFloor)
+        ) {
+          // Skip adopting during breakdown recovery, downtrend pause, or when below floor to protect remaining wallet assets
           return;
         }
-        const rawUnallocated = maxAllowedTradingBase - memoryHeld;
+
+        const refP = this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : (this.lastBestBid || 0));
+        const maxBudgetBase = (this.cfg.maxInventoryQuote > 0 && refP > 0)
+          ? (this.cfg.maxInventoryQuote / refP)
+          : Infinity;
+        const targetAdoptCap = Math.min(maxAllowedTradingBase, maxBudgetBase);
+        const rawUnallocated = targetAdoptCap - memoryHeld;
+        if (rawUnallocated <= dustThreshold) {
+          return;
+        }
         const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || dustThreshold, this.qtyPrecision);
         if (unallocatedQty >= this.minQty) {
           const recentOrders = this.db.getOrders(50);
@@ -1516,7 +1534,7 @@ export class DynamicGrid implements IStrategyHost {
             return;
           }
           this.log(
-            `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} ${this.baseAsset} > memory ${memoryHeld.toFixed(4)} ${this.baseAsset}). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
+            `📥 [INVENTORY RECONCILE] Detected unallocated trading inventory in wallet (${unallocatedQty.toFixed(4)} ${this.baseAsset} > memory ${memoryHeld.toFixed(4)} ${this.baseAsset}, Budget Cap: ${maxBudgetBase === Infinity ? "None" : maxBudgetBase.toFixed(4)}). Adopting into lots at $${adoptPrice.toFixed(6)} to enable full grid turnover / take-profit!`,
           );
           this.lots.push({
             price: adoptPrice,
