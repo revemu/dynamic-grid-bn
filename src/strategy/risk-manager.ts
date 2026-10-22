@@ -510,6 +510,7 @@ export class RiskManager {
       } else if (
         isChannelReady &&
         this.host.breakdownFloorPrice !== undefined &&
+        (this.host.breakdownLowPrice !== undefined ? this.host.breakdownLowPrice < this.host.breakdownFloorPrice * 0.9995 : false) &&
         lowerBound >= this.host.breakdownFloorPrice * 0.998 &&
         refPrice >= this.host.breakdownFloorPrice * 1.002 &&
         (confirmedLastClosed && confirmedLastClosed.close >= this.host.breakdownFloorPrice)

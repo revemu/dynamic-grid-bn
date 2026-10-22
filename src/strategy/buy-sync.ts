@@ -309,7 +309,16 @@ export class BuyOrderSynchronizer {
 
     // ── Staged Maker Buy Window Guard (Anti-Waterfall) ──────────────────
     const maxActiveBuys = Math.max(1, Number(this.host.cfg.maxActiveMakerBuys ?? 2));
-    const sortedEligibleByPriceDesc = [...eligibleBuyIndices].sort((a, b) => {
+    // For resting maker buys: only levels that can actually be placed (at or below market price)
+    // or levels that already hold an open resting buy order should be considered for the active maker buy window.
+    const eligiblePlacableBuyIndices = eligibleBuyIndices.filter((idx) => {
+      const lvl = effectiveBuyLevels[idx];
+      if (!lvl) return false;
+      const hasOpenBuy = openBuys.some((o) => o.levelDesc === effectiveLevelNames[idx] || Math.abs(o.price - lvl) / lvl <= 0.001);
+      return hasOpenBuy || lvl <= maxAllowedBuyPrice;
+    });
+
+    const sortedEligibleByPriceDesc = [...eligiblePlacableBuyIndices].sort((a, b) => {
       const pA = effectiveBuyLevels[a] ?? 0;
       const pB = effectiveBuyLevels[b] ?? 0;
       return pB - pA;

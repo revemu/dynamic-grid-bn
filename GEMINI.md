@@ -3020,6 +3020,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.47` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.22`) และ `GEMINI.md`
 
+---
+
+### 81. Strict Higher Low (HL) Recovery Enforcement & Staged Maker Buy Window Deadlock Fix (`v0.2.48`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **ช่องโหว่ False Floor Reclaim ใน `risk-manager.ts`**:
+     - เมื่อเกิดคลื่นขาลง (LH + LL เช่น LL $81,800.00) ภายในกรอบราคา โค้ดใน `index.ts` ไปตั้งค่า `breakdownFloorPrice = lowerBound` ($81,800)
+     - ในขณะที่ราคาตลาดปัจจุบัน ($82,229) อยู่เหนือ Floor อยู่แล้วตั้งแต่แรก ตรรกะ `CHANNEL FLOOR RECLAIMED` ใน `risk-manager.ts` จึงเข้าใจผิดว่าราคากลับมายืนเหนือ Floor สำเร็จแล้วและสั่งปลดล็อค `waitingForHigherLow = false` ทันทีในมิลลิวินาทีเดียวกัน
+     - ส่งผลให้บอทไม่ยอมรอ Higher Low (HL) หรือ Trendline Breakout ทั้งๆ ที่ตลาดเพิ่งทุบทำ Lower Low และยังไม่มีการยืนยันการกลับตัวใดๆ
+  2. **บั๊ก Deadlock ใน Staged Maker Buy Window (`buy-sync.ts`)**:
+     - โค้ด Staged Window (`maxActiveMakerBuys: 2`) ไปเลือก 2 ระดับราคาที่สูงที่สุดในกริดเสมอ (Level 1 $82,913 และ Level 2 $82,648)
+     - แต่ราคาตลาดปัจจุบันอยู่ที่ $82,229 ทำให้คำสั่งที่ราคาสูงกว่าตลาดไม่สามารถวางได้ (ติดเงื่อนไข Maker Post-Only) และคำสั่ง Level 4 ($82,118) / Level 5 ($81,853) ที่อยู่ใต้ราคากลับถูกตัดทิ้ง ทำให้บอทไม่วางออเดอร์เลยสักชั้น (0 Orders)
+  3. **ข้อความสรุปสถานะสับสน (`index.ts`)**:
+     - เมื่อ `openBuys === 0` โค้ดสรุปสถานะเข้าใจผิดว่าซื้อครบเป้าแล้ว จึงแสดง `🎯 Level Target Met | Holding $0.0` ทั้งๆ ที่ถือเงินสด 100%
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.48`)**:
+  1. **Strict Higher Low Enforcement & Loophole Closure**:
+     - ใน `src/strategy/index.ts`: เมื่อเกิดคลื่นขาลงภายในกรอบ (`!isBelowFloor`) จะตั้ง `breakdownFloorPrice = undefined` เพื่อไม่ให้ไปทับซ้อนกับการหลุด Floor จริง
+     - ใน `src/strategy/risk-manager.ts`: เพิ่มเงื่อนไขบังคับว่า "Channel Floor Reclaimed" จะทำงานได้ก็ต่อเมื่อราคาเคยทุบหลุดต่ำกว่า Floor นั้นจริง (`breakdownLowPrice < breakdownFloorPrice * 0.9995`)
+     - ตราบใดที่ยังไม่มี HL (`!isHlAfterLl`), ไม่เบรค Trendline (`!tlBreakout`) และยังไม่ปิดเหนือ Buy Level 2 (`!isReclaimedBuy2`): บอทจะล็อกอยู่ในสถานะ `waitingForHigherLow = true` และระงับการซื้อ 100% พร้อมขึ้นเตือนชัดเจนว่ารอ HL เหนือจุดต่ำสุดของการทุบ
+  2. **Staged Maker Buy Window Deadlock Fix**:
+     - ใน `src/strategy/buy-sync.ts`: กรองเฉพาะชั้นราคาที่สามารถวางคำสั่งซื้อ Maker ได้จริง (`lvl <= maxAllowedBuyPrice` หรือมีออเดอร์เปิดค้างอยู่) ก่อนจะดึงเข้าโควตา `maxActiveMakerBuys` ทำให้เมื่อหลุดพ้นสถานะรอตั้งฐาน บอทจะวางคำสั่งซื้อที่ Buy Level 4 ($82,118) และ Level 5 ($81,853) ได้อย่างแม่นยำ
+  3. **Context-Aware Empty Holding Message**:
+     - ใน `src/strategy/index.ts`: หากพอร์ตถือ $0.0 จะแสดง `⏳ Waiting Buy Dip` หรือ `🛡️ Paused: Waiting Higher Low` อย่างตรงไปตรงมา
+  4. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.48` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.23`) และ `GEMINI.md`
+
+
 
 
 

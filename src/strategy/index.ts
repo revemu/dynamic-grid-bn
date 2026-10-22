@@ -2845,44 +2845,47 @@ export class DynamicGrid implements IStrategyHost {
     // has NOT already been resolved, enter the unified waitingForHigherLow state.
     if (Boolean(dow?.isDowntrendDropActive) && !this.waitingForHigherLow && isChannelReady) {
       const activeDumpLow = dow?.downtrendDropLow ?? lowerBound;
-      const isNewUnresolvedDrop =
-        this.lastResolvedDumpLowPrice === undefined ||
-        activeDumpLow < this.lastResolvedDumpLowPrice * 0.9985 ||
-        isBelowFloor;
+      const lastLl = dow?.waveCycle?.lastLl;
+      const lastHl = dow?.waveCycle?.lastHl;
+      const dumpLowTime =
+        Math.max(
+          lastLl?.time ?? 0,
+          dow?.candidateValley && dow.candidateValley.price <= activeDumpLow * 1.0005 ? dow.candidateValley.time : 0,
+        ) || (Math.floor(Date.now() / 1000) - 3600);
+
+      const isHlAfterLl = Boolean(
+        lastHl &&
+        lastLl &&
+        lastHl.index > lastLl.index &&
+        lastHl.time >= dumpLowTime &&
+        lastHl.price > activeDumpLow * 1.0005,
+      );
+      const tlBreakout = Boolean(
+        dow?.downtrendBreakoutConfirmed ||
+        (dow?.downtrendLine?.isBroken && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2),
+      );
+
+      const closedCandlesList = this.dowEngine?.getClosedCandles() ?? [];
+      const confirmedLastClosed = closedCandlesList.length > 0 ? closedCandlesList[closedCandlesList.length - 1] : undefined;
+      const isReclaimedBuy2 = Boolean(
+        confirmedLastClosed &&
+        confirmedLastClosed.close >= effectiveBuyLevel2Target * 0.9995 &&
+        refPrice >= effectiveBuyLevel2Target * 0.999,
+      );
+
+      const isNewUnresolvedDrop = !isHlAfterLl && !tlBreakout && !isReclaimedBuy2;
 
       if (isNewUnresolvedDrop) {
-        const lastLl = dow?.waveCycle?.lastLl;
-        const lastHl = dow?.waveCycle?.lastHl;
-        const dumpLowTime =
-          Math.max(
-            lastLl?.time ?? 0,
-            dow?.candidateValley && dow.candidateValley.price <= activeDumpLow * 1.0005 ? dow.candidateValley.time : 0,
-          ) || (Math.floor(Date.now() / 1000) - 3600);
-
-        const isHlAfterLl = Boolean(
-          lastHl &&
-          lastLl &&
-          lastHl.index > lastLl.index &&
-          lastHl.time >= dumpLowTime &&
-          lastHl.price > activeDumpLow * 1.0005,
+        this.waitingForHigherLow = true;
+        this.isFlatChannelShiftWaiting = false;
+        this.breakdownFloorPrice = isBelowFloor ? lowerBound : undefined;
+        this.breakdownBuyLevel2Price = effectiveBuyLevel2Target;
+        this.breakdownLowPrice = Math.min(refPrice, activeDumpLow);
+        this.breakdownTime = dumpLowTime;
+        this.log(
+          `🛡️ [UNIFIED DOWNTREND GUARD] Active bear wave / floor break detected (Low: $${this.breakdownLowPrice.toFixed(6)} | Floor: $${lowerBound.toFixed(6)}) — pausing buys until Higher Low, Micro-HL, or Buy Level 2 Reclaim ($${effectiveBuyLevel2Target.toFixed(6)})!`,
         );
-        const tlBreakout = Boolean(
-          dow?.downtrendBreakoutConfirmed ||
-          (dow?.downtrendLine?.isBroken && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2),
-        );
-
-        if (!isHlAfterLl && !tlBreakout) {
-          this.waitingForHigherLow = true;
-          this.isFlatChannelShiftWaiting = false;
-          this.breakdownFloorPrice = lowerBound;
-          this.breakdownBuyLevel2Price = effectiveBuyLevel2Target;
-          this.breakdownLowPrice = Math.min(refPrice, activeDumpLow);
-          this.breakdownTime = dumpLowTime;
-          this.log(
-            `🛡️ [UNIFIED DOWNTREND GUARD] Active bear wave / floor break detected (Low: $${this.breakdownLowPrice.toFixed(6)} | Floor: $${lowerBound.toFixed(6)}) — pausing buys until Higher Low, Micro-HL, or Buy Level 2 Reclaim ($${effectiveBuyLevel2Target.toFixed(6)})!`,
-          );
-          this.saveState();
-        }
+        this.saveState();
       }
     }
 
@@ -3660,12 +3663,15 @@ export class DynamicGrid implements IStrategyHost {
       } else {
         const buyLvlIdx = buyLevels.findIndex((lvl) => Math.abs(lvl - buyTrigger) <= ((this.tickSize || 0.0001) * 0.5));
         const buyLvlTag = buyLvlIdx >= 0 ? ` (Buy L${buyLvlIdx + 1})` : "";
+        const hasPosition = inventoryQuote > 1.0;
         botActionState = {
-          code: "BUY_ZONE_TARGET_MET",
-          title: openSells.length > 0
-            ? `🎯 Level Target Met • 💎 ${openSells.length} Sell Resting`
-            : "🎯 Level Target Met",
-          reason: `Holding $${inventoryQuote.toFixed(1)} (${activeLevelName})${openSells.length > 0 ? ` • ${tlSellOrder ? `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)}` : `Sell: $${openSells[0].price.toFixed(this.pricePrecision)}`}` : ""}`,
+          code: hasPosition ? "BUY_ZONE_TARGET_MET" : "WAITING_BUY_TRIGGER",
+          title: hasPosition
+            ? (openSells.length > 0 ? `🎯 Level Target Met • 💎 ${openSells.length} Sell Resting` : "🎯 Level Target Met")
+            : (openSells.length > 0 ? `⏳ Waiting Buy Dip • 💎 ${openSells.length} Sell Resting` : "⏳ Waiting Buy Dip"),
+          reason: hasPosition
+            ? `Holding $${inventoryQuote.toFixed(1)} (${activeLevelName})${openSells.length > 0 ? ` • ${tlSellOrder ? `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)}` : `Sell: $${openSells[0].price.toFixed(this.pricePrecision)}`}` : ""}`
+            : `Cash: $${(this.walletQuoteBalance || inventoryQuote).toFixed(1)} (0% Load) • Waiting for price dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag}`,
           nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • ${sellStatusPart}`,
           severity: "info",
         };
