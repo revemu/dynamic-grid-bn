@@ -97,7 +97,8 @@ export class RiskManager {
       if (uptrendKey) {
         this.host.lastTrendSupportBreakKey = uptrendKey;
       }
-      if (this.host.baseHeld() >= (this.host.minQty || 0.0001)) {
+      const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
+      if (this.host.baseHeld() >= dustThreshold) {
         const dexBid = bestBid ?? effectiveMid;
         this.host.log(
           `🚨 [TREND SUPPORT BREAK] Price ($${refPrice.toFixed(6)}) broke below Support Trendline ($${uptrendLine.currentLinePrice.toFixed(6)}) — Liquidating 100% (${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset}) to ${this.host.quoteAsset} to prevent holding crash knife!`,
@@ -302,7 +303,8 @@ export class RiskManager {
                     : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`));
 
           if (canDoStage1Split) {
-            const halfQty = roundToStep(heldNow * 0.50, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+            const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
+            const halfQty = roundToStep(heldNow * 0.50, effStepSize, this.host.qtyPrecision);
             this.host.log(
               `🛡️ CUT LOSS STAGE 1/2 (50% DE-RISK | ${triggerReason}): Selling 50% (${halfQty.toFixed(4)} ${this.host.baseAsset}) @ Bid $${dexBid.toFixed(6)} — holding remaining 50% with bounce limit sell @ Floor $${lowerBound.toFixed(6)} unless Buffer ($${cutLossBound.toFixed(6)}) breaks`,
             );
@@ -321,8 +323,9 @@ export class RiskManager {
               const remainingHeld = this.host.baseHeld();
               const bounceSellPrice = roundToTick(Math.max(lowerBound, refPrice * 1.002), this.host.tickSize || 0.0001);
               const bounceNotional = remainingHeld * bounceSellPrice;
-              if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && remainingHeld >= (this.host.minQty || 0.0001) && bounceNotional >= minNotionalForSplit) {
-                const bounceQty = roundToStep(remainingHeld, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+              const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
+              if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && remainingHeld >= dustThreshold && bounceNotional >= minNotionalForSplit) {
+                const bounceQty = roundToStep(remainingHeld, effStepSize, this.host.qtyPrecision);
                 await placeRestingOrder(
                   false,
                   bounceSellPrice,

@@ -356,6 +356,7 @@ export class BinanceUserDataFeed {
   constructor(
     private readonly client: {
       getCredentials?: () => { apiKey: string; apiSecret: string };
+      getTimeOffset?: () => number;
       createUserDataStream?: () => Promise<string>;
       keepAliveUserDataStream?: (key: string) => Promise<void>;
       closeUserDataStream?: (key: string) => Promise<void>;
@@ -408,8 +409,9 @@ export class BinanceUserDataFeed {
       this.reconnectDelayMs = 1_000;
       this.log(`Binance User Data Stream connected: ${url}`);
 
-      // Subscribe to user data stream using HMAC-SHA256 signature
-      const timestamp = Date.now();
+      // Subscribe to user data stream using HMAC-SHA256 signature (with time offset compensation)
+      const timeOffset = this.client.getTimeOffset?.() ?? 0;
+      const timestamp = Date.now() + timeOffset;
       const query = `apiKey=${creds.apiKey}&timestamp=${timestamp}`;
       const signature = crypto.createHmac("sha256", creds.apiSecret).update(query).digest("hex");
 

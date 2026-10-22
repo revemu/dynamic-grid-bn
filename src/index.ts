@@ -176,6 +176,7 @@ async function main(): Promise<void> {
             apiKey: config.binanceApiKey,
             apiSecret: config.binanceApiSecret,
           },
+          getTimeOffset: () => (exchange as any).getTimeOffset?.() ?? 0,
         },
         "wss://ws-api.binance.com:443/ws-api/v3",
         (msg) => log(`[userData] ${msg}`),

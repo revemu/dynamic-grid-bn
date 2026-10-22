@@ -109,12 +109,13 @@ export class SellOrderSynchronizer {
       }
 
       // If bounce exit order is missing but we still hold the remaining tranche, re-place it at Floor
-      if (!bounceExitOrder && this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && held >= (this.host.minQty || 0.0001)) {
+      const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
+      if (!bounceExitOrder && this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && held >= dustThreshold) {
         const bounceSellPrice = roundToTick(Math.max(lowerBound, refPrice * 1.002), this.host.tickSize || 0.0001);
         const bounceNotional = held * bounceSellPrice;
         const minNotionalForSplit = Math.max(this.host.minNotional || 5.0, 5.0);
         if (bounceNotional >= minNotionalForSplit) {
-          const bounceQty = roundToStep(held, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+          const bounceQty = roundToStep(held, effStepSize, this.host.qtyPrecision);
           await placeRestingOrder(
             false,
             bounceSellPrice,
@@ -272,7 +273,8 @@ export class SellOrderSynchronizer {
         const isBelowSellPrice = refPrice < effectiveTlSellPrice;
         if (isProfitOk && isBelowSellPrice && held >= this.host.minQty) {
           const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
-          const targetSellQty = roundToStep(held, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+          const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
+          const targetSellQty = roundToStep(held, effStepSize, this.host.qtyPrecision);
           const orderNotional = targetSellQty * effectiveTlSellPrice;
 
           if (targetSellQty >= this.host.minQty && orderNotional >= minOrderNotional) {
@@ -355,7 +357,7 @@ export class SellOrderSynchronizer {
           this.host.saveState();
         }
 
-        if (eligibleIndices.length === 0 && held >= (this.host.minQty || 0.0001)) {
+        if (eligibleIndices.length === 0 && held >= dustThreshold) {
           const tlSellName = resSellName;
           const frontRunRatio = isUsingRealCeil ? 0.0003 : 0.0008;
           const rawTargetSellPrice = effectiveResistancePrice * (1 - frontRunRatio);
@@ -363,7 +365,8 @@ export class SellOrderSynchronizer {
 
           if (isProfitOk && refPrice < effectiveTlSellPrice) {
             const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
-            const targetSellQty = roundToStep(held, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+            const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
+            const targetSellQty = roundToStep(held, effStepSize, this.host.qtyPrecision);
             const orderNotional = targetSellQty * effectiveTlSellPrice;
             if (targetSellQty >= this.host.minQty && orderNotional >= minOrderNotional) {
               let existingTlSell = this.host.openOrders.find((o) => !o.isBid && (
@@ -655,7 +658,7 @@ export class SellOrderSynchronizer {
       })
       .map(({ idx }) => idx);
 
-    if (eligibleSellIndices.length === 0 && held >= (this.host.minQty || 0.0001)) {
+    if (eligibleSellIndices.length === 0 && held >= dustThreshold) {
       for (let i = sellLevels.length - 1; i >= 0; i--) {
         if (enabledSells[i]) {
           eligibleSellIndices.push(i);

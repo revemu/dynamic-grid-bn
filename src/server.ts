@@ -244,7 +244,8 @@ export class DashboardServer {
     // Database: Trades History API
     if (pathname === "/api/db/trades") {
       const limit = parseInt(parsedUrl.searchParams.get("limit") || "5000", 10);
-      const trades = this.db.getTrades(limit);
+      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      const trades = this.db.getTrades(limit, symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(trades));
       return;
@@ -253,7 +254,8 @@ export class DashboardServer {
     // Database: Order Activity History API
     if (pathname === "/api/db/orders") {
       const limit = parseInt(parsedUrl.searchParams.get("limit") || "5000", 10);
-      const orders = this.db.getOrderActivity(limit);
+      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      const orders = this.db.getOrderActivity(limit, symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(orders));
       return;

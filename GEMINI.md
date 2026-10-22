@@ -2771,6 +2771,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.37` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.12`) และ `GEMINI.md`
 
+---
+
+### 71. Post-Fee Trend Support Break & Bounce Protection, Binance WS Time Synchronization & API Scoping (`v0.2.38`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Trendline Support Cut & Bounce Exits Blocked Post-Fee (`src/strategy/risk-manager.ts:100, 324` & `sell-sync.ts:111, 358, 658`)**:
+     - โค้ดเดิมใน `risk-manager.ts:100` ตรวจสอบ `if (this.host.baseHeld() >= (this.host.minQty || 0.0001))` เมื่อหลุด Support Trendline
+     - หากซื้อ 1.0 SOMI แล้วโดนหัก Fee เหลือ 0.999 SOMI เงื่อนไขนี้จะเป็นเท็จ ทำให้บอทไม่ยอมคัทลอสหนีตาย ปล่อยให้พอร์ตถือเหรียญดิ่งลงเหว
+     - เช่นเดียวกับการตั้งขาย Bounce Exit ที่ Floor สำหรับไม้ที่เหลือ 50% และการ Fallback ไปเกาะยอดขายบนสุดถูกบล็อกด้วย `held >= this.host.minQty`
+  2. **Binance WebSocket API User Data Stream Timestamp Rejection (`src/exchange/binance/feed.ts:412` & `src/index.ts:173`)**:
+     - ใน `BinanceUserDataFeed` การคำนวณ HMAC-SHA256 signature ใช้ `Date.now()` โดยไม่บวก `timeOffset`
+     - หากเวลาเครื่องเบี่ยงเบนจาก Binance REST Server เกิน 1,000ms คำสั่ง Subscribe จะถูกปฏิเสธด้วย Error `-1021: Timestamp outside of recvWindow` ทำให้หลุดการเชื่อมต่อ Real-time
+  3. **StepSize Fallback `0.0001` Rounding Down High-Valued Asset Quantities to Zero (`src/strategy/order-executor.ts` & `src/strategy/risk-manager.ts`)**:
+     - มีมากกว่า 10 จุดที่ใช้ `this.host.stepSize || 0.0001` ซึ่งสำหรับ Bitcoin (`stepSize = 0.00001` BTC) การส่งออเดอร์ขนาดเล็กจะถูกปัดเศษลงเหลือ 0 BTC ทันที
+  4. **API Endpoints `/api/db/trades` & `/api/db/orders` Not Filtering by `symbol` (`src/server.ts:245-260` & `src/db.ts:1535`)**:
+     - `getOrderActivity(limit)` ใน `db.ts` และ Endpoints ใน `server.ts` ไม่รองรับ Query Parameter `symbol` ทำให้ได้ข้อมูลปนกันทุกคู่เหรียญ
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.38`)**:
+  1. **คุ้มครองการ Liquidate และ Bounce Exit ด้วย `dustThreshold`**:
+     - ปรับให้เช็ค `held >= (this.host.minQty ? this.host.minQty * 0.5 : 1e-6)` ในทุกจุดของการคัทลอสและกระจายไม้ขาย
+  2. **ซิงค์ Time Offset ให้กับ Binance WebSocket API**:
+     - ส่ง `getTimeOffset: () => (exchange as any).getTimeOffset?.() ?? 0` เข้า `BinanceUserDataFeed` และใช้ `const timestamp = Date.now() + timeOffset;`
+  3. **คำนวณ StepSize Fallback ตามความแม่นยำจริงของเหรียญ**:
+     - ใช้ `getStepSize(): number` ซึ่ง Fallback เป็น `this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6` ป้องกันการปัดเศษออเดอร์ BTC เป็น 0
+  4. **รองรับ `symbol` Filter ใน `/api/db/trades`, `/api/db/orders` และ `getOrderActivity`**:
+     - กรองประวัติออเดอร์และกิจกรรมการเทรดให้ตรงตามคู่เหรียญที่ระบุ
+  5. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.38` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.13`) และ `GEMINI.md`
+
+
 
 
 

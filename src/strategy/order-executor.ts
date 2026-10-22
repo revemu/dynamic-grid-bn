@@ -50,6 +50,10 @@ export class OrderExecutor {
     return -1;
   }
 
+  private getStepSize(): number {
+    return this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
+  }
+
   /**
    * Asynchronously fetch transaction receipt to track gas fee spent
    */
@@ -290,7 +294,7 @@ export class OrderExecutor {
       }
     }
 
-    qty = roundToStep(qty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+    qty = roundToStep(qty, this.getStepSize(), this.host.qtyPrecision);
     if (qty < this.host.minQty) {
       return;
     }
@@ -536,7 +540,7 @@ export class OrderExecutor {
     }
 
     const rawNetQty = Math.max(0, qty - compBase - spotTradingFeeBase);
-    const netQty = roundToStep(rawNetQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+    const netQty = roundToStep(rawNetQty, this.getStepSize(), this.host.qtyPrecision);
     this.host.lots.push({ price, qty: netQty, time: now });
     this.host.lastBuyFillTime = now;
     this.host.lastBuyFillPrice = price;
@@ -731,7 +735,7 @@ export class OrderExecutor {
     if (held < this.host.minQty || qty < this.host.minQty) {
       return false;
     }
-    const executeQty = roundToStep(Math.min(held, qty), this.host.stepSize || 0.0001, this.host.qtyPrecision);
+    const executeQty = roundToStep(Math.min(held, qty), this.getStepSize(), this.host.qtyPrecision);
     if (executeQty < this.host.minQty) {
       return false;
     }
@@ -809,7 +813,7 @@ export class OrderExecutor {
       return false;
     }
 
-    const finalQty = roundToStep(Math.min(executeQty, availableBase), this.host.stepSize || 0.0001, this.host.qtyPrecision);
+    const finalQty = roundToStep(Math.min(executeQty, availableBase), this.getStepSize(), this.host.qtyPrecision);
     if (finalQty < this.host.minQty) return false;
 
     try {
@@ -937,7 +941,7 @@ export class OrderExecutor {
 
     if (this.host.cfg.dryRun) {
       const rawBuyQty = notionalQuote / effectivePrice;
-      const buyQty = roundToStep(rawBuyQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+      const buyQty = roundToStep(rawBuyQty, this.getStepSize(), this.host.qtyPrecision);
       if (buyQty < this.host.minQty) return false;
       const slippagePctVal = this.host.cfg.iocSlippagePct ?? 0.2;
       const dryLimitPrice = roundToTick(Math.min(targetPrice, effectivePrice * (1 + slippagePctVal / 100)), this.host.tickSize || 0.0001);
@@ -961,7 +965,7 @@ export class OrderExecutor {
 
     const availableBudgetQuote = Math.min(notionalQuote, this.host.walletQuoteBalance);
     const rawFinalQty = availableBudgetQuote / effectivePrice;
-    const finalQty = roundToStep(rawFinalQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+    const finalQty = roundToStep(rawFinalQty, this.getStepSize(), this.host.qtyPrecision);
     if (finalQty < this.host.minQty) {
       this.host.log(`⚠️ [IOC BUY] Insufficient ${this.host.quoteAsset} balance ($${this.host.walletQuoteBalance.toFixed(2)} < $${notionalQuote.toFixed(2)})`);
       return false;
@@ -1151,7 +1155,7 @@ export class OrderExecutor {
     }
 
     const rawExecuteQty = Math.min(held, availableBase > 0 ? availableBase : held);
-    const executeQty = roundToStep(rawExecuteQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+    const executeQty = roundToStep(rawExecuteQty, this.getStepSize(), this.host.qtyPrecision);
     const minNotional = Math.max(this.host.minNotional || 5.0, 5.0);
     const orderNotional = executeQty * price;
 
@@ -1444,7 +1448,7 @@ export class OrderExecutor {
 
           if (Date.now() - lastBuyTs > buyCooldownMs) {
             const rawDesiredQty = toSpendQuote / currentBestAsk;
-            const desiredQty = roundToStep(rawDesiredQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+            const desiredQty = roundToStep(rawDesiredQty, this.getStepSize(), this.host.qtyPrecision);
 
             if (desiredQty >= this.host.minQty) {
               this.host.orderCooldowns.set(buyCooldownKey, Date.now());
@@ -1530,7 +1534,7 @@ export class OrderExecutor {
 
             const rawDesiredQty = isFinalTranche
               ? held
-              : roundToStep(held / Math.max(1, remainingUnsold.length), this.host.stepSize || 0.0001, this.host.qtyPrecision);
+              : roundToStep(held / Math.max(1, remainingUnsold.length), this.getStepSize(), this.host.qtyPrecision);
             const desiredQty = Math.min(held, rawDesiredQty);
 
             if (desiredQty >= this.host.minQty) {

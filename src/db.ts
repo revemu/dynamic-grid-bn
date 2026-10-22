@@ -1532,8 +1532,12 @@ export class BotDatabase {
     return list.slice(0, limit);
   }
 
-  public getOrderActivity(limit = 5000): UnifiedOrderRecord[] {
-    return this.data.orders.slice(0, limit);
+  public getOrderActivity(limit = 5000, symbol?: string): UnifiedOrderRecord[] {
+    let list = this.data.orders;
+    if (symbol) {
+      list = list.filter((o) => this.matchesSymbol(o, symbol));
+    }
+    return list.slice(0, limit);
   }
 
   public getTradeRounds(symbol?: string): TradeRoundsResult {
