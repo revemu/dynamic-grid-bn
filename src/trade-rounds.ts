@@ -119,6 +119,11 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     : undefined;
 
   const inferOrderBase = (o: UnifiedOrderRecord): string | undefined => {
+    if (o.baseAsset) return o.baseAsset.toUpperCase();
+    if (o.symbol) {
+      const symBase = o.symbol.toUpperCase().split(/[:\/\-_]/)[0]?.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "");
+      if (symBase) return symBase;
+    }
     const p = Number(o.fillPrice || o.price || 0);
     const isSomnia = Boolean(
       o.explorerUrl?.includes("somnia") ||
@@ -129,7 +134,6 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     if (p > 50_000) return "WBTC";
     if (p > 500 && p <= 50_000) return (isSomnia ? "WETH" : (o.symbol?.includes("ETHFDUSD") || o.baseAsset === "ETH" ? "ETH" : "WETH"));
     if (p > 0.01 && p < 10.0) return "SOMI";
-    if (o.baseAsset) return o.baseAsset.toUpperCase();
     return undefined;
   };
 

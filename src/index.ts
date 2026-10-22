@@ -389,7 +389,7 @@ async function main(): Promise<void> {
         localTrendEngine.setMaxCandles(s.maxCandleCount);
       }
 
-      // If initialCandleCount changed or timeframe changed, re-fetch candles
+      // If initialCandleCount changed or timeframe changed, re-fetch candles & restart WebSocket kline feeds
       if (
         (s.initialCandleCount && s.initialCandleCount !== prevInitial) ||
         (s.dowTimeframe && s.dowTimeframe !== prevTf)
@@ -408,6 +408,57 @@ async function main(): Promise<void> {
           );
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           log(`🔄 Reloaded ${fetchLimit} candles (${tf}) following settings update`);
+
+          // If timeframe changed, restart WebSocket Kline streams on the new interval
+          if (s.dowTimeframe && s.dowTimeframe !== prevTf) {
+            const symLower = candleSym.toLowerCase();
+            macroFeed?.stop();
+            tradingFeed?.stop();
+
+            macroFeed = new BinanceAtrFeed(
+              {
+                symbol: symLower,
+                interval: tf,
+                wsBase: config.binanceWsBase,
+                staleMs: config.binanceStaleMs,
+                initialCandleCount: fetchLimit,
+              },
+              config.atrLookback,
+              (msg) => log(`[macro ${tf}] ${msg}`),
+            );
+
+            tradingFeed = new BinanceAtrFeed(
+              {
+                symbol: symLower,
+                interval: tf,
+                wsBase: config.binanceWsBase,
+                staleMs: config.binanceStaleMs,
+                initialCandleCount: fetchLimit,
+              },
+              config.atrLookback,
+              (msg) => log(`[trading ${tf}] ${msg}`),
+            );
+
+            tradingFeed.onCandle((candle, isClosed) => {
+              if (isClosed) {
+                localTrendEngine.addCandle(candle);
+              }
+            });
+
+            macroFeed.onCandle((candle, isClosed) => {
+              macroDowEngine.addCandle(candle);
+              dashboard.addCandle(candle, isClosed);
+              if (isClosed) {
+                grid.onCandleClosed(candle);
+                wakeSleep?.();
+              }
+            });
+
+            macroFeed.start();
+            tradingFeed.start();
+            grid.atrSource = tradingFeed;
+            log(`🔄 Re-subscribed WebSocket Kline streams to new timeframe: ${tf}`);
+          }
         } catch (err) {
           log(`⚠️ Failed to reload candles on settings update: ${(err as Error).message}`);
         }

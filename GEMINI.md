@@ -2517,4 +2517,24 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.28` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.2`) และ `GEMINI.md`
 
+---
+
+### 62. Dynamic Timeframe Stream Resubscription & Trade Rounds Order Base Prioritization (`v0.2.29`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Dynamic Timeframe Stream Resubscription Bug (`src/index.ts`)**:
+     - เมื่อผู้ใช้เปลี่ยน `dowTimeframe` ใน Settings Modal บนแดชบอร์ด (เช่น จาก `15m` เป็น `1h` หรือกลับกัน) ระบบสั่งโหลดแท่งเทียนเริ่มต้นชุดใหม่จาก REST API ได้สำเร็จ แต่ไม่ได้ Re-subscribe หรือสร้าง `macroFeed` และ `tradingFeed` ใหม่บน WebSocket
+     - ส่งผลให้ WebSocket ยังคงสตรีมแท่งเทียนของ Timeframe เดิม (เช่น `15m`) เข้ามาผสมกับแท่งเทียน `1h` ใน `macroDowEngine` ทำให้ประวัติแท่งเทียนในหน่วยความจำมีขนาดเวลาปะปนกัน จนการคำนวณสวิงยอด/เหวและกรอบราคาผิดเพี้ยน
+  2. **Trade Rounds Heuristic Base Overriding Explicit Metadata (`src/trade-rounds.ts`)**:
+     - ฟังก์ชัน `inferOrderBase(o)` ที่จัดกลุ่มรอบการเทรด (Trade Rounds) วางเงื่อนไขเดาเหรียญจากระดับราคา (`p > 50_000 => WBTC`, `p > 500 => WETH`, `p < 10 => SOMI`) ไว้ก่อนการอ่าน Property `o.baseAsset` และ `o.symbol`
+     - ส่งผลให้ออเดอร์ของเหรียญ `BTCUSDT` บน Binance ถูกเดากลับเป็น `"WBTC"` (ของ DreamDEX) และเหรียญอื่นๆ ที่ราคาอยู่ในช่วงดังกล่าวเสี่ยงถูกจัดกลุ่มผิดพลาด
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.29`)**:
+  1. **Re-subscribe WebSocket Streams เมื่อ Timeframe เปลี่ยนแปลง (`src/index.ts`)**:
+     - ตรวจสอบ `if (s.dowTimeframe && s.dowTimeframe !== prevTf)`: สั่งหยุดการทำงานของ Feed เดิม (`macroFeed?.stop()`, `tradingFeed?.stop()`), สร้าง Instance `BinanceAtrFeed` ใหม่บน interval ล่าสุด, ผูก Event Listeners ครบถ้วน, เริ่มการสตรีม และอัปเดต `grid.atrSource = tradingFeed` ทันที
+  2. **จัดลำดับความสำคัญของ Metadata ใน Trade Rounds (`src/trade-rounds.ts`)**:
+     - ปรับฟังก์ชัน `inferOrderBase(o)` ให้อ่านจาก `o.baseAsset.toUpperCase()` และตัดชื่อ Base จาก `o.symbol` เป็นอันดับแรกก่อน หากไม่มีข้อมูลทั้งคู่จึงค่อยใช้ระดับราคามาช่วยประเมิน
+  3. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.29` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.3`) และ `GEMINI.md`
+
+
 
