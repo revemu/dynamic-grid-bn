@@ -109,7 +109,7 @@ export class LotTracker {
       this.host.lockedChannel = undefined;
       this.host.iocBracketSellCycle = undefined;
       this.host.soldSellIndices.clear();
-      this.host.db.saveLockedChannel(this.host.symbol, undefined);
+      this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined);
     }
 
     return { closedQty: qty - remaining, roundPnl };
@@ -122,7 +122,7 @@ export class LotTracker {
     if (maxAllowedQty <= 1e-6) {
       this.host.lots = [];
       this.host.lockedChannel = undefined;
-      this.host.db.saveLockedChannel(this.host.symbol, undefined);
+      this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined);
       return;
     }
     let accumulated = 0;

@@ -271,7 +271,7 @@ export class SellOrderSynchronizer {
         const isBelowSellPrice = refPrice < effectiveTlSellPrice;
         if (isProfitOk && isBelowSellPrice && held >= this.host.minQty) {
           const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
-          const targetSellQty = roundToStep(held, this.host.stepSize || 0.0001, 4);
+          const targetSellQty = roundToStep(held, this.host.stepSize || 0.0001, this.host.qtyPrecision);
           const orderNotional = targetSellQty * effectiveTlSellPrice;
 
           if (targetSellQty >= this.host.minQty && orderNotional >= minOrderNotional) {
@@ -362,7 +362,7 @@ export class SellOrderSynchronizer {
 
           if (isProfitOk && refPrice < effectiveTlSellPrice) {
             const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
-            const targetSellQty = roundToStep(held, this.host.stepSize || 0.0001, 4);
+            const targetSellQty = roundToStep(held, this.host.stepSize || 0.0001, this.host.qtyPrecision);
             const orderNotional = targetSellQty * effectiveTlSellPrice;
             if (targetSellQty >= this.host.minQty && orderNotional >= minOrderNotional) {
               let existingTlSell = this.host.openOrders.find((o) => !o.isBid && (

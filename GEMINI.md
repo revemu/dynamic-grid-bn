@@ -2459,3 +2459,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
   2. **Typecheck & Version Bump**:
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.26` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.0`) และ `GEMINI.md`
+
+---
+
+### 60. Market Structure Engine Modular Refactoring & Strategy Inter-Module Hardening (`v0.2.27`)
+- **สาเหตุของการปรับปรุงโครงสร้าง (Motivation)**:
+  1. **Monolithic Market Structure Architecture**:
+     - ไฟล์ `src/market-structure.ts` เดิมมีขนาด 1,842 บรรทัด รวมตรรกะ Dow Theory, Wave Cycles, แท่งเทียน, สวิงยอด/เหว, เส้นแนวโน้ม Trendline และการคำนวณกรอบ Channel Grid Zone ไว้ในไฟล์เดียว ทำให้ยากต่อการตรวจสอบและขยายระบบ
+  2. **Strategy Inter-Module Audit Bugs**:
+     - **Bug 1 (`saveLockedChannel` Key Mismatch)**: ใน `src/strategy/lot-tracker.ts` มีการเรียก `this.host.db.saveLockedChannel(this.host.symbol, undefined)` โดยส่ง `this.host.symbol` (เช่น `"ETHUSDC"`) แทนที่จะเป็น `this.host.getSymbolKey()` (เช่น `"BINANCE:ETHUSDC"`) ส่งผลให้เมื่อบอทปิดโพซิชันจนหมด กรอบที่ล็อกไว้ใน `grid-bot.db.json` ไม่ถูกลบออกจริง
+     - **Bug 2 (Confirmed Channel `sellLevels` Nested Property Mismatch)**: ใน `src/strategy/order-executor.ts` ฟังก์ชัน `findSellLevelIndex` พยายามอ่าน `bounds?.channel?.sellLevels` แต่โครงสร้างจริงของ `confirmedChannel` (`ConfirmedChannelState`) เก็บ `sellLevels` อยู่ที่ระดับ root (`bounds?.sellLevels`) และใน `bounds?.gridZone?.sellLevels` ส่งผลให้ fallback matching ตามระดับราคาเป้าหมายไม่ทำงานเมื่อมี partial fills
+     - **Bug 3 (Hardcoded 4-Decimal Precision in Order Execution)**: ใน `order-executor.ts` (lines 508, 763) และ `sell-sync.ts` (lines 274, 365) มีการฮาร์ดโค้ดเลข `4` ใน `roundToStep(..., 4)` แทนที่จะใช้ `this.host.qtyPrecision` ส่งผลให้เหรียญที่มีความละเอียดทศนิยมต่างจาก 4 (เช่น BTC บน Binance ที่ใช้ 5-6 ตำแหน่ง) เกิดการปัดเศษผิดพลาด
+- **การแก้ไขและสถาปัตยกรรมแบบแยกโมดูล (`v0.2.27`)**:
+  1. **แยกโมดูลโครงสร้างตลาดภายใต้ `src/market-structure/`**:
+     - `src/market-structure/types.ts`: ประกาศ Standard Interfaces สำหรับโครงสร้างตลาดทั้งหมด (`Candle`, `SwingPoint`, `CandidatePoint`, `GridZone`, `TrendLine`, `DowStructure`, `WaveCycleData`, `ChannelOptions`)
+     - `src/market-structure/candle-manager.ts`: ดูแลประวัติแท่งเทียน (`CandleManager`), แท่งปิด (`getClosedCandles()`), ไส้เทียน/เนื้อเทียน (`getEffectiveHigh`, `getEffectiveLow`), การคำนวณ ATR %, และการโหลด Macro HTF Candles จาก REST API
+     - `src/market-structure/swing-detector.ts`: อัลกอริทึมค้นหาจุดสวิงยอดและเหว (`findSwings`), จัดการ Outside-bar dedup, ค้นหา Candidate Points ใน unconfirmed tail (`findCandidatePoints`), และฟังก์ชันตรวจสอบ Invariant ไม่ถูกทำลาย (`isUnbrokenValley`, `isUnbrokenPeak`, `isSwingLowUnbroken`)
+     - `src/market-structure/dow-engine.ts`: ตรรกะ Dow Theory และ Wave Cycles ZigZag (`calculateWaveCycles`), Invalidate False HLs, ตรวจสอบ Higher Low หลังการทุบ (`checkForHigherLow` รวมถึง 2-bar Micro-HL), การวิเคราะห์ Market Regime, และตรวจจับคลื่นขาลงจริง (`detectDowntrendDrop`)
+     - `src/market-structure/trendline-engine.ts`: คำนวณเส้นแนวโน้ม Downtrend Resistance Envelope & Uptrend Support Line (`calculateTrendlines`), การตรวจสอบเงื่อนไข Slope, การนับแตะสัมผัส (Touches), และการยืนยัน Breakout / Breakdown
+     - `src/market-structure/channel-engine.ts`: ตรรกะคำนวณกรอบราคาและเส้นกริด (`ChannelEngine.calculateBounds` และ `buildGridZone`) ได้แก่ Tier 1 (Pure Unobstructed Wave Box), Tier 2 (Support-First Staircase), Tier 3 Fallback, โหมด Donchian ATR, และการสร้างระดับ Buy Levels 1-5, Sell Targets 1-5 และ Narrow Channel Collapse
+     - `src/market-structure/index.ts`: Orchestrator Facade `DowStructureEngine` เชื่อมต่อทุก Engine ย่อยเข้าด้วยกัน คงฟังก์ชันและอินเทอร์เฟซเดิม 100%
+     - `src/market-structure.ts`: Re-export ทุกอย่างจาก `./market-structure/index.js` ป้องกัน Breaking Changes
+  2. **แก้ไขบั๊กในระบบ Strategy (`src/strategy/*`)**:
+     - เพิ่ม `getSymbolKey(): string;` ลงใน `IStrategyHost` ใน `src/strategy/types.ts`
+     - แก้ไข `src/strategy/lot-tracker.ts` lines 112 & 125 ให้เรียก `this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined)`
+     - แก้ไข `src/strategy/order-executor.ts` line 35 ให้ resolve `bounds?.sellLevels ?? bounds?.gridZone?.sellLevels ?? []`
+     - แก้ไข `order-executor.ts` (lines 508, 763), `sell-sync.ts` (lines 274, 365) และ `index.ts` (line 1458) ให้ใช้ `qtyPrecision` จาก Exchange Info แทนเลข `4` แข็ง
+  3. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.27` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.1`) และ `GEMINI.md`
+

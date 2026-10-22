@@ -32,7 +32,7 @@ export class OrderExecutor {
       }
     }
     const bounds = this.host.confirmedChannel;
-    const sellLevels = bounds?.channel?.sellLevels ?? [];
+    const sellLevels = bounds?.sellLevels ?? bounds?.gridZone?.sellLevels ?? [];
     if (price && sellLevels.length > 0) {
       let closestIdx = -1;
       let minDiff = Infinity;
@@ -505,7 +505,7 @@ export class OrderExecutor {
     }
 
     const rawNetQty = Math.max(0, qty - compBase - spotTradingFeeBase);
-    const netQty = roundToStep(rawNetQty, this.host.stepSize || 0.0001, 4);
+    const netQty = roundToStep(rawNetQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
     this.host.lots.push({ price, qty: netQty, time: now });
     this.host.lastBuyFillTime = now;
     this.host.lastBuyFillPrice = price;
@@ -760,7 +760,7 @@ export class OrderExecutor {
       return false;
     }
 
-    const finalQty = roundToStep(Math.min(executeQty, availableBase), this.host.stepSize || 0.0001, 4);
+    const finalQty = roundToStep(Math.min(executeQty, availableBase), this.host.stepSize || 0.0001, this.host.qtyPrecision);
     if (finalQty < this.host.minQty) return false;
 
     try {

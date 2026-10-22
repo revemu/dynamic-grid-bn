@@ -1455,7 +1455,7 @@ export class DynamicGrid implements IStrategyHost {
           return;
         }
         const rawUnallocated = maxAllowedTradingBase - memoryHeld;
-        const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || 0.0001, 4);
+        const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || 0.0001, this.qtyPrecision);
         if (unallocatedQty >= this.minQty) {
           const recentOrders = this.db.getOrders(10);
           const lastBuyFill = recentOrders.find((o) => o.action === "BUY_FILL" && o.price > 0);

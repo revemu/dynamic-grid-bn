@@ -150,6 +150,7 @@ export interface IStrategyHost {
   lastEvaluatedCeil?: number;
 
   // Methods
+  getSymbolKey(): string;
   log(msg: string): void;
   status(msg: string): void;
   emit(event: StrategyEvent): void;
