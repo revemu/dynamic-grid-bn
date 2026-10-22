@@ -2881,6 +2881,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.41` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.16`) และ `GEMINI.md`
 
+---
+
+### 75. Conditional Take Profit Position Reset, Binance Sell Slippage & Triangle Squeeze Liquidation (`v0.2.42`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Unconditional `clearPositionState()` on Take Profit Exit (`src/strategy/index.ts:3088`)**:
+     - เมื่อราคาแตะเพดานบน (100% Take Profit) โค้ดเดิมเรียก `await this.sellAll(exitPrice, "SELL", reachedTargetPrice);` แล้วบรรทัดถัดมาสั่ง `this.clearPositionState();` ทันทีโดยไม่เช็คผลลัพธ์
+     - หากคำสั่ง IOC ขายไม่สำเร็จ (เช่น `[IOC UNFILLED] Keeping inventory lots intact` เนื่องจากสภาพคล่องลดลงชั่วขณะ) ฟังก์ชัน `sellAll` ตั้งใจเก็บบัญชี Lots ไว้ แต่บรรทัดที่ 3088 กลับสั่งล้างสถานะพอร์ตทิ้งทันที ส่งผลให้ Lots กลายเป็น 0 และสูญเสียข้อมูลราคาต้นทุนเฉลี่ย ทั้งๆ ที่เหรียญจริงยังคงค้างอยู่ในกระเป๋าบน Exchange
+  2. **Binance CEX in Maker Limit Mode Skips Slippage Protection on Take Profit (`src/strategy/order-executor.ts:1204`)**:
+     - ตรรกะการคำนวณราคาขายพร้อม Slippage ถูกครอบไว้ด้วยเงื่อนไข `exchangeName === "dreamdex" || orderExecutionMode === "IOC_BRACKET"`
+     - ส่งผลให้บน Binance CEX ในโหมด MAKER_LIMIT คำสั่ง IOC Take Profit จะถูกส่งด้วยราคา Bid ณ เสี้ยววินาทีก่อนหน้าแบบเป๊ะๆ โดยไม่หักลบ Slippage (`1 - slippagePct`) หากราคา Bid ขยับลงแม้แต่ 1 ช่อง (1 Tick) ก่อนคำสั่งเดินทางไปถึง Matching Engine คำสั่งจะถูกยกเลิกทันที (Immediate Or Cancel Expired)
+  3. **Triangle Squeeze Exits Orphan Position in Maker Limit Mode (`src/strategy/index.ts:3371`)**:
+     - เมื่อเกิดสามเหลี่ยมบีบตัว (Triangle Squeeze) บอทจะล็อกโหมด `isSqueezePaused = true` และสั่ง `cancelAllRestingOrders()` ล้างคำสั่งขายบนกระดานทิ้งทั้งหมด
+     - ทว่าบรรทัดคำสั่งเทขาย `sellAll` กลับมีเงื่อนไข `&& this.cfg.orderExecutionMode === "IOC_BRACKET"` ส่งผลให้ในโหมด MAKER_LIMIT บอทจะยกเลิกออเดอร์ขาย Maker Limit ทิ้งทั้งหมด แต่ไม่ยอมขายเหรียญออกเป็นเงินสด ทำให้เหรียญค้างอยู่ในพอร์ตโดยไม่มีออเดอร์ขายตั้งรองรับ
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.42`)**:
+  1. **`sellAll()` Returns `Promise<boolean>` & Conditional State Reset**:
+     - ปรับปรุงให้ `sellAll()` คืนค่า `Promise<boolean>` (`true` หากขายสำเร็จ, `false` หาก Unfilled หรือเกิดข้อผิดพลาด)
+     - ใน `src/strategy/index.ts`: ตรวจสอบ `const exitOk = await this.sellAll(...)` และสั่ง `clearPositionState()` เฉพาะเมื่อ `exitOk === true` เท่านั้น หากขายไม่ติด ประวัติ Lots และ Average Entry Price จะยังคงอยู่ครบถ้วนเพื่อรอขายใหม่ในรอบถัดไป
+  2. **Universal Take Profit Slippage Protection Across All Modes & Exchanges**:
+     - ใน `src/strategy/order-executor.ts`: ปลดเงื่อนไขออกให้รองรับ `action === "SELL"` ทุกกรณี ทั้ง Binance และ DreamDEX โดยคำนวณ `limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct))` เพื่อให้คำสั่ง IOC Take Profit แมตช์ได้สำเร็จ 100%
+  3. **Universal Triangle Squeeze Liquidation**:
+     - ใน `src/strategy/index.ts`: ปรับปรุงเมื่อเกิด Triangle Squeeze ให้เทขายออกเป็นเงินสด `await this.sellAll(exitBid, "CUT")` โดยไม่จำกัดเฉพาะโหมด IOC_BRACKET เพื่อป้องกันปัญหาเหรียญตกค้างไร้ออเดอร์ขาย
+  4. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.42` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.17`) และ `GEMINI.md`
+
 
 
 

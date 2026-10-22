@@ -40,7 +40,7 @@ export interface EvaluateCutLossParams {
     targetPrice: number,
     allowLoss?: boolean,
   ) => Promise<boolean>;
-  sellAll: (price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number) => Promise<void>;
+  sellAll: (price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number) => Promise<boolean | void>;
 }
 
 export class RiskManager {
@@ -61,7 +61,7 @@ export class RiskManager {
     isChannelReady: boolean;
     lastClosedCandle?: Candle;
     cancelAllRestingOrders: (side?: "BUY" | "SELL", reason?: string) => Promise<void>;
-    sellAll: (price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number) => Promise<void>;
+    sellAll: (price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number) => Promise<boolean | void>;
   }): Promise<boolean> {
     const { dow, refPrice, lowerBound, span, buyLevels, bestBid, effectiveMid, isChannelReady, lastClosedCandle, cancelAllRestingOrders, sellAll } = params;
     const isBelowFloor = isChannelReady && refPrice < lowerBound;

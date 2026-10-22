@@ -1059,7 +1059,7 @@ export class OrderExecutor {
   /**
    * Clean exit / Stop-loss liquidation of 100% held position
    */
-  public async sellAll(price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number): Promise<void> {
+  public async sellAll(price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number): Promise<boolean> {
     const actionLabel = action === "CUT"
       ? "CUT LOSS (SELL ALL)"
       : (action === "MANUAL" ? "MANUAL SELL ALL (EMERGENCY EXIT)" : "100% FULL EXIT (TAKE PROFIT)");
@@ -1074,7 +1074,7 @@ export class OrderExecutor {
     if (held < this.host.minQty) {
       this.host.clearPositionState();
       this.host.saveState();
-      return;
+      return true;
     }
     const now = Date.now();
 
@@ -1130,7 +1130,7 @@ export class OrderExecutor {
       });
       this.host.saveState();
       this.host.emitTelemetryTick();
-      return;
+      return true;
     }
 
     await this.host.refreshWalletBalances();
@@ -1144,14 +1144,14 @@ export class OrderExecutor {
       );
       this.host.clearPositionState();
       this.host.saveState();
-      return;
+      return true;
     }
 
     if (availableBase < this.host.minQty) {
       this.host.log(
         `⚠️ [GAS GUARD] Cannot execute ${actionLabel}: Wallet has ${this.host.walletBaseBalance.toFixed(4)} ${this.host.baseAsset}, which is within the ${minGasReserveBase.toFixed(4)} ${this.host.baseAsset} gas safety reserve. Standing by for balance.`,
       );
-      return;
+      return false;
     }
 
     const rawExecuteQty = Math.min(held, availableBase > 0 ? availableBase : held);
@@ -1165,7 +1165,7 @@ export class OrderExecutor {
       );
       this.host.clearPositionState();
       this.host.saveState();
-      return;
+      return true;
     }
 
     try {
@@ -1201,7 +1201,7 @@ export class OrderExecutor {
           limitPrice = (price > 0 ? price : targetPrice) * (1 - slippagePct);
         }
         limitPrice = roundToTick(limitPrice, this.host.tickSize || 0.0001);
-      } else if (action === "SELL" && (this.host.binance.exchangeName === "dreamdex" || this.host.cfg.orderExecutionMode === "IOC_BRACKET")) {
+      } else if (action === "SELL") {
         let currentBestBid = 0;
         if (this.host.binance.exchangeName === "dreamdex") {
           try {
@@ -1258,7 +1258,7 @@ export class OrderExecutor {
         );
         await this.host.refreshWalletBalances();
         this.host.saveState();
-        return;
+        return false;
       }
 
       const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
@@ -1266,7 +1266,7 @@ export class OrderExecutor {
         this.host.log(`⚡ [EXIT SYNC] Position was already closed by WebSocket execution report — skipping duplicate fill processing`);
         this.host.saveState();
         this.host.emitTelemetryTick();
-        return;
+        return true;
       }
 
       const actualQty = Math.min(executeQty, filledQty > 0 ? filledQty : executeQty);
@@ -1321,6 +1321,7 @@ export class OrderExecutor {
         this.host.clearPositionState();
       }
       this.host.saveState();
+      return true;
     } catch (err) {
       this.host.log(`⚠️ On-chain ${actionLabel} failed: ${(err as Error).message}`);
       await this.host.refreshWalletBalances();
@@ -1329,6 +1330,7 @@ export class OrderExecutor {
         this.host.clearPositionState();
         this.host.saveState();
       }
+      return false;
     }
   }
 

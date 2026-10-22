@@ -3084,14 +3084,16 @@ export class DynamicGrid implements IStrategyHost {
           `🎯 ${exitTypeLabel}: Price $${refPrice.toFixed(6)} (Bid: $${exitPrice.toFixed(6)}) reached ${isLhEscapeReached ? "Lower High / Real Ceil" : "Upper Bound / Real Ceil"} ($${reachedTargetPrice.toFixed(6)}) with +${(((exitPrice - avgEntryPrice) / (avgEntryPrice || exitPrice)) * 100).toFixed(2)}% profit (Avg Entry: $${avgEntryPrice.toFixed(6)}) — cancelling orders & full 100% exit to start fresh cycle`,
         );
         await this.cancelAllRestingOrders();
-        await this.sellAll(exitPrice, "SELL", reachedTargetPrice);
-        this.clearPositionState();
-        this.stuckSince = undefined;
-        this.lastBuyFillTime = 0;
-        this.lastBuyFillPrice = 0;
-        this.lastBuyFillCandleTime = 0;
-        this.saveState();
-        return;
+        const exitOk = await this.sellAll(exitPrice, "SELL", reachedTargetPrice);
+        if (exitOk) {
+          this.clearPositionState();
+          this.stuckSince = undefined;
+          this.lastBuyFillTime = 0;
+          this.lastBuyFillPrice = 0;
+          this.lastBuyFillCandleTime = 0;
+          this.saveState();
+          return;
+        }
       }
     }
 
@@ -3368,8 +3370,9 @@ export class DynamicGrid implements IStrategyHost {
         `🔺 [TRIANGLE SQUEEZE] Support ($${uptrendLine!.currentLinePrice.toFixed(6)}) & Resistance ($${downtrendLine!.currentLinePrice.toFixed(6)}) converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%) — Liquidating all ${this.baseHeld().toFixed(4)} ${this.baseAsset} to cash and standing by for channel expansion!`,
       );
       await this.cancelAllRestingOrders(undefined, "Triangle squeeze: trendlines converging — liquidating and pausing");
-      if (this.baseHeld() > 0 && !isBelowFloor && this.cfg.orderExecutionMode === "IOC_BRACKET") {
-        await this.sellAll(refPrice, "SELL");
+      if (this.baseHeld() > 0 && !isBelowFloor) {
+        const exitBid = bestBid ?? effectiveMid;
+        await this.sellAll(exitBid, "CUT");
       }
       this.saveState();
     }
@@ -4274,7 +4277,7 @@ export class DynamicGrid implements IStrategyHost {
     return this.orderExecutor.buyTrancheIOC(qty, execPrice, levelName, targetPrice, notionalQuote);
   }
 
-  public async sellAll(price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number): Promise<void> {
+  public async sellAll(price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number): Promise<boolean> {
     return this.orderExecutor.sellAll(price, action, anchorRefPrice);
   }
 
