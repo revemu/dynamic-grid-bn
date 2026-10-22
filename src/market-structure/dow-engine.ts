@@ -408,74 +408,7 @@ export class DowEngine {
       }
     }
 
-    // 3. Fast 2-Bar Structural Micro-HL (Confirmed Closed Candles)
-    const closedCandles = candles.length > 0 && candles[candles.length - 1]?.isClosed === true ? candles : candles.slice(0, -1);
-    if (closedCandles.length >= 4) {
-      let troughIdx = -1;
-      let troughLow = lowestDumpPrice;
-      for (let i = 0; i < closedCandles.length; i++) {
-        const c = closedCandles[i]!;
-        if (c.time >= sinceTime - 3600) {
-          const effLow = getEffectiveLow(c, useTrueWick, wickThresholdPct);
-          const barLow = Math.min(c.low, effLow);
-          if (troughIdx === -1 || barLow <= troughLow * 1.0005) {
-            troughLow = Math.min(troughLow, barLow);
-            troughIdx = i;
-          }
-        }
-      }
-
-      if (troughIdx >= 0 && closedCandles.length - 1 >= troughIdx + 2) {
-        const lastClosed = closedCandles[closedCandles.length - 1]!;
-        let maxBounceHigh = closedCandles[troughIdx]!.high;
-
-        for (let i = troughIdx + 1; i < closedCandles.length; i++) {
-          const c = closedCandles[i]!;
-          const effLow = getEffectiveLow(c, useTrueWick, wickThresholdPct);
-          const barLow = Math.min(c.low, effLow);
-
-          // Must hold strictly above dump trough (+0.10%) and have seen an initial bounce (>= +0.20%)
-          const isHigherLowRetest =
-            barLow > troughLow * 1.001 &&
-            maxBounceHigh >= troughLow * 1.002 &&
-            barLow < maxBounceHigh;
-
-          if (isHigherLowRetest) {
-            const nextBarConfirmed =
-              i < closedCandles.length - 1 &&
-              lastClosed.close > lastClosed.open &&
-              lastClosed.close >= c.high;
-
-            const selfReversalConfirmed =
-              i >= troughIdx + 2 &&
-              c.close > c.open &&
-              c.close >= maxBounceHigh;
-
-            const isLiveHolding = !currentPrice || currentPrice >= barLow;
-
-            if ((nextBarConfirmed || selfReversalConfirmed) && isLiveHolding) {
-              const microHl: SwingPoint = {
-                index: i,
-                time: c.time,
-                price: barLow,
-                type: "LOW",
-              };
-              return {
-                confirmed: true,
-                higherLow: microHl,
-                reason: `Fast 2-Bar Micro-HL at $${barLow.toFixed(6)} > Dump Trough $${troughLow.toFixed(6)} (Closed @ $${lastClosed.close.toFixed(6)})`,
-              };
-            }
-          }
-
-          if (c.high > maxBounceHigh) {
-            maxBounceHigh = c.high;
-          }
-        }
-      }
-    }
-
-    return { confirmed: false, reason: "Waiting for confirmed Higher Low or 2-bar Micro-HL after dump trough" };
+    return { confirmed: false, reason: "Waiting for confirmed Dow Theory Higher Low (HL) after dump trough" };
   }
 
   /**

@@ -494,7 +494,7 @@ export class RiskManager {
         `🚀 TRENDLINE BREAKOUT CONFIRMED (${brokenCount} candles) @ $${refPrice.toFixed(6)} (Broke above ${linePriceStr}) — Breakdown resolved, enabling recovery entry!`,
       );
     } else if (!isBelowFloor && (this.host.breakdownFloorPrice || this.host.breakdownLowPrice || lowerBound > 0)) {
-      // 3. Resolve via Confirmed Higher Low (3-Bar Swing HL or Fast 2-Bar Micro-HL)
+      // 3. Resolve via Confirmed Dow Theory Higher Low (HL) Swing Pivot
       const checkTime = this.host.breakdownTime ?? (Math.floor(Date.now() / 1000) - 3600);
       const checkFloor = this.host.breakdownFloorPrice ?? lowerBound;
       const checkLow = trackedLow;

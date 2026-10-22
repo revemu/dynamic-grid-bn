@@ -3046,6 +3046,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.48` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.23`) และ `GEMINI.md`
 
+---
+
+### 82. Removal of Loose Fast 2-Bar Micro-HL & Flapping Loop Resolution (`v0.2.49`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **การเกิด Flapping Loop รัวสลับสถานะทุก 200ms**:
+     - ใน `dow-engine.ts` ตรรกะข้อที่ 3 (`Fast 2-Bar Micro-HL`) ตรวจจับแท่งเทียนเด้งสั้นๆ 2 แท่งที่มี Low ยกสูงกว่าแท่งทุบ ($81,954 > $81,800) แล้วตัดสินว่าเป็น `HL Confirmed` สั่งปลดล็อค `waitingForHigherLow = false`
+     - ในขณะที่ `strategy/index.ts` ตรวจพบว่าคลื่นใหญ่ยังเป็นขาลง (LH + LL) และยังไม่มี Swing Pivot `HL` ตัวจริง จึงสั่งเปิดโหมด `waitingForHigherLow = true` ซ้ำใน Tick ถัดไป
+     - เกิดการล็อกและปลดล็อคสลับกันไปมาทุก 200ms จนเต็มหน้าจอเทอร์มินัล
+  2. **ความไม่ตรงกับหลักทฤษฎี Dow Theory**:
+     - แท่งเทียนเด้งสั้นๆ 2 แท่งไม่ใช่ Higher Low ที่แท้จริง และไม่ได้แสดงผลเป็นป้ายสวิง `HL` บนกราฟ TradingView
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.49`)**:
+  1. **ตัดตรรกะ `Fast 2-Bar Structural Micro-HL` ออกจาก [`dow-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/dow-engine.ts)**:
+     - บังคับว่า Higher Low (HL) จะต้องมาจาก Confirmed Wave Swing Low หรือ Confirmed Swing Low Pivot (`SwingDetector`) ที่มีแท่งเทียนยืนยันซ้ายขวาครบถ้วน และแสดงป้าย `HL` บนกราฟจริงเท่านั้น
+  2. **ป้องกัน Flapping Loop ใน [`strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts)**:
+     - ประสานเงื่อนไข `(this.lastResolvedDumpLowPrice === undefined || activeDumpLow < this.lastResolvedDumpLowPrice * 0.9985 || isBelowFloor)` เพื่อให้เมื่อคลื่นขาลงถูกระงับการซื้อ บอทจะล็อกอยู่ในสถานะ `waitingForHigherLow = true` นิ่งสนิท 100% ไม่ส่งคำสั่งซื้อและไม่สลับสถานะรัวๆ อีกต่อไป
+  3. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.49` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.24`) และ `GEMINI.md`
+
+
 
 
 
