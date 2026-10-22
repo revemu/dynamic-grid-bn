@@ -2226,6 +2226,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. **Version Bump**:
      - อัปเกรดเป็น `v0.2.18` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 52. Dual Rest Orders Visibility, Trendline Front-Run Clarity & Chart Palette De-cluttering (`v0.2.19`)
+- **สาเหตุของปัญหา**:
+  1. **สถานะบอทซ่อนคำสั่งขายเมื่ออยู่ใน Buy Zone**:
+     - ใน `src/strategy.ts`: เมื่อราคาอยู่ใน Buy Zone โค้ดตรวจสอบเฉพาะ `openBuys.length > 0` จึงแสดงแค่ `📋 2 Buys Resting` โดยไม่แจ้งว่ามีคำสั่งขาย (`Sell TL Exit`) วางรออยู่จริงบนกระดานด้วย
+     - ใน `nextTrigger` แสดงเพียงค่าตัวเลขพิกัดเส้นดิบ `Sell: >$2484.80` แทนที่จะแจ้งราคาคำสั่งขายจริงที่ตั้งรอไว้ที่ `$2482.81` พร้อม Buffer Front-run (-0.08%) ทำให้ผู้ใช้เข้าใจผิดว่าราคาตั้งขายไม่ตรงกับเส้น
+  2. **ความคลุมเครือใน Grid Meter (ตารางระดับกริดขวามือ)**:
+     - คำสั่ง `Sell TL Exit (Trendline)` ถูกนำไปแสดงทับในแถว `62% Sell Target 2` โดยที่ชื่อแถวยังคงเป็น `Sell Target 2` และแสดงตัวเลข `$2,482.81` โดดๆ ไม่ได้บอกว่าคือราคาขายดักใต้เส้น Trendline พร้อม Buffer
+     - เป้าหมายขายด้านบน (Target 3, 4, 5) ที่อยู่เหนือเส้น Trendline ในโหมด Maker Limit ถูกสั่งระงับการวาง (Suppressed) แต่ใน Grid Meter ยังคงแสดงสถานะปกติ (`Hold 50%`, `Hold 25%`, `Flat 0%`) ทำให้ดูเหมือนเป้าเหล่านั้นยังทำงานอยู่
+  3. **สีเส้นบนกราฟทับซ้อนและกลืนไปกับสีแท่งเทียน**:
+     - คำสั่งซื้อบนกระดานใช้สีเขียว `#22c55e` และคำสั่งขายใช้สีแดง `#ef4444` ซึ่งเป็นสีเดียวกับแท่งเทียนเขียว-แดงเป๊ะๆ
+     - เส้นคลื่น Dow Wave Cycle ใช้สีฟ้า Cyan ทึบหนา 2px ลากตัดผ่ากลางแท่งเทียน บดบังเนื้อเทียนและไส้เทียน
+     - เส้นประกริด Buy Levels (ฟ้า 70%) และ Sell Targets (ส้ม 50%) มีความทึบสูงเกินไป รวมกัน 10 กว่าเส้นจนกลายเป็นตาข่ายหนาทึบรบกวนสายตา
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.19`)**:
+  1. **Dual Rest Orders & Trendline Buffer Visibility ใน Bot Action Banner (`src/strategy.ts`)**:
+     - ตรวจสอบทั้ง `openBuys` และ `openSells` พร้อมกัน:
+       - **Title**: `📋 2 Buys & 💎 1 Sell Resting`
+       - **Reason**: `Buys: $2468.44, $2461.79 • Sell TL: $2482.81`
+       - **Next Trigger**: `Fills on flash dip <$2475.10 (Buy L3) • Sell TL Resting @ $2482.81 (TL $2484.80 -0.08%)` แสดงสถานะทั้งสองฝั่งครบถ้วน และอธิบายที่มาของส่วนต่างราคาชัดเจน
+  2. **Grid Meter Enhancements (`public/app.js`, `public/index.html`, `public/style.css`)**:
+     - **TL Exit Row Identification**: เมื่อมีคำสั่งขายที่เส้นกด แถวจะถูกเปลี่ยนชื่อเป็น `📉 TL Exit` พร้อมป้าย Action Badge `📉 SELL TL $62.32 (-0.08%)` และแสดงราคาอ้างอิง `(TL $2484.80)`
+     - **Suppressed Targets Indicator (`🚫 TL CAP`)**: ในโหมด Maker Limit เป้าขายที่อยู่เหนือเส้นแนวต้านจะแสดงป้าย `🚫 TL CAP` (Capped by Trendline) เพื่อให้ทราบทันทีว่างบถูกรวมไปขายที่เส้น TL Exit แทน
+     - **Active Resistance Status Banner**: เพิ่มแถบสรุปสถานะแนวต้านสดเหนือตาราง Grid Meter: `📉 TL Resistance: $2,484.80 • Exit: $2,482.81 (-0.08%)`
+  3. **Clean Visual Hierarchy Chart Palette (`public/app.js`)**:
+     - **แท่งเทียน**: ปรับแต่งไส้เทียนให้สว่างคมชัด (`wickUpColor: #34d399`, `wickDownColor: #fb7185`) โดดเด่นในเลเยอร์หน้าสุด
+     - **Open Buy Orders**: เปลี่ยนเป็น **สีเหลืองทองนีออน (`#facc15`)** เส้นประหนา 1.5px แยกขาดจากแท่งเทียนเขียวทันที
+     - **Open Sell Orders**: เปลี่ยนเป็น **สีส้มแสดสว่าง (`#f97316`)** เส้นประหนา 1.5px แยกขาดจากแท่งเทียนแดงทันที
+     - **Dow Wave Cycle Line**: เปลี่ยนเป็น **สีเทาฟ้าโปร่งแสง (`rgba(148, 163, 184, 0.40)`)** เส้นบาง 1px ถอยไปเป็นเลเยอร์พื้นหลัง ไม่บังไส้เทียน
+     - **Grid Levels (Buy & Sell)**: ปรับลดความทึบลงเหลือ **`rgba(..., 0.22)`** ให้ทำหน้าที่เป็นเส้นระดับอ้างอิงพื้นหลัง ไม่รบกวนสายตา
+     - **Center Midline**: ปรับเป็นเส้นประบาง **`rgba(251, 191, 36, 0.45)`**
+  4. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.19` ใน `package.json` และ `src/version.ts`
+
 
 
 

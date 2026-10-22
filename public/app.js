@@ -61,6 +61,7 @@
 
   // Vertical Ladder Meter Elements
   const elLadderZoneBadge = document.getElementById("ladderZoneBadge");
+  const elLadderResistanceBanner = document.getElementById("ladderResistanceBanner");
   const elLadderCurrentLevel = document.getElementById("ladderCurrentLevel");
   const elLadderTargetAlloc = document.getElementById("ladderTargetAlloc");
 
@@ -758,8 +759,8 @@
         borderColor: "#10b981",
         borderUpColor: "#10b981",
         borderDownColor: "#f43f5e",
-        wickUpColor: "#10b981",
-        wickDownColor: "#f43f5e",
+        wickUpColor: "#34d399",
+        wickDownColor: "#fb7185",
         priceFormat: {
           type: "price",
           precision: activePricePrecision,
@@ -797,10 +798,10 @@
         },
       });
 
-      // Wave Cycle Series (Cyan / Sky line connecting Dow Swings)
+      // Wave Cycle Series (Subtle Slate/Blue line connecting Dow Swings in background, does not clash with candles)
       waveCycleLineSeries = chart.addLineSeries({
-        color: "rgba(56, 189, 248, 0.85)",
-        lineWidth: 2,
+        color: "rgba(148, 163, 184, 0.40)",
+        lineWidth: 1,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
         title: "",
         lastValueVisible: false,
@@ -1117,25 +1118,30 @@
     });
 
     const ladderSteps = [
-      { pct: 100, el: elStepCeil, priceEl: elStepPriceCeil, defaultAction: "Flat 0%", price: ceil, enabled: true },
-      { pct: sellPcts[4], el: elStepSell5, priceEl: elStepPriceSell5, defaultAction: sellStepLabels[4], price: floor + span * (sellPcts[4] / 100), enabled: enabledSells[4] !== false },
-      { pct: sellPcts[3], el: elStepSell4, priceEl: elStepPriceSell4, defaultAction: sellStepLabels[3], price: floor + span * (sellPcts[3] / 100), enabled: enabledSells[3] !== false },
-      { pct: sellPcts[2], el: elStepSell3, priceEl: elStepPriceSell3, defaultAction: sellStepLabels[2], price: floor + span * (sellPcts[2] / 100), enabled: enabledSells[2] !== false },
-      { pct: sellPcts[1], el: elStepSell2, priceEl: elStepPriceSell2, defaultAction: sellStepLabels[1], price: floor + span * (sellPcts[1] / 100), enabled: enabledSells[1] !== false },
-      { pct: sellPcts[0], el: elStepSell1, priceEl: elStepPriceSell1, defaultAction: sellStepLabels[0], price: floor + span * (sellPcts[0] / 100), enabled: enabledSells[0] !== false },
-      { pct: 50, el: elStepCenter, priceEl: elStepPriceCenter, defaultAction: "Midline", price: center, enabled: true },
-      { pct: buyPcts[0], el: elStepBuy1, priceEl: elStepPriceBuy1, defaultAction: buyStepLabels[0], price: floor + span * (buyPcts[0] / 100), enabled: enabledBuys[0] !== false },
-      { pct: buyPcts[1], el: elStepBuy2, priceEl: elStepPriceBuy2, defaultAction: buyStepLabels[1], price: floor + span * (buyPcts[1] / 100), enabled: enabledBuys[1] !== false },
-      { pct: buyPcts[2], el: elStepBuy3, priceEl: elStepPriceBuy3, defaultAction: buyStepLabels[2], price: floor + span * (buyPcts[2] / 100), enabled: enabledBuys[2] !== false },
-      { pct: buyPcts[3], el: elStepBuy4, priceEl: elStepPriceBuy4, defaultAction: buyStepLabels[3], price: floor + span * (buyPcts[3] / 100), enabled: enabledBuys[3] !== false },
-      { pct: buyPcts[4], el: elStepBuy5, priceEl: elStepPriceBuy5, defaultAction: buyStepLabels[4], price: floor + span * (buyPcts[4] / 100), enabled: enabledBuys[4] !== false },
-      { pct: 0, el: elStepFloor, priceEl: elStepPriceFloor, defaultAction: "Cut Loss", price: floor, enabled: true },
+      { pct: 100, el: elStepCeil, priceEl: elStepPriceCeil, defaultTitle: "Ceiling (Take Profit)", defaultAction: "Flat 0%", price: ceil, enabled: true },
+      { pct: sellPcts[4], el: elStepSell5, priceEl: elStepPriceSell5, defaultTitle: "Sell Target 5", defaultAction: sellStepLabels[4], price: floor + span * (sellPcts[4] / 100), enabled: enabledSells[4] !== false },
+      { pct: sellPcts[3], el: elStepSell4, priceEl: elStepPriceSell4, defaultTitle: "Sell Target 4", defaultAction: sellStepLabels[3], price: floor + span * (sellPcts[3] / 100), enabled: enabledSells[3] !== false },
+      { pct: sellPcts[2], el: elStepSell3, priceEl: elStepPriceSell3, defaultTitle: "Sell Target 3", defaultAction: sellStepLabels[2], price: floor + span * (sellPcts[2] / 100), enabled: enabledSells[2] !== false },
+      { pct: sellPcts[1], el: elStepSell2, priceEl: elStepPriceSell2, defaultTitle: "Sell Target 2", defaultAction: sellStepLabels[1], price: floor + span * (sellPcts[1] / 100), enabled: enabledSells[1] !== false },
+      { pct: sellPcts[0], el: elStepSell1, priceEl: elStepPriceSell1, defaultTitle: "Sell Target 1", defaultAction: sellStepLabels[0], price: floor + span * (sellPcts[0] / 100), enabled: enabledSells[0] !== false },
+      { pct: 50, el: elStepCenter, priceEl: elStepPriceCenter, defaultTitle: "50% Center", defaultAction: "Midline", price: center, enabled: true },
+      { pct: buyPcts[0], el: elStepBuy1, priceEl: elStepPriceBuy1, defaultTitle: "Buy Level 1", defaultAction: buyStepLabels[0], price: floor + span * (buyPcts[0] / 100), enabled: enabledBuys[0] !== false },
+      { pct: buyPcts[1], el: elStepBuy2, priceEl: elStepPriceBuy2, defaultTitle: "Buy Level 2", defaultAction: buyStepLabels[1], price: floor + span * (buyPcts[1] / 100), enabled: enabledBuys[1] !== false },
+      { pct: buyPcts[2], el: elStepBuy3, priceEl: elStepPriceBuy3, defaultTitle: "Buy Level 3", defaultAction: buyStepLabels[2], price: floor + span * (buyPcts[2] / 100), enabled: enabledBuys[2] !== false },
+      { pct: buyPcts[3], el: elStepBuy4, priceEl: elStepPriceBuy4, defaultTitle: "Buy Level 4", defaultAction: buyStepLabels[3], price: floor + span * (buyPcts[3] / 100), enabled: enabledBuys[3] !== false },
+      { pct: buyPcts[4], el: elStepBuy5, priceEl: elStepPriceBuy5, defaultTitle: "Buy Level 5", defaultAction: buyStepLabels[4], price: floor + span * (buyPcts[4] / 100), enabled: enabledBuys[4] !== false },
+      { pct: 0, el: elStepFloor, priceEl: elStepPriceFloor, defaultTitle: "0% Floor (Low)", defaultAction: "Cut Loss", price: floor, enabled: true },
     ];
 
     // Reset all ladder steps to default clean state
     ladderSteps.forEach((step) => {
       if (!step.el) return;
       step.el.classList.remove("has-resting-buy", "has-resting-sell", "active-ladder-step");
+      const titleEl = step.el.querySelector(".step-title");
+      if (titleEl && step.defaultTitle) {
+        titleEl.textContent = step.defaultTitle;
+        titleEl.title = "";
+      }
       const actionEl = step.el.querySelector(".step-action");
       if (step.enabled === false) {
         step.el.classList.add("step-disabled");
@@ -1235,13 +1241,38 @@
       if (matchedStep && matchedStep.el) {
         usedSteps.add(matchedStep);
         matchedStep.el.classList.add(isBid ? "has-resting-buy" : "has-resting-sell");
-        if (matchedStep.priceEl) matchedStep.priceEl.textContent = fmtPrice(order.price);
+
+        // Format TL Exit reference and front-run buffer
+        const titleEl = matchedStep.el.querySelector(".step-title");
+        const tlObj = data.downtrendLine && !data.downtrendLine.isBroken ? data.downtrendLine : null;
+        const liveTlPrice = tlObj?.currentLinePrice ?? data.sellTrigger;
+        const liveRcPrice = data.liveCalculatedUpperBound || data.upperBound;
+        const refResPrice = isRealCeilOrder ? liveRcPrice : liveTlPrice;
+        const frontRunPct = (refResPrice && refResPrice > 0 && refResPrice > order.price)
+          ? ((refResPrice - order.price) / refResPrice) * 100
+          : 0;
+        const frontRunStr = frontRunPct > 0 ? ` (-${frontRunPct.toFixed(2)}%)` : "";
+
+        if (isTlExitOrder && titleEl) {
+          titleEl.textContent = isRealCeilOrder ? "🎯 Ceil Exit" : "📉 TL Exit";
+          titleEl.title = isRealCeilOrder
+            ? `Real Ceiling Exit Limit Order (Ref Ceil: $${fmtPrice(refResPrice)})`
+            : `Trendline Exit Limit Order (Ref TL: $${fmtPrice(refResPrice)}${frontRunStr})`;
+        }
+
+        if (matchedStep.priceEl) {
+          if (isTlExitOrder && refResPrice && Math.abs(refResPrice - order.price) > 0.005) {
+            matchedStep.priceEl.innerHTML = `${fmtPrice(order.price)} <span style="font-size:7.5px; opacity:0.8; color:#f59e0b; display:block; font-weight:normal;" title="Ref ${isRealCeilOrder ? "Ceil" : "TL"}: $${fmtPrice(refResPrice)}${frontRunStr}">(TL ${fmtPrice(refResPrice)})</span>`;
+          } else {
+            matchedStep.priceEl.textContent = fmtPrice(order.price);
+          }
+        }
 
         const actionEl = matchedStep.el.querySelector(".step-action");
         if (actionEl) {
           const notionalVal = order.notionalUsdso || (order.price * (order.qty || 0));
           const notional = notionalVal > 0 ? `$${notionalVal.toFixed(2)}` : "";
-          const sideTag = isRealCeilOrder ? "🎯 SELL CEIL" : (isTlExitOrder ? "📉 SELL TL" : (isBid ? "BUY" : "SELL"));
+          const sideTag = isRealCeilOrder ? "🎯 SELL CEIL" : (isTlExitOrder ? `📉 SELL TL${frontRunStr}` : (isBid ? "BUY" : "SELL"));
           const tagClass = isBid ? "buy-order-tag" : "sell-order-tag";
           let expPill = "";
           if (order.expireTime) {
@@ -1249,12 +1280,37 @@
             expPill = remH > 0 ? `<span style="opacity:0.8; font-size:7.5px; margin-left:3px; font-weight:600;">⏳${remH}h</span>` : "";
           }
           const orderTitle = isRealCeilOrder
-            ? `Real Ceiling Exit Limit Order @ $${fmtPrice(order.price)}`
-            : (isTlExitOrder ? `Trendline Exit Limit Order @ $${fmtPrice(order.price)}` : `Limit Order @ $${fmtPrice(order.price)}`);
+            ? `Real Ceiling Exit Limit Order @ $${fmtPrice(order.price)} (Ref Ceil: $${fmtPrice(refResPrice)})`
+            : (isTlExitOrder ? `Trendline Exit Limit Order @ $${fmtPrice(order.price)} (Front-run ${frontRunPct.toFixed(2)}% below TL $${fmtPrice(refResPrice)} for early Maker fill)` : `Limit Order @ $${fmtPrice(order.price)}`);
           actionEl.innerHTML = `<span class="step-order-tag ${tagClass}" title="${orderTitle}"><span class="order-pulse-dot"></span> ${sideTag} ${notional}${expPill}</span>`;
         }
       }
     });
+
+    // In MAKER_LIMIT mode: Mark targets above resistance as suppressed (🚫 TL CAP)
+    if (!isIocExecution) {
+      const tl = data.downtrendLine && !data.downtrendLine.isBroken ? data.downtrendLine : null;
+      const tlPrice = tl?.currentLinePrice;
+      const isTlActive = Boolean(tlPrice && (data.enableSellBelowTrendResistance !== false));
+      const rcPrice = data.liveCalculatedUpperBound || data.upperBound;
+      const isRcActive = Boolean(rcPrice && (data.enableSellAtRealCeiling !== false) && rcPrice < ceil);
+      const effectiveRes = Math.min(isTlActive && tlPrice ? tlPrice : Infinity, isRcActive && rcPrice ? rcPrice : Infinity);
+
+      if (Number.isFinite(effectiveRes)) {
+        [0, 1, 2, 3, 4].forEach((idx) => {
+          const step = ladderSteps.find((s) => s.pct === sellPcts[idx]);
+          if (!step || !step.el || !step.enabled || usedSteps.has(step)) return;
+          const lvlPrice = (sLevels && sLevels[idx] !== undefined) ? sLevels[idx] : step.price;
+          if (lvlPrice >= effectiveRes) {
+            const actionEl = step.el.querySelector(".step-action");
+            if (actionEl) {
+              const resLabel = (effectiveRes === tlPrice) ? `TL $${fmtPrice(tlPrice)}` : `Ceil $${fmtPrice(rcPrice)}`;
+              actionEl.innerHTML = `<span class="step-order-tag" style="background:rgba(239,68,68,0.12); border:1px dashed rgba(239,68,68,0.4); color:#fca5a5; font-size:8.5px;" title="Target suppressed by ${resLabel} (Consolidated to TL Exit)"><span style="color:#f87171; font-weight:600;">🚫 TL CAP</span></span>`;
+            }
+          }
+        });
+      }
+    }
 
     // 3b. In IOC mode (zero resting limit orders on book), render virtual IOC triggers, sold status, and TL Capping directly on the ladder
     const isIocExecution = (data.orderExecutionMode === "IOC_BRACKET") || (!openOrders.length && data.exchange === "dreamdex");
@@ -1373,6 +1429,35 @@
           }
         }
       });
+    }
+
+    // 3c. Update Active Resistance Banner in Grid Meter Header
+    if (elLadderResistanceBanner) {
+      const tl = data.downtrendLine && !data.downtrendLine.isBroken ? data.downtrendLine : null;
+      const tlPrice = tl?.currentLinePrice;
+      const isTlActive = Boolean(tlPrice && (data.enableSellBelowTrendResistance !== false));
+      const rcPrice = data.liveCalculatedUpperBound || data.upperBound;
+      const isRcActive = Boolean(rcPrice && (data.enableSellAtRealCeiling !== false) && rcPrice < ceil);
+
+      const activeTlOrder = (data.openOrders || []).find(
+        (o) => !o.isBid && o.levelDesc && (o.levelDesc.includes("TL Exit") || o.levelDesc.includes("Trendline") || o.levelDesc.includes("Real Ceil")),
+      );
+
+      if (isTlActive && tlPrice && tlPrice < ceil) {
+        elLadderResistanceBanner.style.display = "";
+        const orderInfo = activeTlOrder
+          ? ` • Exit: $${fmtPrice(activeTlOrder.price)} <span style="opacity:0.75; font-size:7.5px;">(-0.08%)</span>`
+          : "";
+        elLadderResistanceBanner.innerHTML = `📉 TL Resistance: $${fmtPrice(tlPrice)}${orderInfo}`;
+      } else if (isRcActive && rcPrice && rcPrice < ceil) {
+        elLadderResistanceBanner.style.display = "";
+        const orderInfo = activeTlOrder
+          ? ` • Exit: $${fmtPrice(activeTlOrder.price)} <span style="opacity:0.75; font-size:7.5px;">(-0.03%)</span>`
+          : "";
+        elLadderResistanceBanner.innerHTML = `🎯 Real Ceil: $${fmtPrice(rcPrice)}${orderInfo}`;
+      } else {
+        elLadderResistanceBanner.style.display = "none";
+      }
     }
 
     // 4. Highlight the active current price step from top to bottom
@@ -2063,12 +2148,12 @@
         lineLiveCalculatedBottomBound = null;
       }
 
-      // 2. 50% Channel Center (Midline) - Dashed Amber
+      // 2. 50% Channel Center (Midline) - Dashed Amber (Subtle Background)
       if (data.centerPrice && data.bottomBound && data.upperBound) {
         lineCenter = setPriceLine(lineCenter, {
           price: data.centerPrice,
-          color: "#fbbf24",
-          lineWidth: 2,
+          color: "rgba(251, 191, 36, 0.45)",
+          lineWidth: 1.5,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
           title: "",
@@ -2156,13 +2241,13 @@
         const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true, true];
 
         let lineIdx = 0;
-        // Buy Levels (40%, 30%, 20%, 10%) - Dotted sky blue / cyan lines, or muted clean gray line if disabled
+        // Buy Levels (40%, 30%, 20%, 10%) - Soft Subtle Cyan dotted lines (does not clash with candles)
         buyLevels.forEach((lvl, bIdx) => {
           if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
             const isEnabled = enabledBuys[bIdx] !== false;
             gridZoneLevelLines[lineIdx].applyOptions({
               price: lvl,
-              color: isEnabled ? "rgba(56, 189, 248, 0.70)" : "rgba(148, 163, 184, 0.25)",
+              color: isEnabled ? "rgba(56, 189, 248, 0.22)" : "rgba(148, 163, 184, 0.12)",
               axisLabelVisible: isEnabled,
               title: "",
             });
@@ -2170,13 +2255,13 @@
           }
         });
 
-        // Sell Levels (60%, 70%, 80%, 90%) - Dotted orange lines, or muted clean gray line if disabled
+        // Sell Levels (60%, 70%, 80%, 90%) - Soft Subtle Coral Orange dotted lines (does not clash with candles)
         sellLevels.forEach((lvl, sIdx) => {
           if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
             const isEnabled = enabledSells[sIdx] !== false;
             gridZoneLevelLines[lineIdx].applyOptions({
               price: lvl,
-              color: isEnabled ? "rgba(249, 115, 22, 0.50)" : "rgba(148, 163, 184, 0.25)",
+              color: isEnabled ? "rgba(249, 115, 22, 0.22)" : "rgba(148, 163, 184, 0.12)",
               axisLabelVisible: isEnabled,
               title: "",
             });
@@ -2224,8 +2309,8 @@
         const isBid = Boolean(order.isBid);
         line.applyOptions({
           price: order.price,
-          color: isBid ? "#22c55e" : "#ef4444",
-          lineWidth: 1,
+          color: isBid ? "#facc15" : "#f97316", // Electric Gold for Buys, Coral Orange for Sells (does not clash with green/red candles!)
+          lineWidth: 1.5,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
           title: "", // Clean: thin dashed line, no blocking boxes on candles!

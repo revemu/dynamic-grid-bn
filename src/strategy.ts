@@ -3649,6 +3649,29 @@ export class DynamicGrid {
       };
     } else if (inBuyZone) {
       const openBuys = this.openOrders.filter((o) => o.isBid);
+      const openSells = this.openOrders.filter((o) => !o.isBid);
+      const tlSellOrder = openSells.find(
+        (o) => o.levelDesc?.includes("TL Exit") || o.levelDesc?.includes("Real Ceil") || o.levelDesc?.includes("Trendline"),
+      );
+      const refResistancePrice = downtrendLine?.currentLinePrice ?? tlSellPrice ?? sellTrigger;
+      const tlFrontRunPct = (tlSellOrder && refResistancePrice > 0)
+        ? ((refResistancePrice - tlSellOrder.price) / refResistancePrice) * 100
+        : 0;
+
+      let sellStatusPart = "";
+      if (tlSellOrder) {
+        const diffStr = tlFrontRunPct > 0 ? ` -${tlFrontRunPct.toFixed(2)}%` : "";
+        sellStatusPart = `Sell TL Resting @ $${tlSellOrder.price.toFixed(this.pricePrecision)} (TL $${refResistancePrice.toFixed(this.pricePrecision)}${diffStr})`;
+      } else if (openSells.length > 0) {
+        sellStatusPart = openSells.length === 1
+          ? `Sell Resting @ $${openSells[0].price.toFixed(this.pricePrecision)}`
+          : `${openSells.length} Sells Resting ($${openSells.map((s) => s.price.toFixed(this.pricePrecision)).join(", ")})`;
+      } else if (isTlSellTrigger) {
+        sellStatusPart = `Sell Trigger: >$${sellTrigger.toFixed(this.pricePrecision)} (TL Resistance)`;
+      } else {
+        sellStatusPart = `Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`;
+      }
+
       const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
 
       if (isCapacityFull) {
@@ -3661,7 +3684,7 @@ export class DynamicGrid {
             : `Sell target: >$${sellTrigger.toFixed(this.pricePrecision)}`,
           severity: "info",
         };
-      } else if (isTlSellTrigger && this.baseHeld() > 0 && openBuys.length === 0) {
+      } else if (isTlSellTrigger && this.baseHeld() > 0 && openBuys.length === 0 && openSells.length === 0) {
         const tlSlipPct = (this.cfg.iocSlippagePct ?? 0.2);
         botActionState = {
           code: "WAITING_TRENDLINE_EXIT",
@@ -3670,6 +3693,16 @@ export class DynamicGrid {
           nextTrigger: `IOC Sell when price touches TL ($${sellTrigger.toFixed(this.pricePrecision)} • slip ${tlSlipPct.toFixed(2)}%)`,
           severity: "info",
         };
+      } else if (openBuys.length > 0 && openSells.length > 0) {
+        const buyLvlIdx = buyLevels.findIndex((lvl) => Math.abs(lvl - buyTrigger) <= ((this.tickSize || 0.0001) * 0.5));
+        const buyLvlTag = buyLvlIdx >= 0 ? ` (Buy L${buyLvlIdx + 1})` : "";
+        botActionState = {
+          code: "MAKER_BUY_SELL_RESTING",
+          title: `📋 ${openBuys.length} Buys & 💎 ${openSells.length} Sell${openSells.length > 1 ? "s" : ""} Resting`,
+          reason: `Buys: ${openBuys.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", ")} • ${tlSellOrder ? `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)}` : `Sell: $${openSells[0].price.toFixed(this.pricePrecision)}`}`,
+          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • ${sellStatusPart}`,
+          severity: "success",
+        };
       } else if (openBuys.length > 0) {
         const buyLvlIdx = buyLevels.findIndex((lvl) => Math.abs(lvl - buyTrigger) <= ((this.tickSize || 0.0001) * 0.5));
         const buyLvlTag = buyLvlIdx >= 0 ? ` (Buy L${buyLvlIdx + 1})` : "";
@@ -3677,7 +3710,7 @@ export class DynamicGrid {
           code: "MAKER_BUY_RESTING",
           title: `📋 ${openBuys.length} Buys Resting`,
           reason: openBuys.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", "),
-          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
+          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • ${sellStatusPart}`,
           severity: "success",
         };
       } else {
@@ -3685,25 +3718,45 @@ export class DynamicGrid {
         const buyLvlTag = buyLvlIdx >= 0 ? ` (Buy L${buyLvlIdx + 1})` : "";
         botActionState = {
           code: "BUY_ZONE_TARGET_MET",
-          title: "🎯 Level Target Met",
-          reason: `Holding $${inventoryQuote.toFixed(1)} (Target $${targetInventoryQuote.toFixed(0)} for ${activeLevelName})`,
-          nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`,
+          title: openSells.length > 0
+            ? `🎯 Level Target Met • 💎 ${openSells.length} Sell Resting`
+            : "🎯 Level Target Met",
+          reason: `Holding $${inventoryQuote.toFixed(1)} (${activeLevelName})${openSells.length > 0 ? ` • ${tlSellOrder ? `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)}` : `Sell: $${openSells[0].price.toFixed(this.pricePrecision)}`}` : ""}`,
+          nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • ${sellStatusPart}`,
           severity: "info",
         };
       }
     } else {
       // In Sell Zone (50% - 100%)
       const openSells = this.openOrders.filter((o) => !o.isBid);
+      const openBuys = this.openOrders.filter((o) => o.isBid);
+      const tlSellOrder = openSells.find(
+        (o) => o.levelDesc?.includes("TL Exit") || o.levelDesc?.includes("Real Ceil") || o.levelDesc?.includes("Trendline"),
+      );
+      const refResistancePrice = downtrendLine?.currentLinePrice ?? tlSellPrice ?? sellTrigger;
+      const tlFrontRunPct = (tlSellOrder && refResistancePrice > 0)
+        ? ((refResistancePrice - tlSellOrder.price) / refResistancePrice) * 100
+        : 0;
+
       const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
 
       if (openSells.length > 0) {
+        const tlDiffStr = tlFrontRunPct > 0 ? ` -${tlFrontRunPct.toFixed(2)}%` : "";
         botActionState = {
           code: "MAKER_SELL_RESTING",
-          title: `💎 ${openSells.length} Sells Resting`,
-          reason: openSells.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", "),
-          nextTrigger: openSells.length === 1
-            ? `Resting Limit Sell placed @ $${openSells[0].price.toFixed(this.pricePrecision)}`
-            : `${openSells.length} Resting Limit Sells placed`,
+          title: tlSellOrder
+            ? `💎 ${openSells.length} Sell${openSells.length > 1 ? "s" : ""} Resting (TL Exit)`
+            : (openBuys.length > 0
+                ? `💎 ${openSells.length} Sell${openSells.length > 1 ? "s" : ""} & 📋 ${openBuys.length} Buy${openBuys.length > 1 ? "s" : ""} Resting`
+                : `💎 ${openSells.length} Sells Resting`),
+          reason: tlSellOrder
+            ? `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)} (TL $${refResistancePrice.toFixed(this.pricePrecision)}${tlDiffStr})`
+            : openSells.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", "),
+          nextTrigger: tlSellOrder
+            ? `Resting Limit Sell placed @ $${tlSellOrder.price.toFixed(this.pricePrecision)} (Front-run${tlDiffStr} below TL $${refResistancePrice.toFixed(this.pricePrecision)})`
+            : (openSells.length === 1
+                ? `Resting Limit Sell placed @ $${openSells[0].price.toFixed(this.pricePrecision)}`
+                : `${openSells.length} Resting Limit Sells placed`),
           severity: "success",
         };
       } else if (isTlSellTrigger && this.baseHeld() > 0) {

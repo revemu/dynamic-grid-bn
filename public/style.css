@@ -1498,6 +1498,24 @@ body {
   flex-shrink: 0;
 }
 
+.ladder-res-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: rgba(249, 115, 22, 0.12);
+  border: 1px dashed rgba(249, 115, 22, 0.40);
+  border-radius: 5px;
+  padding: 3px 6px;
+  margin: 1px 0 5px 0;
+  font-size: 8px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: #fed7aa;
+  letter-spacing: 0.2px;
+  text-align: center;
+}
+
 /* ── Vertical Ladder Steps ────────────────────────────────────────────────── */
 .vertical-ladder-meter {
   display: flex;
