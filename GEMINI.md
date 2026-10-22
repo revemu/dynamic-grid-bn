@@ -2563,5 +2563,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.30` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.4`) และ `GEMINI.md`
 
+---
+
+### 64. IOC Bracket Execution Engine Hardening & Desync Fix (`v0.2.31`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Infinite Repeat Sells via `soldSellIndices` Desync in `sellTrancheIOC`**:
+     - ใน `src/strategy/order-executor.ts` เมื่อคำสั่ง Maker Sell Match สำเร็จ ระบบจะบันทึก `soldSellIndices.add(soldIdx)` เพื่อจดจำว่าเป้าขายนั้นบรรลุแล้ว
+     - แต่ในเมธอด `sellTrancheIOC()` ทั้งใน Dry-run และ Live เมื่อขายสำเร็จ กลับไม่มีการบันทึก `soldSellIndices.add(soldIdx)` เลย
+     - ส่งผลให้ใน `executeIocBracketGrid()` เงื่อนไข `!soldSellIndices.has(i)` ยังคงเป็นจริงตลอดเวลา เมื่อ Cooldown 15 วินาทีหมดลง บอทจะวนส่งคำสั่งขาย IOC ซ้ำที่เป้าเดิมเรื่อยๆ ทุก 15 วินาทีจนเหรียญในพอร์ตหมดเกลี้ยง
+  2. **Missing `break` in IOC Sell Ladder Loop**:
+     - ลูปค้นหาเป้าขายใน `executeIocBracketGrid()` ขาด `break;` ทำให้เมื่อราคาพุ่งทะลุหลายเป้า ตัวแปรถูกเขียนทับไปเป็นเป้าบนสุดทันที แทนที่จะทยอยขายไต่ระดับจากเป้าต่ำสุดที่ยังไม่ได้ขาย
+  3. **Missing Profit Requirement Guard in IOC Sells**:
+     - ขาดการตรวจสอบ `meetsProfitRequirement` (`avgEntry * minProfitMult`) ใน `executeIocBracketGrid()` ทำให้เสี่ยงต่อการขายขาดทุนเมื่อกรอบราคาขยับลงต่ำกว่าราคาต้นทุน
+  4. **Residual Inventory at Final Target**:
+     - โค้ดเดิมใช้สูตร `held / activeSellCount` ทุกรอบ ทำให้เมื่อถึงเป้าขายสุดท้าย เหลือเหรียญค้างพอร์ตอยู่ราว ~32% โดยไม่ยอม Liquidation 100%
+  5. **Ignored `activeDowntrendLine` & `postCutSingleTrancheOnly` in IOC Buys**:
+     - ไม่ได้ตรวจสอบแนวต้านขาลง ทำให้เข้าซื้อชน Trendline ได้ และไม่จำกัด 1 Tranche หลังเพิ่งโดน Cut Loss
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.31`)**:
+  1. **บันทึก `soldSellIndices` ใน `sellTrancheIOC`**:
+     - เมื่อ IOC Sell Match สำเร็จทั้งในโหมด Dry-run และ Live จะเรียก `findSellLevelIndex` และบันทึก `this.host.soldSellIndices.add(soldIdx)` ทันที ป้องกันการวนขายซ้ำทุก 15 วินาที
+  2. **ปรับปรุง Sell Side ใน `executeIocBracketGrid`**:
+     - ใส่ `break;` หลังเจอเป้าต่ำสุดที่ยังไม่ได้ขาย เพื่อให้ขายแบบไต่ระดับอย่างถูกต้อง
+     - ตรวจสอบ `meetsProfitRequirement` ก่อนส่งคำสั่งขายทุกครั้ง
+     - กรองเป้าขายใต้เส้นแนวต้านขาลง (`isTlActive && sellLevels[i] < tlPrice`)
+     - ระงับการขายทับซ้อนใน Upper Bound Ceiling Zone หากเปิดใช้งาน `takeProfitAtUpperBound`
+     - คำนวณ `remainingUnsold` และบังคับขายเหรียญที่เหลือทั้งหมด 100% (`desiredQty = held`) ในเป้าสุดท้าย
+  3. **ปรับปรุง Buy Side ใน `executeIocBracketGrid`**:
+     - กรองไม่ให้เข้าซื้อ IOC หาก `currentBestAsk >= activeDowntrendLine.currentLinePrice`
+     - จำกัดการซื้อเหลือ 1 Tranche (`maxAllowedPerBuy = levelTrancheQuote`) เมื่อ `this.host.postCutSingleTrancheOnly === true` และปลดล็อกเป็น `false` ทันทีหลังซื้อสำเร็จ
+  4. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.31` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.5`) และ `GEMINI.md`
+
 
 

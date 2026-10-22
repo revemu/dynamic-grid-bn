@@ -718,6 +718,18 @@ export class OrderExecutor {
       const slippagePctVal = this.host.cfg.iocSlippagePct ?? 0.2;
       const dryLimitPrice = roundToTick(targetPrice * (1 - slippagePctVal / 100), this.host.tickSize || 0.0001);
       const { roundPnl } = this.lotTracker.closeLots(executeQty, effectivePrice);
+      const soldIdx = this.findSellLevelIndex(actionLabel, effectivePrice);
+      if (soldIdx >= 0) {
+        const remainingHeld = this.lotTracker.baseHeld();
+        if (remainingHeld < (this.host.minQty || 0.0001)) {
+          this.host.soldSellIndices.clear();
+        } else {
+          this.host.soldSellIndices.add(soldIdx);
+          this.host.log(
+            `🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.host.soldSellIndices).map((i) => i + 1).join(", ")}])`,
+          );
+        }
+      }
       this.host.log(
         `[dry-run] ⚡ ${actionLabel}: Sold ${executeQty.toFixed(4)} ${this.host.baseAsset} @ $${effectivePrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${dryLimitPrice.toFixed(6)} • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)}`,
       );
@@ -806,6 +818,18 @@ export class OrderExecutor {
         : (typeof res.price === "number" && res.price > 0 ? res.price : effectivePrice);
 
       const { roundPnl } = this.lotTracker.closeLots(actualQty, fillPrice);
+      const soldIdx = this.findSellLevelIndex(actionLabel, fillPrice);
+      if (soldIdx >= 0) {
+        const remainingHeld = this.lotTracker.baseHeld();
+        if (remainingHeld < (this.host.minQty || 0.0001)) {
+          this.host.soldSellIndices.clear();
+        } else {
+          this.host.soldSellIndices.add(soldIdx);
+          this.host.log(
+            `🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.host.soldSellIndices).map((i) => i + 1).join(", ")}])`,
+          );
+        }
+      }
 
       this.host.log(
         `⚡ ON-CHAIN ${actionLabel}: Sold ${actualQty.toFixed(4)} ${this.host.baseAsset} @ $${fillPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)} (tx: ${res.txHash || orderIdStr || "N/A"})`,
@@ -1348,6 +1372,11 @@ export class OrderExecutor {
         }
       }
 
+      // Check trendline resistance filter (if descending trendline is active, cannot buy at or above TL)
+      if (activeDowntrendLine && !activeDowntrendLine.isBroken && currentBestAsk >= activeDowntrendLine.currentLinePrice) {
+        targetTranches = 0;
+      }
+
       if (targetTranches > 0 && matchedLevelIndex >= 0 && matchedBuyPrice !== undefined) {
         const targetHoldFraction = isTlBuy
           ? (buyFractions[0] ?? 0.20)
@@ -1356,13 +1385,20 @@ export class OrderExecutor {
         const deficitQuote = targetHoldQuote - currentHeldQuote;
         const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
 
-        if (deficitQuote >= minOrderNotional) {
-          const buyCooldownKey = `ioc_buy_level_${matchedLevelIndex}`;
+        // After a Cut Loss, enforce incremental 1-tranche DCA re-entry
+        const levelTrancheQuote = isTlBuy
+          ? (maxInv * (buyFractions[0] ?? 0.20))
+          : (maxInv * (buyFractions[matchedLevelIndex] || (activeBuyCount > 0 ? 1 / activeBuyCount : 0.20)));
+        const maxAllowedPerBuy = this.host.postCutSingleTrancheOnly ? levelTrancheQuote : deficitQuote;
+        const toSpendQuote = Math.min(deficitQuote, maxAllowedPerBuy);
+
+        if (toSpendQuote >= minOrderNotional) {
+          const buyCooldownKey = isTlBuy ? `ioc_buy_tl` : `ioc_buy_level_${matchedLevelIndex}`;
           const lastBuyTs = this.host.orderCooldowns.get(buyCooldownKey) ?? 0;
           const buyCooldownMs = 15_000;
 
           if (Date.now() - lastBuyTs > buyCooldownMs) {
-            const rawDesiredQty = deficitQuote / currentBestAsk;
+            const rawDesiredQty = toSpendQuote / currentBestAsk;
             const desiredQty = roundToStep(rawDesiredQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
 
             if (desiredQty >= this.host.minQty) {
@@ -1372,9 +1408,13 @@ export class OrderExecutor {
                 : `Buy Level ${matchedLevelIndex + 1} (${((matchedBuyPrice - lowerBound) / span * 100).toFixed(0)}%)`;
 
               this.host.log(
-                `⚡ [IOC BRACKET BUY] Market ask $${currentBestAsk.toFixed(6)} entered ${levelName} — executing IOC buy for $${deficitQuote.toFixed(2)} ${this.host.quoteAsset}`,
+                `⚡ [IOC BRACKET BUY] Market ask $${currentBestAsk.toFixed(6)} entered ${levelName} — executing IOC buy for $${toSpendQuote.toFixed(2)} ${this.host.quoteAsset}${this.host.postCutSingleTrancheOnly ? " [Post-Cut 1x DCA Guard]" : ""}`,
               );
-              await this.buyTrancheIOC(desiredQty, currentBestAsk, levelName, matchedBuyPrice, deficitQuote);
+              const ok = await this.buyTrancheIOC(desiredQty, currentBestAsk, levelName, matchedBuyPrice, toSpendQuote);
+              if (ok && this.host.postCutSingleTrancheOnly) {
+                this.host.postCutSingleTrancheOnly = false;
+                this.host.saveState();
+              }
             }
           }
         }
@@ -1383,37 +1423,64 @@ export class OrderExecutor {
 
     // SELL SIDE
     const held = this.lotTracker.baseHeld();
-    const activeSellCount = enabledSells.filter(Boolean).length;
-    if (this.host.sellOrdersActive && held >= this.host.minQty && currentBestBid > 0 && activeSellCount > 0) {
+    const isCeilingZone = refPrice >= upperBound || (currentBestBid > 0 && currentBestBid >= upperBound);
+    if (isCeilingZone && this.host.cfg.takeProfitAtUpperBound) {
+      return;
+    }
+
+    const isTlActive = (this.host.cfg.enableSellBelowTrendResistance !== false) &&
+      Boolean(activeDowntrendLine && !activeDowntrendLine.isBroken);
+    const tlPrice = (isTlActive && activeDowntrendLine) ? activeDowntrendLine.currentLinePrice : Infinity;
+
+    const activeSellIndices = (sellLevels.length > 0 ? sellLevels.map((_, idx) => idx) : [0, 1, 2, 3, 4]).filter(
+      (idx) => enabledSells[idx] && sellLevels[idx] !== undefined && (!isTlActive || sellLevels[idx]! < tlPrice),
+    );
+
+    if (this.host.sellOrdersActive && held >= this.host.minQty && currentBestBid > 0 && activeSellIndices.length > 0) {
       let targetTrancheToSell = -1;
       let matchedSellPrice: number | undefined;
 
-      for (let i = 0; i < sellLevels.length; i++) {
-        if (!enabledSells[i]) continue;
+      // Pick the lowest unsold reached target (ladder upwards)
+      for (const i of activeSellIndices) {
         const lvlPrice = sellLevels[i];
-        if (currentBestBid >= lvlPrice && !this.host.soldSellIndices.has(i)) {
+        if (lvlPrice !== undefined && currentBestBid >= lvlPrice && !this.host.soldSellIndices.has(i)) {
           targetTrancheToSell = i;
           matchedSellPrice = lvlPrice;
+          break;
         }
       }
 
       if (targetTrancheToSell >= 0 && matchedSellPrice !== undefined) {
-        const sellCooldownKey = `ioc_sell_level_${targetTrancheToSell}`;
-        const lastSellTs = this.host.orderCooldowns.get(sellCooldownKey) ?? 0;
-        const sellCooldownMs = 15_000;
+        const avgEntry = this.lotTracker.getAvgEntryPrice();
+        const minProfitMult = this.host.getMinProfitMultiplier();
+        const lowestLotCost = this.host.lots.length > 0 ? Math.min(...this.host.lots.map((l) => l.price)) : avgEntry;
+        const meetsProfitRequirement = this.host.cfg.requireProfitAboveAvgEntry
+          ? (avgEntry <= 0 || currentBestBid >= avgEntry * minProfitMult)
+          : (lowestLotCost <= 0 || currentBestBid >= lowestLotCost * minProfitMult);
 
-        if (Date.now() - lastSellTs > sellCooldownMs) {
-          const trancheQty = held / activeSellCount;
-          const desiredQty = roundToStep(trancheQty, this.host.stepSize || 0.0001, this.host.qtyPrecision);
+        if (meetsProfitRequirement) {
+          const sellCooldownKey = `ioc_sell_level_${targetTrancheToSell}`;
+          const lastSellTs = this.host.orderCooldowns.get(sellCooldownKey) ?? 0;
+          const sellCooldownMs = 15_000;
 
-          if (desiredQty >= this.host.minQty) {
-            this.host.orderCooldowns.set(sellCooldownKey, Date.now());
-            const levelName = `Sell Target ${targetTrancheToSell + 1} (${((matchedSellPrice - lowerBound) / span * 100).toFixed(0)}%)`;
+          if (Date.now() - lastSellTs > sellCooldownMs) {
+            const remainingUnsold = activeSellIndices.filter((idx) => !this.host.soldSellIndices.has(idx));
+            const isFinalTranche = remainingUnsold.length <= 1 || targetTrancheToSell === activeSellIndices[activeSellIndices.length - 1];
 
-            this.host.log(
-              `⚡ [IOC BRACKET SELL] Market bid $${currentBestBid.toFixed(6)} entered ${levelName} — executing IOC sell for ${desiredQty.toFixed(4)} ${this.host.baseAsset}`,
-            );
-            await this.sellTrancheIOC(desiredQty, currentBestBid, levelName, matchedSellPrice);
+            const rawDesiredQty = isFinalTranche
+              ? held
+              : roundToStep(held / Math.max(1, remainingUnsold.length), this.host.stepSize || 0.0001, this.host.qtyPrecision);
+            const desiredQty = Math.min(held, rawDesiredQty);
+
+            if (desiredQty >= this.host.minQty) {
+              this.host.orderCooldowns.set(sellCooldownKey, Date.now());
+              const levelName = `Sell Target ${targetTrancheToSell + 1} (${((matchedSellPrice - lowerBound) / span * 100).toFixed(0)}%)`;
+
+              this.host.log(
+                `⚡ [IOC BRACKET SELL] Market bid $${currentBestBid.toFixed(6)} entered ${levelName} — executing IOC sell for ${desiredQty.toFixed(4)} ${this.host.baseAsset}${isFinalTranche ? " (100% Exit)" : ""}`,
+              );
+              await this.sellTrancheIOC(desiredQty, currentBestBid, levelName, matchedSellPrice);
+            }
           }
         }
       }
