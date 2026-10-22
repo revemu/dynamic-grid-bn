@@ -119,13 +119,20 @@ export class OrderExecutor {
     const sideStr = order.isBid ? "BUY" : "SELL";
     const orderNotional = (order.notionalQuote !== undefined ? order.notionalQuote : order.notionalUsdso) || (order.price * order.qty);
     if (this.host.cfg.dryRun) {
-      const dryGasBase = 0.001;
-      const dryGasQuote = dryGasBase * order.price;
-      this.host.accumulatedGasBase += dryGasBase;
-      this.host.accumulatedGasQuote += dryGasQuote;
-      this.host.totalGasSpentBase += dryGasBase;
-      this.host.totalGasSpentQuote += dryGasQuote;
-      this.host.totalTxCount++;
+      const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
+      if (isDex) {
+        const isSomiBase = this.host.baseAsset.toUpperCase() === "SOMI";
+        const dryGasSomi = 0.001;
+        if (isSomiBase) {
+          this.host.accumulatedGasBase += dryGasSomi;
+          this.host.totalGasSpentBase += dryGasSomi;
+        }
+        const somiPrice = isSomiBase ? order.price : 0.20;
+        const dryGasQuote = dryGasSomi * somiPrice;
+        this.host.accumulatedGasQuote += dryGasQuote;
+        this.host.totalGasSpentQuote += dryGasQuote;
+        this.host.totalTxCount++;
+      }
 
       this.host.log(
         `[dry-run] 🗑️ CANCELLED ${sideStr} LIMIT @ $${order.price.toFixed(6)} (${order.qty.toFixed(4)} ${this.host.baseAsset} | $${orderNotional.toFixed(2)} ${this.host.quoteAsset}) • ${order.levelDesc} [${reason}]`,
@@ -309,13 +316,20 @@ export class OrderExecutor {
 
     if (this.host.cfg.dryRun) {
       try {
-        const dryGasBase = 0.002;
-        const dryGasQuote = dryGasBase * price;
-        this.host.accumulatedGasBase += dryGasBase;
-        this.host.accumulatedGasQuote += dryGasQuote;
-        this.host.totalGasSpentBase += dryGasBase;
-        this.host.totalGasSpentQuote += dryGasQuote;
-        this.host.totalTxCount++;
+        const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
+        if (isDex) {
+          const isSomiBase = this.host.baseAsset.toUpperCase() === "SOMI";
+          const dryGasSomi = 0.002;
+          if (isSomiBase) {
+            this.host.accumulatedGasBase += dryGasSomi;
+            this.host.totalGasSpentBase += dryGasSomi;
+          }
+          const somiPrice = isSomiBase ? price : 0.20;
+          const dryGasQuote = dryGasSomi * somiPrice;
+          this.host.accumulatedGasQuote += dryGasQuote;
+          this.host.totalGasSpentQuote += dryGasQuote;
+          this.host.totalTxCount++;
+        }
 
         this.host.openOrders.push({
           id,
@@ -604,18 +618,20 @@ export class OrderExecutor {
     this.host.needsBuyRebalance = true;
 
     const remainingHeldAfterFill = this.lotTracker.baseHeld();
-    const soldIdx = this.findSellLevelIndex(levelDesc, price);
-    if (soldIdx >= 0) {
-      if (remainingHeldAfterFill < (this.host.minQty || 0.0001)) {
-        this.host.soldSellIndices.clear();
-      } else {
+    const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
+    if (remainingHeldAfterFill < dustThreshold) {
+      this.host.soldSellIndices.clear();
+      this.host.iocBracketSellCycle = undefined;
+    } else {
+      const soldIdx = this.findSellLevelIndex(levelDesc, price);
+      if (soldIdx >= 0) {
         this.host.soldSellIndices.add(soldIdx);
         this.host.log(`🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.host.soldSellIndices).map((i) => i + 1).join(", ")}])`);
       }
-      this.host.saveState();
     }
+    this.host.saveState();
 
-    if (this.host.cutLossStage1Executed && (levelDesc === "Cut Loss Bounce Exit (50%)" || remainingHeldAfterFill < (this.host.minQty || 0.0001))) {
+    if (this.host.cutLossStage1Executed && (levelDesc === "Cut Loss Bounce Exit (50%)" || remainingHeldAfterFill < dustThreshold)) {
       this.host.cutLossStage1Executed = false;
       this.host.cutLossStage1Price = undefined;
       this.host.cutLossStage1CandleTime = undefined;
@@ -735,12 +751,14 @@ export class OrderExecutor {
       const slippagePctVal = this.host.cfg.iocSlippagePct ?? 0.2;
       const dryLimitPrice = roundToTick(targetPrice * (1 - slippagePctVal / 100), this.host.tickSize || 0.0001);
       const { roundPnl } = this.lotTracker.closeLots(executeQty, effectivePrice);
-      const soldIdx = this.findSellLevelIndex(actionLabel, effectivePrice);
-      if (soldIdx >= 0) {
-        const remainingHeld = this.lotTracker.baseHeld();
-        if (remainingHeld < (this.host.minQty || 0.0001)) {
-          this.host.soldSellIndices.clear();
-        } else {
+      const remainingHeld = this.lotTracker.baseHeld();
+      const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
+      if (remainingHeld < dustThreshold) {
+        this.host.soldSellIndices.clear();
+        this.host.iocBracketSellCycle = undefined;
+      } else {
+        const soldIdx = this.findSellLevelIndex(actionLabel, effectivePrice);
+        if (soldIdx >= 0) {
           this.host.soldSellIndices.add(soldIdx);
           this.host.log(
             `🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.host.soldSellIndices).map((i) => i + 1).join(", ")}])`,
@@ -835,12 +853,14 @@ export class OrderExecutor {
         : (typeof res.price === "number" && res.price > 0 ? res.price : effectivePrice);
 
       const { roundPnl } = this.lotTracker.closeLots(actualQty, fillPrice);
-      const soldIdx = this.findSellLevelIndex(actionLabel, fillPrice);
-      if (soldIdx >= 0) {
-        const remainingHeld = this.lotTracker.baseHeld();
-        if (remainingHeld < (this.host.minQty || 0.0001)) {
-          this.host.soldSellIndices.clear();
-        } else {
+      const remainingHeld = this.lotTracker.baseHeld();
+      const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
+      if (remainingHeld < dustThreshold) {
+        this.host.soldSellIndices.clear();
+        this.host.iocBracketSellCycle = undefined;
+      } else {
+        const soldIdx = this.findSellLevelIndex(actionLabel, fillPrice);
+        if (soldIdx >= 0) {
           this.host.soldSellIndices.add(soldIdx);
           this.host.log(
             `🎯 [Sell Cycle] Marked Sell Target ${soldIdx + 1} as SOLD for current inventory wave (sold: [${Array.from(this.host.soldSellIndices).map((i) => i + 1).join(", ")}])`,
@@ -1293,17 +1313,27 @@ export class OrderExecutor {
         this.trackTxGas(res.txHash, effectiveActionLabel);
       }
       await this.host.refreshWalletBalances();
-      if (this.host.walletBaseBalance - minGasReserveBase <= (this.host.minQty || 0.0001)) {
+      const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
+      if (this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
         this.host.lots = [];
         this.host.lockedChannel = undefined;
+        this.host.confirmedChannel = undefined;
+        this.host.pendingConfirmedChannelUpdate = true;
+        this.host.soldSellIndices.clear();
+        this.host.iocBracketSellCycle = undefined;
       }
       this.host.saveState();
     } catch (err) {
       this.host.log(`⚠️ On-chain ${actionLabel} failed: ${(err as Error).message}`);
       await this.host.refreshWalletBalances();
-      if (this.host.walletBaseBalance - minGasReserveBase <= (this.host.minQty || 0.0001)) {
+      const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
+      if (this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
         this.host.lots = [];
         this.host.lockedChannel = undefined;
+        this.host.confirmedChannel = undefined;
+        this.host.pendingConfirmedChannelUpdate = true;
+        this.host.soldSellIndices.clear();
+        this.host.iocBracketSellCycle = undefined;
         this.host.saveState();
       }
     }

@@ -2657,6 +2657,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.33` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.8`) และ `GEMINI.md`
 
+---
+
+### 67. Dry-Run Gas Fee Insulation, Universal Sell Cycle Clear & Dust Threshold Normalization (`v0.2.34`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Phantom Gas Fee Accumulation in Dry-Run on Binance & Non-SOMI Assets (`src/strategy/order-executor.ts`)**:
+     - ใน `cancelOrderInternal` และ `placeRestingOrder`: เมื่อรันในโหมด `dryRun` โค้ดเดิมมีการบวกค่าแก๊สจำลอง `0.001` และ `0.002` เข้า `accumulatedGasBase` และคูณ `price` เข้า `accumulatedGasQuote` เสมอโดยไม่ตรวจสอบ `isDex`
+     - ส่งผลให้เมื่อรัน dry-run บน Binance CEX ซึ่งไม่มีแก๊ส หรือรันคู่ WBTC บน DreamDEX จะถูกบวกแก๊สปลอมเป็น BTC หรือ WBTC (ครั้งละ $68 - $135) สะสมในพอร์ตอย่างผิดพลาด
+  2. **`soldSellIndices` Stale Across Waves on Alternative Exits (`src/strategy/order-executor.ts` & `src/strategy/lot-tracker.ts`)**:
+     - ใน `processSellFill` และ `sellTrancheIOC`: การล้างเป้าขาย `soldSellIndices.clear()` ถูกผูกไว้ภายใน `if (soldIdx >= 0)`
+     - หากคำสั่งขายที่ทำให้พอร์ตว่างเป็นคำสั่งพิเศษ เช่น `Sell Real Ceil Exit`, `Sell TL Exit`, `Cut Loss Bounce Exit` หรือ `Upper Bound TP` ตัวแปร `soldIdx` จะเป็น `-1` ส่งผลให้ `soldSellIndices.clear()` ไม่ทำงาน และเป้าขายของรอบเก่าค้างข้ามไปยังรอบใหม่
+  3. **Inflated Dust Threshold Wiping Valid Small Lots on High-Priced Assets (`src/strategy/lot-tracker.ts`)**:
+     - ใน `closeLots()` กำหนด `dustThreshold = Math.max(minQty || 0.0001, 0.0001)`
+     - สำหรับ Bitcoin ซึ่งมี `minQty = 0.00001` BTC (~$0.68) การใช้ `Math.max(..., 0.0001)` บังคับให้เกณฑ์ Dust กลายเป็น `0.0001` BTC (~$6.80) ทำให้ไม้เทรดขนาดเล็กที่ถูกต้อง (เช่น 0.00008 BTC) ถูกล้างทิ้งเป็นเศษเหรียญ Dust โดยไม่จำเป็น
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.34`)**:
+  1. **แยกแยะ Dry-Run Gas ตามประเภทกระดานและเหรียญแก๊ส**:
+     - ใน `cancelOrderInternal` และ `placeRestingOrder`: ตรวจสอบ `isDex` ถ้าเป็น CEX (Binance) จะไม่คิดค่าแก๊สใดๆ ทั้งสิ้น
+     - ถ้าเป็น DEX (DreamDEX): จำลองแก๊สเป็นเหรียญ SOMI และบวกเข้า `accumulatedGasBase` เฉพาะเมื่อ `baseAsset === "SOMI"` พร้อมคำนวณมูลค่า `dryGasQuote = dryGasSomi * somiPrice` (~$0.0002)
+  2. **รับประกันการล้างเป้าขายเมื่อพอร์ตว่างอย่างแท้จริง (Universal Sell Cycle Clear)**:
+     - ใน `closeLots()`: เมื่อพอร์ตว่าง (`baseHeld() < dustThreshold`) สั่งเคลียร์ `this.host.soldSellIndices.clear()` และ `this.host.iocBracketSellCycle = undefined` ทันที
+     - ใน `processSellFill`, `sellTrancheIOC` และ `sellAll`: แยกการตรวจสอบพอร์ตว่างออกมานอก `soldIdx >= 0` ให้เคลียร์เป้าขายทันทีเมื่อเหรียญหมดพอร์ต ไม่ว่าจะขายออกด้วยคำสั่งใด
+  3. **ปรับเกณฑ์ Dust Threshold ให้สัมพันธ์กับ `minQty` ของเหรียญจริง**:
+     - เปลี่ยนจาก `Math.max(..., 0.0001)` เป็น `(this.host.minQty ? this.host.minQty * 0.5 : 1e-6)` รองรับเหรียญมูลค่าสูงอย่าง BTC และ ETH ได้อย่างแม่นยำ 100%
+  4. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.34` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.9`) และ `GEMINI.md`
+
+
 
 
 

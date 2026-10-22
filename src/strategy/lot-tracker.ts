@@ -102,8 +102,8 @@ export class LotTracker {
       if (lot.qty <= 1e-12) this.host.lots.shift();
     }
 
-    // If remaining inventory is less than minQty (e.g. 0.0001 ETH) or 1e-5, treat position as completely flat/closed
-    const dustThreshold = Math.max(this.host.minQty || 0.0001, 0.0001);
+    // If remaining inventory is less than half minQty or 1e-6, treat position as completely flat/closed
+    const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
     if (this.baseHeld() < dustThreshold) {
       this.host.lots = [];
       this.host.lockedChannel = undefined;
@@ -126,6 +126,8 @@ export class LotTracker {
       this.host.lockedChannel = undefined;
       this.host.confirmedChannel = undefined;
       this.host.pendingConfirmedChannelUpdate = true;
+      this.host.soldSellIndices.clear();
+      this.host.iocBracketSellCycle = undefined;
       this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined);
       return;
     }
