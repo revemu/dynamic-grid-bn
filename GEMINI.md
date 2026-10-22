@@ -3082,6 +3082,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.50` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.25`) และ `GEMINI.md`
 
+---
+
+### 84. Preserving Canonical Dow Theory Swing Labels & Removal of Retroactive HL Overwrite (`v0.2.51`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **การเขียนทับป้ายประวัติศาสตร์ `HL` กลายเป็น `LL` ทั้งหมด (Retroactive HL Overwrite Loop)**:
+     - ใน `dow-engine.ts` บรรทัดที่ 200–215 มีลูป Invalidate ที่ย้อนกลับไปค้นหาสวิง HL ในอดีตทั้งหมด หากพบว่ามีสวิง Low ในอนาคต (เช่น การทุบทำ Lower Low ก้นเหว $81,800 ในวันที่ 22 Oct) ต่ำกว่าราคาของ HL นั้น ลูปนี้จะเขียนทับป้าย `sw.dowLabel` จาก `"HL"` กลายเป็น `"LL"` ทันที
+     - ส่งผลให้คลื่นขาขึ้นที่สวยงามตลอดวันที่ 21 Oct ซึ่งทำ Higher Lows ยกฐานอย่างต่อเนื่อง ถูกย้อนกลับไปเปลี่ยนเป็นป้ายสีแดง `LL` ทั้งหมด ทำให้ผู้ใช้เห็นป้าย `LL` เต็มไปหมดแม้ในช่วงราคาพุ่งขึ้น
+     - ทำให้ตัวแปร `lastHl` ถูกรีเซ็ตเป็น `undefined` ตลอดเวลา และระบบโครงสร้างคลื่น Dow Theory เสียหาย
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.51`)**:
+  1. **ตัดลูปเขียนทับป้ายประวัติศาสตร์ออกจาก [`dow-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/dow-engine.ts)**:
+     - ป้ายสวิง Dow Theory (`HH`, `HL`, `LH`, `LL`) ถูกล็อกให้สะท้อนสถานะคลื่นจริงอย่างเที่ยงตรง (Canonical Forward Pass) โดยไม่มีการย้อนเวลาไปเขียนทับป้ายในอดีตเด็ดขาด
+     - หากระดับแนวรับของ HL ในอดีตถูกทะลุในเวลาต่อมา จะระบุผ่านฟิลด์ `sw.isBroken = true` แทน โดยไม่เปลี่ยน `dowLabel: "HL"`
+  2. **ผลลัพธ์บนหน้าจอ Dashboard TradingView**:
+     - สวิงเหวทุกจุดในช่วงคลื่นขาขึ้นจะกลับมาแสดงป้ายสีเขียว **`HL` (Higher Low ยกฐาน)** อย่างถูกต้องตามตำรา Dow Theory 100%
+     - ป้าย `LL` จะแสดงเฉพาะจุดที่หลุดทำจุดต่ำสุดใหม่ (Lower Low) จริง ๆ เท่านั้น
+     - ตัวแปร `lastHl` สามารถระบุจุดยกฐานล่าสุดได้อย่างถูกต้อง ไม่กลายเป็น `undefined` อีกต่อไป
+  3. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.51` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.26`) และ `GEMINI.md`
+
+
 
 
 

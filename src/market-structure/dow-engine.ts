@@ -197,33 +197,19 @@ export class DowEngine {
       }
     }
 
-    // 2.1 Invalidate False HLs: หากมีจุดสวิง Low ใดที่เคยถูกมองว่าเป็น HL ชั่วคราว
-    // แต่ในเวลาต่อมามีสวิง Low ถัดมา (หรือสวิง Low ในรอบทุบ) ที่กดตัวต่ำกว่ามัน (New Low ต่ำกว่า HL นั้น)
-    // โครงสร้าง Higher Low นั้นถือว่าถูกทำลาย (Broken/Invalidated) ทันที -> ต้องเปลี่ยนป้ายเป็น LL
+    // 2.1 Track whether past swings were subsequently penetrated/broken by future price action
+    // Note: In Dow Theory, historical swing labels (HH, HL, LH, LL) must remain canonical to reflect the wave structure at that time.
+    // They are never retroactively overwritten! Only the `isBroken` flag is marked.
     for (let i = 0; i < annotatedSwings.length; i++) {
       const sw = annotatedSwings[i]!;
-      if (sw.type === "LOW" && sw.dowLabel === "HL") {
-        const futureLows = annotatedSwings.slice(i + 1).filter((next) => next.type === "LOW");
-        const brokenByFutureLow = futureLows.some((next) => next.price < sw.price);
-        if (brokenByFutureLow) {
-          sw.dowLabel = "LL";
-          sw.labelDescription = "Lower Low (LL) หลุดฐาน";
-          sw.isTransitionStart = false;
-          sw.transitionType = undefined;
-        }
-      }
-    }
-
-    // Re-evaluate lastHl / lastLl after invalidation
-    lastHl = undefined;
-    lastLl = undefined;
-    for (const sw of annotatedSwings) {
       if (sw.type === "LOW") {
-        if (sw.dowLabel === "HL") lastHl = sw;
-        else if (sw.dowLabel === "LL") lastLl = sw;
+        const futureLows = annotatedSwings.slice(i + 1).filter((next) => next.type === "LOW");
+        sw.isBroken = futureLows.some((next) => next.price < sw.price);
+      } else {
+        const futureHighs = annotatedSwings.slice(i + 1).filter((next) => next.type === "HIGH");
+        sw.isBroken = futureHighs.some((next) => next.price > sw.price);
       }
     }
-    lastLowLabel = annotatedSwings.filter((s) => s.type === "LOW").pop()?.dowLabel ?? "LL";
 
     // 3. Build wave legs and interpolated continuous wave points
     const legs: WaveLeg[] = [];

@@ -75,6 +75,7 @@ export interface DowSwingPoint extends SwingPoint {
   prevPrice?: number;
   changePct?: number;
   labelDescription?: string;
+  isBroken?: boolean;
 }
 
 export interface WaveLeg {
