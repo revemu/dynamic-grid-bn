@@ -2191,6 +2191,42 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.17` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 51. Dynamic Remaining Capacity Buy Order Allocation & Budget Fulfillment Fix (`v0.2.18`)
+- **สาเหตุของปัญหา**:
+  1. **การคำนวณขนาดไม้ซื้อแบบคงที่ (Static Weight Allocation) ไม่สอดคล้องกับงบที่เหลือจริง**:
+     - ใน `src/strategy.ts` เมธอด `syncRestingOrders()`: ขนาดคำสั่งซื้อของแต่ละ Buy Level (`levelTrancheQuote`) ถูกคำนวณจาก `maxInv * levelWeightFrac` โดยตรงเสมอ (เช่น L4 = 25% x $200 = $50, L5 = 30% x $200 = $60)
+     - โค้ดเดิมยึดสมมติฐานว่าไม้บนทั้งหมด (L1, L2, L3) จะต้องถูกซื้อด้วยมูลค่าตามสัดส่วนคงที่ $20 + $30 + $40 = $90 เสมอ
+     - หากเกิดเหตุการณ์ที่ไม้บนซื้อมาด้วยมูลค่าน้อยกว่า (เช่น ผู้ใช้ปรับเพิ่มงบจาก $150 เป็น $200 ระหว่างรัน, มีการขายทำกำไรบางส่วนคืนเงินสดกลับมา, หรือไม้บนถูกบล็อกด้วยฟิลเตอร์) งบที่เหลือจริง (`currentAvailableCapacity = maxInv - currentHeldQuote` = $137.72) จะไม่ถูกนำมาเฉลี่ยกระจายให้กับไม้ซื้อที่ยังรอตั้งซื้อจริง (L4, L5)
+     - ส่งผลให้เกิดงบตกค้าง ($28.04) ไม่ถูกนำไปตั้งซื้อ ทำให้ `[ของในมือ ($62.28)] + [คำสั่งตั้งซื้อ ($109.68)] = $171.96` ไม่เท่ากับงบพอร์ทที่ตั้งไว้ ($200)
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.18`)**:
+  1. **Dynamic Remaining Capacity Allocation (`src/strategy.ts`)**:
+     - คำนวณผลรวมน้ำหนักของ Buy Levels ที่พร้อมตั้งซื้อจริง (`eligibleBuyIndices`):
+       ```typescript
+       const totalEligibleBuyWeight = eligibleBuyIndices.reduce((sum, idx) => {
+         const w = isPyramid ? Math.max(1, Number(rawWeights[idx]) || 10) : 1;
+         return sum + w;
+       }, 0);
+       ```
+     - กระจายงบที่เหลือจริง (`currentAvailableCapacity`) ตามสัดส่วนน้ำหนักของเลเวลที่ยังเปิดใช้งานอยู่:
+       ```typescript
+       const myWeight = isPyramid ? Math.max(1, Number(rawWeights[i]) || 10) : 1;
+       const eligibleWeightFrac = totalEligibleBuyWeight > 0
+         ? (myWeight / totalEligibleBuyWeight)
+         : (1 / Math.max(1, eligibleBuyIndices.length));
+       let levelTrancheQuote = isSingleBuyLevel ? currentAvailableCapacity : (currentAvailableCapacity * eligibleWeightFrac);
+       ```
+     - ตัวอย่างกรณี ETH/FDUSD ($200 งบรวม, ของในมือ $62.28, งบเหลือ $137.72, น้ำหนัก L4=25, L5=30):
+       - Buy Level 4: `(25 / 55) * $137.72 = $62.60`
+       - Buy Level 5: `(30 / 55) * $137.72 = $75.12`
+       - รวมของในมือ + คำสั่งตั้งซื้อ: `$62.28 + $62.60 + $75.12 = $200.00` ครบถ้วน 100% พอดีเป๊ะ
+  2. **Reactive Settings Rebalance Trigger on Budget Change (`src/strategy.ts`)**:
+     - ใน `updateRuntimeSettings()` เมื่อมีการเปลี่ยนแปลง `maxInventoryQuote` หรือ `maxInventoryUsdso` ให้กำหนด `this.needsBuyRebalance = true;` และ `this.needsSellRebalance = true;` ทันที เพื่อกระตุ้นให้บอทคำนวณและปรับขนาดคำสั่งซื้อบนกระดานใหม่ทันที
+  3. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.18` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

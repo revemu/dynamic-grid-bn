@@ -885,6 +885,14 @@ export class DynamicGrid {
           }
           continue;
         }
+        if (key === "maxInventoryQuote" || key === "maxInventoryUsdso") {
+          const num = Math.max(5, Number(val) || 200);
+          this.cfg.maxInventoryQuote = num;
+          this.cfg.maxInventoryUsdso = num;
+          this.needsBuyRebalance = true;
+          this.needsSellRebalance = true;
+          continue;
+        }
         if (key === "symbol" && typeof val === "string" && val.trim().length > 0) {
           const cleanSym = val.trim().toUpperCase().replace(/[\/\-_]/g, "");
           this.symbol = cleanSym;
@@ -4797,8 +4805,25 @@ export class DynamicGrid {
             .filter((o) => o.isBid && o !== currentOpenBuyAtLvl)
             .reduce((sum, o) => sum + ((o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty)), 0);
           const remainingCapacityForOrder = Math.max(0, currentAvailableCapacity - otherOpenBuysQuote);
-          const levelWeightFrac = buyWeightFractions[i] ?? (activeBuyCount > 0 ? (1 / activeBuyCount) : 0.2);
-          let levelTrancheQuote = isSingleBuyLevel ? maxInv : (maxInv * levelWeightFrac);
+          const isPyramid = (this.cfg.buySizingMode ?? "PYRAMID") === "PYRAMID";
+          const rawWeights = Array.isArray(this.cfg.buyLevelWeights) && this.cfg.buyLevelWeights.length >= 5
+            ? this.cfg.buyLevelWeights
+            : [10, 15, 20, 25, 30];
+
+          // Sum weights across all currently eligible buy levels (levels that should hold active buy orders)
+          const totalEligibleBuyWeight = eligibleBuyIndices.reduce((sum, idx) => {
+            const w = isPyramid ? Math.max(1, Number(rawWeights[idx]) || 10) : 1;
+            return sum + w;
+          }, 0);
+
+          const myWeight = isPyramid ? Math.max(1, Number(rawWeights[i]) || 10) : 1;
+          const eligibleWeightFrac = totalEligibleBuyWeight > 0
+            ? (myWeight / totalEligibleBuyWeight)
+            : (1 / Math.max(1, eligibleBuyIndices.length));
+
+          // Dynamically allocate remaining capacity across eligible buy levels so that:
+          // (Total Held Position) + (Sum of all resting buy orders) == maxInventoryQuote
+          let levelTrancheQuote = isSingleBuyLevel ? currentAvailableCapacity : (currentAvailableCapacity * eligibleWeightFrac);
           if (levelTrancheQuote < minOrderNotional && currentAvailableCapacity >= minOrderNotional) {
             levelTrancheQuote = Math.min(currentAvailableCapacity, minOrderNotional);
           }
