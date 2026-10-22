@@ -2825,6 +2825,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.39` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.14`) และ `GEMINI.md`
 
+---
+
+### 73. Downtrend LL False Higher-Low Recovery Guard, DreamDEX TxHash Order Reconciliation & Trade Manager Symbol Scoping (`v0.2.40`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **False Higher-Low Confirmation on Lower Lows in Downtrend Waterfall (`src/market-structure/dow-engine.ts:383`)**:
+     - ใน `checkForHigherLow()` โค้ดเดิมใช้ `swingLows.find((s) => s.index < candidateLow.index && s.price < candidateLow.price)` ซึ่งวิ่งไปเจอเหวแรกสุดในอดีต (เช่น เหวเมื่อ 2 วันก่อนทางซ้ายมือ $2388.52)
+     - มีเงื่อนไข `(isHigherThanPriorLow || candidateLow.price >= referenceFloor)` ทำให้สวิงเหวใหม่ที่ทุบลงมาทำ Lower Low ติดๆ กันในคลื่นขาลง (เช่น $2487, $2473, $2438, $2430) ถูกเข้าใจผิดว่าเป็น Higher Low (HL) ยกฐาน เพราะราคาสูงกว่าก้นกรอบในอดีต
+     - ไม่มีการตรวจสอบป้าย `dowLabel` ทำให้เหวที่ถูกแปะป้ายเป็น `LL` หลุดฐานกลับถูกนำมารายงานเป็น `HL Confirmed` ส่งผลให้บอทปลดล็อก `waitingForHigherLow = false` เข้าซื้อรับมีดกลางอากาศแล้วถูก Stop Loss / Cut Loss ซ้ำซาก
+  2. **DreamDEX TxHash vs Uint128 Order ID Reconciliation Mismatch (`src/exchange/dreamdex/client.ts` & `src/strategy/index.ts`)**:
+     - เมื่อวางคำสั่งบน DreamDEX Smart Contract คืนค่า `orderId: hash` (EVM txHash ขึ้นต้นด้วย `0x`)
+     - เมื่อ `getOpenOrders()` ดึงข้อมูลจาก Somnia GraphQL Indexer จะได้ `orderId` เป็นตัวเลข uint128 แท้จริง (เช่น `"12345"`)
+     - ทำให้ `onChainIdSet` มีเฉพาะตัวเลข uint128 ส่งผลให้ออเดอร์ `0x...` ถูกมองเป็น Stale Order และเมื่อเรียก `getOrder(symbol, "0x...")` ตัว Indexer โยนข้อผิดพลาด `Error: Order 0x... not found`
+     - ใน `cancelOrder` หากออเดอร์ยังไม่อยู่ใน `getOpenOrders` ก็จะไม่สามารถถอดรหัส uint128 order ID ได้และกดยกเลิกไม่สำเร็จ
+  3. **Lot Manager & Manual Trades Missing Symbol Scoping (`public/app.js`, `src/server.ts`, `src/db.ts`)**:
+     - การแก้ไข, ลบ, หรือเพิ่ม Lot ในหน้า Trade Manager และการเพิ่ม Manual Trade ไม่ได้ส่ง `symbol` ที่เปิดดูอยู่
+     - `updateLot`, `deleteLot`, `addLot` ใน `db.ts` แก้ไขเฉพาะ `this.data.state.lots` โดยไม่แตะต้อง `statesBySymbol[symbolKey].lots` ทำให้เมื่อสลับเหรียญข้อมูลที่แก้ไขจะถูกทับกลับเป็นค่าเดิม
+     - `adjustStatePnl` บวก PnL กระจายเข้าทุกเหรียญใน `statesBySymbol` แทนที่จะเจาะจงเฉพาะเหรียญของรายการนั้น
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.40`)**:
+  1. **Dow Theory Strict Higher-Low Verification**:
+     - ใน `checkForHigherLow()`: บังคับเช็ค `annotated.dowLabel !== "LL"` เพื่อห้ามนำเหว Lower Low มาเป็น HL โดยเด็ดขาด
+     - ค้นหา `immediatePriorLow` เฉพาะเหวที่อยู่ก่อนหน้าตัวมันทันทีในคลื่น (`swingLows[candidateIdx - 1]`) โดยราคาต้องสูงกว่าเหวก่อนหน้าจริง (`candidateLow.price > immediatePriorLow.price * 1.0005`)
+     - ตัดเงื่อนไขหลวม `|| candidateLow.price >= referenceFloor` ออกจากการตัดสินใจยืนยัน HL
+  2. **DreamDEX GraphQL Query by TxHash & Seamless Promotion**:
+     - เพิ่ม `getOrderByTxHash(poolAddress, txHash)` ใน `SomniaIndexerClient` ค้นหาผ่าน Hasura GraphQL `{ placedTxHash: { _ilike: normTx } }`
+     - แนบ `txHash: o.placedTxHash` ใน `ExchangeOpenOrder`
+     - ใน `DreamDexClient.getOrder()` และ `cancelOrder()`: หาก `orderId` ขึ้นต้นด้วย `0x` ให้ค้นหาผ่าน `getOrderByTxHash` คืนสถานะและ uint128 order ID ได้แม่นยำ 100%
+     - ใน `syncOpenOrdersWithExchange`: แนบ `txHash` เข้า `onChainIdSet` และโปรโมต `alreadyTracked.onChainOrderId = idStr` อัตโนมัติทันที
+  3. **End-to-End Symbol Scoping for Lot & Trade Management**:
+     - Frontend `public/app.js`: ส่ง `symbol: activeSymbol || activeBaseAsset` ใน `handleAddTrade`, `handleSaveEditLot`, `tmDeleteLot`, `handleAddLot`
+     - Backend `src/server.ts`: รับและส่งต่อ `parsed.symbol` ให้กับ DB methods ทั้งหมด
+     - Database `src/db.ts`: ซิงค์การอัปเดต/ลบ/เพิ่ม Lot เข้าทั้ง `statesBySymbol[symbolKey].lots` และ root state พร้อมปรับปรุง `deleteTrade`, `addManualTrade`, และ `adjustStatePnl` ให้แยก PnL ตามคู่เหรียญอย่างถูกต้อง
+  4. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.40` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.15`) และ `GEMINI.md`
+
 
 
 

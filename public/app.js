@@ -5357,6 +5357,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          symbol: activeSymbol || activeBaseAsset,
           price,
           qty,
           action,
@@ -5421,7 +5422,7 @@
       const res = await fetch(`${API_BASE}/api/db/lots/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ index, lot: { price, qty, time } }),
+        body: JSON.stringify({ symbol: activeSymbol || activeBaseAsset, index, lot: { price, qty, time } }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Update lot failed");
@@ -5441,7 +5442,7 @@
       const res = await fetch(`${API_BASE}/api/db/lots/delete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ index }),
+        body: JSON.stringify({ symbol: activeSymbol || activeBaseAsset, index }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Delete lot failed");
@@ -5466,7 +5467,7 @@
       const res = await fetch(`${API_BASE}/api/db/lots/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lot: { price, qty, time: Date.now() } }),
+        body: JSON.stringify({ symbol: activeSymbol || activeBaseAsset, lot: { price, qty, time: Date.now() } }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Add lot failed");

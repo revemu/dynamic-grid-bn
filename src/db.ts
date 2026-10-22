@@ -1547,7 +1547,7 @@ export class BotDatabase {
 
   // ── Trade & Lot Management API Methods ─────────────────────────────────────
 
-  private adjustStatePnl(diff: number, manualTradeId?: string, isRemove?: boolean): void {
+  private adjustStatePnl(diff: number, manualTradeId?: string, isRemove?: boolean, symbolKey?: string): void {
     if (!Number.isFinite(diff) || Math.abs(diff) < 1e-8) return;
     if (!this.data.state) this.data.state = this.getDefaultState();
 
@@ -1568,6 +1568,9 @@ export class BotDatabase {
 
     if (this.data.statesBySymbol) {
       for (const sym of Object.keys(this.data.statesBySymbol)) {
+        if (symbolKey && !this.matchesSymbol({ symbol: sym } as any, symbolKey)) {
+          continue;
+        }
         const s = this.data.statesBySymbol[sym];
         if (s) {
           s.tradeRealizedPnl = (s.tradeRealizedPnl || 0) + diff;
@@ -1742,19 +1745,30 @@ export class BotDatabase {
     // Deduct order's PnL from state if it had realized PnL
     const orderPnl = Number(order.pnlQuote !== undefined ? order.pnlQuote : order.pnlUsdso !== undefined ? order.pnlUsdso : (order.pnl || 0));
     if (this.data.state && Number.isFinite(orderPnl) && Math.abs(orderPnl) > 1e-8) {
-      this.adjustStatePnl(-orderPnl, id, true);
+      this.adjustStatePnl(-orderPnl, id, true, order.symbol);
     }
 
     // Check if lot removal was requested
-    if (opts?.removeMatchingLot && this.data.state?.lots) {
-      const lotIdx = this.data.state.lots.findIndex(
-        (l) =>
-          Math.abs(l.time - (order.time || order.placedTime)) < 5000 ||
-          (Math.abs(l.price - order.price) < 0.0001 && Math.abs(l.qty - order.qty) < 0.01),
-      );
-      if (lotIdx >= 0) {
-        this.data.state.lots.splice(lotIdx, 1);
-        lotRemoved = true;
+    if (opts?.removeMatchingLot) {
+      const removeMatching = (lotsArr?: Lot[]) => {
+        if (!lotsArr) return false;
+        const lotIdx = lotsArr.findIndex(
+          (l) =>
+            Math.abs(l.time - (order.time || order.placedTime)) < 5000 ||
+            (Math.abs(l.price - order.price) < 0.0001 && Math.abs(l.qty - order.qty) < 0.01),
+        );
+        if (lotIdx >= 0) {
+          lotsArr.splice(lotIdx, 1);
+          return true;
+        }
+        return false;
+      };
+      if (this.data.state?.lots) {
+        lotRemoved = removeMatching(this.data.state.lots);
+      }
+      if (order.symbol && this.data.statesBySymbol && this.data.statesBySymbol[order.symbol]?.lots) {
+        const removedSym = removeMatching(this.data.statesBySymbol[order.symbol]!.lots);
+        if (removedSym) lotRemoved = true;
       }
     }
 
@@ -1832,29 +1846,41 @@ export class BotDatabase {
         if (trade.addLot) {
           if (!this.data.state.lots) this.data.state.lots = [];
           this.data.state.lots.push({ price, qty, time: now });
+          if (trade.symbol && this.data.statesBySymbol) {
+            if (!this.data.statesBySymbol[trade.symbol]) this.data.statesBySymbol[trade.symbol] = this.getDefaultState();
+            if (!this.data.statesBySymbol[trade.symbol]!.lots) this.data.statesBySymbol[trade.symbol]!.lots = [];
+            this.data.statesBySymbol[trade.symbol]!.lots!.push({ price, qty, time: now });
+          }
         }
       } else if (side === "SELL") {
         // Accumulate Realized PnL into State
         const finalPnl = Number(pnlVal || 0);
         if (Number.isFinite(finalPnl)) {
-          this.adjustStatePnl(finalPnl, record.id, false);
+          this.adjustStatePnl(finalPnl, record.id, false, record.symbol);
         }
 
         // Deduct Lots (FIFO) from State
-        if (Array.isArray(this.data.state.lots) && this.data.state.lots.length > 0) {
+        const deductFromLots = (lotsArr: Lot[]) => {
           let remaining = qty;
-          while (remaining > 1e-12 && this.data.state.lots.length > 0) {
-            const lot = this.data.state.lots[0]!;
+          while (remaining > 1e-12 && lotsArr.length > 0) {
+            const lot = lotsArr[0]!;
             const take = Math.min(lot.qty, remaining);
             lot.qty -= take;
             remaining -= take;
             if (lot.qty <= 1e-12) {
-              this.data.state.lots.shift();
+              lotsArr.shift();
             }
           }
-          if (this.data.state.lots.reduce((sum, l) => sum + l.qty, 0) < 0.0001) {
-            this.data.state.lots = [];
+          if (lotsArr.reduce((sum, l) => sum + l.qty, 0) < 0.0001) {
+            lotsArr.length = 0;
           }
+        };
+
+        if (Array.isArray(this.data.state.lots) && this.data.state.lots.length > 0) {
+          deductFromLots(this.data.state.lots);
+        }
+        if (record.symbol && this.data.statesBySymbol && Array.isArray(this.data.statesBySymbol[record.symbol]?.lots)) {
+          deductFromLots(this.data.statesBySymbol[record.symbol]!.lots!);
         }
       }
     }
@@ -1863,38 +1889,65 @@ export class BotDatabase {
     return { success: true, order: record };
   }
 
-  public updateLot(index: number, lot: Lot): { success: boolean; lots: Lot[]; error?: string } {
-    if (!this.data.state?.lots || index < 0 || index >= this.data.state.lots.length) {
-      return { success: false, lots: this.data.state?.lots || [], error: "Lot index out of bounds" };
+  public updateLot(index: number, lot: Lot, symbolKey?: string): { success: boolean; lots: Lot[]; error?: string } {
+    let targetLots = this.data.state?.lots;
+    if (symbolKey && this.data.statesBySymbol && this.data.statesBySymbol[symbolKey]?.lots) {
+      targetLots = this.data.statesBySymbol[symbolKey]!.lots;
     }
-    this.data.state.lots[index] = {
+    if (!targetLots || index < 0 || index >= targetLots.length) {
+      return { success: false, lots: targetLots || [], error: "Lot index out of bounds" };
+    }
+    targetLots[index] = {
       price: Number(lot.price),
       qty: Number(lot.qty),
       time: Number(lot.time || Date.now()),
     };
-    this.flushSync();
-    return { success: true, lots: this.data.state.lots };
-  }
-
-  public deleteLot(index: number): { success: boolean; lots: Lot[]; error?: string } {
-    if (!this.data.state?.lots || index < 0 || index >= this.data.state.lots.length) {
-      return { success: false, lots: this.data.state?.lots || [], error: "Lot index out of bounds" };
+    if (this.data.state && this.data.state.lots !== targetLots && this.data.state.lots?.[index]) {
+      this.data.state.lots[index] = { ...targetLots[index]! };
     }
-    this.data.state.lots.splice(index, 1);
     this.flushSync();
-    return { success: true, lots: this.data.state.lots };
+    return { success: true, lots: targetLots };
   }
 
-  public addLot(lot: Lot): { success: boolean; lots: Lot[]; error?: string } {
+  public deleteLot(index: number, symbolKey?: string): { success: boolean; lots: Lot[]; error?: string } {
+    let targetLots = this.data.state?.lots;
+    if (symbolKey && this.data.statesBySymbol && this.data.statesBySymbol[symbolKey]?.lots) {
+      targetLots = this.data.statesBySymbol[symbolKey]!.lots;
+    }
+    if (!targetLots || index < 0 || index >= targetLots.length) {
+      return { success: false, lots: targetLots || [], error: "Lot index out of bounds" };
+    }
+    targetLots.splice(index, 1);
+    if (this.data.state && this.data.state.lots !== targetLots && this.data.state.lots?.[index]) {
+      this.data.state.lots.splice(index, 1);
+    }
+    this.flushSync();
+    return { success: true, lots: targetLots };
+  }
+
+  public addLot(lot: Lot, symbolKey?: string): { success: boolean; lots: Lot[]; error?: string } {
     if (!this.data.state) this.data.state = this.getDefaultState();
     if (!this.data.state.lots) this.data.state.lots = [];
-    this.data.state.lots.push({
+    const newLot = {
       price: Number(lot.price),
       qty: Number(lot.qty),
       time: Number(lot.time || Date.now()),
-    });
+    };
+    let targetLots = this.data.state.lots;
+    if (symbolKey) {
+      if (!this.data.statesBySymbol) this.data.statesBySymbol = {};
+      if (!this.data.statesBySymbol[symbolKey]) this.data.statesBySymbol[symbolKey] = this.getDefaultState();
+      if (!this.data.statesBySymbol[symbolKey]!.lots) this.data.statesBySymbol[symbolKey]!.lots = [];
+      targetLots = this.data.statesBySymbol[symbolKey]!.lots!;
+      targetLots.push(newLot);
+      if (this.data.state.lots !== targetLots) {
+        this.data.state.lots.push(newLot);
+      }
+    } else {
+      targetLots.push(newLot);
+    }
     this.flushSync();
-    return { success: true, lots: this.data.state.lots };
+    return { success: true, lots: targetLots };
   }
 
   public clearTradesAndActivity(): void {

@@ -177,6 +177,43 @@ export class SomniaIndexerClient {
   }
 
   /**
+   * Fetch an order by transaction hash where it was placed
+   */
+  async getOrderByTxHash(poolAddress: string, txHash: string): Promise<IndexedOrder | null> {
+    const normTx = txHash.trim().toLowerCase();
+    const query = `
+      query GetOrderByTxHash($where: Order_bool_exp!) {
+        Order(where: $where, limit: 1) {
+          id
+          orderId
+          market_id
+          owner
+          isBid
+          price
+          quantityRemaining
+          fullQuantity
+          filledQuantity
+          status
+          rested
+          cancelReason
+          placedTxHash
+          placedAtTimestamp
+          expireTimestampNs
+        }
+      }
+    `;
+    const where: Record<string, any> = {
+      placedTxHash: { _ilike: normTx },
+    };
+    if (poolAddress) {
+      where.market_id = { _eq: poolAddress.toLowerCase() };
+    }
+    const data = await this.fetchGql<{ Order: any[] }>(query, { where });
+    if (!data?.Order || data.Order.length === 0) return null;
+    return this.mapOrder(data.Order[0]);
+  }
+
+  /**
    * Batch fetch multiple orders by their on-chain order IDs
    * Returns a Map where key is orderId string
    */

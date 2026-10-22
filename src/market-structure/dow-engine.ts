@@ -379,16 +379,31 @@ export class DowEngine {
       const candidateLow = recentConfirmedLows[i];
       if (!candidateLow) continue;
 
+      // Guard 1: Never treat a swing that was structurally classified as "LL" (Lower Low) as an HL!
+      const annotated = wave?.annotatedSwings.find(
+        (s) => s.type === "LOW" && (s.index === candidateLow.index || s.time === candidateLow.time),
+      );
+      if (annotated && annotated.dowLabel === "LL") {
+        continue;
+      }
+
       const isHigherThanDump = candidateLow.price > lowestDumpPrice * 1.0005;
-      const priorLow = swingLows.find((s) => s.index < candidateLow.index && s.price < candidateLow.price);
-      const isHigherThanPriorLow = Boolean(priorLow);
+
+      // Guard 2: Must compare with the IMMEDIATELY PRECEDING swing low in the wave, NOT any ancient swing in history!
+      const candidateIdx = swingLows.findIndex((s) => s.index === candidateLow.index || s.time === candidateLow.time);
+      const immediatePriorLow = candidateIdx > 0 ? swingLows[candidateIdx - 1] : undefined;
+      const isHigherThanImmediatePrior = Boolean(immediatePriorLow && candidateLow.price > immediatePriorLow.price * 1.0005);
       const isPriceHoldingAbove = currentPrice ? currentPrice >= candidateLow.price : true;
 
-      if (isHigherThanDump && (isHigherThanPriorLow || candidateLow.price >= referenceFloor) && isPriceHoldingAbove) {
+      // Higher Low requires:
+      // 1. Higher than the dump trough
+      // 2. Higher than the immediate preceding low in the wave structure
+      // 3. Price holding above the candidate low
+      if (isHigherThanDump && isHigherThanImmediatePrior && isPriceHoldingAbove) {
         return {
           confirmed: true,
           higherLow: candidateLow,
-          reason: `Confirmed Higher Low at $${candidateLow.price.toFixed(6)} > Lowest $${lowestDumpPrice.toFixed(6)}`,
+          reason: `Confirmed Higher Low at $${candidateLow.price.toFixed(6)} > Prior Low $${immediatePriorLow!.price.toFixed(6)} (and Lowest $${lowestDumpPrice.toFixed(6)})`,
         };
       }
     }

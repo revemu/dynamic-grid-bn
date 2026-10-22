@@ -1040,7 +1040,12 @@ export class DynamicGrid implements IStrategyHost {
 
       // 1. Query active open orders directly from Binance Spot API / DreamDEX
       const liveOrders = await this.binance.getOpenOrders(this.symbol);
-      const onChainIdSet = new Set<string>(liveOrders.map((o) => o.orderId.toString()));
+      const onChainIdSet = new Set<string>();
+      for (const o of liveOrders) {
+        if (o.orderId) onChainIdSet.add(o.orderId.toString().toLowerCase());
+        if (o.clientOrderId) onChainIdSet.add(o.clientOrderId.toString().toLowerCase());
+        if (o.txHash) onChainIdSet.add(o.txHash.toString().toLowerCase());
+      }
 
       // 1b. Detect & sweep orphan BUY orders on other Binance symbols that lock our quoteAsset (FDUSD/USDT)
       if (this.binance.exchangeName === "binance") {
@@ -1108,12 +1113,26 @@ export class DynamicGrid implements IStrategyHost {
       // Check details of all open orders from Binance & detect Partial Fills in real-time
       for (const liveOrder of liveOrders) {
         const idStr = liveOrder.orderId.toString();
+        const liveTxHash = liveOrder.txHash?.toLowerCase();
+        const liveClientOrderId = liveOrder.clientOrderId?.toLowerCase();
         const isBid = liveOrder.side === "BUY";
         const price = liveOrder.price;
         const remainingQty = liveOrder.origQty - liveOrder.executedQty;
-        const alreadyTracked = this.openOrders.find((o) => o.onChainOrderId === idStr);
+        const alreadyTracked = this.openOrders.find(
+          (o) =>
+            (o.onChainOrderId && o.onChainOrderId.toLowerCase() === idStr.toLowerCase()) ||
+            (liveTxHash && o.onChainOrderId && o.onChainOrderId.toLowerCase() === liveTxHash) ||
+            (liveTxHash && o.txHash && o.txHash.toLowerCase() === liveTxHash) ||
+            (liveClientOrderId && o.onChainOrderId && o.onChainOrderId.toLowerCase() === liveClientOrderId),
+        );
 
         if (alreadyTracked) {
+          if (alreadyTracked.onChainOrderId !== idStr) {
+            alreadyTracked.onChainOrderId = idStr;
+          }
+          if (liveOrder.txHash && !alreadyTracked.txHash) {
+            alreadyTracked.txHash = liveOrder.txHash;
+          }
           const prevRemaining = alreadyTracked.qty;
           if (liveOrder.executedQty > 0 && remainingQty < prevRemaining - 1e-8) {
             const filledQty = prevRemaining - remainingQty;
@@ -1279,9 +1298,12 @@ export class DynamicGrid implements IStrategyHost {
         if (ts < cleanupThreshold) this.handledExitOrderIds.delete(id);
       }
 
-      // 5. Pillar 2: Process in-memory orders whose ID is no longer open on Binance
+      // 5. Pillar 2: Process in-memory orders whose ID is no longer open on Binance/DreamDEX
       const staleTracked = this.openOrders.filter(
-        (o) => !o.onChainOrderId || !onChainIdSet.has(o.onChainOrderId),
+        (o) =>
+          !o.onChainOrderId ||
+          (!onChainIdSet.has(o.onChainOrderId.toLowerCase()) &&
+           !(o.txHash && onChainIdSet.has(o.txHash.toLowerCase()))),
       );
 
       for (const stale of staleTracked) {

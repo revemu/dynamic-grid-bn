@@ -381,14 +381,26 @@ export class DreamDexClient implements IExchangeClient {
       time: o.placedAtTimestamp ? o.placedAtTimestamp * 1000 : Date.now(),
       updateTime: Date.now(),
       isWorking: o.status === "Open",
+      txHash: o.placedTxHash,
     }));
   }
 
   public async getOrder(symbol: string, orderId: string | number): Promise<ExchangeOpenOrder> {
     const market = this.resolveMarket(symbol);
-    const idStr = String(orderId);
-    const map = await this.indexer.getOrdersByIds(market.pool, [idStr]);
-    const o = map.get(idStr);
+    const idStr = String(orderId).trim();
+    let o: import("./indexer.js").IndexedOrder | null = null;
+
+    if (idStr.startsWith("0x")) {
+      o = await this.indexer.getOrderByTxHash(market.pool, idStr);
+      if (!o && this.account) {
+        const recent = await this.indexer.getRecentOrders(this.account.address, market.pool, 50);
+        o = recent.find((r) => r.placedTxHash?.toLowerCase() === idStr.toLowerCase()) || null;
+      }
+    } else {
+      const map = await this.indexer.getOrdersByIds(market.pool, [idStr]);
+      o = map.get(idStr) || null;
+    }
+
     if (!o) {
       throw new Error(`Order ${idStr} not found on DreamDEX indexer`);
     }
@@ -407,6 +419,7 @@ export class DreamDexClient implements IExchangeClient {
       time: o.placedAtTimestamp ? o.placedAtTimestamp * 1000 : Date.now(),
       updateTime: Date.now(),
       isWorking: o.status === "Open",
+      txHash: o.placedTxHash,
     };
   }
 
@@ -641,12 +654,15 @@ export class DreamDexClient implements IExchangeClient {
     // If orderId is a transaction hash (starts with 0x), resolve actual uint128 orderId via indexer
     if (idStr.startsWith("0x")) {
       try {
-        const open = await this.indexer.getOpenOrders(this.account.address, market.pool);
-        const match = open.find((o) => o.placedTxHash?.toLowerCase() === idStr.toLowerCase());
+        let match = await this.indexer.getOrderByTxHash(market.pool, idStr);
+        if (!match && this.account) {
+          const open = await this.indexer.getOpenOrders(this.account.address, market.pool);
+          match = open.find((o) => o.placedTxHash?.toLowerCase() === idStr.toLowerCase()) || null;
+        }
         if (match && match.orderId) {
           idStr = match.orderId;
         } else {
-          this.log(`⚠️ Cannot cancel txHash ${idStr}: order not found in open indexer records.`);
+          this.log(`⚠️ Cannot cancel txHash ${idStr}: order not found in indexer records.`);
           return undefined;
         }
       } catch (err) {

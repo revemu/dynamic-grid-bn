@@ -69,6 +69,7 @@ export interface ExchangeOpenOrder {
   time: number;
   updateTime: number;
   isWorking?: boolean;
+  txHash?: string;
 }
 
 export interface ExchangeAccountBalances {

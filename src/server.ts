@@ -373,6 +373,9 @@ export class DashboardServer {
       req.on("end", () => {
         try {
           const parsed = JSON.parse(body);
+          if (!parsed.symbol && this.opts.getSettings) {
+            parsed.symbol = this.opts.getSettings().symbol;
+          }
           const result = this.db.addManualTrade(parsed || {});
           if (result.success) {
             if (result.order) {
@@ -425,7 +428,7 @@ export class DashboardServer {
             res.end(JSON.stringify({ success: false, error: "Missing lot index or lot payload" }));
             return;
           }
-          const result = this.db.updateLot(parsed.index, parsed.lot);
+          const result = this.db.updateLot(parsed.index, parsed.lot, parsed.symbol);
           if (result.success) {
             this.opts.onReloadState?.();
             this.broadcast("lots_updated", { lots: result.lots });
@@ -452,7 +455,7 @@ export class DashboardServer {
             res.end(JSON.stringify({ success: false, error: "Missing lot index" }));
             return;
           }
-          const result = this.db.deleteLot(parsed.index);
+          const result = this.db.deleteLot(parsed.index, parsed.symbol);
           if (result.success) {
             this.opts.onReloadState?.();
             this.broadcast("lots_updated", { lots: result.lots });
@@ -479,7 +482,7 @@ export class DashboardServer {
             res.end(JSON.stringify({ success: false, error: "Missing lot payload" }));
             return;
           }
-          const result = this.db.addLot(parsed.lot);
+          const result = this.db.addLot(parsed.lot, parsed.symbol);
           if (result.success) {
             this.opts.onReloadState?.();
             this.broadcast("lots_updated", { lots: result.lots });
