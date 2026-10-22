@@ -2320,6 +2320,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
   8. **Version Bump**:
      - อัปเกรดเป็น `v0.2.21` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 55. Frontend Temporal Dead Zone (TDZ) Fix for `isIocExecution` (`v0.2.22`)
+- **สาเหตุของปัญหา**:
+  - ในไฟล์ `public/app.js` ที่บรรทัด 1291 มีการเรียกใช้ตัวแปร `if (!isIocExecution)`
+  - แต่ตัวแปร `const isIocExecution = ...` ถูกประกาศอยู่ที่บรรทัด 1316 (ด้านล่าง)
+  - ตามมาตรฐาน ES6 ตัวแปร `const` อยู่ในสถานะ Temporal Dead Zone (TDZ) หากถูกอ้างอิงก่อนบรรทัดที่ประกาศ จะโยนข้อผิดพลาด `ReferenceError: Cannot access 'isIocExecution' before initialization`
+  - ข้อผิดพลาดนี้ทำให้ฟังก์ชัน `updateZoneLevelBars()` ล้มเหลว ส่งผลให้ฟังก์ชัน `updateTick()` และการเรียก `/api/state` ตลอดจนการรับ Event SSE หยุดทำงานทั้งหมด แดชบอร์ดจึงค้างและไม่โหลดข้อมูล
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.22`)**:
+  1. **ย้ายตำแหน่งการประกาศตัวแปร `isIocExecution` ใน `public/app.js`**:
+     - ย้าย `const isIocExecution = (data.orderExecutionMode === "IOC_BRACKET") || (!openOrders.length && data.exchange === "dreamdex");` ขึ้นมาไว้ก่อนบล็อก `if (!isIocExecution)` เพื่อให้อยู่ใน Scope ก่อนการเรียกใช้งานทั้งหมด
+  2. **Cache Busting ใน `public/index.html`**:
+     - ปรับ `<script src="app.js?v=2.6"></script>` เพื่อให้เบราว์เซอร์ของผู้ใช้โหลดไฟล์สคริปต์เวอร์ชันใหม่ทันทีโดยไม่ต้องกด Hard Refresh
+  3. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.22` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

@@ -1287,6 +1287,9 @@
       }
     });
 
+    // Determine execution mode for visual rendering
+    const isIocExecution = (data.orderExecutionMode === "IOC_BRACKET") || (!openOrders.length && data.exchange === "dreamdex");
+
     // In MAKER_LIMIT mode: Mark targets above resistance as suppressed (🚫 TL CAP)
     if (!isIocExecution) {
       const tl = data.downtrendLine && !data.downtrendLine.isBroken ? data.downtrendLine : null;
@@ -1313,7 +1316,6 @@
     }
 
     // 3b. In IOC mode (zero resting limit orders on book), render virtual IOC triggers, sold status, and TL Capping directly on the ladder
-    const isIocExecution = (data.orderExecutionMode === "IOC_BRACKET") || (!openOrders.length && data.exchange === "dreamdex");
     if (isIocExecution) {
       const soldSet = new Set(Array.isArray(data.soldSellIndices) ? data.soldSellIndices : []);
       const tl = data.downtrendLine && !data.downtrendLine.isBroken ? data.downtrendLine : null;
