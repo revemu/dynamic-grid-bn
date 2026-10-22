@@ -2683,6 +2683,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.34` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.9`) และ `GEMINI.md`
 
+---
+
+### 68. Unified Position Reset Architecture via `clearPositionState` & Stale Channel Cleanup (`v0.2.35`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Fragmented Position Reset Across Multiple Modules (`src/strategy/` and submodules)**:
+     - ในโค้ดเดิม มีจุดที่สั่งล้างหรือรีเซ็ต Position มากถึง 7 รูทีน (`updateSymbolInfo`, `loadState`, `resetBotState`, `resetPosition`, `tick` dust cleanup, `lot-tracker.ts` (`closeLots`, `clampLotsTo`), `sell-sync.ts`, `order-executor.ts` (`sellAll`))
+     - ในหลายจุด มีการสั่งเพียง `this.lots = []` หรือ `this.host.lots = []` โดดๆ โดยไม่ได้ล้าง `lockedChannel`, `lastDynamicBounds`, `confirmedChannel`, `pendingConfirmedChannelUpdate`, `soldSellIndices`, หรือ `iocBracketSellCycle`
+     - ส่งผลให้เมื่อมีการเปลี่ยนคู่เหรียญเทรด (เช่น จาก SOMI เป็น WBTC) หรือกดยกเลิก/รีเซ็ตบอท กรอบราคาเดิม (`lockedChannel`) หรือเป้าขาย (`soldSellIndices`) ของรอบที่แล้วยังค้างอยู่ในหน่วยความจำ ทำให้บอทข้ามเป้าขายในรอบใหม่ หรือใช้กรอบราคาผิดพลาด
+  2. **Stale Channel Bounds Invalidation on Pair Switch or Flat State**:
+     - เมื่อพอร์ตกลับสู่สถานะ Cash 100% ควรปลดล็อกกรอบราคา (`lockedChannel = undefined`, `db.setLockedChannel(null)`) และรีเซ็ต `confirmedChannel = undefined` เพื่อให้การคำนวณกรอบราคาครั้งต่อไปเกาะตามแท่งเทียนล่าสุดของเหรียญปัจจุบันอย่างสมบูรณ์
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.35`)**:
+  1. **สร้าง Centralized Method `clearPositionState()` บน `IStrategyHost` และ `DynamicGrid`**:
+     - ทำการ Reset ทุกอย่างที่เกี่ยวกับ Position และวัฏจักรการเทรดแบบ Atomic ในจุดเดียว:
+       - `this.lots = []`
+       - `this.lockedChannel = undefined`
+       - `this.lastDynamicBounds = undefined`
+       - `this.confirmedChannel = undefined`
+       - `this.pendingConfirmedChannelUpdate = undefined`
+       - `this.soldSellIndices.clear()`
+       - `this.iocBracketSellCycle = undefined`
+       - `this.db.setLockedChannel(null)`
+  2. **เชื่อมโยงการเรียก `clearPositionState()` ครอบคลุมทั้ง 7 รูทีน**:
+     - `src/strategy/index.ts`: `updateSymbolInfo()`, `loadState()`, `resetBotState()`, `resetPosition()`, และ `tick()` dust cleanup
+     - `src/strategy/lot-tracker.ts`: `closeLots()` (เมื่อพอร์ตว่าง), `clampLotsTo()` (เมื่อ target <= 0)
+     - `src/strategy/sell-sync.ts`: เมื่อตรวจพบยอดเหรียญในบัญชีเหลือน้อยกว่าเกณฑ์ Dust
+     - `src/strategy/order-executor.ts`: `sellAll()` ทั้งกรณีไม่มีเหรียญถืออยู่และกรณีเหรียญคงเหลือต่ำกว่าเกณฑ์
+  3. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.35` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.10`) และ `GEMINI.md`
+
+
 
 
 

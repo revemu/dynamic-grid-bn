@@ -424,10 +424,7 @@ export class DynamicGrid implements IStrategyHost {
     this.lastBestAsk = undefined;
     this.wsBookTicker = undefined;
     this.lastPeriodicSyncTs = 0;
-    this.lastDynamicBounds = undefined;
-    this.confirmedChannel = undefined;
-    this.pendingConfirmedChannelUpdate = true;
-    this.lockedChannel = undefined;
+    this.clearPositionState();
     this.waitingForHigherLow = false;
     this.isFlatChannelShiftWaiting = false;
     this.lastEvaluatedFloor = undefined;
@@ -1525,6 +1522,22 @@ export class DynamicGrid implements IStrategyHost {
     return `${ex}:${sym}`;
   }
 
+  /**
+   * Complete, unified position reset (0 inventory / 100% Cash).
+   * Atomically clears lots, persistent locked channels, cached confirmed channel,
+   * sold sell targets wave tracker, and IOC bracket sell cycle.
+   */
+  public clearPositionState(): void {
+    this.lots = [];
+    this.lockedChannel = undefined;
+    this.lastDynamicBounds = undefined;
+    this.confirmedChannel = undefined;
+    this.pendingConfirmedChannelUpdate = true;
+    this.soldSellIndices.clear();
+    this.iocBracketSellCycle = undefined;
+    this.db.saveLockedChannel(this.getSymbolKey(), undefined);
+  }
+
   public clampLotsTo(maxAllowedQty: number): void {
     this.lotTracker.clampLotsTo(maxAllowedQty);
   }
@@ -1782,7 +1795,7 @@ export class DynamicGrid implements IStrategyHost {
       const totalHeld = this.baseHeld();
       if (totalHeld < this.minQty && totalHeld > 0) {
         // Clean up dust lots on startup
-        this.lots = [];
+        this.clearPositionState();
       }
       const avgEntry = this.getAvgEntryPrice();
       this.log(
@@ -1980,7 +1993,7 @@ export class DynamicGrid implements IStrategyHost {
     }
 
     // 2. Clear memory lots & orders completely
-    this.lots = [];
+    this.clearPositionState();
     this.openOrders = [];
     this.inFlightOrders.clear();
     this.orderCooldowns.clear();
@@ -2001,11 +2014,6 @@ export class DynamicGrid implements IStrategyHost {
     this.lastBuyFillTime = 0;
     this.lastBuyFillPrice = 0;
     this.lastBuyFillCandleTime = 0;
-    this.lockedChannel = undefined;
-    this.lastDynamicBounds = undefined;
-    this.confirmedChannel = undefined;
-    this.pendingConfirmedChannelUpdate = true;
-    this.db.saveLockedChannel(this.getSymbolKey(), undefined);
 
     // 4. Reset PnL & Gas if requested
     if (opts?.resetPnl) {
@@ -2037,7 +2045,7 @@ export class DynamicGrid implements IStrategyHost {
   public async resetPosition(): Promise<{ success: boolean; clearedLots: number }> {
     this.log(`🎯 User triggered RESET POSITION.`);
     const count = this.lots.length;
-    this.lots = [];
+    this.clearPositionState();
 
     // Cancel all resting SELL orders since we no longer hold a position to sell
     await this.cancelAllRestingOrders("SELL", "User Reset Position");
@@ -2059,11 +2067,6 @@ export class DynamicGrid implements IStrategyHost {
     this.lastBuyFillTime = 0;
     this.lastBuyFillPrice = 0;
     this.lastBuyFillCandleTime = 0;
-    this.lockedChannel = undefined;
-    this.lastDynamicBounds = undefined;
-    this.confirmedChannel = undefined;
-    this.pendingConfirmedChannelUpdate = true;
-    this.db.saveLockedChannel(this.getSymbolKey(), undefined);
 
     this.saveState(true);
     this.emitTelemetryTick();
@@ -2542,7 +2545,8 @@ export class DynamicGrid implements IStrategyHost {
       this.log(
         `🧹 Auto-cleared residual dust position (${totalHeldBase.toFixed(4)} ${this.baseAsset} | $${totalHeldUsdso.toFixed(4)})`,
       );
-      this.lots = [];
+      this.clearPositionState();
+      this.saveState();
     }
 
     // ── Dynamic Channel Hysteresis & Position Lock ──────────────────────────

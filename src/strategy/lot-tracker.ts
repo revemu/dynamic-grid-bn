@@ -105,13 +105,7 @@ export class LotTracker {
     // If remaining inventory is less than half minQty or 1e-6, treat position as completely flat/closed
     const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
     if (this.baseHeld() < dustThreshold) {
-      this.host.lots = [];
-      this.host.lockedChannel = undefined;
-      this.host.confirmedChannel = undefined;
-      this.host.pendingConfirmedChannelUpdate = true;
-      this.host.iocBracketSellCycle = undefined;
-      this.host.soldSellIndices.clear();
-      this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined);
+      this.host.clearPositionState();
     }
 
     return { closedQty: qty - remaining, roundPnl };
@@ -122,13 +116,7 @@ export class LotTracker {
    */
   public clampLotsTo(maxAllowedQty: number): void {
     if (maxAllowedQty <= 1e-6) {
-      this.host.lots = [];
-      this.host.lockedChannel = undefined;
-      this.host.confirmedChannel = undefined;
-      this.host.pendingConfirmedChannelUpdate = true;
-      this.host.soldSellIndices.clear();
-      this.host.iocBracketSellCycle = undefined;
-      this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined);
+      this.host.clearPositionState();
       return;
     }
     let accumulated = 0;

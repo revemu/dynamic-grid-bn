@@ -89,7 +89,7 @@ export class SellOrderSynchronizer {
         await cancelAllRestingOrders("SELL", "Inventory empty or dust only (no base to sell)");
       }
       if (this.host.lots.length > 0) {
-        this.host.lots = [];
+        this.host.clearPositionState();
         this.host.saveState();
       }
       return;

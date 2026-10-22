@@ -152,6 +152,7 @@ export interface IStrategyHost {
   lastEvaluatedCeil?: number;
 
   // Methods
+  clearPositionState(): void;
   getSymbolKey(): string;
   log(msg: string): void;
   status(msg: string): void;

@@ -1068,7 +1068,7 @@ export class OrderExecutor {
 
     const held = this.lotTracker.baseHeld();
     if (held < this.host.minQty) {
-      this.host.lots = [];
+      this.host.clearPositionState();
       this.host.saveState();
       return;
     }
@@ -1315,12 +1315,7 @@ export class OrderExecutor {
       await this.host.refreshWalletBalances();
       const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
       if (this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
-        this.host.lots = [];
-        this.host.lockedChannel = undefined;
-        this.host.confirmedChannel = undefined;
-        this.host.pendingConfirmedChannelUpdate = true;
-        this.host.soldSellIndices.clear();
-        this.host.iocBracketSellCycle = undefined;
+        this.host.clearPositionState();
       }
       this.host.saveState();
     } catch (err) {
@@ -1328,12 +1323,7 @@ export class OrderExecutor {
       await this.host.refreshWalletBalances();
       const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
       if (this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
-        this.host.lots = [];
-        this.host.lockedChannel = undefined;
-        this.host.confirmedChannel = undefined;
-        this.host.pendingConfirmedChannelUpdate = true;
-        this.host.soldSellIndices.clear();
-        this.host.iocBracketSellCycle = undefined;
+        this.host.clearPositionState();
         this.host.saveState();
       }
     }
