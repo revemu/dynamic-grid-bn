@@ -275,6 +275,15 @@ export class BuyOrderSynchronizer {
         const levelWeightFrac = buyWeightFractions[idx] ?? (activeBuyCount > 0 ? (1 / activeBuyCount) : 0.2);
         const expectedTrancheQuote = isSingleBuyLevel ? maxInv : (maxInv * levelWeightFrac);
         const expectedTrancheQty = lvl > 0 ? (expectedTrancheQuote / lvl) : 0;
+
+        // Cumulative Exposure Quota Guard: If current inventory already fulfills or exceeds this level's target,
+        // this level is fulfilled and not eligible for duplicate buys (even across dynamic channel shifts).
+        const targetExposure = buyTargets[idx] ?? 1.0;
+        const isQuotaFulfilled = currentHoldFraction >= (targetExposure - 0.01);
+        if (isQuotaFulfilled) {
+          return false;
+        }
+
         if (this.lotTracker.hasLotNearLevel(lvl, idx, effectiveBuyLevels, expectedTrancheQty)) {
           return false;
         }
@@ -492,7 +501,8 @@ export class BuyOrderSynchronizer {
           this.host.openOrders = this.host.openOrders.filter((o) => o !== currentOpenBuyAtLvl);
 
           const effectiveBuyQty = maxPossibleBudget / lvlPrice;
-          if (effectiveBuyQty >= this.host.minQty && maxPossibleBudget >= minOrderNotional) {
+          const isEligibleForReplacement = lvlPrice <= maxAllowedBuyPrice && canBuy;
+          if (isEligibleForReplacement && effectiveBuyQty >= this.host.minQty && maxPossibleBudget >= minOrderNotional) {
             await placeRestingOrder(
               true,
               lvlPrice,
@@ -507,6 +517,10 @@ export class BuyOrderSynchronizer {
       }
 
       if (currentHoldFraction >= 0.95) {
+        continue;
+      }
+      const targetExposure = buyTargets[i] ?? 1.0;
+      if (currentHoldFraction >= (targetExposure - 0.01)) {
         continue;
       }
       const expectedTrancheQty = lvlPrice > 0 ? (targetOrderQuote / lvlPrice) : 0;

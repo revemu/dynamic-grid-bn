@@ -559,6 +559,7 @@ export class OrderExecutor {
       this.host.log(`🔄 [Sell Cycle] New BUY fill received — resetting sold sell targets to re-enable full ladder`);
       this.host.soldSellIndices.clear();
     }
+    this.host.saveState();
 
     const gasCompLog = compBase > 0
       ? ` | ⛽ Gas Compensated: ${compBase.toFixed(4)} ${this.host.baseAsset} (-$${gasLossQuote.toFixed(4)}) returned to wallet gas reserve`

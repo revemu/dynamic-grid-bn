@@ -2952,6 +2952,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.44` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.19`) และ `GEMINI.md`
 
+---
+
+### 78. Cumulative Target Quota Guard, ACID Buy Fill Persistence & Safe Order Replacement (`v0.2.45`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Cumulative Exposure Quota Bypassed across Dynamic Channel Shifts (`src/strategy/buy-sync.ts:278`)**:
+     - ใน `syncBuyOrders()` ขั้นตอนการคัดกรองชั้นกริดที่อนุญาตให้วางคำสั่งซื้อ (`eligibleBuyIndices`) อาศัยเพียง `hasLotNearLevel(lvl, idx, ...)` เปรียบเทียบราคาไม้ที่ถือกับราคาชั้นกริดปัจจุบัน
+     - เนื่องจากบอททำงานแบบ Dynamic Grid เมื่อแท่งเทียนปิดและกรอบราคาขยับเลื่อนลง (Downshift) ระดับราคาของ Buy Level 1 และ 2 ใหม่จะเคลื่อนหนีห่างออกจากราคาต้นทุนของไม้เดิมที่เคยซื้อไว้เกินเกณฑ์ Proximity (`0.15%`) ส่งผลให้ `hasLotNearLevel` คืนค่าเป็น `false`
+     - เมื่อ `hasLotNearLevel` เป็น `false` และพอร์ตยังถือของไม่ถึง 95% บอทจะเข้าใจผิดว่า Buy Level 1 และ 2 ยังไม่เคยถูกซื้อ และหยิบชั้นบนมาตั้งออเดอร์ซื้อซ้ำ พร้อมยกเลิกชั้นล่าง (Level 4, 5) ทำให้บอทซื้อเบิ้ลที่ราคาสูงซ้ำๆ จนงบประมาณหมด
+  2. **Missing ACID State Persistence on Buy Fills (`src/strategy/order-executor.ts:544`)**:
+     - ใน `processSellFill` (บรรทัด 636) มีคำสั่ง `this.host.saveState()` ทันทีหลังปิด Lots แต่ใน `processBuyFill` หลังพุชไม้ใหม่เข้า `this.host.lots.push({ price, qty, time })` กลับไม่มีคำสั่ง `this.host.saveState()`
+     - หากเกิดไฟดับ ปิดบอท หรือเซิร์ฟเวอร์รีสตาร์ทกะทันหันก่อนมี Event อื่นมาทริกเกอร์ ไม้ที่เพิ่งซื้อมาในหน่วยความจำจะตกหล่นและไม่ถูกบันทึกลงดิสก์
+  3. **Unprotected Order Placement during Buy Order Re-alignment / Resizing (`src/strategy/buy-sync.ts:495`)**:
+     - เมื่อคำสั่งซื้อเดิมถูกยกเลิกเพื่อเลื่อนราคาหรือปรับขนาด (Resize) โค้ดส่งคำสั่ง `placeRestingOrder` ที่ราคา `lvlPrice` ใหม่ทันทีโดยไม่ได้ตรวจเช็คเงื่อนไข `lvlPrice <= maxAllowedBuyPrice && canBuy`
+     - หากจังหวะนั้นราคาตลาดกำลังทุบลงมาเร็วมากจนราคาตลาดอยู่ต่ำกว่า `lvlPrice` ออเดอร์ซื้อที่ส่งไปจะกลายเป็น Taker ทันที ทำให้เสียค่าธรรมเนียม Taker สูงขึ้น เกิด Slippage หรือถูก Binance ปฏิเสธคำสั่ง (Post-Only Reject)
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.45`)**:
+  1. **Cumulative Target Quota Guard in `buy-sync.ts`**:
+     - ตรวจสอบ `currentHoldFraction >= (targetExposure - 0.01)` ในทั้งขั้นตอนกรอง `eligibleBuyIndices` และก่อนส่งคำสั่งวางออเดอร์ซื้อใหม่ เพื่อรับประกันว่าหากพอร์ตมีสัดส่วนเหรียญสะสมเต็มโควตาของชั้นนั้นแล้ว ชั้นนั้นจะถือว่า Fulfilled ทันที ไม่ถูกนำมาตั้งซื้อเบิ้ลซ้ำซ้อนไม่ว่ากรอบราคาจะเลื่อนอย่างไร จนกว่าจะขาย Take Profit ระบายของออกไป
+  2. **ACID Buy Fill State Persistence in `order-executor.ts`**:
+     - เพิ่มคำสั่ง `this.host.saveState()` ภายใน `processBuyFill` ทันทีหลังอัปเดต Lots, ค่ายกเว้นแก๊ส, และ Timestamps รับประกันว่าประวัติและสถานะการซื้อจะถูกบันทึกลงดิสก์แบบ ACID 100% ทุกครั้ง
+  3. **Safe Market Price Guard on Order Replacement in `buy-sync.ts`**:
+     - ตรวจสอบ `isEligibleForReplacement = lvlPrice <= maxAllowedBuyPrice && canBuy` ก่อนส่งคำสั่ง `placeRestingOrder` ทดแทนเสมอ ป้องกันคำสั่งกลายเป็น Taker หรือเกิด Post-Only Reject
+  4. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.45` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.20`) และ `GEMINI.md`
+
 
 
 
