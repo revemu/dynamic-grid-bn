@@ -3065,6 +3065,24 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.49` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.24`) และ `GEMINI.md`
 
+---
+
+### 83. Pure Structure-Driven Waiting For Higher Low & Stale Cache Invalidation (`v0.2.50`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **การตกค้างของแคช `lastResolvedDumpLowPrice` ในฐานข้อมูล**:
+     - ในรอบก่อนหน้า บั๊ก 2-Bar Micro-HL เคยบันทึกค่า `lastResolvedDumpLowPrice = 81800` ลงในไฟล์ `data/grid-bot.db.json`
+     - เมื่อบอทบูตขึ้นมาในเวอร์ชัน `v0.2.49` บอทได้อ่านค่าแคชเก่านี้ขึ้นมา ทำให้เงื่อนไข `activeDumpLow < lastResolvedDumpLowPrice` ประเมินเป็น false บอทจึงเข้าใจผิดว่าการทุบ $81,800 เคยได้รับการยืนยันฐานไปแล้วในอดีต
+     - ส่งผลให้บอทไม่ยอมล็อก `waitingForHigherLow = true` และส่งคำสั่ง Maker Buy Limit 2 ออเดอร์ (Level 4 $82,118 และ Level 5 $81,853) ออกไป ทั้งๆ ที่ตลาดจริงยังไม่มีการทำ Higher Low (HL) เลย
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.50`)**:
+  1. **Pure Structure-Driven Waiting For Higher Low**:
+     - ปรับเงื่อนไข `isNewUnresolvedDrop = !isHlAfterLl && !tlBreakout && !isReclaimedBuy2;` โดยไม่อนุญาตให้ตัวแปรแคชเก่ามาขัดขวางการตรวจจับโครงสร้างคลื่นขาลงของตลาดจริง
+     - หากตรวจพบคลื่นขาลง และยังไม่มี HL (`!isHlAfterLl`), ยังไม่เบรค Trendline (`!tlBreakout`) และยังไม่ปิดเหนือ Buy Level 2 (`!isReclaimedBuy2`): บอทจะเข้าสู่ `waitingForHigherLow = true` และรีเซ็ตแคชเก่า `lastResolvedDumpLowPrice = undefined` ทันที
+     - บอทจะส่งคำสั่งยกเลิกออเดอร์ตั้งซื้อค้าง (Cancel Open Buys) ทั้งหมดทันที เพื่อดึงเงินกลับมาเป็นเงินสด 100% Cash และล็อกรอจนกว่าจะเกิด Higher Low หรือเบรค Trendline จริงๆ
+  2. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.50` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.25`) และ `GEMINI.md`
+
+
 
 
 

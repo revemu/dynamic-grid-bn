@@ -2873,13 +2873,7 @@ export class DynamicGrid implements IStrategyHost {
         refPrice >= effectiveBuyLevel2Target * 0.999,
       );
 
-      const isNewUnresolvedDrop =
-        (this.lastResolvedDumpLowPrice === undefined ||
-          activeDumpLow < this.lastResolvedDumpLowPrice * 0.9985 ||
-          isBelowFloor) &&
-        !isHlAfterLl &&
-        !tlBreakout &&
-        !isReclaimedBuy2;
+      const isNewUnresolvedDrop = !isHlAfterLl && !tlBreakout && !isReclaimedBuy2;
 
       if (isNewUnresolvedDrop) {
         this.waitingForHigherLow = true;
@@ -2888,6 +2882,7 @@ export class DynamicGrid implements IStrategyHost {
         this.breakdownBuyLevel2Price = effectiveBuyLevel2Target;
         this.breakdownLowPrice = Math.min(refPrice, activeDumpLow);
         this.breakdownTime = dumpLowTime;
+        this.lastResolvedDumpLowPrice = undefined; // Invalidate any stale cache
         this.log(
           `🛡️ [UNIFIED DOWNTREND GUARD] Active bear wave / floor break detected (Low: $${this.breakdownLowPrice.toFixed(6)} | Floor: $${lowerBound.toFixed(6)}) — pausing buys until Dow Theory Higher Low (HL), Trendline Breakout, or Buy Level 2 Reclaim ($${effectiveBuyLevel2Target.toFixed(6)})!`,
         );
