@@ -1688,7 +1688,7 @@ export class DynamicGrid implements IStrategyHost {
       }
       // 🔒 Persistent Multi-Symbol Channel Lock Restoration:
       // Look up locked channel for this exact exchange:symbol pair from dedicated storage
-      const persistentLockedChannel = this.db.getLockedChannel(symbolKey) || data.lockedChannel;
+      const persistentLockedChannel = this.db.getLockedChannel(symbolKey);
 
       if (
         persistentLockedChannel &&

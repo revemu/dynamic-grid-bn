@@ -394,7 +394,7 @@ export class DowEngine {
     }
 
     // 3. Fast 2-Bar Structural Micro-HL (Confirmed Closed Candles)
-    const closedCandles = candles.filter((c, idx) => c.isClosed === true || idx < candles.length - 1);
+    const closedCandles = candles.length > 0 && candles[candles.length - 1]?.isClosed === true ? candles : candles.slice(0, -1);
     if (closedCandles.length >= 4) {
       let troughIdx = -1;
       let troughLow = lowestDumpPrice;

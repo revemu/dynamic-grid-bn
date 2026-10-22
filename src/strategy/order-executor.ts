@@ -637,6 +637,8 @@ export class OrderExecutor {
    * Evaluate fills on active resting limit orders against real-time market price and candle range
    */
   public async checkOrderFills(bestBid: number, bestAsk: number, mid: number): Promise<void> {
+    if (!this.host.cfg.dryRun) return;
+
     const remainingOpenOrders: OpenOrder[] = [];
     const binancePrice = this.host.atrSource.getLatestPrice?.();
     const candles = this.host.dowEngine?.getCandles() ?? [];

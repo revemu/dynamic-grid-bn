@@ -1126,8 +1126,11 @@ export class BotDatabase {
   }
 
   public getLockedChannel(symbolKey?: string): LockedChannel | undefined {
-    if (symbolKey && this.data.lockedChannels && this.data.lockedChannels[symbolKey]) {
-      return this.data.lockedChannels[symbolKey];
+    if (symbolKey) {
+      if (this.data.lockedChannels && this.data.lockedChannels[symbolKey]) {
+        return this.data.lockedChannels[symbolKey];
+      }
+      return undefined;
     }
     return this.data.state.lockedChannel;
   }

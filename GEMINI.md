@@ -2489,3 +2489,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.27` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.1`) และ `GEMINI.md`
 
+---
+
+### 61. Historical Candle Closed State, Cross-Symbol Channel Isolation & Fill Guard Hardening (`v0.2.28`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Historical Candle Closed State Bug (`BinanceAtrFeed`)**:
+     - ใน `src/exchange/binance/feed.ts` เมธอด `fetchHistoricalKlines()` ฮาร์ดโค้ด `isClosed: true` ให้กับแท่งเทียนทุกแท่งจาก REST API ทั้งที่แท่งสุดท้ายใน Array คือแท่งเทียนปัจจุบันที่กำลังวิ่งอยู่ (Live candle) ซึ่งยังไม่ปิด
+     - ส่งผลให้ระบบนำ High/Low/Close ของแท่งที่ยังไม่ปิดไปคำนวณเข้า Rolling ATR (`onClosedBar`) ทำให้ค่า ATR ผิดเพี้ยน และส่งสัญญาณ `onCandle(candle, true)` ไปกระตุ้น `grid.onCandleClosed(candle)` บน Strategy ก่อนเวลาอันควร
+  2. **Cross-Symbol Channel Lock Leak (`getLockedChannel`)**:
+     - ใน `src/db.ts` เมธอด `getLockedChannel(symbolKey?: string)` หากส่ง `symbolKey` มาแต่ไม่พบข้อมูลใน `lockedChannels[symbolKey]` กลับหลุดร่วง (Fall through) ไปคืนค่า `this.data.state.lockedChannel` ซึ่งเป็นกรอบของเหรียญอื่นที่เคยล็อกไว้
+     - ใน `src/strategy/index.ts` บรรทัดที่ 1691 มีการ Fallback `|| data.lockedChannel` เช่นกัน ทำให้เมื่อสลับเหรียญหรือรีสตาร์ทบอท บอทอาจดึงกรอบราคาของเหรียญอื่นมาใช้
+  3. **Missing Dry-Run Guard in Simulated Fills (`checkOrderFills`)**:
+     - ฟังก์ชัน `checkOrderFills` ใน `src/strategy/order-executor.ts` ทำหน้าที่จำลอง Fill เมื่อแตะราคา แต่หัวฟังก์ชันขาด Guard เช็ค `if (!this.host.cfg.dryRun) return;` ทำให้เสี่ยงต่อการจำลอง Fill ทับออเดอร์จริงบนกระดาน Live
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.28`)**:
+  1. **ตรวจสอบเวลาปิดแท่งเทียนจริงใน `fetchHistoricalKlines`**:
+     - เปรียบเทียบ `closeTimeMs = Number(k[6])` กับ `nowMs = Date.now()`
+     - หาก `closeTimeMs <= nowMs` ให้ถือเป็นแท่งปิดสมบูรณ์ (`isClosed: true`) และคำนวณเข้า `onClosedBar`
+     - หากแท่งยังวิ่งอยู่ ให้ระบุ `isClosed: false`, ไม่เรียก `onClosedBar` และกระจาย Event `listener(candle, false)` อย่างถูกต้อง
+  2. **ตัดการ Fallback ข้ามเหรียญใน `getLockedChannel`**:
+     - ใน `src/db.ts`: หากส่ง `symbolKey` มา ให้ค้นหาเฉพาะ `this.data.lockedChannels[symbolKey]` หากไม่พบให้คืนค่า `undefined` ทันที ไม่ดึง `this.data.state.lockedChannel` ของเหรียญอื่นมาปน
+     - ใน `src/strategy/index.ts`: เปลี่ยนเป็น `this.db.getLockedChannel(symbolKey)` เด็ดขาด
+  3. **เพิ่ม Defense-in-depth Guard ใน `checkOrderFills`**:
+     - ใส่ `if (!this.host.cfg.dryRun) return;` เป็นบรรทัดแรกสุดของ `checkOrderFills` ป้องกันการจำลอง Order Fill ในโหมด Live 100%
+  4. **Standardize `closedCandles` ใน Dow Engine**:
+     - ปรับการกรองแท่งปิดใน `dow-engine.ts:397` ให้ตรงกับมาตรฐานของ `CandleManager.getClosedCandles()`
+  5. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.28` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.2`) และ `GEMINI.md`
+
+
