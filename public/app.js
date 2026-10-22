@@ -1413,16 +1413,17 @@
         const frac = buyFractions[idx] || 0.2;
         runningCumFrac += frac;
         const targetCumulativeQuote = maxInv * runningCumFrac;
-        const deficitQuote = targetCumulativeQuote - heldQuote;
+        const prevCumulativeQuote = maxInv * (runningCumFrac - frac);
 
-        if (heldQuote >= targetCumulativeQuote) {
-          // Level target already met/exceeded
+        if (heldQuote >= targetCumulativeQuote - 1.0) {
+          // Level target already met/exceeded (with $1.0 rounding/price tolerance)
           actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.65; background:rgba(59,130,246,0.15); border-color:rgba(59,130,246,0.35); color:#93c5fd;" title="Level Capacity Met (Holding $${heldQuote.toFixed(1)} >= Target $${targetCumulativeQuote.toFixed(0)})">HOLD $${targetCumulativeQuote.toFixed(0)} ✓</span>`;
         } else {
-          // Level has deficit to buy
-          const toSpendQuote = Math.max(0, Math.min(deficitQuote, maxInv - heldQuote));
+          // Calculate incremental tranche spend for this specific level (e.g. +$50 for L4, +$60 for L5)
+          const incrementalTrancheQuote = targetCumulativeQuote - Math.max(heldQuote, prevCumulativeQuote);
+          const toSpendQuote = Math.max(0, Math.min(incrementalTrancheQuote, maxInv - heldQuote));
           const spendStr = `+$${Math.round(toSpendQuote)}`;
-          const title = `IOC Buy Level ${idx + 1} @ $${fmtPrice(lvlPrice)}: Target Capacity $${targetCumulativeQuote.toFixed(0)} (Will buy ${spendStr})`;
+          const title = `IOC Buy Level ${idx + 1} @ $${fmtPrice(lvlPrice)}: Tranche ${spendStr} (Target Cumulative: $${targetCumulativeQuote.toFixed(0)})`;
 
           const isBuyingBlocked = Boolean(data.isPaused || data.isBelowFloor || data.waitingForHigherLow || data.downtrendDropPaused || data.buyOrdersActive === false);
 

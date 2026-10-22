@@ -3102,6 +3102,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.51` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.26`) และ `GEMINI.md`
 
+---
+
+### 85. Incremental Tranche Grid Ladder Display & Tolerance Alignment (`v0.2.52`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **การแสดงผลตัวเลขสะสมที่ชวนสับสนบน Grid Ladder ในโหมด IOC (`public/app.js`)**:
+     - ใน `public/app.js` ตัวเลขบนปุ่ม `IOC BUY` เดิมคำนวณจาก `targetCumulativeQuote - heldQuote` ส่งผลให้ชั้นล่างสุด (Buy Level 5) แสดงตัวเลขส่วนต่างทั้งหมดของพอร์ตที่เหลืออยู่ เช่น เมื่อถืออยู่ $89.89 (งบ $200) Buy Level 4 แสดง `+$50` และ Buy Level 5 แสดง `+$110`
+     - เมื่อผู้ใช้นำ $50 (L4) + $110 (L5) มาบวกกับ $90 ที่ถืออยู่ จะได้ $250 ซึ่งเกินงบพอร์ต $200 ไป $50 ทำให้ผู้ใช้เข้าใจผิดว่าบอทเตรียมจะซื้อเกินพอร์ต
+     - นอกจากนี้ที่ Buy Level 3 (เป้า $90) การถือครอง $89.89 ขาดไปเพียง $0.11 แต่ระบบแสดงเป็น `IOC BUY +$0` แทนที่จะเป็นป้ายสีฟ้า `HOLD $90 ✓`
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.52`)**:
+  1. **Incremental Tranche Spend Calculation ใน [`public/app.js`](file:///c:/Sites/github/dynamic-grid-bn/public/app.js)**:
+     - ปรับการคำนวณตัวเลขปุ่มซื้อของแต่ละชั้นให้เป็นขนาดไม้เฉพาะชั้นนั้น (Incremental Tranche):
+       `incrementalTrancheQuote = targetCumulativeQuote - Math.max(heldQuote, prevCumulativeQuote)`
+     - ผลลัพธ์: Buy Level 4 แสดง `+$50` และ Buy Level 5 แสดง `+$60` เมื่อรวมกับยอดถือเดิม $90 จะได้ $90 + $50 + $60 = **$200 พอดีเป๊ะ 100%** ไม่มีตัวเลขเกินพอร์ตอีกต่อไป
+  2. **Tolerance Alignment for Met Levels**:
+     - ตรวจสอบ `heldQuote >= targetCumulativeQuote - 1.0` ทำให้ชั้นที่ขาดเพียงเศษเซนต์ (เช่น $89.89 จาก $90) แสดงเป็นป้ายสีฟ้า **`HOLD $90 ✓`** สวยงาม ไม่ขึ้น `+$0` หลอกตา
+  3. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.52` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.27`) และ `GEMINI.md`
+
+
 
 
 
