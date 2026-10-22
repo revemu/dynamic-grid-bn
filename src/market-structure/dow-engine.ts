@@ -549,7 +549,7 @@ export class DowEngine {
     );
     const isFreshLlAfterPeak = Boolean(
       lastCanonicalLow?.dowLabel === "LL" &&
-      lastCanonicalLow.index > (lastCanonicalHigh?.index ?? -1) &&
+      lastCanonicalLow.index > (activePeak?.index ?? -1) &&
       !hasReclaimedBuy2SinceLl
     );
     const isConfirmedDowntrendWave = Boolean(

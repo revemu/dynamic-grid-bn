@@ -2860,6 +2860,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.40` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.15`) และ `GEMINI.md`
 
+---
+
+### 74. Downtrend Drop Guard Retention on Lower Highs & Multi-Asset CEX Position Reset (`v0.2.41`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Downtrend Drop Guard Deactivated on Intermediate Lower Highs (`src/market-structure/dow-engine.ts:552`)**:
+     - ใน `detectDowntrendDrop()` โค้ดเดิมตรวจสอบ `lastCanonicalLow.index > (lastCanonicalHigh?.index ?? -1)` โดย `lastCanonicalHigh` คือยอดสวิงตัวล่าสุดในคลื่น ไม่ใช่ยอดสูงสุดของกรอบ (`activePeak`)
+     - ในคลื่นขาลงที่สลับฟันปลา (`Peak -> LL -> LH -> LL -> LH`) ทันทีที่เกิดยอด Lower High (LH) ตัวใหม่ ดัชนีของ High จะแซงหน้า Low ทำให้ `isFreshLlAfterPeak` และ `isDowntrendDropActive` หลุดกลายเป็น `false` ทันที ทั้งๆ ที่การเกิดยอด LH ในทาง Dow Theory คือการยืนยันว่าแรงซื้ออ่อนแอและขาลงยังดำเนินอยู่ต่อเนื่อง
+  2. **Position State Lockout on Multi-Asset CEX Wallets (`src/strategy/order-executor.ts:1321` & `src/strategy/index.ts:1555`)**:
+     - เมื่อสั่งขาย 100% (`sellAll`) โค้ดเดิมตรวจสอบเฉพาะ `this.host.walletBaseBalance - minGasReserveBase <= dustThreshold`
+     - หากผู้ใช้มีเหรียญ Base Asset (เช่น ETH, BTC) อื่นๆ คงค้างอยู่ในกระเป๋า Binance CEX จะทำให้ยอดคงเหลือในกระเป๋ามากกว่า `dustThreshold` เสมอ ส่งผลให้ฟังก์ชัน `clearPositionState()` ไม่ยอมทำงาน
+     - ทำให้ `lockedChannel` ค้าง, `soldSellIndices` ไม่ถูกล้าง, และสถานะคัทลอส Stage 1 (`cutLossStage1Executed`, `stuckSince`, `bufferBreakStartTime`) ยังคงคั่งค้างอยู่ในเมมโมรี่
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.41`)**:
+  1. **รักษา Downtrend Drop Guard ต่อเนื่องตลอดคลื่นขาลงจนกว่าจะเบรกโครงสร้าง**:
+     - ใน `detectDowntrendDrop()`: เปลี่ยนให้ตรวจสอบ `lastCanonicalLow.index > (activePeak?.index ?? -1)` เพื่อให้ระบบตรวจจับรอบทุบทำงานอย่างต่อเนื่องตลอดช่วงที่อยู่ใต้ `activePeak` ตราบใดที่ยังไม่เกิด HL หรือเบรกทะลุแนวต้าน
+  2. **ตรวจสอบ Trading Inventory Base ในการล้างสถานะพอร์ต**:
+     - ใน `sellAll()`: เพิ่มการตรวจสอบ `this.lotTracker.baseHeld() < dustThreshold` เพื่อให้เรียก `clearPositionState()` ได้อย่างแม่นยำ 100% แม้ในกระเป๋าหลักบน Exchange จะมีเหรียญอื่นคงค้างอยู่ก็ตาม
+     - ใน `clearPositionState()`: ล้างสถานะ `cutLossStage1Executed`, `cutLossStage1Price`, `cutLossStage1CandleTime`, `stuckSince`, และ `bufferBreakStartTime` คืนค่าระบบกลับสู่สถานะเงินสด 100% ที่สะอาดบริสุทธิ์
+  3. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.41` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.16`) และ `GEMINI.md`
+
 
 
 

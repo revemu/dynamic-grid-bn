@@ -1560,6 +1560,11 @@ export class DynamicGrid implements IStrategyHost {
     this.pendingConfirmedChannelUpdate = true;
     this.soldSellIndices.clear();
     this.iocBracketSellCycle = undefined;
+    this.cutLossStage1Executed = false;
+    this.cutLossStage1Price = undefined;
+    this.cutLossStage1CandleTime = undefined;
+    this.stuckSince = undefined;
+    this.bufferBreakStartTime = undefined;
     this.db.saveLockedChannel(this.getSymbolKey(), undefined);
   }
 

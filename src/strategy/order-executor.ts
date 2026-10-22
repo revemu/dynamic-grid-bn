@@ -1142,7 +1142,7 @@ export class OrderExecutor {
       this.host.log(
         `🛑 [INVENTORY GUARD] ${actionLabel} aborted: Trading inventory is empty (${held.toFixed(4)} ${this.host.baseAsset}). Refusing to sell wallet gas balance (${this.host.walletBaseBalance.toFixed(4)} ${this.host.baseAsset}).`,
       );
-      this.host.lots = [];
+      this.host.clearPositionState();
       this.host.saveState();
       return;
     }
@@ -1163,8 +1163,7 @@ export class OrderExecutor {
       this.host.log(
         `⚠️ [MIN NOTIONAL GUARD] Cannot execute ${actionLabel}: Order quantity ${executeQty.toFixed(4)} or value $${orderNotional.toFixed(2)} is below exchange minimum.`,
       );
-      this.host.lots = [];
-      this.host.lockedChannel = undefined;
+      this.host.clearPositionState();
       this.host.saveState();
       return;
     }
@@ -1318,7 +1317,7 @@ export class OrderExecutor {
         this.trackTxGas(res.txHash, effectiveActionLabel);
       }
       await this.host.refreshWalletBalances();
-      if (this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
+      if (this.lotTracker.baseHeld() < dustThreshold || this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
         this.host.clearPositionState();
       }
       this.host.saveState();
@@ -1326,7 +1325,7 @@ export class OrderExecutor {
       this.host.log(`⚠️ On-chain ${actionLabel} failed: ${(err as Error).message}`);
       await this.host.refreshWalletBalances();
       const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
-      if (this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
+      if (this.lotTracker.baseHeld() < dustThreshold || this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
         this.host.clearPositionState();
         this.host.saveState();
       }
