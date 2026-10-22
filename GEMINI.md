@@ -2432,3 +2432,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 
 
+
+
+---
+
+### 59. Strategy Engine Modular Refactoring & Critical Edge-Case Hardening (`v0.2.26`)
+- **สาเหตุของการปรับปรุงโครงสร้าง (Motivation)**:
+  1. **Monolithic Architecture**:
+     - ไฟล์ `src/strategy.ts` เดิมมีขนาดใหญ่ถึง 7,485 บรรทัด รวมตรรกะทุกอย่างเข้าด้วยกัน (Position tracking, Risk management, Buy sync, Sell sync, Order execution, WebSocket feeds, DB persistence, Telemetry) ทำให้การตรวจสอบบั๊กและบำรุงรักษาซับซ้อน
+  2. **Bug Fix A (Stage 1 IOC Failure Fallthrough Protection)**:
+     - ในตรรกะ Two-Stage Cut Loss เดิม หากการส่งคำสั่งขาย IOC ของ Stage 1 เกิดข้อผิดพลาดชั่วคราว (`stage1Ok === false` เช่น RPC timeout หรือ slippage สภาพคล่อง) โค้ดจะหลุดร่วง (Fall through) ลงไปในกิ่ง `else` บรรทัดถัดมาที่เรียก `sellAll(dexBid, "CUT")` ส่งผลให้กลายเป็นตัดขาดทุน 100% เต็มพอร์ตทันทีโดยไม่ได้ตั้งใจ
+  3. **Bug Fix B (Stale Breakdown Time Anchor on Multi-Candle Breakdown)**:
+     - ขณะราคาหลุด Floor ติดต่อกันหลายแท่งเทียน และทำจุดต่ำสุดใหม่ (`refPrice < this.breakdownLowPrice`) โค้ดเดิมอัปเดตเฉพาะ `this.breakdownLowPrice` แต่ไม่ได้อัปเดต `this.breakdownTime` ทำให้ค่าเวลากลายเป็นเวลาของแท่งแรกเมื่อหลายชั่วโมงก่อน เมื่อราคาดีดตัวขึ้นชั่วคราว ระบบอาจดึงสวิง Low เก่าก่อนการทุบระลอกใหม่มายืนยัน Higher Low ผิดจังหวะ
+- **การแก้ไขและสถาปัตยกรรมแบบแยกโมดูล (`v0.2.26`)**:
+  1. **แยกโมดูลเด็ดขาดตาม Single Responsibility Principle ภายใต้ `src/strategy/`**:
+     - `src/strategy/types.ts`: ประกาศ Standard Interfaces สำหรับยุทธศาสตร์ทั้งหมด (`Lot`, `OpenOrder`, `StrategyEvent`, `IStrategyHost`, `GridPersistedState`) กำจัดปัญหา Circular Dependency 100%
+     - `src/strategy/lot-tracker.ts`: ดูแลบัญชี Position Inventory, FIFO Matching, Lot-based Profit Matching, ถัวเฉลี่ยต้นทุน (`getAvgEntryPrice`), ยอดถือครอง (`baseHeld`), การตัดลดและชดเชยค่าแก๊ส DEX (`accumulatedGasBase`, `totalGasDeductedQuote`)
+     - `src/strategy/risk-manager.ts`: เครื่องยนต์ Two-Stage Cut Loss, Dual-Speed Cut Loss (Buffer delay / Candle close), Trend Support Breakdown Exit, และ Higher Low Recovery Engine
+       - **แก้ไข Bug A**: หาก `stage1Ok === false` ให้แสดง Log Warning และ `return;` ป้องกันไม่ให้หลุดร่วงไปสั่ง `sellAll()` 100%
+       - **แก้ไข Bug B**: เมื่อ `refPrice < this.breakdownLowPrice` ระบบจะอัปเดต `this.breakdownTime = Math.floor(Date.now() / 1000)` เสมอ เพื่อยึดเวลาของเหวต่ำสุดจริงในการค้นหา Higher Low
+     - `src/strategy/buy-sync.ts`: ซิงค์ Maker Buy Orders, คัดเลือก `eligibleBuyIndices`, ป้องกันน้ำตกด้วย Staged Maker Buy Window Guard, ป้องกันการทุบทำลายโครงสร้างด้วย Neckline Breakdown Guard, ตรวจสอบ Intra-candle waterfall & Cooldowns, และยกเลิกคำสั่งที่ไม่ผ่านเกณฑ์พร้อมระบุเหตุผลอย่างละเอียด
+     - `src/strategy/sell-sync.ts`: ซิงค์ Maker Sell Orders, วางเป้าหมายขายตามขั้นบันได (Ladder sells), ควบคุม Resistance Overrides (Trendline และ Real Frame S/R Ceiling), แยกและดูแลคำสั่ง Cut Loss Bounce Exit (50%) ที่ Floor, และตรวจสอบความคุ้มค่ากำไร (`isProfitOk`)
+     - `src/strategy/order-executor.ts`: Primitives สำหรับการส่งและยกเลิกคำสั่งซื้อขายจริง (`placeRestingOrder`, `cancelOrderInternal`, `cancelAllRestingOrders`, `sellTrancheIOC`, `buyTrancheIOC`, `sellAll`, `executeIocBracketGrid`, `checkOrderFills`, `trackTxGas`)
+     - `src/strategy/index.ts`: Orchestrator Facade `DynamicGrid` จัดการ State, Database persistence (`loadState`, `saveState`), WebSocket feeds, Runtime telemetry, และควบคุมวงรอบ `tick()` หลักที่สะอาด กระชับ และอ่านเข้าใจง่าย
+     - `src/strategy.ts`: Re-export ทุกอย่างจาก `./strategy/index.js` ทำให้โค้ดภายนอกทั้งหมด (`src/index.ts`) ทำงานได้ราบรื่น 100% โดยไม่มี Breaking Changes ใดๆ
+  2. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.26` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.0`) และ `GEMINI.md`

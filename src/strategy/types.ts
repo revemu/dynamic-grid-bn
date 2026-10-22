@@ -1,0 +1,170 @@
+/**
+ * @license
+ * Copyright DreamDEX S.A.
+ *
+ * Use of this source code is governed by an MIT-style license that can be
+ * found in the LICENSE file at https://github.com/somnia-chain/dreamdex-bot-kit/blob/main/LICENSE
+ */
+
+import type { Config } from "../config.js";
+import type { AtrSource } from "../types.js";
+import type { DowStructureEngine, Candle, TrendLine, DowStructure } from "../market-structure.js";
+import type { IExchangeClient, ExchangeSymbolInfo } from "../exchange/types.js";
+import type { BotDatabase, StrategyStateRecord, LockedChannel } from "../db.js";
+
+export interface Lot {
+  price: number; // entry price
+  qty: number;   // base remaining
+  time: number;  // timestamp entry
+}
+
+export interface OpenOrder {
+  id: string;
+  onChainOrderId?: string;
+  isBid: boolean; // true = BUY, false = SELL
+  price: number;
+  qty: number;
+  targetFraction: number;
+  notional?: number;
+  notionalQuote: number;
+  notionalUsdso: number;
+  levelDesc: string;
+  placedTime: number;
+  expireTime?: number;
+  txHash?: string;
+}
+
+export interface StrategyEvent {
+  type: "tick" | "order" | "order_gas";
+  data: any;
+}
+
+export type GridPersistedState = StrategyStateRecord;
+
+export interface ConfirmedChannelState {
+  candleTime: number;
+  channel: {
+    floor: number;
+    center: number;
+    ceiling: number;
+    span: number;
+    buyLevels: number[];
+    sellLevels: number[];
+  };
+  dow: DowStructure;
+}
+
+/**
+ * Host interface implemented by DynamicGrid orchestrator,
+ * allowing modular strategy components (RiskManager, LotTracker, BuySync, SellSync, OrderExecutor)
+ * to interact with runtime state and dependencies cleanly without circular imports.
+ */
+export interface IStrategyHost {
+  cfg: Config;
+  binance: IExchangeClient;
+  symbol: string;
+  baseAsset: string;
+  quoteAsset: string;
+  minQty: number;
+  stepSize: number;
+  tickSize: number;
+  qtyPrecision: number;
+  minNotional: number;
+  isPaused: boolean;
+  isSwitchingSymbol: boolean;
+  db: BotDatabase;
+  atrSource: AtrSource;
+  dowEngine?: DowStructureEngine;
+  localTrendEngine?: DowStructureEngine;
+
+  // Balances
+  walletBaseBalance: number;
+  walletQuoteBalance: number;
+  lastObservedBaseBalance: number;
+  lastObservedQuoteBalance: number;
+  getEffectiveGasReserveBase(): number;
+  getEffectiveGasReserveSomi(): number;
+
+  // Orders & Lots
+  lots: Lot[];
+  openOrders: OpenOrder[];
+  cancelledOrderIds: Map<string, number>;
+  handledExitOrderIds: Map<string, number>;
+  inFlightOrders: Set<string>;
+  orderCooldowns: Map<string, number>;
+
+  // PnL & Gas
+  realizedPnl: number;
+  tradeRealizedPnl: number;
+  totalGasDeductedBase: number;
+  totalGasDeductedQuote: number;
+  accumulatedGasBase: number;
+  accumulatedGasQuote: number;
+  totalGasSpentBase: number;
+  totalGasSpentQuote: number;
+  totalTxCount: number;
+
+  // State & Flags
+  lastRefPrice: number;
+  lastBestBid?: number;
+  lastBestAsk?: number;
+  wsBookTicker?: {
+    bestBid: number;
+    bestAsk: number;
+    mid: number;
+    time: number;
+  };
+  stuckSince?: number;
+  waitingForHigherLow: boolean;
+  isFlatChannelShiftWaiting: boolean;
+  isTrendSupportExitActive: boolean;
+  trendSupportBreakPrice?: number;
+  lastTrendSupportBreakKey?: string;
+  wasFlatCashLastTick: boolean;
+  lastCutLossTime?: number;
+  cutLossStage1Executed: boolean;
+  cutLossStage1Price?: number;
+  cutLossStage1CandleTime?: number;
+  bufferBreakStartTime?: number;
+  breakdownCandleTimes: Set<number>;
+  breakdownFloorPrice?: number;
+  breakdownLowPrice?: number;
+  breakdownTime?: number;
+  breakdownBuyLevel2Price?: number;
+  postCutSingleTrancheOnly: boolean;
+  iocBracketSellCycle?: any;
+  lastBuyFillTime: number;
+  lastBuyFillPrice: number;
+  lastBuyFillCandleTime: number;
+  lastResolvedDumpLowPrice?: number;
+  isDowntrendDropPaused: boolean;
+  downtrendDropLow?: number;
+  needsBuyRebalance: boolean;
+  needsSellRebalance: boolean;
+  soldSellIndices: Set<number>;
+  buyOrdersActive: boolean;
+  sellOrdersActive: boolean;
+  confirmedChannel?: any;
+  lockedChannel?: LockedChannel;
+  lastEvaluatedFloor?: number;
+  lastEvaluatedCeil?: number;
+
+  // Methods
+  log(msg: string): void;
+  status(msg: string): void;
+  emit(event: StrategyEvent): void;
+  emitTelemetryTick(): void;
+  saveState(immediate?: boolean): void;
+  refreshWalletBalances(): Promise<{ base: number; quote: number; somi: number; usdso: number; address: string }>;
+  syncOnChainOrders(): Promise<void>;
+  roundPrice(price: number): number;
+  roundQty(qty: number): number;
+  formatPrice(price: number): string;
+  formatQty(qty: number): string;
+  getBuyLevelWeightFractions(enabledBuys?: boolean[], numLevels?: number, forceFirstActive?: boolean): number[];
+  getCumulativeBuyTargetFraction(upToIdx: number, enabledBuys?: boolean[], numLevels?: number, forceFirstActive?: boolean): number;
+  getMinProfitMultiplier(): number;
+  getAvgEntryPrice(): number;
+  baseHeld(): number;
+  getTotalPortfolioValueQuote(refP: number): number;
+}
