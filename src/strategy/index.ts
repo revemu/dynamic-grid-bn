@@ -1156,7 +1156,7 @@ export class DynamicGrid implements IStrategyHost {
               continue;
             }
             const matchByPrice = this.openOrders.find(
-              (o) => o.isBid === isBid && !o.onChainOrderId &&
+              (o) => o.isBid === isBid && (!o.onChainOrderId || o.onChainOrderId.startsWith("0x")) &&
                 Math.abs(o.price - price) / price < 0.0005 &&
                 Math.abs(o.qty - remainingQty) / (remainingQty || 1) < 0.15,
             );
@@ -1457,13 +1457,14 @@ export class DynamicGrid implements IStrategyHost {
       const tolerance = Math.max(0.5, (this.minQty || 1) * 0.5);
 
       // 1. Auto-compensate from lots: smoothly clamp lots to available trading capacity
+      const dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6;
       if (memoryHeld > maxAllowedTradingBase && maxAllowedTradingBase >= 0) {
         const diff = memoryHeld - maxAllowedTradingBase;
-        if (diff > (this.minQty || 0.0001)) {
+        if (diff > dustThreshold) {
           this.clampLotsTo(maxAllowedTradingBase);
           this.saveState();
         }
-      } else if (maxAllowedTradingBase > memoryHeld + Math.max(this.minQty || 0.0001, 0.0001)) {
+      } else if (maxAllowedTradingBase > memoryHeld + dustThreshold) {
         // 2. Adopt Unallocated Trading Inventory: If physical trading capacity exceeds memory lots, adopt difference into lots
         // SAFETY GUARD: NEVER adopt unallocated inventory when price is below floor / cut-loss zone or waiting for Higher Low!
         // This prevents re-adopting wallet balance and triggering repetitive 30s cut-loss dump loops.
@@ -1472,7 +1473,7 @@ export class DynamicGrid implements IStrategyHost {
           return;
         }
         const rawUnallocated = maxAllowedTradingBase - memoryHeld;
-        const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || 0.0001, this.qtyPrecision);
+        const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || dustThreshold, this.qtyPrecision);
         if (unallocatedQty >= this.minQty) {
           const recentOrders = this.db.getOrders(50);
           const currentSymNorm = (this.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");

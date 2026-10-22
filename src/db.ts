@@ -1491,8 +1491,29 @@ export class BotDatabase {
     return this.recordEvent({ ...order, action: order.action === "PLACED" ? (order.side === "BUY" ? "CREATE_BUY" : "CREATE_SELL") : (order.side === "SELL" ? "CANCEL_SELL" : "CANCEL_BUY") });
   }
 
-  public getOrders(limit = 5000, filter?: { status?: "OPEN" | "FILLED" | "CANCELLED"; side?: "BUY" | "SELL" }): UnifiedOrderRecord[] {
+  public matchesSymbol(o: UnifiedOrderRecord, symbol?: string): boolean {
+    if (!symbol) return true;
+    const cleanSym = symbol.toUpperCase().replace(/[\/\-_]/g, ":");
+    const symBase = cleanSym.split(/[:]/)[0]?.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "") || cleanSym;
+
+    if (o.symbol) {
+      const oSym = o.symbol.toUpperCase().replace(/[\/\-_]/g, ":");
+      if (oSym === cleanSym) return true;
+      const oBase = oSym.split(/[:]/)[0]?.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "") || oSym;
+      if (oBase === symBase || symBase.includes(oBase) || oBase.includes(symBase)) return true;
+    }
+    if (o.baseAsset) {
+      const b = o.baseAsset.toUpperCase();
+      if (b === symBase || symBase.includes(b) || b.includes(symBase)) return true;
+    }
+    return false;
+  }
+
+  public getOrders(limit = 5000, filter?: { status?: "OPEN" | "FILLED" | "CANCELLED"; side?: "BUY" | "SELL"; symbol?: string }): UnifiedOrderRecord[] {
     let list = this.data.orders;
+    if (filter?.symbol) {
+      list = list.filter((o) => this.matchesSymbol(o, filter.symbol));
+    }
     if (filter?.status) {
       list = list.filter((o) => o.status === filter.status);
     }
@@ -1502,10 +1523,13 @@ export class BotDatabase {
     return list.slice(0, limit);
   }
 
-  public getTrades(limit = 5000): UnifiedOrderRecord[] {
-    return this.data.orders
-      .filter((o) => o.status === "FILLED" || o.fillTime !== undefined || ["BUY_FILL", "SELL_FILL", "CUT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(o.action))
-      .slice(0, limit);
+  public getTrades(limit = 5000, symbol?: string): UnifiedOrderRecord[] {
+    let list = this.data.orders
+      .filter((o) => o.status === "FILLED" || o.fillTime !== undefined || ["BUY_FILL", "SELL_FILL", "CUT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(o.action));
+    if (symbol) {
+      list = list.filter((o) => this.matchesSymbol(o, symbol));
+    }
+    return list.slice(0, limit);
   }
 
   public getOrderActivity(limit = 5000): UnifiedOrderRecord[] {

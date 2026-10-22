@@ -636,7 +636,30 @@ export class DreamDexClient implements IExchangeClient {
       throw new Error("Cannot cancel order on DreamDEX: Private key not configured");
     }
     const market = this.resolveMarket(symbol);
-    const idBigInt = BigInt(String(orderId).replace(/\D/g, "") || "0");
+    let idStr = String(orderId);
+
+    // If orderId is a transaction hash (starts with 0x), resolve actual uint128 orderId via indexer
+    if (idStr.startsWith("0x")) {
+      try {
+        const open = await this.indexer.getOpenOrders(this.account.address, market.pool);
+        const match = open.find((o) => o.placedTxHash?.toLowerCase() === idStr.toLowerCase());
+        if (match && match.orderId) {
+          idStr = match.orderId;
+        } else {
+          this.log(`⚠️ Cannot cancel txHash ${idStr}: order not found in open indexer records.`);
+          return undefined;
+        }
+      } catch (err) {
+        this.log(`⚠️ Failed to resolve orderId from txHash ${idStr}: ${(err as Error).message}`);
+        return undefined;
+      }
+    }
+
+    const idBigInt = BigInt(idStr.replace(/\D/g, "") || "0");
+    if (idBigInt === 0n) {
+      this.log(`⚠️ Invalid uint128 orderId (${idStr}) for DreamDEX cancelOrder.`);
+      return undefined;
+    }
 
     const hash = await this.walletClient.writeContract({
       address: market.pool,

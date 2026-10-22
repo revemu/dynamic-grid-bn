@@ -2713,6 +2713,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.35` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.10`) และ `GEMINI.md`
 
+---
+
+### 69. Cross-Symbol Gas Isolation, Trade Manager Scoping, DreamDEX TxHash Order Resolution & Dust Alignment (`v0.2.36`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Cross-Symbol Gas Fee Contamination in `calculateTradeRounds` (`src/trade-rounds.ts`)**:
+     - ใน `calculateTradeRounds`: แม้ว่า `fills` จะถูกกรองตาม `normActiveBase` แล้ว แต่ในลูปคำนวณและแจกแจงค่าแก๊สของออเดอร์ (`for (const o of orders)`) กลับวนลูปออเดอร์ทั้งหมดในระบบโดยไม่มีการตรวจสอบเหรียญ
+     - เมื่อผู้ใช้เปิดดู Trade Rounds ของคู่เหรียญใหม่ (เช่น WBTC หรือ WETH) ค่าแก๊สของออเดอร์ SOMI จำนวนมากในอดีตที่อยู่นอกช่วงเวลาของรอบเทรด จะถูกดึงไปกองใส่ `rounds[0]` หรือรอบสุดท้ายของ WBTC ทำให้สถิติค่าแก๊สและ Net PnL ของรอบเทรดผิดพลาด
+  2. **Trade Manager Overview & Orders API Unscoped by Symbol (`src/db.ts` & `src/server.ts`)**:
+     - เมธอด `getTrades(limit)` และ `getOrders(limit, filter)` ใน `db.ts` ไม่รองรับการกรองตามคู่เหรียญ
+     - ใน `server.ts`: Endpoint `GET /api/db/trade-manager` รับพารามิเตอร์ `symbol` มาแล้วแต่เรียก `getTrades(5000)` และ `getOrders(5000)` แบบไม่กรอง ทำให้ประวัติการเทรดและออเดอร์ของทุกคู่เหรียญปนกันบนแดชบอร์ด
+  3. **DreamDEX TxHash Matching Obstruction & Hex Stripping Bug (`src/strategy/index.ts` & `src/exchange/dreamdex/client.ts`)**:
+     - เมื่อวางออเดอร์บน DreamDEX บอทจะได้รับ TxHash (`0x...`) มาเก็บใน `o.onChainOrderId` ชั่วคราว
+     - ใน `syncOnChainOrders()`: โค้ดเดิมเช็ค `!o.onChainOrderId` ทำให้ไม่สามารถ Match ออเดอร์กับ uint128 ID จริงที่ Indexer ดึงมาได้ ส่งผลให้บอทสร้างออเดอร์ Duplicate ขึ้นมาแทน
+     - ใน `cancelOrder`: การแปลง `BigInt(orderId.replace(/\D/g, ""))` ทำให้ TxHash ถูกตัดตัวอักษร hex ทิ้งจนเหลือเฉพาะเลขสุ่มๆ ส่งไปแคนเซิลบน Smart Contract อย่างผิดพลาด
+  4. **Residual Dust Ceiling in `reconcileInventory` (`src/strategy/index.ts`)**:
+     - ยังมีจุดที่ใช้ `Math.max(this.minQty || 0.0001, 0.0001)` บังคับเกณฑ์ที่ `0.0001` BTC (~$6.80) แทนที่จะสัมพันธ์กับ `minQty` จริง
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.36`)**:
+  1. **เพิ่มการกรองเหรียญใน `calculateTradeRounds` Gas Attribution Loop**:
+     - ตรวจสอบ `inferOrderBase(o)` ในลูป `for (const o of orders)` เทียบกับ `normActiveBase` ป้องกันการรั่วไหลของค่าแก๊สข้ามคู่เหรียญ 100%
+  2. **รองรับ `symbol` Filter ใน `getTrades` และ `getOrders`**:
+     - เพิ่มเมธอด `matchesSymbol` และเชื่อมโยง Query Parameter ใน `/api/db/trade-manager` ให้แสดงเฉพาะประวัติของเหรียญที่กำลังดูอยู่
+  3. **Seamless DreamDEX TxHash Resolution**:
+     - ใน `syncOnChainOrders()`: อนุญาตให้ `(!o.onChainOrderId || o.onChainOrderId.startsWith("0x"))` สามารถจับคู่กับ uint128 ID จาก Indexer ได้ทันที
+     - ใน `cancelOrder`: ตรวจสอบหาก `orderId.startsWith("0x")` ให้ค้นหา uint128 ID ที่แท้จริงจาก Indexer ผ่าน `placedTxHash` ก่อนส่งคำสั่งแคนเซิล
+  4. **ปรับเกณฑ์ Dust ใน `reconcileInventory`**:
+     - เปลี่ยนมาใช้ `dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6`
+  5. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.36` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.11`) และ `GEMINI.md`
+
+
 
 
 

@@ -281,8 +281,8 @@ export class DashboardServer {
     // Database: Trade & Lot Manager Overview API
     if (pathname === "/api/db/trade-manager") {
       const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
-      const trades = this.db.getTrades(5000);
-      const allOrders = this.db.getOrders(5000);
+      const trades = this.db.getTrades(5000, symbolParam);
+      const allOrders = this.db.getOrders(5000, { symbol: symbolParam });
       const state = this.db.getState(symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(

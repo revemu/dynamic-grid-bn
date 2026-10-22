@@ -329,6 +329,13 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
 
   // Attribute ALL order gas (including orders created, orders cancelled during rebalancing, and direct fills)
   for (const o of orders) {
+    if (normActiveBase) {
+      const inferred = inferOrderBase(o);
+      if (inferred && !normActiveBase.includes(inferred) && !inferred.includes(normActiveBase)) {
+        continue;
+      }
+    }
+
     const cGas = Number(o.createGasQuote || o.createGasUsdso || 0);
     const cGasSomi = Number(o.createGasSomi || 0);
     const kGas = Number(o.cancelGasQuote || o.cancelGasUsdso || 0);
