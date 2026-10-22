@@ -449,6 +449,7 @@ export class DowEngine {
     hasValidChannel: boolean,
     useTrueWick = true,
     wickThresholdPct = 0.20,
+    downtrendBreakoutConfirmed = false,
   ): { isDowntrendDropActive: boolean; downtrendDropLow: number } {
     const activeFloorPrice = bottomBound > 0 ? bottomBound : (activeValley?.price ?? 0);
     const isBreakingBelowChannelFloor = Boolean(
@@ -458,22 +459,18 @@ export class DowEngine {
       )
     );
 
-    const buy2LevelPrice = hasValidChannel ? (bottomBound + finalSpan * 0.32) : 0;
-    const hasReclaimedBuy2SinceLl = Boolean(
-      hasValidChannel &&
-      lastCanonicalLow &&
-      candles.some((c) => c.time > lastCanonicalLow.time && c.close >= buy2LevelPrice * 0.9995)
-    );
-    const isFreshLlAfterPeak = Boolean(
+    // 🛡️ Dow Theory Pure Wave Rule:
+    // If the latest confirmed swing low is a Lower Low (LL), the market is in an active
+    // unresolved bear wave until a confirmed Higher Low (HL) forms or a macro Trendline Breakout occurs.
+    // A temporary reaction bounce to a peak (even if activePeak.index > LL.index) does NOT resolve an LL wave!
+    const peakCeiling = activePeak?.price ?? (upperBound > 0 ? upperBound : Infinity);
+    const isUnresolvedLlWave = Boolean(
       lastCanonicalLow?.dowLabel === "LL" &&
-      lastCanonicalLow.index > (activePeak?.index ?? -1) &&
-      !hasReclaimedBuy2SinceLl
+      !downtrendBreakoutConfirmed &&
+      price < peakCeiling
     );
-    const isConfirmedDowntrendWave = Boolean(
-      isFreshLlAfterPeak &&
-      price < (activePeak?.price ?? upperBound)
-    );
-    const isDowntrendDropActive = isConfirmedDowntrendWave || isBreakingBelowChannelFloor;
+
+    const isDowntrendDropActive = isUnresolvedLlWave || isBreakingBelowChannelFloor;
 
     const dropPrices: number[] = [];
     if (lastCanonicalLow?.dowLabel === "LL") {

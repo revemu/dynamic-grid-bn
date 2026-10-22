@@ -328,6 +328,7 @@ export class DowStructureEngine {
       hasValidChannel,
       useTrueWick,
       wickThreshFraction,
+      downtrendBreakoutConfirmed,
     );
 
     const lastHigh = this.swingHighs[this.swingHighs.length - 1];

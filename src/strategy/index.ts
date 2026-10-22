@@ -2836,15 +2836,15 @@ export class DynamicGrid implements IStrategyHost {
 
     const currentBuyLevel2 = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001 ? buyLevels[1] : undefined;
     const effectiveBuyLevel2Target =
-      currentBuyLevel2 ??
       (this.breakdownBuyLevel2Price && this.breakdownBuyLevel2Price > 0.0001 ? this.breakdownBuyLevel2Price : undefined) ??
       (this.breakdownFloorPrice && this.breakdownFloorPrice > 0.0001 ? this.breakdownFloorPrice : undefined) ??
+      currentBuyLevel2 ??
       (lowerBound > 0 ? lowerBound + span * 0.32 : refPrice);
 
     // If a new active downtrend drop (LH + LL or fresh LL breakdown) is detected and its trough
     // has NOT already been resolved, enter the unified waitingForHigherLow state.
-    if (Boolean(dow?.isDowntrendDropActive) && !this.waitingForHigherLow && isChannelReady) {
-      const activeDumpLow = dow?.downtrendDropLow ?? lowerBound;
+    if (Boolean(dow?.isDowntrendDropActive) && !this.waitingForHigherLow) {
+      const activeDumpLow = dow?.downtrendDropLow ?? (lowerBound > 0 ? lowerBound : refPrice);
       const lastLl = dow?.waveCycle?.lastLl;
       const lastHl = dow?.waveCycle?.lastHl;
       const dumpLowTime =
@@ -2878,8 +2878,8 @@ export class DynamicGrid implements IStrategyHost {
       if (isNewUnresolvedDrop) {
         this.waitingForHigherLow = true;
         this.isFlatChannelShiftWaiting = false;
-        this.breakdownFloorPrice = isBelowFloor ? lowerBound : undefined;
-        this.breakdownBuyLevel2Price = effectiveBuyLevel2Target;
+        this.breakdownFloorPrice = isBelowFloor ? lowerBound : (this.breakdownFloorPrice ?? (lowerBound > 0 ? lowerBound : undefined));
+        this.breakdownBuyLevel2Price = this.breakdownBuyLevel2Price ?? effectiveBuyLevel2Target;
         this.breakdownLowPrice = Math.min(refPrice, activeDumpLow);
         this.breakdownTime = dumpLowTime;
         this.lastResolvedDumpLowPrice = undefined; // Invalidate any stale cache

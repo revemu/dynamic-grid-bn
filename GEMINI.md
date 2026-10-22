@@ -3104,22 +3104,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-### 85. Incremental Tranche Grid Ladder Display & Tolerance Alignment (`v0.2.52`)
-- **สาเหตุของการแก้ไข (Motivation)**:
-  1. **การแสดงผลตัวเลขสะสมที่ชวนสับสนบน Grid Ladder ในโหมด IOC (`public/app.js`)**:
-     - ใน `public/app.js` ตัวเลขบนปุ่ม `IOC BUY` เดิมคำนวณจาก `targetCumulativeQuote - heldQuote` ส่งผลให้ชั้นล่างสุด (Buy Level 5) แสดงตัวเลขส่วนต่างทั้งหมดของพอร์ตที่เหลืออยู่ เช่น เมื่อถืออยู่ $89.89 (งบ $200) Buy Level 4 แสดง `+$50` และ Buy Level 5 แสดง `+$110`
-     - เมื่อผู้ใช้นำ $50 (L4) + $110 (L5) มาบวกกับ $90 ที่ถืออยู่ จะได้ $250 ซึ่งเกินงบพอร์ต $200 ไป $50 ทำให้ผู้ใช้เข้าใจผิดว่าบอทเตรียมจะซื้อเกินพอร์ต
-     - นอกจากนี้ที่ Buy Level 3 (เป้า $90) การถือครอง $89.89 ขาดไปเพียง $0.11 แต่ระบบแสดงเป็น `IOC BUY +$0` แทนที่จะเป็นป้ายสีฟ้า `HOLD $90 ✓`
-- **การแก้ไขและสถาปัตยกรรม (`v0.2.52`)**:
-  1. **Incremental Tranche Spend Calculation ใน [`public/app.js`](file:///c:/Sites/github/dynamic-grid-bn/public/app.js)**:
-     - ปรับการคำนวณตัวเลขปุ่มซื้อของแต่ละชั้นให้เป็นขนาดไม้เฉพาะชั้นนั้น (Incremental Tranche):
-       `incrementalTrancheQuote = targetCumulativeQuote - Math.max(heldQuote, prevCumulativeQuote)`
-     - ผลลัพธ์: Buy Level 4 แสดง `+$50` และ Buy Level 5 แสดง `+$60` เมื่อรวมกับยอดถือเดิม $90 จะได้ $90 + $50 + $60 = **$200 พอดีเป๊ะ 100%** ไม่มีตัวเลขเกินพอร์ตอีกต่อไป
-  2. **Tolerance Alignment for Met Levels**:
-     - ตรวจสอบ `heldQuote >= targetCumulativeQuote - 1.0` ทำให้ชั้นที่ขาดเพียงเศษเซนต์ (เช่น $89.89 จาก $90) แสดงเป็นป้ายสีฟ้า **`HOLD $90 ✓`** สวยงาม ไม่ขึ้น `+$0` หลอกตา
-  3. **Typecheck & Version Bump**:
+### 86. Unresolved Lower Low (LL) Wave Downtrend Guard Enforcement (`v0.2.53`)
+- **สาเหตุของปัญหา (Root Cause)**:
+  1. **บอทเข้าช้อนซื้อเต็มพอร์ต (Buy Level 1-5) ในคลื่นขาลงที่ยังไม่มี Higher Low (HL)**:
+     - ทั้งบน DreamDEX (SOMI:USDso) และ Binance (BTCFDUSD) เมื่อราคาดิ่งลงทำจุดต่ำสุดใหม่ที่เป็น Lower Low (`LL`) บอทได้ทำการเข้าซื้อกริด Buy 1 ถึง Buy 5 จนเต็มพอร์ต $200 ทั้งที่ยังไม่เคยเกิดการยกฐาน Higher Low (`HL`) เลยในคลื่นปัจจุบัน
+     - จากนั้นเมื่อราคาไหลทะลุก้นเหว `LL` ลงไป บอทจึงถูกบังคับ Cut Loss (Sell All) ทันที
+  2. **ช่องโหว่ใน `DowEngine.detectDowntrendDrop` (`src/market-structure/dow-engine.ts`)**:
+     - *ช่องโหว่ 1 (`lastCanonicalLow.index > activePeak.index`)*: เมื่อราคาทำเหว `LL` แล้วเด้งทำยอดรีบาวด์ (Bounce Peak) สั้นๆ ทำให้แท่งยอดเกิดหลังแท่งเหว โค้ดเดิมเข้าใจผิดว่า "ยอดเกิดหลังเหวแล้ว คลื่นทุบจึงจบแล้ว" ทั้งที่การเด้งสั้นๆ โดยไม่ยกฐานยังคงเป็นคลื่นขาลงเดิมตามหลัก Dow Theory
+     - *ช่องโหว่ 2 (`candles.some(...)` Reclaim Buy Level 2 ในกรอบจิ๋ว)*: เมื่อบอทสร้างกรอบขนาด 2.22% ($0.1753 - $0.1792) Buy Level 2 ของกรอบนี้อยู่สูงกว่าเหวเพียง 0.71% ($0.1765) การที่แท่งรีบาวด์แตะ $0.1792 ทำให้เงื่อนไข `candles.some(...)` กลายเป็นจริงค้างไว้ตลอดกาล แม้ราคาจะรูดกลับลงมาหาก้นเหว บอทก็ไม่ยอมเปิดสถานะรอ HL
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.53`)**:
+  1. **Dow Theory Pure Wave Rule ใน [`src/market-structure/dow-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/dow-engine.ts)**:
+     - กำหนดให้ตราบใดที่สวิงเหวล่าสุดเป็น Lower Low (`lastCanonicalLow.dowLabel === "LL"`) โดยที่ยังไม่เกิด Trendline Breakout ทะลุเส้นกดขาลง (`!downtrendBreakoutConfirmed`) และราคายังอยู่ใต้เพดานยอดคลื่น ให้ถือว่าคลื่นทุบยังทำงานอยู่ (`isDowntrendDropActive = true`) เสมอ
+     - ตัดเงื่อนไข `LL.index > peak.index` และตัดการ Reclaim Buy Level 2 แบบลวงในกรอบจิ๋วออกทั้งหมด
+  2. **ส่งสัญญาณ Trendline Breakout ใน [`src/market-structure/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/index.ts)**:
+     - ส่ง `downtrendBreakoutConfirmed` เข้าสู่ `DowEngine.detectDowntrendDrop` เพื่อให้คลื่นทุบปลดล็อกได้ก็ต่อเมื่อยืนยัน Higher Low (`HL`) แท้จริง หรือทะลุ Trendline ขาลงชัดเจนเท่านั้น
+  3. **บังคับเปิด `waitingForHigherLow` ใน [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts)**:
+     - เมื่อ `dow.isDowntrendDropActive` เป็นจริง บอทจะเปิดสถานะ `waitingForHigherLow = true` ทันทีแม้กรอบราคายังไม่สมบูรณ์
+     - ระงับคำสั่งซื้อทั้งหมด ไม่เข้าช้อนมีดร่วง และรักษาเงินสดในพอร์ต (100% Cash) ไว้อย่างปลอดภัย จนกว่าจะฟอร์ม HL สำเร็จ
+  4. **Typecheck & Version Bump**:
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
-     - ปรับเวอร์ชันเป็น `v0.2.52` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.27`) และ `GEMINI.md`
+     - ปรับเวอร์ชันเป็น `v0.2.53` ใน `package.json`, `src/version.ts`, `public/index.html` (`style.css?v=2.4`, `app.js?v=3.28`) และ `GEMINI.md`
+
 
 
 
