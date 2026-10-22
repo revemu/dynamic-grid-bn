@@ -2336,6 +2336,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. **Version Bump**:
      - อัปเกรดเป็น `v0.2.22` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 56. Anti-Waterfall Buy Cooldown, Neckline Breakdown Guard, Low TL Suppression & Bounce Cut Loss (`v0.2.23`)
+- **สาเหตุของปัญหา**:
+  1. **ขาดระบบ Cooldown & Intra-Candle Waterfall Guard ใน Staged Maker Buys**:
+     - เมื่อไม้ซื้อ Limit Buy แมตช์บน Binance WebSocket จะรายงานผลใน 50ms ทำให้ลูป `step()` ในวินาทีถัดไปเลื่อนหน้าต่างวางไม้ซื้อถัดไปลงบนกระดานทันทีกลางแท่งทุบเดิม และเมื่อถือของมาแล้ว 3 ไม้ (`L1–L3`) ไม้ที่เหลือคือ `L4 + L5` (2 ไม้) ซึ่งเท่ากับ `maxActiveMakerBuys: 2` พอดี จึงยังวางค้างพร้อมกันทั้ง 2 ไม้
+  2. **`LL Breakdown Buy Cancel` ตรวจจับเฉพาะป้าย `lastLl`**:
+     - สวิงเหวที่เกิดก่อนหน้า `LH ($2,481.65)` อยู่ที่ `$2,473.62` ซึ่งสูงกว่าฐานกรอบ `$2,460.46` จึงมีป้ายกำกับเป็น `HL` ไม่ใช่ `LL` การเช็คแค่ `lastLl` จึงไม่พบแนวรับที่กำลังถูกทุบหลุด
+  3. **การ Override ของเส้นกด `Trendline` ทำงานแม้กำไรไม่ถึงเกณฑ์ขั้นต่ำ**:
+     - `isDowntrendEscape` ประเมินเป็น `true` ทุกครั้งที่มีเส้นกด ทำให้บอทยอมขายออกที่ `+0.06%` (`+$0.02`) แม้ในสภาวะตลาดปกติที่เพิ่งซื้อแค่ `Buy L1` และโค้ดยกเลิกออเดอร์ขาย `Sell Target 1–5` ก่อนเช็คความคุ้มทุน ทำให้หากเส้นกดอยู่ต่ำกว่าทุน บอทจะไม่วางออเดอร์ขายใดๆ เลยบนกระดาน
+  4. **`cutLossOnBufferOnly` บล็อกการทำงานของ Two-Stage Cut Loss**:
+     - บน `:3334` เปิด `cutLossOnBufferOnly: true` ไว้ ทำให้แท่ง 15m ปิดหลุด `Floor (0%)` ไม่ทริกเกอร์คัท 50% แรก และเมื่อคัทครึ่งแรกสำเร็จ บอทไม่ได้วางคำสั่ง Limit Sell ดักขาย 50% ที่เหลือไว้ที่ระดับ Floor
+  5. **ตกหล่นฟิลด์ใน `getRuntimeSettings()`**:
+     - `breakevenEscapeProfitPct` และ `maxActiveMakerBuys` ไม่ได้ถูกส่งผ่าน `getRuntimeSettings()` ทำให้ `/api/config` ไม่แสดงและไม่บันทึกลงฐานข้อมูล
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.23`)**:
+  1. **ระบบ Post-Buy Cooldown & Intra-Candle Waterfall Guard**:
+     - บันทึก `lastBuyFillTime`, `lastBuyFillPrice`, `lastBuyFillCandleTime` ทุกครั้งที่เกิด Buy Fill
+     - หน่วงเวลา 60 วินาที และหากราคาปัจจุบันในแท่งเทียนเดียวกันไหลลงต่ำกว่าราคาที่เพิ่งซื้อเกิน `-0.25%` จะระงับการวางไม้ซื้อที่ลึกกว่านั้นจนกว่าแท่งเทียนจะสร้างฐานหรือปิดแท่ง
+  2. **ระบบ Intra-Channel Structural Breakdown Guard (Neckline Support Check)**:
+     - ค้นหาจุดต่ำสุดของสวิง (`priorLowToHigh` หรือ `latestSwingLow`) ที่เกิดก่อนหน้า `LH` หรือ `candidatePeak` และยกเลิก/ระงับคำสั่งซื้อทุกไม้ที่อยู่ต่ำกว่าระดับราคานี้ทันทีเมื่อราคาไหลหลุด
+  3. **ระบบ Low Trendline Sell Suppression & Full Grid Targets Preservation**:
+     - แยกแยะ `isDowntrendEscape` ให้ทำงานเฉพาะเมื่อตลาดเป็นขาลงจริง (`DOWNTREND` / มี `LL` ล่าสุด / ถือของลึก $\ge 22\%$ / ติดดอยนาน)
+     - หากราคาที่เส้นกดต่ำกว่าเกณฑ์กำไรขั้นต่ำในสภาวะปกติ จะระงับการตั้งขายที่เส้นกด และคงคำสั่งขาย `Sell Target 1–5` ด้านบนไว้เพื่อรอการเบรกเอาท์ทำกำไรเต็มเม็ดเต็มหน่วย
+  4. **ปลดล็อก Two-Stage Cut Loss & Resting Bounce Exit Order at Floor**:
+     - ให้ Stage 1 คัท 50% แรกทันทีที่มีแท่งเทียน 15m ปิดต่ำกว่า `Floor (0%)` (แม้ `cutLossOnBufferOnly` จะเปิดอยู่)
+     - วางคำสั่ง Maker Limit Sell สำหรับ 50% ที่เหลือดักไว้ที่ระดับ Floor (`lowerBound`) เพื่อขายออกที่ราคาดีขึ้นหากราคาวิ่งกลับมาทดสอบแนวต้าน และสั่งคัท 50% สุดท้าย (Stage 2) เมื่อราคาหลุด Buffer
+  5. **เพิ่มการซิงค์ Config ครบถ้วน**:
+     - บรรจุ `breakevenEscapeProfitPct` และ `maxActiveMakerBuys` ลงใน `getRuntimeSettings()`, `updateRuntimeSettings()` และ `telemetryData`
+  6. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.23` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=2.7`) และ `GEMINI.md`
+
 
 
 
