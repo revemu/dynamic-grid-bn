@@ -2367,6 +2367,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
   6. **Version Bump**:
      - อัปเกรดเป็น `v0.2.23` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=2.7`) และ `GEMINI.md`
 
+---
+
+### 57. Neckline Breakdown Guard, Bounce Exit Protection, Low TL Suppression Churn Fix & Version Bump (`v0.2.24`)
+- **สาเหตุของปัญหาที่ตรวจพบจากการตรวจสอบอย่างละเอียดรอบที่ 2 (Second-Round Audit of v0.2.23)**:
+  1. **Neckline Breakdown Guard ไม่ทริกเกอร์จริง (`hasBearishPeak` & `structuralBreakdownLow`)**:
+     - `lastSwingHigh` เป็นออบเจกต์เดียวกับ `lastLh` ทำให้ `lastLh.price < lastSwingHigh.price` ได้ผลลัพธ์เป็น `false` เสมอ และ `(lastSwingHigh as any).dowLabel` ให้ค่า `undefined` เพราะ `SwingPoint` ไม่มีฟิลด์ `dowLabel`
+  2. **Bounce Exit Order ถูกยกเลิกทิ้งใน 1 วินาทีถัดไป (`syncRestingOrders`)**:
+     - ลูปตรวจสอบ Stale Sell Order ใน `syncRestingOrders` บังคับยกเลิกออเดอร์ขายที่ไม่มีชื่อตรงกับ `sellNames` ส่งผลให้ `"Cut Loss Bounce Exit (50%)"` ถูกยกเลิกทิ้งทันทีในวินาทีถัดมา และตรรกะ Resistance Sell Override เข้าใจผิดว่าคำสั่งดักขายที่ Floor เป็นคำสั่งขายที่เส้นกดเพราะราคาเข้าใกล้เกณฑ์ 0.5%
+  3. **Low TL Suppression Churn (Cancel/Replace Loop)**:
+     - `existingTlSell` ใช้ตรรกะค้นหาออเดอร์โดยตรวจ `Math.abs(o.price - effectiveResistancePrice) / effectiveResistancePrice <= 0.005` ทำให้เมื่อเส้นกดอยู่ต่ำกว่าทุนและไม่คุ้มขาย บอทกลับไปแมตช์โดนออเดอร์ปกติ `Sell Target 1` แล้วสั่งยกเลิก จากนั้นอีก 1 วินาทีถัดมา ตรรกะ Standard Ladder Sell ก็กลับมาวางใหม่ กลายเป็นลูปยกเลิกและวางซ้ำทุกๆ 1 วินาที
+  4. **Two-Stage Cut Loss สั่งคัท 100% กะทันหันหากพอร์ตเล็ก**:
+     - เมื่อพอร์ตมีมูลค่าเหรียญน้อยกว่าขั้นต่ำที่จะแบ่ง 2 ไม้ (`heldNow * dexBid < minNotionalForSplit * 2.1`) ทำให้ `canDoStage1Split` เป็น `false` แต่เนื่องจาก `isFloorCandleCut` ยังเป็น `true` บอทจึงกระโดดข้ามไปรันคัท 100% ทันทีที่แท่ง 15m ปิดหลุด Floor ฝ่าฝืนการตั้งค่า `cutLossOnBufferOnly: true`
+  5. **`isUsingRealCeil` ลดเกณฑ์กำไรหนีตายผิดจังหวะ**:
+     - `isDowntrendEscape` มีเงื่อนไข `|| isUsingRealCeil` พ่วงอยู่ ทำให้เมื่อตรวจพบกรอบ Real Frame Ceiling บอทกลับลดเกณฑ์กำไรลงเหลือ `+0.06%` ทั้งที่เป็นสภาวะขาขึ้นหรือตลาดปกติ
+  6. **Erroneous Cooldown Reset เมื่อคำสั่งขายแมตช์**:
+     - ใน `onMakerSellFill` มีการรีเซ็ต `this.lastBuyFillTime = 0` ทำให้หากมีไม้ขายเล็กๆ แมตช์ ระบบ Buy Cooldown 60s และ Intra-Candle Waterfall Guard จะถูกล้างทิ้งทันที ทั้งที่ราคายังไหลลงต่อ
+  7. **โค้ดซ้ำซ้อนและเหตุผลการยกเลิกคำสั่งซื้อไม่ตรงเงื่อนไขจริง**:
+     - มีบล็อกคำสั่ง `existingTlSell` ซ้ำซ้อน 20 บรรทัดใน `syncRestingOrders` และการยกเลิกคำสั่งซื้อที่ไม่ผ่านเกณฑ์แสดงข้อความ generic ว่า `"quota already fulfilled"` ทั้งที่ถูกระงับจาก Cooldown หรือ Breakdown
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.24`)**:
+  1. **แก้ไข Neckline Breakdown Guard ให้แม่นยำ 100%**:
+     - ค้นหาผ่าน `dow.waveCycle.annotatedSwings` เพื่อดึง `latestConfirmedHigh` และตรวจสอบ `dowLabel === "LH"` หรือราคาต่ำกว่า High ก่อนหน้า พร้อมจับคู่กับสวิง Low ที่เกิดขึ้นก่อนหน้านั้นเป็นแนวรับ Neckline (`structuralBreakdownLow`) หากราคาหลุดแนวรับนี้จะระงับการวางไม้ซื้อด้านล่างทั้งหมดทันที
+  2. **ปกป้อง Bounce Exit Limit Sell Order**:
+     - เพิ่มเงื่อนไข `this.cutLossStage1Executed` ใน `syncRestingOrders` ฝั่ง Sell เพื่อดูแลเฉพาะคำสั่ง `"Cut Loss Bounce Exit (50%)"` ดักขายที่ Floor และไม่นำคำสั่งนี้ไปปนกับ Stale Sells หรือ Resistance Overrides
+  3. **ยุติ Low TL Churn อย่างเด็ดขาด**:
+     - จำกัดการค้นหา `existingTlSell` เฉพาะออเดอร์ที่มี `levelDesc === "Sell TL Exit (Trendline)"` หรือ `"Sell Real Ceil Exit"` เท่านั้น ไม่แตะต้องออเดอร์ `Sell Target 1–5`
+  4. **ประสาน Two-Stage Cut Loss กับ `cutLossOnBufferOnly` อย่างปลอดภัย**:
+     - ให้ `isFloorCandleCut` ทำงานก็ต่อเมื่อ `!cutLossOnBufferOnly || canDoStage1Split` เท่านั้น หากพอร์ตเล็กไม่สามารถแบ่งไม้ได้ จะรอให้หลุด Buffer ก่อนจึงค่อยคัทตามการตั้งค่า `cutLossOnBufferOnly`
+  5. **ตัด `isUsingRealCeil` ออกจาก `isDowntrendEscape`**:
+     - การขายที่ Real Ceil ในสภาวะตลาดปกติจะใช้เกณฑ์กำไรมาตรฐาน `minNetProfitPct (0.25%+)` และจะใช้เกณฑ์หนีตาย `+0.06%` เฉพาะเมื่อเป็นขาลงจริง ติดดอย หรือถือของลึกเท่านั้น
+  6. **คงค่า Buy Cooldown ข้ามการขาย**:
+     - นำการรีเซ็ต `lastBuyFillTime` ออกจาก `onMakerSellFill` เพื่อให้ระบบป้องกัน Waterfall ทำงานต่อเนื่องจนครบ 60s หรือจนแท่งเทียนตั้งฐานสำเร็จ
+  7. **ทำความสะอาดโค้ดและปรับปรุง Logs**:
+     - ลบบล็อกโค้ดที่ซ้ำซ้อนออก และปรับข้อความยกเลิกคำสั่งซื้อให้แสดงเหตุผลที่แท้จริง (`Intra-channel breakdown guard`, `Intra-candle waterfall guard`, `Buy fill cooldown`, `Trendline resistance filter`, `Trend support filter`)
+  8. **Version Bump**:
+     - ปรับเวอร์ชันเป็น `v0.2.24` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=2.8`) และ `GEMINI.md`
+
+
 
 
 
