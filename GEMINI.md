@@ -2799,6 +2799,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.38` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.13`) และ `GEMINI.md`
 
+---
+
+### 72. DreamDEX Orderbook Ticker Priority, Binance Dual-Format Order ID & Candle Backfill Protection (`v0.2.39`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **DreamDEX Real-time Ticker Hijacked by Binance WebSocket Stream (`src/strategy/index.ts:2314-2331`)**:
+     - ใน `tick()` โค้ดเดิมดึง `bestBid`, `bestAsk`, `mid` จาก `this.wsBookTicker` (ซึ่งเชื่อมต่อกับ Binance CEX ตลอดเวลา)
+     - ส่งผลให้เมื่อบอทรันบน DreamDEX Spot (DEX) ราคาซื้อขายและสเปรดถูกอ้างอิงจาก CEX แทนที่จะเป็นสภาพคล่องบน Somnia Network นำไปสู่การตัดสินใจ IOC ซื้อ/ขายผิดพลาดและ Revert
+  2. **Binance REST `getOrder` & `cancelOrder` Rejection on String ClientOrderId (`src/exchange/binance/client.ts:348` & `483`)**:
+     - ส่งพารามิเตอร์ `orderId: String(orderId)` เสมอ ทำให้เมื่อส่ง ClientOrderId ที่เป็นตัวอักษร (เช่น `order_...`) Binance จะ Revert ด้วย Error `-1100: Illegal characters found in parameter 'orderId'`
+  3. **Premature Candle Closure on Historical Ingestion (`src/market-structure/candle-manager.ts:127`)**:
+     - ใน `addCandle()` สั่งมาร์ก `isClosed = true` บนแท่งเทียนก่อนหน้าเสมอ แม้ว่าแท่งเทียนที่เพิ่มเข้ามาใหม่จะเป็นข้อมูลในอดีต (Warmup/Backfill) ทำให้แท่งเทียนปัจจุบันที่ยังไม่ปิดถูกเข้าใจผิดว่าปิดสมบูรณ์แล้ว
+  4. **WebSocket `executionReport` Dropped due to Symbol Separators (`src/strategy/index.ts:509`)**:
+     - เปรียบเทียบ `report.symbol.toUpperCase() !== this.symbol.toUpperCase()` โดยตรง ทำให้หากผู้ใช้กรอกคู่เทรดเป็น `"BTC/USDT"` หรือ `"BTC:USDT"` บอทจะไม่ยอมรับรายงานการจับคู่ออเดอร์จาก Binance
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.39`)**:
+  1. **จัดลำดับความสำคัญของสมุดคำสั่งตามกระดานจริง**:
+     - ใน `tick()`: หากรันบน DreamDEX จะเรียก `this.binance.getTopOfBook(this.symbol)` เพื่อดึงราคา Bid/Ask จาก On-chain DreamDEX ก่อนเสมอ และใช้ Binance `wsBookTicker` เฉพาะเมื่ออยู่บน Binance CEX หรือเมื่อไม่มีข้อมูลจาก DEX
+  2. **รองรับ Dual Format ทั้ง OrderId และ ClientOrderId ใน Binance Client**:
+     - ตรวจสอบ `/^\d+$/.test(idStr)` หากเป็นตัวเลขให้ส่ง `orderId` หากมีตัวอักษรให้ส่ง `origClientOrderId` ตามมาตรฐาน Binance REST API
+  3. **ป้องกันการปิดแท่งเทียนก่อนเวลาในการโหลดประวัติ**:
+     - ตรวจสอบ `candle.time > this.candles[this.candles.length - 1]!.time` ก่อนมาร์ก `isClosed = true`
+  4. **ตัด Separator ในการตรวจสอบ Symbol ของ Execution Report**:
+     - ตัดเครื่องหมายคั่นออกก่อนเปรียบเทียบ ทำให้รองรับทั้ง `BTCUSDT`, `BTC/USDT`, `BTC-USDT`
+  5. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.39` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.14`) และ `GEMINI.md`
+
+
 
 
 

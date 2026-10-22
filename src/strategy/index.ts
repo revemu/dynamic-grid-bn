@@ -506,7 +506,9 @@ export class DynamicGrid implements IStrategyHost {
    * Catches FILLED, PARTIALLY_FILLED, CANCELED immediately without polling /openOrders!
    */
   public handleWsExecutionReport(report: BinanceExecutionReport): void {
-    if (report.symbol.toUpperCase() !== this.symbol.toUpperCase()) return;
+    const reportSym = (report.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+    const currentSym = (this.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+    if (reportSym !== currentSym) return;
 
     const idStr = String(report.orderId);
     const isBid = report.side === "BUY";
@@ -2311,22 +2313,37 @@ export class DynamicGrid implements IStrategyHost {
     let bestAsk: number | undefined;
     let mid: number | undefined;
 
-    // 2. Real-time Book Ticker: Prioritize WebSocket stream (0 REST weight)
-    if (this.wsBookTicker && now - this.wsBookTicker.time < 10_000) {
-      bestBid = this.wsBookTicker.bestBid;
-      bestAsk = this.wsBookTicker.bestAsk;
-      mid = this.wsBookTicker.mid;
-    } else {
-      // Fallback: poll REST only if WebSocket is unavailable or stale (>10s)
+    // 2. Real-time Book Ticker: Prioritize native exchange orderbook for DreamDEX, and WebSocket stream for Binance
+    if (this.binance.exchangeName === "dreamdex") {
       try {
         const top = await this.binance.getTopOfBook(this.symbol);
-        if (top) {
+        if (top && (top.bestBid > 0 || top.bestAsk > 0)) {
           bestBid = top.bestBid;
           bestAsk = top.bestAsk;
           mid = top.mid;
         }
       } catch (err) {
-        this.status(`Binance bookTicker fallback error: ${(err as Error).message}`);
+        this.status(`DreamDEX bookTicker error: ${(err as Error).message}`);
+      }
+    }
+
+    if (bestBid === undefined || bestBid <= 0 || bestAsk === undefined || bestAsk <= 0) {
+      if (this.wsBookTicker && now - this.wsBookTicker.time < 10_000) {
+        bestBid = this.wsBookTicker.bestBid;
+        bestAsk = this.wsBookTicker.bestAsk;
+        mid = this.wsBookTicker.mid;
+      } else {
+        // Fallback: poll REST only if WebSocket is unavailable or stale (>10s)
+        try {
+          const top = await this.binance.getTopOfBook(this.symbol);
+          if (top) {
+            bestBid = top.bestBid;
+            bestAsk = top.bestAsk;
+            mid = top.mid;
+          }
+        } catch (err) {
+          this.status(`Binance bookTicker fallback error: ${(err as Error).message}`);
+        }
       }
     }
 

@@ -123,7 +123,7 @@ export class CandleManager {
     if (idx >= 0) {
       this.candles[idx] = candle;
     } else {
-      if (this.candles.length > 0) {
+      if (this.candles.length > 0 && candle.time > this.candles[this.candles.length - 1]!.time) {
         this.candles[this.candles.length - 1]!.isClosed = true;
       }
       this.candles.push(candle);

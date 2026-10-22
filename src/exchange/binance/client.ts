@@ -345,10 +345,14 @@ export class BinanceClient implements IExchangeClient {
    */
   public async getOrder(symbol: string, orderId: number | string): Promise<BinanceOpenOrder> {
     const sym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
-    const o = await this.signedRequest<any>("GET", "/api/v3/order", {
-      symbol: sym,
-      orderId: String(orderId),
-    });
+    const idStr = String(orderId);
+    const params: Record<string, string> = { symbol: sym };
+    if (/^\d+$/.test(idStr)) {
+      params.orderId = idStr;
+    } else {
+      params.origClientOrderId = idStr;
+    }
+    const o = await this.signedRequest<any>("GET", "/api/v3/order", params);
     return {
       symbol: o.symbol,
       orderId: Number(o.orderId),
@@ -480,10 +484,14 @@ export class BinanceClient implements IExchangeClient {
    */
   public async cancelOrder(symbol: string, orderId: number | string): Promise<any> {
     const sym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
-    return await this.signedRequest<any>("DELETE", "/api/v3/order", {
-      symbol: sym,
-      orderId: String(orderId),
-    });
+    const idStr = String(orderId);
+    const params: Record<string, string> = { symbol: sym };
+    if (/^\d+$/.test(idStr)) {
+      params.orderId = idStr;
+    } else {
+      params.origClientOrderId = idStr;
+    }
+    return await this.signedRequest<any>("DELETE", "/api/v3/order", params);
   }
 
   /**
