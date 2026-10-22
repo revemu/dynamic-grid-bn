@@ -96,6 +96,7 @@ export class DynamicGrid {
   private isFlatChannelShiftWaiting = false;
   private isTrendSupportExitActive = false;
   private trendSupportBreakPrice?: number;
+  private lastTrendSupportBreakKey?: string;
   private wasFlatCashLastTick = true;
   private lastEvaluatedFloor?: number;
   private lastEvaluatedCeil?: number;
@@ -1993,6 +1994,7 @@ export class DynamicGrid {
     this.isFlatChannelShiftWaiting = false;
     this.isTrendSupportExitActive = false;
     this.trendSupportBreakPrice = undefined;
+    this.lastTrendSupportBreakKey = undefined;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
@@ -2047,6 +2049,7 @@ export class DynamicGrid {
     this.isFlatChannelShiftWaiting = false;
     this.isTrendSupportExitActive = false;
     this.trendSupportBreakPrice = undefined;
+    this.lastTrendSupportBreakKey = undefined;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
@@ -2486,7 +2489,30 @@ export class DynamicGrid {
         this.pendingConfirmedChannelUpdate = false;
       }
     } else {
-      dow = this.confirmedChannel!.dow;
+      // Retain frozen channel grid bounds from confirmed closed candle,
+      // but obtain live real-time market structure indicators (trendlines, candidates, crash drops) with refPrice:
+      const liveDow = this.dowEngine?.getStructure(refPrice, undefined, {
+        mode: this.cfg.channelMode,
+        minChannelWidthPct: this.cfg.minChannelWidthPct,
+        maxChannelWidthPct: this.cfg.maxChannelWidthPct,
+        atrMinMultiplier: this.cfg.atrMinMultiplier,
+        atrMaxMultiplier: this.cfg.atrMaxMultiplier,
+        donchianLookback: this.cfg.donchianLookback,
+        floorBufferPct: this.cfg.floorBufferPct,
+        atrPct: this.atrSource.atrPct?.(),
+        useTrueWick: this.cfg.useTrueWick,
+        wickThresholdPct: this.cfg.wickThresholdPct,
+        srLookbackCandles: this.cfg.srLookbackCandles,
+        enableNarrowChannelCollapse: this.cfg.enableNarrowChannelCollapse,
+        narrowChannelThresholdPct: this.cfg.narrowChannelThresholdPct,
+        narrowChannelBuyBufferPct: this.cfg.narrowChannelBuyBufferPct,
+        narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct,
+        buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
+        sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
+        useOnlyClosedCandles: false,
+      });
+
+      dow = liveDow ?? this.confirmedChannel!.dow;
       gridZone = this.confirmedChannel!.gridZone;
       lowerBound = this.confirmedChannel!.lowerBound;
       upperBound = this.confirmedChannel!.upperBound;
@@ -2822,6 +2848,7 @@ export class DynamicGrid {
         this.isDowntrendDropPaused = false;
         this.isTrendSupportExitActive = false;
         this.trendSupportBreakPrice = undefined;
+        this.lastTrendSupportBreakKey = undefined;
         this.breakdownTime = undefined;
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
@@ -2907,13 +2934,33 @@ export class DynamicGrid {
     // ── Trend Support Breakdown Check (Exit 100% to Cash & Wait for Reversal) ─
     const uptrendLine = dow?.uptrendLine;
     const isExitOnTrendSupportBreak = this.cfg.enableExitOnTrendSupportBreak !== false;
+    const uptrendKey = uptrendLine ? `${uptrendLine.p1.time}_${uptrendLine.p2.time}` : undefined;
+    const isNewUptrendBreak = uptrendKey ? (this.lastTrendSupportBreakKey !== uptrendKey) : true;
+
+    // Decisive trend support breakdown requires:
+    // 1. Confirmed closed candle below trendline, OR
+    // 2. Real-time price dropped below trendline beyond floorBufferPct threshold (preventing 0.05% intra-bar wicks), OR
+    // 3. Multi-bar confirmed breakdown (uptrendBreakdownConfirmed)
+    const trendSupportBufferPct = Math.max(0.20, this.cfg.floorBufferPct ?? 0.25);
+    const isDecisiveSupportBreak = Boolean(
+      uptrendLine && (
+        dow?.uptrendBreakdownConfirmed ||
+        (uptrendLine.brokenCandleCount ?? 0) >= 1 ||
+        (latestClosedCandle && latestClosedCandle.close < uptrendLine.currentLinePrice * 0.9995) ||
+        refPrice < uptrendLine.currentLinePrice * (1 - trendSupportBufferPct / 100)
+      )
+    );
     const isTrendSupportBroken = Boolean(
       isExitOnTrendSupportBreak &&
       uptrendLine &&
-      (refPrice < uptrendLine.currentLinePrice * 0.9985 || uptrendLine.isBroken || (uptrendLine.brokenCandleCount ?? 0) >= 1 || dow?.uptrendBreakdownConfirmed)
+      isNewUptrendBreak &&
+      isDecisiveSupportBreak
     );
 
     if (isTrendSupportBroken && !this.isPaused && !isBelowFloor) {
+      if (uptrendKey) {
+        this.lastTrendSupportBreakKey = uptrendKey;
+      }
       if (this.baseHeld() >= (this.minQty || 0.0001)) {
         const dexBid = bestBid ?? effectiveMid;
         this.log(
@@ -3153,9 +3200,25 @@ export class DynamicGrid {
       (dow?.waveCycle?.lastLh && latestSwingHigh && dow.waveCycle.lastLh.time === latestSwingHigh.time),
     );
     const latestLhPrice = isLatestHighLh && latestSwingHigh ? latestSwingHigh.price : undefined;
-    const minNetProfitTargetPrice = avgEntryPrice > 0 ? avgEntryPrice * this.getMinProfitMultiplier() : 0;
+
+    // In downtrend structure (LH+LL), allow escaping at breakeven / slight profit to safely de-risk
+    const isDowntrendActive = Boolean(
+      dow?.regime === "DOWNTREND" ||
+      (dow?.waveCycle?.lastLl && (!dow?.waveCycle?.lastHl || dow.waveCycle.lastLl.index > dow.waveCycle.lastHl.index))
+    );
+    const escapeMinProfitPct = isDowntrendActive
+      ? Math.max(0.05, this.cfg.breakevenEscapeProfitPct ?? 0.06)
+      : Math.max(0.20, this.cfg.minNetProfitPct ?? 0.25);
+    const minNetProfitTargetPrice = avgEntryPrice > 0 ? avgEntryPrice * (1 + escapeMinProfitPct / 100) : 0;
+
+    // Consider candidatePeak as well if confirmed >= 2 bars
+    const candidatePeakPrice = (dow?.candidatePeak && (dow.candidatePeak.confirmationCandles ?? 0) >= 2)
+      ? dow.candidatePeak.price
+      : undefined;
+    const effectiveLhPrice = latestLhPrice ?? candidatePeakPrice;
+
     const candidateLhEscape = Math.min(
-      latestLhPrice !== undefined && latestLhPrice > 0 ? latestLhPrice : Infinity,
+      effectiveLhPrice !== undefined && effectiveLhPrice > 0 ? effectiveLhPrice : Infinity,
       liveCalculatedCeil !== undefined && liveCalculatedCeil > 0 ? liveCalculatedCeil : Infinity,
     );
     const isIocMode = this.cfg.orderExecutionMode === "IOC_BRACKET";
@@ -3164,17 +3227,16 @@ export class DynamicGrid {
       candidateLhEscape < firstActiveSellTarget &&
       candidateLhEscape >= minNetProfitTargetPrice;
 
-    // LH Dynamic Escape: ONLY active in IOC mode when price is genuinely stuck below first sell target,
-    // and price has not blown past the LH level
+    // LH Dynamic Escape: Active in BOTH IOC and MAKER_LIMIT modes when price is genuinely stuck below first sell target,
+    // and candidate escape price is above required profit/breakeven target
     const lhDynamicEscapePrice = (
-      isIocMode &&
       (this.cfg.enableLhDynamicEscape !== false) &&
       isPriceStuckBelowFirstSell &&
       isLhNearPrice &&
       refPrice <= candidateLhEscape * 1.002
     ) ? candidateLhEscape : undefined;
 
-    const liveRealCeil = (isIocMode && this.cfg.enableSellAtRealCeiling !== false)
+    const liveRealCeil = (this.cfg.enableSellAtRealCeiling !== false)
       ? (lhDynamicEscapePrice !== undefined && liveCalculatedCeil !== undefined
           ? Math.min(liveCalculatedCeil, lhDynamicEscapePrice)
           : (lhDynamicEscapePrice ?? liveCalculatedCeil))
@@ -4305,6 +4367,7 @@ export class DynamicGrid {
         uptrendLine ?? undefined,
         uptrendBroken,
         liveRealCeil,
+        dow,
       );
     }
 
@@ -4589,6 +4652,7 @@ export class DynamicGrid {
     activeUptrendLine?: import("./market-structure.js").TrendLine,
     uptrendBroken?: boolean,
     liveRealCeil?: number,
+    dow?: import("./market-structure.js").DowStructure,
   ): Promise<void> {
     const currentHeldQuote = this.baseHeld() * refPrice;
     const currentHeldUsdso = currentHeldQuote;
@@ -4712,6 +4776,19 @@ export class DynamicGrid {
       const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
       const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
 
+      // ── Intra-Channel LL Breakdown Guard ────────────────────────────────
+      // If the wave structure in the channel has formed a confirmed LL (Lower Low)
+      // and subsequent bounce failed (LH), and current price is breaking below that LL,
+      // cancel & suppress any resting buy orders below that LL to avoid catching a continuation crash knife!
+      const lastLl = dow?.waveCycle?.lastLl;
+      const lastLh = dow?.waveCycle?.lastLh;
+      const isLlContinuationBreakdown = Boolean(
+        lastLl &&
+        lastLh &&
+        lastLh.index > lastLl.index &&
+        refPrice < lastLl.price * 1.0005
+      );
+
       // Determine which buy levels are actually eligible for placing/holding orders
       // (not disabled by user unless overridden by active Uptrend Support at idx 0, not suppressed by Holding Fraction Guard, Trendline filter, or above current bid)
       const eligibleBuyIndices = effectiveBuyLevels
@@ -4743,9 +4820,24 @@ export class DynamicGrid {
           if (this.cfg.enableBuyAboveTrendSupport !== false && isTlAboveBuyTarget && idx > 0 && activeUptrendLine && lvl < activeUptrendLine.currentLinePrice * 0.995) {
             return false;
           }
+          // LL Breakdown Filter: Do not buy below broken Lower Low
+          if (isLlContinuationBreakdown && lastLl && lvl < lastLl.price * 1.0005) {
+            return false;
+          }
           return true;
         })
         .map(({ idx }) => idx);
+
+      // ── Staged Maker Buy Window Guard (Anti-Waterfall) ──────────────────
+      // Limit simultaneous resting Maker buys to at most maxActiveMakerBuys (closest to current bid)
+      // to prevent a vertical flash crash from sweeping all 5 pyramid levels simultaneously!
+      const maxActiveBuys = Math.max(1, Number(this.cfg.maxActiveMakerBuys ?? 2));
+      const sortedEligibleByPriceDesc = [...eligibleBuyIndices].sort((a, b) => {
+        const pA = effectiveBuyLevels[a] ?? 0;
+        const pB = effectiveBuyLevels[b] ?? 0;
+        return pB - pA;
+      });
+      const activeWindowBuyIndices = new Set(sortedEligibleByPriceDesc.slice(0, maxActiveBuys));
 
       const numBuyLevels = effectiveBuyLevels.length || 5;
       const numEligibleBuyLevels = eligibleBuyIndices.length > 0 ? eligibleBuyIndices.length : numBuyLevels;
@@ -4848,6 +4940,21 @@ export class DynamicGrid {
           this.saveState();
         }
 
+        // Cancel resting buy orders placed below broken Lower Low during Dow continuation breakdown
+        if (isLlContinuationBreakdown && lastLl) {
+          const buysBelowBrokenLl = openBuys.filter((o) => o.price < lastLl.price * 1.0005);
+          if (buysBelowBrokenLl.length > 0) {
+            for (const o of buysBelowBrokenLl) {
+              await this.cancelOrderInternal(
+                o,
+                `Dow continuation breakdown: price ($${refPrice.toFixed(4)}) breaking below LL ($${lastLl.price.toFixed(4)}) after LH — cancelling buys below broken LL`,
+              );
+            }
+            this.openOrders = this.openOrders.filter((o) => !buysBelowBrokenLl.includes(o));
+            this.saveState();
+          }
+        }
+
         for (let i = 0; i < effectiveBuyLevels.length; i++) {
           const lvlPrice = effectiveBuyLevels[i];
           if (!lvlPrice) continue;
@@ -4880,6 +4987,24 @@ export class DynamicGrid {
                 `Buy level ${i + 1} quota already fulfilled by current holding (${(currentHoldFraction * 100).toFixed(1)}%) — cancelling`,
               );
               this.openOrders = this.openOrders.filter((o) => o !== currentIneligibleBuy);
+              this.saveState();
+            }
+            continue;
+          }
+
+          // ── Staged Maker Buy Window Guard (Anti-Waterfall) ──────────────────
+          // If this level is not within the closest maxActiveMakerBuys to current price,
+          // do NOT place a resting limit order yet to prevent flash crash waterfalls!
+          if (this.cfg.orderExecutionMode === "MAKER_LIMIT" && !activeWindowBuyIndices.has(i)) {
+            const currentDistantBuy = this.openOrders.find(
+              (o) => o.isBid && (o.levelDesc === effectiveLevelNames[i] || (!o.levelDesc && Math.abs(o.price - lvlPrice) / lvlPrice <= 0.001)),
+            );
+            if (currentDistantBuy) {
+              await this.cancelOrderInternal(
+                currentDistantBuy,
+                `Staged window guard: buy level ${i + 1} is beyond next ${maxActiveBuys} active levels — will place when price approaches`,
+              );
+              this.openOrders = this.openOrders.filter((o) => o !== currentDistantBuy);
               this.saveState();
             }
             continue;
@@ -5223,7 +5348,14 @@ export class DynamicGrid {
 
           const mode = this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
           const avgEntry = this.getAvgEntryPrice();
-          const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * 1.001;
+          const isDowntrendEscape = Boolean(
+            (activeDowntrendLine && !activeDowntrendLine.isBroken) ||
+            (isUsingRealCeil && effectiveResistancePrice < upperBound * 0.99)
+          );
+          const effectiveMinProfitPct = isDowntrendEscape
+            ? (this.cfg.breakevenEscapeProfitPct ?? 0.06)
+            : Math.max(0.20, this.cfg.minNetProfitPct ?? 0.25);
+          const isProfitOk = avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * (1 + effectiveMinProfitPct / 100);
 
           // In MAKER_LIMIT mode: Keep resting sell order active on the book right below resistance to fill as a Maker!
           const isBelowSellPrice = refPrice < effectiveTlSellPrice;
@@ -5332,7 +5464,14 @@ export class DynamicGrid {
             const frontRunRatio = isUsingRealCeil ? 0.0003 : 0.0008;
             const rawTargetSellPrice = effectiveResistancePrice * (1 - frontRunRatio);
             const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, rawTargetSellPrice), this.tickSize || 0.0001);
-            const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * 1.001;
+            const isDowntrendEscape = Boolean(
+              (activeDowntrendLine && !activeDowntrendLine.isBroken) ||
+              (isUsingRealCeil && effectiveResistancePrice < upperBound * 0.99)
+            );
+            const effectiveMinProfitPct = isDowntrendEscape
+              ? (this.cfg.breakevenEscapeProfitPct ?? 0.06)
+              : Math.max(0.20, this.cfg.minNetProfitPct ?? 0.25);
+            const isProfitOk = avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * (1 + effectiveMinProfitPct / 100);
 
             if (isProfitOk && refPrice < effectiveTlSellPrice) {
               const minOrderNotional = Math.max(this.minNotional || 5.0, 5.0);
@@ -6946,13 +7085,19 @@ export class DynamicGrid {
 
     try {
       // Determine effective limit price with slippage protection for IOC execution
-      // On DreamDEX CLOB / IOC bracket, strict limit price with 0 slippage causes Revert 0xc04ad919 if book depth shifts.
+      // On DreamDEX CLOB / IOC bracket and for emergency Cut Loss across all exchanges,
+      // strict limit price with 0 slippage causes order cancellation if book depth shifts.
       let limitPrice = price;
-      if (this.binance.exchangeName === "dreamdex" || this.cfg.orderExecutionMode === "IOC_BRACKET") {
+      const slippagePct = slippagePctVal / 100;
+      if (action === "CUT") {
+        // Cut Loss: Allow matching down to max bid discount across all exchanges to guarantee immediate execution
+        limitPrice = price * (1 - slippagePct);
+        limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
+      } else if (action === "MANUAL" && (this.binance.exchangeName === "dreamdex" || this.cfg.orderExecutionMode === "IOC_BRACKET")) {
         let currentBestBid = 0;
         if (this.binance.exchangeName === "dreamdex") {
           try {
-            const top = await this.binance.getTopOfBook(this.symbol, action === "MANUAL");
+            const top = await this.binance.getTopOfBook(this.symbol, true);
             if (top?.bestBid && top.bestBid > 0) {
               currentBestBid = top.bestBid;
               price = Math.min(price, top.bestBid);
@@ -6962,35 +7107,47 @@ export class DynamicGrid {
           currentBestBid = this.wsBookTicker.bestBid;
         } else {
           try {
-            const top = await this.binance.getTopOfBook(this.symbol, action === "MANUAL");
+            const top = await this.binance.getTopOfBook(this.symbol, true);
+            if (top?.bestBid && top.bestBid > 0) {
+              currentBestBid = top.bestBid;
+            }
+          } catch {}
+        }
+        const effectiveBid = currentBestBid > 0 ? currentBestBid : (price > 0 ? price : 0);
+        if (effectiveBid > 0) {
+          limitPrice = effectiveBid;
+        } else {
+          limitPrice = (price > 0 ? price : targetPrice) * (1 - slippagePct);
+        }
+        limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
+      } else if (action === "SELL" && (this.binance.exchangeName === "dreamdex" || this.cfg.orderExecutionMode === "IOC_BRACKET")) {
+        let currentBestBid = 0;
+        if (this.binance.exchangeName === "dreamdex") {
+          try {
+            const top = await this.binance.getTopOfBook(this.symbol, false);
+            if (top?.bestBid && top.bestBid > 0) {
+              currentBestBid = top.bestBid;
+              price = Math.min(price, top.bestBid);
+            }
+          } catch {}
+        } else if (this.wsBookTicker && Date.now() - this.wsBookTicker.time < 10_000 && this.wsBookTicker.bestBid > 0) {
+          currentBestBid = this.wsBookTicker.bestBid;
+        } else {
+          try {
+            const top = await this.binance.getTopOfBook(this.symbol, false);
             if (top?.bestBid && top.bestBid > 0) {
               currentBestBid = top.bestBid;
             }
           } catch {}
         }
         const avgEntry = this.getAvgEntryPrice();
-        const slippagePct = slippagePctVal / 100;
-        if (action === "SELL") {
-          // Take profit / Resistance IOC: limitPrice allows matching down to targetPrice * (1 - slippagePct), while staying strictly above avg entry
-          const minAllowedBySlippage = targetPrice * (1 - slippagePct);
-          const minProfitMult = this.getMinProfitMultiplier();
-          const minProfitablePrice = avgEntry > 0 ? avgEntry * minProfitMult : minAllowedBySlippage;
-          const minAllowedPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
-          const basePrice = (price > 0) ? price : targetPrice;
-          limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct));
-        } else if (action === "MANUAL") {
-          // Manual Sell All: If Best Bid is available in orderbook, send strictly at Best Bid (0% discount)
-          // No need to reduce/discount price beforehand. Only fallback to slippage if no valid Best Bid exists.
-          const effectiveBid = currentBestBid > 0 ? currentBestBid : (price > 0 ? price : 0);
-          if (effectiveBid > 0) {
-            limitPrice = effectiveBid;
-          } else {
-            limitPrice = (price > 0 ? price : targetPrice) * (1 - slippagePct);
-          }
-        } else {
-          // Cut Loss: Allow matching down to max bid discount to guarantee immediate execution
-          limitPrice = price * (1 - slippagePct);
-        }
+        // Take profit / Resistance IOC: limitPrice allows matching down to targetPrice * (1 - slippagePct), while staying strictly above avg entry
+        const minAllowedBySlippage = targetPrice * (1 - slippagePct);
+        const minProfitMult = this.getMinProfitMultiplier();
+        const minProfitablePrice = avgEntry > 0 ? avgEntry * minProfitMult : minAllowedBySlippage;
+        const minAllowedPrice = Math.max(minProfitablePrice, minAllowedBySlippage);
+        const basePrice = (price > 0) ? price : targetPrice;
+        limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct));
         limitPrice = roundToTick(limitPrice, this.tickSize || 0.0001);
       }
 

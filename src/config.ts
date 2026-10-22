@@ -141,6 +141,10 @@ export const defaultStrategyConfig = {
   buyLevelWeights: [10, 15, 20, 25, 30] as number[],
   /** Minimum net profit spread (%) above cost basis required for sell targets to prevent fee-eroded micro-exits in narrow channels (default 0.25%). */
   minNetProfitPct: 0.25,
+  /** Breakeven/micro-profit percentage required for LH Dynamic Escape during confirmed downtrend (LH+LL) to escape safely (default 0.06%). */
+  breakevenEscapeProfitPct: 0.06,
+  /** Maximum number of active resting Maker buy limit orders placed simultaneously on book (default 2, preventing flash crash waterfalls). */
+  maxActiveMakerBuys: 2,
   /** When true, dynamically lowers sell target to a confirmed Lower High (LH) formed below Sell Target 1 while holding inventory (if profitable >= minNetProfitPct). */
   enableLhDynamicEscape: true,
   /**
@@ -300,6 +304,9 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.cutLossStage2Multiplier !== undefined) merged.cutLossStage2Multiplier = Number(saved.cutLossStage2Multiplier);
       if (saved.enableLhDynamicEscape !== undefined) merged.enableLhDynamicEscape = Boolean(saved.enableLhDynamicEscape);
       if (saved.minNetProfitPct !== undefined) merged.minNetProfitPct = Number(saved.minNetProfitPct);
+      if (saved.breakevenEscapeProfitPct !== undefined) merged.breakevenEscapeProfitPct = Number(saved.breakevenEscapeProfitPct);
+      if (saved.maxActiveMakerBuys !== undefined) merged.maxActiveMakerBuys = Number(saved.maxActiveMakerBuys);
+      if (saved.enableExitOnTrendSupportBreak !== undefined) merged.enableExitOnTrendSupportBreak = Boolean(saved.enableExitOnTrendSupportBreak);
       if (saved.buySizingMode === "EQUAL" || saved.buySizingMode === "PYRAMID") {
         merged.buySizingMode = saved.buySizingMode;
       }

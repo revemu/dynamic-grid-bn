@@ -2286,6 +2286,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.20` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 54. Structural LL Breakdown Guard, Staged Maker Buys & Maker LH Dynamic Escape (`v0.2.21`)
+- **สาเหตุของปัญหา**:
+  1. **บั๊ก `enableLhDynamicEscape` และ `enableSellAtRealCeiling` ถูกล็อกไว้เฉพาะ `IOC_BRACKET`**:
+     - ใน `src/strategy.ts` มีเงื่อนไข `isIocMode &&` บล็อกไว้ ทำให้บน Binance ที่ใช้โหมด `MAKER_LIMIT` ค่า `liveRealCeil` กลายเป็น `undefined` ตลอดเวลา บอทจึงไม่ยอมขยับ Limit Sell ลงมาดักขายที่ยอดเด้ง `LH`
+  2. **เกณฑ์กำไร `minNetProfitPct` (0.40%) สูงเกินไปในคลื่นขาลง**:
+     - เมื่อโครงสร้างทำ `LH + LL` บอทปฏิเสธการหนีตายที่ยอดเด้ง `LH` เพราะกำไรไม่ถึง `0.40%` แม้จะมีกำไร `+0.08%` และค่าธรรมเนียม Maker เป็น 0% ก็ตาม
+  3. **วางออเดอร์ Limit Buy L4 & L5 รอรับมีดใต้จุด `LL` เดิมในกรอบ**:
+     - เมื่อโครงสร้างในกรอบคอนเฟิร์มขาลงต่อเนื่อง (`Continuation Breakdown: LH ➔ LL ➔ LH ➔ หลุด LL`) บอทกลับยังวางออเดอร์ซื้อ L4 ($62) และ L5 ($75) แช่ไว้ใต้ LL เดิม ทำให้เกิดเหตุการณ์แท่งทุบ 21 วินาทีกวาดซื้อ 55% ของพอร์ตก่อนหลุดกรอบ
+  4. **ไม่มีระบบ Staged Maker Buy Window (Anti-Waterfall)**:
+     - วางออเดอร์ซื้อทั้ง 5 ระดับพร้อมกันใน Orderbook ทำให้เมื่อราคา Flash Crash จะโดนรวบซื้อทุกไม้ในแท่งเดียว
+  5. **การหนีตาย Cut Loss เท 100% ที่ปลายไส้เทียน**:
+     - ในโหมด `MAKER_LIMIT` ออเดอร์ `sellAll(..., "CUT")` ส่ง IOC ด้วยราคา Bid ดิบโดยไม่มี Slippage Buffer ทำให้มีความเสี่ยงที่ออเดอร์จะ Expire Unfilled และการเทขาย 100% เกิดขึ้นที่จุดต่ำสุดของแท่งเทียน
+  6. **บั๊กใน `v0.2.20`**:
+     - `uptrendLine.isBroken` ไวต่อไส้เทียน 0.05% และเสี่ยงล็อก `waitingForHigherLow` วนลูปไม่รู้จบ
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.21`)**:
+  1. **ปลดล็อก `enableLhDynamicEscape` & `enableSellAtRealCeiling` ในโหมด `MAKER_LIMIT`**:
+     - ถอดเงื่อนไข `isIocMode &&` ออก เพื่อให้ทั้งโหมด Maker และ IOC สามารถคำนวณ `candidateLhEscape` และขยับออเดอร์ Limit Sell ลงมาดักขายที่ `LH` หรือ `candidatePeak` (ยืนยัน $\ge 2$ แท่ง)
+  2. **ระบบ Downtrend Breakeven Escape (`breakevenEscapeProfitPct: 0.06%`)**:
+     - เมื่อตรวจพบโครงสร้างขาลง (`LH + LL`) หรือตลาดเป็น Downtrend จะลดเกณฑ์กำไรของ LH Dynamic Escape ลงมาเหลือเพียง `breakevenEscapeProfitPct` (`0.06%`) เพื่อระบายของออก 100% ที่จุดคุ้มทุนทันทีเมื่อราคาเด้งทดสอบ
+  3. **ระบบ Intra-Channel LL Breakdown Buy Cancel**:
+     - เมื่อราคาไหลหลุดต่ำกว่า `lastLl.price * 1.0005` หลังจากทำ `LH` จะยกเลิกออเดอร์ซื้อทุกไม้ที่อยู่ต่ำกว่า `lastLl` ทันที และระงับการวางออเดอร์ซื้อใต้ `lastLl` ป้องกันการรับมีดใต้แนวรับที่พังแล้ว
+  4. **ระบบ Staged Maker Buy Window (`maxActiveMakerBuys: 2`)**:
+     - ในโหมด `MAKER_LIMIT` บอทจะวางออเดอร์ซื้อบน Orderbook เฉพาะ 1-2 ระดับที่ใกล้ราคาปัจจุบันที่สุดเท่านั้น ไม้ที่อยู่ลึกกว่านั้นจะไม่ถูกวางจนกว่าราคาจะไหลลงมาใกล้ ป้องกันการถูก Flash Crash รวบ 5 ไม้รวดในแท่งเดียว
+  5. **ปรับปรุง `enableExitOnTrendSupportBreak`**:
+     - บังคับว่าต้องมีแท่งเทียน 15m ปิดแท่งต่ำกว่าเส้นรับ หรือราคาหลุดต่ำกว่าเส้นรับเกิน `floorBufferPct` จึงจะสั่งล้างพอร์ต และมีการจำ `lastTrendSupportBreakKey` ป้องกันการล็อกซ้ำ
+  6. **Slippage Protection สำหรับ Emergency Cut Loss ในโหมด `MAKER_LIMIT`**:
+     - ใน `sellAll` เมื่อ `action === "CUT"` หรือ `"MANUAL"` จะคำนวณ `limitPrice = price * (1 - slippagePct)` บนทุกกระดาน เพื่อให้ออเดอร์ IOC แมตช์สภาพคล่องได้ทันที 100%
+  7. **แยก Channel Bounds แบบแช่แข็ง ออกจาก Live Indicator Ticks**:
+     - เมื่อเปิด `adjustChannelOnClosedOnly: true` กรอบราคา (`Floor / Ceil / Buy Levels / Sell Levels`) ยังคงนิ่งสนิทระหว่างแท่งเทียน แต่ตัวชี้วัดโครงสร้าง (Trendline, Candidate Peak/Valley, Breakdown Detection) คำนวณแบบ Real-time ทุก Tick ไม่ดีเลย์ 15 นาที
+  8. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.21` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

@@ -3646,6 +3646,8 @@
       setVal("cfg_iocSlippagePct", data.iocSlippagePct ?? 0.35);
       setVal("cfg_buySizingMode", data.buySizingMode || "PYRAMID");
       setVal("cfg_minNetProfitPct", data.minNetProfitPct ?? 0.25);
+      setVal("cfg_breakevenEscapeProfitPct", data.breakevenEscapeProfitPct ?? 0.06);
+      setVal("cfg_maxActiveMakerBuys", data.maxActiveMakerBuys ?? 2);
       setVal("cfg_cutLossStage2Multiplier", data.cutLossStage2Multiplier ?? 2.0);
       setCheck("cfg_enableTwoStageCutLoss", data.enableTwoStageCutLoss !== false);
       setCheck("cfg_enableLhDynamicEscape", data.enableLhDynamicEscape !== false);
@@ -3875,6 +3877,8 @@
       iocSlippagePct: parseFloat(document.getElementById("cfg_iocSlippagePct").value) || 0.35,
       buySizingMode: document.getElementById("cfg_buySizingMode") ? document.getElementById("cfg_buySizingMode").value : "PYRAMID",
       minNetProfitPct: document.getElementById("cfg_minNetProfitPct") ? parseFloat(document.getElementById("cfg_minNetProfitPct").value) || 0.25 : 0.25,
+      breakevenEscapeProfitPct: document.getElementById("cfg_breakevenEscapeProfitPct") ? parseFloat(document.getElementById("cfg_breakevenEscapeProfitPct").value) || 0.06 : 0.06,
+      maxActiveMakerBuys: document.getElementById("cfg_maxActiveMakerBuys") ? parseInt(document.getElementById("cfg_maxActiveMakerBuys").value, 10) || 2 : 2,
       cutLossStage2Multiplier: document.getElementById("cfg_cutLossStage2Multiplier") ? parseFloat(document.getElementById("cfg_cutLossStage2Multiplier").value) || 2.0 : 2.0,
       enableTwoStageCutLoss: document.getElementById("cfg_enableTwoStageCutLoss") ? document.getElementById("cfg_enableTwoStageCutLoss").checked : true,
       enableLhDynamicEscape: document.getElementById("cfg_enableLhDynamicEscape") ? document.getElementById("cfg_enableLhDynamicEscape").checked : true,
