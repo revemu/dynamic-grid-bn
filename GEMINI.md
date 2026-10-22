@@ -2931,6 +2931,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.43` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.18`) และ `GEMINI.md`
 
+---
+
+### 77. Retain Broken Trendlines for Exit Triggers & Accurate Drawdown-Based Breakeven Escape (`v0.2.44`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Trendline Engine Nulls Out Trendlines on Breakout (`src/market-structure/trendline-engine.ts:188, 352`)**:
+     - เมื่อแท่งเทียนหลุดต่ำกว่าเส้นแนวรับ Uptrend Line ครบ 2 แท่ง (`breakoutConfirmed = true`) ตัว Trendline Engine กลับสั่งล้างค่า `uptrendLine = undefined` (และ `downtrendLine = undefined`)
+     - ใน `RiskManager.evaluateTrendSupportBreak` โค้ดตรวจสอบ `uptrendLine && (dow?.uptrendBreakdownConfirmed || ...)` เมื่อ `uptrendLine` กลายเป็น `undefined` ไปแล้ว เงื่อนไขนี้จึงกลายเป็น `false` เสมอ ส่งผลให้ระบบ Stop Loss หนีตายจากการหลุดเส้นแนวรับไม่ทำงาน
+     - นอกจากนี้ บนหน้าแดชบอร์ด เส้น Trendline จะวูบหายไปจากชาร์ตทันทีเมื่อถูกเบรก ทำให้ผู้ใช้มองไม่เห็นเส้นที่เพิ่งหลุดลงมา
+  2. **Resistance Sell Target Erroneously Slashes Profit Target to 0.06% on 22% Budget Hold (`src/strategy/sell-sync.ts:206`)**:
+     - โค้ดเดิมตรวจสอบ Drawdown ด้วย `const isHeavyDrawdown = Boolean(currentHoldFraction >= 0.22);` โดย `currentHoldFraction` คือสัดส่วนงบที่ใช้ไป
+     - ในการเทรดกริดปกติ การช้อนซื้อแค่ 2 ไม้ (เช่น ไม้แรก 10% ไม้สอง 15% รวมเป็น 25%) เป็นพฤติกรรมปกติ แต่โค้ดกลับมองว่านี่คือ "Heavy Drawdown" และเปิดโหมด `isDowntrendEscape = true` ทันที
+     - ส่งผลให้เป้าขายทำกำไรใต้เส้นแนวต้าน/เพดาน ถูกกดลงมาเหลือเพียง `breakevenEscapeProfitPct` (0.06%) ทำให้บอทเทขายเหรียญทิ้งโดยแทบไม่ได้กำไร ทั้งๆ ที่ตลาดไม่ได้เป็นขาลงและไม่ได้ขาดทุน
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.44`)**:
+  1. **Retain Broken Trendlines with `breakoutConfirmed: true`**:
+     - ใน `src/market-structure/trendline-engine.ts`: เมื่อเกิด Breakout ยืนยัน ให้คงอ็อบเจกต์ `uptrendLine` และ `downtrendLine` ไว้ตามปกติ พร้อมระบุ `breakoutConfirmed: true` ทำให้ `RiskManager` ตรวจจับการหลุดเส้นแนวรับเพื่อสั่ง Cut Loss ได้อย่างแม่นยำ 100% และชาร์ตบนแดชบอร์ดยังคงแสดงเส้นที่เบรกเอาท์ได้ครบถ้วน
+  2. **Accurate Unrealized Drawdown Calculation for Breakeven Escape**:
+     - ใน `src/strategy/sell-sync.ts`: ปรับปรุงการคำนวณ Drawdown ให้คิดจากเปอร์เซ็นต์การขาดทุนจริงจากราคาต้นทุนเฉลี่ย `drawdownPct = ((avgEntry - refPrice) / avgEntry) * 100` และกำหนด `isHeavyDrawdown = drawdownPct >= 2.0 && currentHoldFraction >= 0.60` เพื่อป้องกันไม่ให้บอทตัดกำไรทิ้งที่ 0.06% ในจังหวะสะสมของตามปกติ
+  3. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.44` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.19`) และ `GEMINI.md`
+
 
 
 

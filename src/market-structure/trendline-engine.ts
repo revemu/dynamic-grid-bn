@@ -187,21 +187,19 @@ export class TrendlineEngine {
 
           if (breakoutConfirmed) {
             downtrendBreakoutConfirmed = true;
-            downtrendLine = undefined;
-          } else {
-            downtrendLine = {
-              type: "DOWNTREND",
-              p1: bestP1,
-              p2: bestP2,
-              slope: bestSlope,
-              currentLinePrice,
-              isBroken: isCurrentlyAbove || totalBrokenCandles > 0,
-              breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
-              brokenCandleCount: totalBrokenCandles,
-              breakoutConfirmed: false,
-              points,
-            };
           }
+          downtrendLine = {
+            type: "DOWNTREND",
+            p1: bestP1,
+            p2: bestP2,
+            slope: bestSlope,
+            currentLinePrice,
+            isBroken: isCurrentlyAbove || totalBrokenCandles > 0,
+            breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
+            brokenCandleCount: totalBrokenCandles,
+            breakoutConfirmed,
+            points,
+          };
         }
       }
     }
@@ -351,21 +349,19 @@ export class TrendlineEngine {
 
           if (breakoutConfirmed) {
             uptrendBreakdownConfirmed = true;
-            uptrendLine = undefined;
-          } else {
-            uptrendLine = {
-              type: "UPTREND",
-              p1: bestV1,
-              p2: bestV2,
-              slope: bestSlope,
-              currentLinePrice,
-              isBroken: isCurrentlyBelow || totalBrokenCandles > 0,
-              breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
-              brokenCandleCount: totalBrokenCandles,
-              breakoutConfirmed: false,
-              points,
-            };
           }
+          uptrendLine = {
+            type: "UPTREND",
+            p1: bestV1,
+            p2: bestV2,
+            slope: bestSlope,
+            currentLinePrice,
+            isBroken: isCurrentlyBelow || totalBrokenCandles > 0,
+            breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
+            brokenCandleCount: totalBrokenCandles,
+            breakoutConfirmed,
+            points,
+          };
         }
       }
     }

@@ -203,7 +203,8 @@ export class SellOrderSynchronizer {
       const isStuckPosition = Boolean(
         this.host.stuckSince !== undefined && (Date.now() - this.host.stuckSince > (this.host.cfg.stuckTimeoutMs || 43_200_000) * 0.5)
       );
-      const isHeavyDrawdown = Boolean(currentHoldFraction >= 0.22);
+      const drawdownPct = avgEntry > 0 ? ((avgEntry - refPrice) / avgEntry) * 100 : 0;
+      const isHeavyDrawdown = Boolean(drawdownPct >= 2.0 && currentHoldFraction >= 0.60);
       const isDowntrendEscape = Boolean(isDowntrendActive || isStuckPosition || isHeavyDrawdown);
       const effectiveMinProfitPct = isDowntrendEscape
         ? (this.host.cfg.breakevenEscapeProfitPct ?? 0.06)
