@@ -183,6 +183,7 @@
   let structureMarkers = [];
   let pendingCandles = null;
   let pendingTick = null;
+  let activeSymbol = "SOMI:USDso";
   let activeBaseAsset = "BASE";
   let activeQuoteAsset = "USDT";
   let activePricePrecision = 2;
@@ -1897,6 +1898,7 @@
     }
 
     // 0. Binance Account Balance Updates
+    activeSymbol = data.symbol || data.binanceSymbol || activeSymbol || "SOMI:USDso";
     activeBaseAsset = data.baseAsset || activeBaseAsset || "BASE";
     activeQuoteAsset = data.quoteAsset || activeQuoteAsset || "USDT";
     const baseSym = activeBaseAsset;
@@ -4577,7 +4579,8 @@
       if (elTmTradesTbody) {
         elTmTradesTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-row">🔄 กำลังโหลดข้อมูลล่าสุดจากฐานข้อมูล...</td></tr>';
       }
-      const res = await fetch(`${API_BASE}/api/db/trade-manager`);
+      const symParam = encodeURIComponent(activeSymbol || activeBaseAsset || "");
+      const res = await fetch(`${API_BASE}/api/db/trade-manager?symbol=${symParam}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
@@ -4825,7 +4828,8 @@
       if (elTmRoundsTbody && (!tmRounds || tmRounds.length === 0)) {
         elTmRoundsTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-row">🔄 กำลังคำนวณและโหลดสรุปรอบการซื้อขาย...</td></tr>';
       }
-      const res = await fetch(`${API_BASE}/api/db/rounds`);
+      const symParam = encodeURIComponent(activeSymbol || activeBaseAsset || "");
+      const res = await fetch(`${API_BASE}/api/db/rounds?symbol=${symParam}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data && data.success) {

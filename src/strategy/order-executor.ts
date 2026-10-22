@@ -1258,7 +1258,8 @@ export class OrderExecutor {
         return;
       }
 
-      if (this.lotTracker.baseHeld() < this.host.minQty) {
+      const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
+      if (this.lotTracker.baseHeld() < dustThreshold) {
         this.host.log(`⚡ [EXIT SYNC] Position was already closed by WebSocket execution report — skipping duplicate fill processing`);
         this.host.saveState();
         this.host.emitTelemetryTick();
@@ -1313,7 +1314,6 @@ export class OrderExecutor {
         this.trackTxGas(res.txHash, effectiveActionLabel);
       }
       await this.host.refreshWalletBalances();
-      const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
       if (this.host.walletBaseBalance - minGasReserveBase <= dustThreshold) {
         this.host.clearPositionState();
       }

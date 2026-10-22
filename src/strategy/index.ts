@@ -1794,7 +1794,8 @@ export class DynamicGrid implements IStrategyHost {
       }
 
       const totalHeld = this.baseHeld();
-      if (totalHeld < this.minQty && totalHeld > 0) {
+      const dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6;
+      if (totalHeld < dustThreshold && totalHeld > 0) {
         // Clean up dust lots on startup
         this.clearPositionState();
       }
@@ -2541,7 +2542,8 @@ export class DynamicGrid implements IStrategyHost {
     // ── Position Dust Cleanup ──────────────────────────────────────────
     const totalHeldBase = this.baseHeld();
     const totalHeldUsdso = totalHeldBase * refPrice;
-    const isDustPosition = totalHeldBase < this.minQty || totalHeldUsdso < 0.05;
+    const dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6;
+    const isDustPosition = totalHeldBase < dustThreshold || (totalHeldUsdso < 0.05 && totalHeldBase < this.minQty);
     if (this.lots.length > 0 && isDustPosition) {
       this.log(
         `🧹 Auto-cleared residual dust position (${totalHeldBase.toFixed(4)} ${this.baseAsset} | $${totalHeldUsdso.toFixed(4)})`,
@@ -2552,7 +2554,7 @@ export class DynamicGrid implements IStrategyHost {
 
     // ── Dynamic Channel Hysteresis & Position Lock ──────────────────────────
     const lockChannelInPosition = this.cfg.lockChannelInPosition !== false;
-    const isHoldingPosition = totalHeldBase >= (this.minQty || 0.001) && !isDustPosition;
+    const isHoldingPosition = totalHeldBase >= dustThreshold && !isDustPosition;
 
     const symbolKey = this.getSymbolKey();
 
@@ -3039,16 +3041,11 @@ export class DynamicGrid implements IStrategyHost {
         );
         await this.cancelAllRestingOrders();
         await this.sellAll(exitPrice, "SELL", reachedTargetPrice);
-        this.iocBracketSellCycle = undefined;
+        this.clearPositionState();
         this.stuckSince = undefined;
-    this.lastBuyFillTime = 0;
-    this.lastBuyFillPrice = 0;
-    this.lastBuyFillCandleTime = 0;
-        this.lockedChannel = undefined;
-        this.confirmedChannel = undefined;
-        this.pendingConfirmedChannelUpdate = true;
-        const symbolKey = this.getSymbolKey();
-        this.db.saveLockedChannel(symbolKey, undefined);
+        this.lastBuyFillTime = 0;
+        this.lastBuyFillPrice = 0;
+        this.lastBuyFillCandleTime = 0;
         this.saveState();
         return;
       }

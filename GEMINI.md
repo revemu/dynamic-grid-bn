@@ -2743,6 +2743,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.36` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.11`) และ `GEMINI.md`
 
+---
+
+### 70. Post-Fee Lot Protection, Unblocking IOC Sells 1-3 & Dashboard Symbol Querying (`v0.2.37`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Premature Position Wipeout After Fee Deduction (`src/strategy/index.ts`, `sell-sync.ts`, `order-executor.ts`)**:
+     - โค้ดเดิมใน `index.ts:1797`, `index.ts:2544`, `sell-sync.ts:84`, และ `order-executor.ts:1261` ตรวจสอบเงื่อนไข `totalHeld < this.minQty` หรือ `held < this.host.minQty`
+     - หากซื้อเหรียญ 1 SOMI (`minQty = 1.0`) แล้วถูกหักค่าธรรมเนียมเทรดทำให้ยอดคงเหลือกลายเป็น 0.999 SOMI บอทจะเข้าใจผิดว่าเป็นเศษเหรียญ Dust และสั่ง `clearPositionState()` ล้าง Lot ทันทีใน Tick ถัดไปหรือตอนรีสตาร์ทบอท
+  2. **IOC Bracket Sell Levels 1–3 Suppressed by Holding Fraction Logic (`src/strategy/sell-sync.ts:473` & `729`)**:
+     - ใน `sell-sync.ts` ตรวจสอบเงื่อนไข `isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered`
+     - หากบอทช้อนซื้อเพียง 1 ไม้ล่าง (เช่น ถือ 20% ของ `maxInv`), `currentHoldFraction = 0.20` จะน้อยกว่าหรือเท่ากับ `targetHoldingFraction` ของ Sell Level 1 (0.75), Level 2 (0.50), และ Level 3 (0.25)
+     - ทำให้บอทข้ามการขายทำกำไรที่ Sell Level 1, 2, 3 ทั้งหมด และรอไปขายเฉพาะที่ Sell Level 4 เท่านั้น
+  3. **Fragmented Upper Bound Take Profit State Resets (`src/strategy/index.ts:3041-3053`)**:
+     - บล็อก 100% Take Profit ทำการรีเซ็ตตัวแปรย่อยๆ ด้วยมือ ทำให้ตกหล่นการล้าง `soldSellIndices` และ `lastDynamicBounds`
+  4. **Unscoped UI Trade Manager & Rounds Queries (`public/app.js:4580, 4828`)**:
+     - `loadTradeManagerData()` และ `loadTradeRoundsData()` ไม่ได้ส่ง Query Parameter `?symbol=...` ทำให้แสดงข้อมูลแบบ Default ของบอทแทนที่จะตรงกับเหรียญที่เลือกบนหน้าจอ
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.37`)**:
+  1. **ใช้ Dust Threshold ที่สัมพันธ์กับเหรียญ (`minQty * 0.5`) ทั่วทั้งระบบ**:
+     - ปรับให้เช็ค `dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6` และเคลียร์เฉพาะเมื่อ `totalHeldBase < dustThreshold || (totalHeldUsdso < 0.05 && totalHeldBase < this.minQty)` ป้องกันการล้าง Lot ที่ถูกหักค่าธรรมเนียมเทรด
+  2. **ปลดล็อก IOC Sell Levels 1–3**:
+     - ใน `sell-sync.ts` ตรวจสอบ `isLevelAlreadyFulfilled = this.host.soldSellIndices.has(i) || isInventoryFullyCovered` แทน ทำให้บอทสามารถ Take Profit ตามเป้าหมายราคาของแต่ละขั้นได้อย่างถูกต้อง
+  3. **รวมศูนย์การรีเซ็ต Take Profit 100% ผ่าน `clearPositionState()`**:
+     - ใน `index.ts:3042` สั่ง `this.clearPositionState()` รีเซ็ตทุกอย่างอย่างสมบูรณ์
+  4. **ส่ง Query Parameter `?symbol=${encodeURIComponent(activeSymbol)}` ในแดชบอร์ด**:
+     - ให้หน้าเว็บแดชบอร์ดระบุคู่เหรียญที่กำลังเปิดดูเสมอ
+  5. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.37` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.12`) และ `GEMINI.md`
+
+
 
 
 

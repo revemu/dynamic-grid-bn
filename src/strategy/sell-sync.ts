@@ -81,7 +81,8 @@ export class SellOrderSynchronizer {
     const totalBaseInOpenSellsInit = this.host.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0);
     const totalTradingCapacity = Math.max(0, (this.host.walletBaseBalance + totalBaseInOpenSellsInit) - minReserveBase);
     const held = this.host.cfg.dryRun ? this.lotTracker.baseHeld() : Math.min(this.lotTracker.baseHeld(), totalTradingCapacity);
-    const isDustPosition = held < this.host.minQty || currentHeldQuote < 0.05;
+    const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
+    const isDustPosition = held < dustThreshold || (currentHeldQuote < 0.05 && held < this.host.minQty);
 
     if (isDustPosition) {
       const openSells = this.host.openOrders.filter((o) => !o.isBid);
@@ -469,8 +470,7 @@ export class SellOrderSynchronizer {
           if (!currentOpenSellAtLvl) {
             const isPriceExceeded = currentBestBid > 0 && currentBestBid >= lvlPrice;
             if (isPriceExceeded && (this.host.cfg.enableIocSellWhenExceeded !== false) && this.host.cfg.orderExecutionMode === "IOC_BRACKET") {
-              const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
-              const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
+              const isLevelAlreadyFulfilled = this.host.soldSellIndices.has(i) || isInventoryFullyCovered;
               if (isLevelAlreadyFulfilled) {
                 continue;
               }
@@ -725,8 +725,7 @@ export class SellOrderSynchronizer {
       if (!currentOpenSellAtLvl) {
         const isPriceExceeded = currentBestBid > 0 && currentBestBid >= originalLvlPrice;
         if (isPriceExceeded && (this.host.cfg.enableIocSellWhenExceeded !== false) && this.host.cfg.orderExecutionMode === "IOC_BRACKET") {
-          const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
-          const isLevelAlreadyFulfilled = currentHoldFraction <= targetHoldingFraction || isInventoryFullyCovered;
+          const isLevelAlreadyFulfilled = this.host.soldSellIndices.has(i) || isInventoryFullyCovered;
           if (isLevelAlreadyFulfilled) {
             continue;
           }
