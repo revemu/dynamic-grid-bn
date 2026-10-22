@@ -2999,6 +2999,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. ส่งคำสั่ง POST `/api/config` ซิงค์ค่าการตั้งค่าล่าสุดเข้าสู่เซิร์ฟเวอร์จริงทั้ง 2 Instance สำเร็จ 100%
   4. ปรับเวอร์ชันเป็น `v0.2.46` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.21`) และ `GEMINI.md`
 
+---
+
+### 80. Context-Aware Grid Ladder Status Badges & Visual Safeguard Alignment (`v0.2.47`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. บนหน้าเว็บแดชบอร์ด ในส่วน Grid Ladder ด้านขวา สำหรับโหมด `IOC_BRACKET` โค้ดเดิมถูกออกแบบเป็น Budget Allocation Planner โดยจะแสดงป้าย `⚡ IOC BUY +$20` พร้อมจุดกระพริบสีเขียว (`order-pulse-dot`) ทุกครั้งที่พอร์ตมีโควตาซื้อของชั้นนั้นเหลืออยู่ (`heldQuote < targetCumulativeQuote`)
+  2. การแสดงผลดังกล่าวไม่ได้เชื่อมโยงกับ Safeguard Guards จริงของบอท เช่น ในช่วงที่ราคาดัมพ์หลุด Floor (`isBelowFloor = true`), บอทถูกกด Pause (`isPaused = true`), กำลังรอ Higher Low (`waitingForHigherLow = true`), หรือติด Downtrend Drop Pause (`downtrendDropPaused = true`) ทำให้ผู้ใช้เข้าใจผิดว่าบอทพร้อมจะส่งคำสั่งซื้อทั้งที่กำลังดัมพ์หลุด Floor อยู่
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.47`)**:
+  1. **เพิ่ม Context-Aware Buying Guard Detection ใน `public/app.js`**:
+     - ตรวจสอบ `const isBuyingBlocked = Boolean(data.isPaused || data.isBelowFloor || data.waitingForHigherLow || data.downtrendDropPaused || data.buyOrdersActive === false);`
+  2. **สลับการแสดงผลเป็น Badge สีเทาตามสถานะจริง (Muted Gray Status Badge)**:
+     - เมื่อ `isBuyingBlocked = true`:
+       - หากหลุด Floor: แสดง `Below Floor (+$20)`
+       - หาก Pause: แสดง `Paused (+$20)`
+       - หากรอตั้งฐาน: แสดง `Waiting HL (+$20)`
+       - หากติด Downtrend: แสดง `Downtrend (+$20)`
+       - ถอดคลาส `has-resting-buy` และซ่อนจุดกระพริบสีเขียวทันที
+     - เมื่อเข้าเกณฑ์ซื้อปกติและปลอดภัย: แสดงป้ายเขียวกระพริบ `⚡ IOC BUY +$20` ตามเดิม
+  3. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.47` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.22`) และ `GEMINI.md`
+
+
 
 
 

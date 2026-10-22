@@ -1424,7 +1424,21 @@
           const spendStr = `+$${Math.round(toSpendQuote)}`;
           const title = `IOC Buy Level ${idx + 1} @ $${fmtPrice(lvlPrice)}: Target Capacity $${targetCumulativeQuote.toFixed(0)} (Will buy ${spendStr})`;
 
-          if (isCurrentBuyTrigger) {
+          const isBuyingBlocked = Boolean(data.isPaused || data.isBelowFloor || data.waitingForHigherLow || data.downtrendDropPaused || data.buyOrdersActive === false);
+
+          if (isBuyingBlocked) {
+            const blockReason = data.isPaused
+              ? "Paused"
+              : data.isBelowFloor
+              ? "Below Floor"
+              : data.waitingForHigherLow
+              ? "Waiting HL"
+              : data.downtrendDropPaused
+              ? "Downtrend"
+              : "Buy Paused";
+            actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.6; background:rgba(100,116,139,0.18); border-color:rgba(100,116,139,0.35); color:#94a3b8;" title="${blockReason} — Buying paused">${blockReason} (${spendStr})</span>`;
+            step.el.classList.remove("has-resting-buy");
+          } else if (isCurrentBuyTrigger) {
             actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" title="${title}"><span class="order-pulse-dot"></span> IOC BUY ${spendStr}</span>`;
             step.el.classList.add("has-resting-buy");
           } else {
