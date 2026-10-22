@@ -83,6 +83,8 @@ export interface StrategyStateRecord {
   appliedManualTradeIds?: string[];
   lastCutLossTime?: number;
   postCutSingleTrancheOnly?: boolean;
+  isTrendSupportExitActive?: boolean;
+  trendSupportBreakPrice?: number;
   lastResolvedDumpLowPrice?: number;
   iocBracketSellCycle?: {
     baselineHeldQuote: number;

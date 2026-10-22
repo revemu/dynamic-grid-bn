@@ -94,6 +94,8 @@ export class DynamicGrid {
   private stuckSince?: number;
   private waitingForHigherLow = false;
   private isFlatChannelShiftWaiting = false;
+  private isTrendSupportExitActive = false;
+  private trendSupportBreakPrice?: number;
   private wasFlatCashLastTick = true;
   private lastEvaluatedFloor?: number;
   private lastEvaluatedCeil?: number;
@@ -598,6 +600,7 @@ export class DynamicGrid {
       orderExecutionMode: this.cfg.orderExecutionMode ?? "IOC_BRACKET",
       iocSlippagePct: this.cfg.iocSlippagePct ?? 0.35,
       enableBuyAboveTrendSupport: this.cfg.enableBuyAboveTrendSupport !== false,
+      enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
       enableSellBelowTrendResistance: this.cfg.enableSellBelowTrendResistance !== false,
       enableSellAtRealCeiling: this.cfg.enableSellAtRealCeiling !== false,
       sellProfitMode: this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"),
@@ -1636,6 +1639,12 @@ export class DynamicGrid {
       if (typeof data.isFlatChannelShiftWaiting === "boolean") {
         this.isFlatChannelShiftWaiting = data.isFlatChannelShiftWaiting;
       }
+      if (typeof (data as any).isTrendSupportExitActive === "boolean") {
+        this.isTrendSupportExitActive = (data as any).isTrendSupportExitActive;
+      }
+      if (typeof (data as any).trendSupportBreakPrice === "number") {
+        this.trendSupportBreakPrice = (data as any).trendSupportBreakPrice;
+      }
       if (typeof data.breakdownFloorPrice === "number") {
         this.breakdownFloorPrice = data.breakdownFloorPrice;
       }
@@ -1818,6 +1827,8 @@ export class DynamicGrid {
         stuckSince: this.stuckSince,
         waitingForHigherLow: this.waitingForHigherLow,
         isFlatChannelShiftWaiting: this.isFlatChannelShiftWaiting,
+        isTrendSupportExitActive: this.isTrendSupportExitActive,
+        trendSupportBreakPrice: this.trendSupportBreakPrice,
         breakdownFloorPrice: this.breakdownFloorPrice,
         breakdownLowPrice: this.breakdownLowPrice,
         breakdownBuyLevel2Price: this.breakdownBuyLevel2Price,
@@ -1980,6 +1991,8 @@ export class DynamicGrid {
     this.orderCooldowns.clear();
     this.waitingForHigherLow = false;
     this.isFlatChannelShiftWaiting = false;
+    this.isTrendSupportExitActive = false;
+    this.trendSupportBreakPrice = undefined;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
@@ -2032,6 +2045,8 @@ export class DynamicGrid {
 
     this.waitingForHigherLow = false;
     this.isFlatChannelShiftWaiting = false;
+    this.isTrendSupportExitActive = false;
+    this.trendSupportBreakPrice = undefined;
     this.breakdownFloorPrice = undefined;
     this.breakdownLowPrice = undefined;
     this.breakdownBuyLevel2Price = undefined;
@@ -2805,6 +2820,8 @@ export class DynamicGrid {
         this.waitingForHigherLow = false;
         this.isFlatChannelShiftWaiting = false;
         this.isDowntrendDropPaused = false;
+        this.isTrendSupportExitActive = false;
+        this.trendSupportBreakPrice = undefined;
         this.breakdownTime = undefined;
         this.breakdownFloorPrice = undefined;
         this.breakdownLowPrice = undefined;
@@ -2886,6 +2903,63 @@ export class DynamicGrid {
     const isBufferCandleClosed = Boolean(latestClosedCandle && latestClosedCandle.close < cutLossBound);
 
     const isFastBufferCut = isBelowBuffer && (bufferDelayMs <= 0 || bufferBreakElapsedMs >= bufferDelayMs || isBufferCandleClosed);
+
+    // ── Trend Support Breakdown Check (Exit 100% to Cash & Wait for Reversal) ─
+    const uptrendLine = dow?.uptrendLine;
+    const isExitOnTrendSupportBreak = this.cfg.enableExitOnTrendSupportBreak !== false;
+    const isTrendSupportBroken = Boolean(
+      isExitOnTrendSupportBreak &&
+      uptrendLine &&
+      (refPrice < uptrendLine.currentLinePrice * 0.9985 || uptrendLine.isBroken || (uptrendLine.brokenCandleCount ?? 0) >= 1 || dow?.uptrendBreakdownConfirmed)
+    );
+
+    if (isTrendSupportBroken && !this.isPaused && !isBelowFloor) {
+      if (this.baseHeld() >= (this.minQty || 0.0001)) {
+        const dexBid = bestBid ?? effectiveMid;
+        this.log(
+          `🚨 [TREND SUPPORT BREAK] Price ($${refPrice.toFixed(6)}) broke below Support Trendline ($${uptrendLine.currentLinePrice.toFixed(6)}) — Liquidating 100% (${this.baseHeld().toFixed(4)} ${this.baseAsset}) to ${this.quoteAsset} to prevent holding crash knife!`,
+        );
+        if (this.openOrders.length > 0) {
+          await this.cancelAllRestingOrders();
+        }
+        await this.sellAll(dexBid, "CUT");
+        this.lastCutLossTime = Date.now();
+        this.waitingForHigherLow = true;
+        this.isFlatChannelShiftWaiting = false;
+        this.isTrendSupportExitActive = true;
+        this.trendSupportBreakPrice = uptrendLine.currentLinePrice;
+        this.lastResolvedDumpLowPrice = undefined;
+        this.breakdownFloorPrice = lowerBound;
+        this.breakdownLowPrice = dexBid;
+        this.breakdownTime = Math.floor(Date.now() / 1000);
+        this.breakdownBuyLevel2Price = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001
+          ? buyLevels[1]
+          : (lowerBound > 0 ? lowerBound + span * 0.32 : dexBid * 1.01);
+        this.bufferBreakStartTime = undefined;
+        this.cutLossStage1Executed = false;
+        this.cutLossStage1Price = undefined;
+        this.cutLossStage1CandleTime = undefined;
+        this.postCutSingleTrancheOnly = true;
+        this.iocBracketSellCycle = undefined;
+        this.stuckSince = undefined;
+        this.breakdownCandleTimes.clear();
+        this.saveState();
+        return;
+      } else if (!this.waitingForHigherLow) {
+        // In 100% cash already: cancel any resting buy orders to avoid catching a falling knife
+        const openBuys = this.openOrders.filter((o) => o.isBid);
+        if (openBuys.length > 0) {
+          await this.cancelAllRestingOrders("BUY", "Trend Support Broken — Cancel buys to avoid catching crash knife");
+        }
+        this.waitingForHigherLow = true;
+        this.isTrendSupportExitActive = true;
+        this.trendSupportBreakPrice = uptrendLine.currentLinePrice;
+        this.breakdownFloorPrice = lowerBound;
+        this.breakdownLowPrice = refPrice;
+        this.breakdownTime = Math.floor(Date.now() / 1000);
+        this.saveState();
+      }
+    }
 
     if (
       this.cfg.cutLossAtLowerBound &&
@@ -3368,7 +3442,6 @@ export class DynamicGrid {
 
     // Trendline Filter: Active during breakdown recovery until confirmed breakout occurs
     const downtrendLine = dow?.downtrendLine;
-    const uptrendLine = dow?.uptrendLine;
     const trendlineFiltered = Boolean(this.cfg.trendlineFilter && this.waitingForHigherLow && downtrendLine && !downtrendLine.isBroken);
     const uptrendBroken = Boolean(
       (this.cfg.enableBuyAboveTrendSupport !== false) &&
@@ -3518,7 +3591,16 @@ export class DynamicGrid {
       const dumpFloor = this.breakdownFloorPrice ?? lowerBound;
       const dumpLow = this.breakdownLowPrice ?? effectiveMid;
       const isFlatWait = this.isFlatChannelShiftWaiting;
-      if (this.cfg.trendlineFilter && downtrendLine && !downtrendLine.isBroken) {
+      if (this.isTrendSupportExitActive) {
+        const supPriceStr = this.trendSupportBreakPrice ? `$${this.trendSupportBreakPrice.toFixed(this.pricePrecision)}` : "Support TL";
+        botActionState = {
+          code: "TREND_SUPPORT_BROKEN",
+          title: "🛡️ Trend Support Broken (100% Cash)",
+          reason: `Support broke (${supPriceStr}) • Liquidated to Cash`,
+          nextTrigger: `Paused: Waiting Reversal / Higher Low > $${dumpLow.toFixed(this.pricePrecision)} or Stand > Buy L2 ($${effectiveBuyLevel2Target.toFixed(this.pricePrecision)})`,
+          severity: "warning",
+        };
+      } else if (this.cfg.trendlineFilter && downtrendLine && !downtrendLine.isBroken) {
         const count = downtrendLine.brokenCandleCount;
         botActionState = {
           code: "WAITING_TRENDLINE_BREAKOUT",
@@ -3811,6 +3893,8 @@ export class DynamicGrid {
         downtrendDropPaused,
         waitingForHigherLow: this.waitingForHigherLow,
         isFlatChannelShiftWaiting: this.isFlatChannelShiftWaiting,
+        isTrendSupportExitActive: this.isTrendSupportExitActive,
+        trendSupportBreakPrice: this.trendSupportBreakPrice,
         waitingForNewValley: this.waitingForHigherLow,
         breakdownFloorPrice: this.breakdownFloorPrice,
         breakdownLowPrice: this.breakdownLowPrice,
@@ -3897,6 +3981,7 @@ export class DynamicGrid {
           placedTime: o.placedTime,
           expireTime: o.expireTime,
         })),
+        enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
         isBelowFloor,
         isAboveCeiling,
         zoneWidthPct: gridZone?.zoneWidthPct ?? 0,

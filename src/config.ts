@@ -113,6 +113,8 @@ export const defaultStrategyConfig = {
   enableBuyLevel2Recovery: true,
   /** When true, only places buy orders strictly above ascending Trend Support line and pauses buying if support breaks. */
   enableBuyAboveTrendSupport: false,
+  /** When true, automatically liquidates 100% inventory to cash and pauses buying (waits for Higher Low reversal) if price breaks below ascending Trend Support line. Default true. */
+  enableExitOnTrendSupportBreak: true,
   /** When true, only places sell orders strictly below descending Trendline Resistance. */
   enableSellBelowTrendResistance: false,
   /** When true, enables selling at the real frame (Real S/R Ceil) when it adjusts down, choosing the lower price between trendline and real ceiling. Default true. */

@@ -2260,6 +2260,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Version Bump**:
      - อัปเกรดเป็น `v0.2.19` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 53. Exit on Trend Support Break & Reversal Recovery (`v0.2.20`)
+- **สาเหตุของปัญหา**:
+  1. **การรับมีดตก (Crash Knife) ตลอดทางที่ราคาร่วงหลุดแนวรับ**:
+     - เมื่อเกิดเหตุการณ์แท่งเทียนทุบแรง (Flash Dump) เช่น SOMI หลุด $0.18675 หรือ ETH หลุด $2,476.75
+     - เดิมทีบอทไม่มีตรรกะ "คัทล้างพอร์ตทันทีที่เส้นแนวรับหลุด" ส่งผลให้ออเดอร์ซื้อตามกริดด้านล่าง (Buy L3, Buy L4, Buy L5) ทยอยถูกจับคู่ซื้อจนพอร์ตเต็ม 100% ($198 - $200)
+     - หลังจากกวาดซื้อจนเต็มพอร์ต ราคาก็ดิ่งทะลุหลุด 0% Floor ทำให้บอทต้องไปแบกรับผลขาดทุนเต็มจำนวนทั้ง 5 ไม้ที่จุด Cut Loss ใต้ Floor
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.20`)**:
+  1. **เพิ่ม Config Option `enableExitOnTrendSupportBreak` (Default: `true`)**:
+     - มีสวิตช์เปิด/ปิดในหน้าต่าง Settings Modal บนเว็บแดชบอร์ด (`public/index.html` & `public/app.js`)
+     - รองรับทั้งใน `src/config.ts`, `data/settings.db.json` และส่งผ่าน `latestTick`
+  2. **กลไกตัดขาดทุนทันทีเมื่อหลุดแนวรับ (`src/strategy.ts`)**:
+     - ตรวจจับเมื่อ `refPrice < uptrendLine.currentLinePrice * 0.9985` หรือ `uptrendLine.isBroken` หรือ `uptrendBreakdownConfirmed`:
+       - **ยกเลิกคำสั่งซื้อทั้งหมดทันที (Instant Cancel All Buys)**: ป้องกันไม่ให้ออเดอร์ Buy L3, L4, L5 ถูกจับคู่รับมีดตก
+       - **ขายล้างพอร์ตเป็นเงินสด 100% (`sellAll(dexBid, "CUT")`)**: หากมีเหรียญในมือ จะส่งคำสั่งขายทิ้งทั้งหมดทันทีที่ราคาหลุดเส้นรับ เพื่อล็อคกำไร/ตัดขาดทุนเล็กน้อยทันที
+       - **สลับเข้าสู่สถานะรอกลับตัว (`waitingForHigherLow = true`)**: พอร์ตจะถือเงินสด 100% ปลอดภัย ไม่เสี่ยงดอย
+  3. **การกลับตัวและเริ่มเทรดใหม่โดยอัตโนมัติ (Reversal Recovery Engine)**:
+     - ในสถานะถือเงินสด 100% บอทจะระงับการซื้อทุกกรณี จนกว่าตลาดจะยืนยันการกลับตัว:
+       1) เกิดสวิงยกเหว Higher Low (HL) ใหม่ที่ยืนยันแล้วตามทฤษฎี Dow Theory
+       2) หรือราคาทะลุเบรกเอาท์ผ่านเส้นกด Downtrend Line ($\ge$ 2 แท่งเทียน)
+       3) หรือแท่งเทียนปิดยืนเหนือระดับ Buy Level 2 ได้อย่างมั่นคง
+     - เมื่อเข้าเงื่อนไขกลับตัว บอทจะปลดล็อก `waitingForHigherLow = false` และกลับมาเปิดรับซื้อตามรอบกริดอย่างปลอดภัย
+  4. **Version Bump**:
+     - อัปเกรดเป็น `v0.2.20` ใน `package.json` และ `src/version.ts`
+
 
 
 
