@@ -2403,6 +2403,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
   8. **Version Bump**:
      - ปรับเวอร์ชันเป็น `v0.2.24` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=2.8`) และ `GEMINI.md`
 
+---
+
+### 58. Stage 2 Cut Loss Trigger Enhancement & Dashboard De-risk Status (`v0.2.25`)
+- **สาเหตุของปัญหา**:
+  1. **Stage 2 Cut Loss ไม่ทริกเกอร์ทันทีเมื่อเกิด Lower Low Closed Candle หรือดิ่งแตะ Stage 2 Bound**:
+     - `shouldExecuteCut` คำนวณจาก `isFastBufferCut || isFloorCandleCut` เมื่อ Stage 1 ทำงานไปแล้ว `isFloorCandleCut` เป็น `false` ทำให้หากราคาทำแท่งเทียนปิดต่ำกว่าราคา Stage 1 (`isStage2CandleClosed`) หรือดิ่งแตะ Stage 2 Bound (`isBelowStage2Bound = Floor - 2xBuffer`) บอทจะยังไม่คัท Stage 2 จนกว่าจะหลุด Buffer และรอเวลา Buffer Delay หมด
+  2. **Dashboard Status แสดงข้อความ generic ขณะถือรอขายเด้ง**:
+     - ขณะที่ `cutLossStage1Executed === true` บอทเข้าบล็อก `!shouldExecuteCut` และแสดงข้อความ generic ว่า `holding lots, buy paused until reclaim or buffer break` แทนที่จะบอกผู้ใช้ว่ากำลังถือ 50% รอดักขายเด้งที่ Floor
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.25`)**:
+  1. **เพิ่ม `isStage2Triggered` เข้าใน `shouldExecuteCut`**:
+     - คำนวณ `isStage2Triggered = Boolean(this.cutLossStage1Executed && (isBelowStage2Bound || isStage2CandleClosed))`
+     - ผนวกเข้า `shouldExecuteCut = isFastBufferCut || isFloorCandleCut || isStage2Triggered` ทำให้เมื่อมีแท่งปิดต่ำกว่าราคา Stage 1 หรือราคาดิ่งแตะ Stage 2 Bound บอทจะสั่งคัท Stage 2 (50% สุดท้าย) ทันทีเพื่อรักษาเงินทุน
+  2. **ปรับปรุง `triggerReason` ให้ระบุสาเหตุ Stage 2 ครบถ้วน**:
+     - แสดง `CLOSED CANDLE CONFIRMED BELOW STAGE 1 CUT` หรือ `PRICE REACHED STAGE 2 BOUND` ชัดเจนใน Logs
+  3. **ปรับ Dashboard Status ขณะถือรอดักเด้ง**:
+     - แสดง `🛡️ STAGE 1 DE-RISKED (50% HELD): Price $... — holding bounce exit limit sell @ Floor $... unless Buffer ($...) breaks`
+  4. **Version Bump**:
+     - ปรับเวอร์ชันเป็น `v0.2.25` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=2.9`) และ `GEMINI.md`
+
+
 
 
 

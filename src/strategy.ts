@@ -3010,9 +3010,9 @@ export class DynamicGrid {
         this.postCutSingleTrancheOnly = true;
         this.iocBracketSellCycle = undefined;
         this.stuckSince = undefined;
-    this.lastBuyFillTime = 0;
-    this.lastBuyFillPrice = 0;
-    this.lastBuyFillCandleTime = 0;
+        this.lastBuyFillTime = 0;
+        this.lastBuyFillPrice = 0;
+        this.lastBuyFillCandleTime = 0;
         this.breakdownCandleTimes.clear();
         this.saveState();
         return;
@@ -3070,8 +3070,6 @@ export class DynamicGrid {
         !isBelowStage2Bound &&
         (heldNow * dexBidForCut >= minNotionalForSplit * 2.1);
 
-      const isFloorCandleCut = (!cutLossOnBufferOnly || canDoStage1Split) && (confirmedCandlesCount >= (this.cfg.cutLossConfirmCandles ?? 1));
-      const shouldExecuteCut = isFastBufferCut || isFloorCandleCut;
       const isStage2CandleClosed = Boolean(
         this.cutLossStage1Executed &&
         latestClosedCandle &&
@@ -3080,6 +3078,10 @@ export class DynamicGrid {
         this.cutLossStage1Price !== undefined &&
         latestClosedCandle.close < this.cutLossStage1Price
       );
+      const isStage2Triggered = Boolean(this.cutLossStage1Executed && (isBelowStage2Bound || isStage2CandleClosed));
+
+      const isFloorCandleCut = (!cutLossOnBufferOnly || canDoStage1Split) && (confirmedCandlesCount >= (this.cfg.cutLossConfirmCandles ?? 1));
+      const shouldExecuteCut = isFastBufferCut || isFloorCandleCut || isStage2Triggered;
 
       if (!this.isPaused && this.lots.length > 0) {
         const dexBid = bestBid ?? effectiveMid;
@@ -3095,7 +3097,11 @@ export class DynamicGrid {
             `⚠️ CUT LOSS PAUSED: Price broken below floor/buffer ($${refPrice.toFixed(6)} | Floor: $${lowerBound.toFixed(6)} | Buffer: $${cutLossBound.toFixed(6)}) but DEX Bid $${dexBid.toFixed(6)} is discounted ${bidDiscountPct.toFixed(2)}% below Binance (Limit: ${maxAllowedBidDiscount.toFixed(1)}%) — Holding off fire-sale dump until DEX Bid liquidity normalizes.`,
           );
         } else if (!shouldExecuteCut) {
-          if (isBelowBuffer) {
+          if (this.cutLossStage1Executed) {
+            this.status(
+              `🛡️ STAGE 1 DE-RISKED (50% HELD): Price $${refPrice.toFixed(6)} — holding bounce exit limit sell @ Floor $${lowerBound.toFixed(6)} unless Buffer ($${cutLossBound.toFixed(6)}) breaks`,
+            );
+          } else if (isBelowBuffer) {
             const remSec = Math.max(0, Math.ceil((bufferDelayMs - bufferBreakElapsedMs) / 1000));
             this.status(
               `⏳ FAST CUT PENDING (BUFFER BREAK): Price $${refPrice.toFixed(6)} < Buffer $${cutLossBound.toFixed(6)} — below buffer for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s (${remSec}s remaining until Emergency Fast Cut)`,
@@ -3118,7 +3124,11 @@ export class DynamicGrid {
                 : (isBufferCandleClosed
                     ? `CLOSED CANDLE CONFIRMED BELOW BUFFER: ${lastClosedStr}Price $${refPrice.toFixed(6)} < Buffer $${cutLossBound.toFixed(6)}`
                     : `EMERGENCY FAST CUT (> ${Math.round(bufferDelayMs / 1000)}s BELOW BUFFER): Price $${refPrice.toFixed(6)} stayed below Buffer $${cutLossBound.toFixed(6)} for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s`))
-            : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`;
+            : (isStage2CandleClosed
+                ? `CLOSED CANDLE CONFIRMED BELOW STAGE 1 CUT: ${lastClosedStr}Price $${refPrice.toFixed(6)} < Stage 1 $${(this.cutLossStage1Price ?? 0).toFixed(6)}`
+                : (isBelowStage2Bound
+                    ? `PRICE REACHED STAGE 2 BOUND: Price $${refPrice.toFixed(6)} < $${stage2CutBound.toFixed(6)}`
+                    : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`));
 
           if (canDoStage1Split) {
             const halfQty = roundToStep(heldNow * 0.50, this.stepSize || 0.0001, this.qtyPrecision);
