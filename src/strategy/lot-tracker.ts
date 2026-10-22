@@ -107,6 +107,8 @@ export class LotTracker {
     if (this.baseHeld() < dustThreshold) {
       this.host.lots = [];
       this.host.lockedChannel = undefined;
+      this.host.confirmedChannel = undefined;
+      this.host.pendingConfirmedChannelUpdate = true;
       this.host.iocBracketSellCycle = undefined;
       this.host.soldSellIndices.clear();
       this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined);
@@ -122,6 +124,8 @@ export class LotTracker {
     if (maxAllowedQty <= 1e-6) {
       this.host.lots = [];
       this.host.lockedChannel = undefined;
+      this.host.confirmedChannel = undefined;
+      this.host.pendingConfirmedChannelUpdate = true;
       this.host.db.saveLockedChannel(this.host.getSymbolKey(), undefined);
       return;
     }

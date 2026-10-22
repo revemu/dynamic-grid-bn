@@ -117,7 +117,7 @@ export class DynamicGrid implements IStrategyHost {
     gridZone?: GridZone;
     calculatedAt: number;
   };
-  private pendingConfirmedChannelUpdate = false;
+  public pendingConfirmedChannelUpdate = false;
   public lockedChannel?: LockedChannel;
   private lastActivePeakTime?: number;
   private lastActivePeakPrice?: number;
@@ -1748,7 +1748,7 @@ export class DynamicGrid implements IStrategyHost {
       }
       const avgEntry = this.getAvgEntryPrice();
       this.log(
-        `[state] restored ${this.lots.length} open lots (${this.baseHeld().toFixed(4)} SOMI | Avg: $${avgEntry.toFixed(6)}) and ${this.openOrders.length} open resting orders | Realized PnL: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} from database ${this.cfg.dbPath} (${this.recentOrders.length} unified orders)${this.waitingForHigherLow ? " (Waiting for Higher Low)" : ""}${this.isPaused ? " [PAUSED ⏸️]" : " [ACTIVE ▶️]"}`,
+        `[state] restored ${this.lots.length} open lots (${this.baseHeld().toFixed(4)} ${this.baseAsset} | Avg: $${avgEntry.toFixed(6)}) and ${this.openOrders.length} open resting orders | Realized PnL: ${this.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.realizedPnl).toFixed(4)} from database ${this.cfg.dbPath} (${this.recentOrders.length} unified orders)${this.waitingForHigherLow ? " (Waiting for Higher Low)" : ""}${this.isPaused ? " [PAUSED ⏸️]" : " [ACTIVE ▶️]"}`,
       );
     } catch (err) {
       this.log(`warning: could not load state from database: ${(err as Error).message}`);
@@ -2023,6 +2023,8 @@ export class DynamicGrid implements IStrategyHost {
     this.lastBuyFillCandleTime = 0;
     this.lockedChannel = undefined;
     this.lastDynamicBounds = undefined;
+    this.confirmedChannel = undefined;
+    this.pendingConfirmedChannelUpdate = true;
     this.db.saveLockedChannel(this.getSymbolKey(), undefined);
 
     this.saveState(true);
@@ -2991,6 +2993,8 @@ export class DynamicGrid implements IStrategyHost {
     this.lastBuyFillPrice = 0;
     this.lastBuyFillCandleTime = 0;
         this.lockedChannel = undefined;
+        this.confirmedChannel = undefined;
+        this.pendingConfirmedChannelUpdate = true;
         const symbolKey = this.getSymbolKey();
         this.db.saveLockedChannel(symbolKey, undefined);
         this.saveState();
@@ -3268,7 +3272,7 @@ export class DynamicGrid implements IStrategyHost {
     if (!this.isPaused && enableSqueezeExit && isConverging && !this.isSqueezePaused) {
       this.isSqueezePaused = true;
       this.log(
-        `🔺 [TRIANGLE SQUEEZE] Support ($${uptrendLine!.currentLinePrice.toFixed(6)}) & Resistance ($${downtrendLine!.currentLinePrice.toFixed(6)}) converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%) — Liquidating all ${this.baseHeld().toFixed(4)} SOMI to cash and standing by for channel expansion!`,
+        `🔺 [TRIANGLE SQUEEZE] Support ($${uptrendLine!.currentLinePrice.toFixed(6)}) & Resistance ($${downtrendLine!.currentLinePrice.toFixed(6)}) converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%) — Liquidating all ${this.baseHeld().toFixed(4)} ${this.baseAsset} to cash and standing by for channel expansion!`,
       );
       await this.cancelAllRestingOrders(undefined, "Triangle squeeze: trendlines converging — liquidating and pausing");
       if (this.baseHeld() > 0 && !isBelowFloor && this.cfg.orderExecutionMode === "IOC_BRACKET") {

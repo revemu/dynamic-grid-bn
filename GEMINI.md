@@ -2536,5 +2536,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.29` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.3`) และ `GEMINI.md`
 
+---
+
+### 63. Confirmed Channel Reset on Full Exit & Asset Labeling Hardening (`v0.2.30`)
+- **สาเหตุของการแก้ไข (Motivation)**:
+  1. **Unrefreshed Confirmed Channel on Full Exit & Position Reset**:
+     - เมื่อบอททำการปิด Position ทั้งหมด (เช่น 100% Take Profit, ผู้ใช้กด Manual Reset Position, หรือ LotTracker เคลียร์เศษเหรียญ Dust จาก `closeLots` / `clampLotsTo`) ระบบได้ทำการล้าง `lockedChannel = undefined`
+     - ทว่าตัวแปร `confirmedChannel` กลับไม่ได้ถูกล้าง (`undefined`) และ `pendingConfirmedChannelUpdate` ไม่ได้ถูกตั้งเป็น `true`
+     - เมื่อเปิดใช้งาน `adjustChannelOnClosedOnly: true` (ค่าเริ่มต้น) ตัวแปร `needChannelRecalc` จะประเมินเป็น `false` ทันทีเพราะ `confirmedChannel` ยังมีค่าอยู่ และเวลาแท่งเทียนยังไม่เปลี่ยน ทำให้บอทยังคงติดและใช้ระดับกรอบราคา (Floor, Ceiling, Buy/Sell Levels) ของรอบการเทรดเดิมต่อไปจนกว่าจะมีแท่งเทียนแท่งใหม่ปิดสมบูรณ์
+  2. **Hardcoded `"SOMI"` in Multi-Asset Strategy Logs**:
+     - ใน `src/strategy/index.ts` บรรทัดที่ 1751 (State restoration log) และบรรทัดที่ 3271 (Triangle squeeze liquidation log) มีการระบุชื่อเหรียญเป็น `"SOMI"` แบบ Hardcoded แทนที่จะเป็น `${this.baseAsset}`
+     - ส่งผลให้เมื่อบอทรันบน Binance Spot หรือเหรียญอื่นๆ เช่น BTC หรือ ETH จะแสดงข้อความผิดพลาด เช่น `restored 0.0500 SOMI` หรือ `Liquidating all 0.0500 SOMI`
+- **การแก้ไขและสถาปัตยกรรม (`v0.2.30`)**:
+  1. **ล้าง Confirmed Channel และ Flag บังคับรีเฟรชเมื่อพอร์ตว่าง (`src/strategy/index.ts`, `src/strategy/lot-tracker.ts`, `src/strategy/types.ts`)**:
+     - เพิ่ม `pendingConfirmedChannelUpdate: boolean;` ใน `IStrategyHost` และเปลี่ยน Visibility เป็น `public` บน `DynamicGrid`
+     - เมื่อเกิดการปิด Position ทั้งหมดใน:
+       - `resetPosition()`: กำหนด `this.confirmedChannel = undefined; this.pendingConfirmedChannelUpdate = true;`
+       - 100% Take Profit (`checkAndExecuteTakeProfitLevels`): กำหนด `this.confirmedChannel = undefined; this.pendingConfirmedChannelUpdate = true;`
+       - `LotTracker.closeLots()` เมื่อพอร์ตต่ำกว่า `dustThreshold`: กำหนด `this.host.confirmedChannel = undefined; this.host.pendingConfirmedChannelUpdate = true;`
+       - `LotTracker.clampLotsTo()` เมื่อพอร์ตกลายเป็น 0: กำหนด `this.host.confirmedChannel = undefined; this.host.pendingConfirmedChannelUpdate = true;`
+     - ส่งผลให้ใน Tick ถัดไป เงื่อนไข `needChannelRecalc` เป็นจริงทันที บอทจะรีเฟรชกรอบราคาและระดับ Buy Level 1-4 ให้สดใหม่สอดคล้องกับโครงสร้างล่าสุดทันทีโดยไม่ต้องรอแท่งเทียนถัดไป
+  2. **แก้ไข Hardcoded Asset Labels (`src/strategy/index.ts`)**:
+     - แก้ไขบันทึก Log การโหลด State ให้แสดง `${this.baseAsset}`
+     - แก้ไขบันทึก Log Triangle Squeeze ให้แสดง `${this.baseAsset}`
+  3. **Typecheck & Version Bump**:
+     - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.30` ใน `package.json`, `src/version.ts`, `public/index.html` (`app.js?v=3.4`) และ `GEMINI.md`
+
 
 

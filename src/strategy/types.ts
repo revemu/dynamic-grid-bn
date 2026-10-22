@@ -145,6 +145,7 @@ export interface IStrategyHost {
   buyOrdersActive: boolean;
   sellOrdersActive: boolean;
   confirmedChannel?: any;
+  pendingConfirmedChannelUpdate: boolean;
   lockedChannel?: LockedChannel;
   lastEvaluatedFloor?: number;
   lastEvaluatedCeil?: number;
