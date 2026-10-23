@@ -526,7 +526,7 @@ export class RiskManager {
       this.host.isDowntrendDropPaused = false;
       this.host.isTrendSupportExitActive = false;
       this.host.trendSupportBreakPrice = undefined;
-      this.host.lastTrendSupportBreakKey = undefined;
+      // Note: Retain lastTrendSupportBreakKey so the exact same broken trendline does not instantly re-trigger in subsequent ticks
       this.host.breakdownTime = undefined;
       this.host.breakdownFloorPrice = undefined;
       this.host.breakdownLowPrice = undefined;

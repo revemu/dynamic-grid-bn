@@ -2854,6 +2854,12 @@ export class DynamicGrid implements IStrategyHost {
           dow?.candidateValley && dow.candidateValley.price <= activeDumpLow * 1.0005 ? dow.candidateValley.time : 0,
         ) || (Math.floor(Date.now() / 1000) - 3600);
 
+      const isAlreadyResolved = Boolean(
+        this.lastResolvedDumpLowPrice !== undefined &&
+        activeDumpLow >= this.lastResolvedDumpLowPrice * 0.9995 &&
+        refPrice >= this.lastResolvedDumpLowPrice * 0.9995
+      );
+
       const isHlAfterLl = Boolean(
         lastHl &&
         lastLl &&
@@ -2874,7 +2880,15 @@ export class DynamicGrid implements IStrategyHost {
         refPrice >= effectiveBuyLevel2Target * 0.999,
       );
 
-      const isNewUnresolvedDrop = !isHlAfterLl && !tlBreakout && !isReclaimedBuy2;
+      const reboundThresholdPct = 0.35;
+      const isDynamicRebound = Boolean(
+        confirmedLastClosed &&
+        confirmedLastClosed.close >= confirmedLastClosed.open * 0.9995 &&
+        confirmedLastClosed.close >= activeDumpLow * (1 + reboundThresholdPct / 100) &&
+        refPrice >= activeDumpLow * (1 + (reboundThresholdPct * 0.8) / 100)
+      );
+
+      const isNewUnresolvedDrop = !isAlreadyResolved && !isDynamicRebound && !isHlAfterLl && !tlBreakout && !isReclaimedBuy2;
 
       if (isNewUnresolvedDrop) {
         this.waitingForHigherLow = true;

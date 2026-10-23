@@ -3178,6 +3178,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.55` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 76. Fix Unified Downtrend Guard Re-trigger & Recovery Infinite Loop (`v0.2.56`)
+- **สาเหตุของปัญหา (ลูปสลับระหว่าง Guard และ Recovery ทุกๆ 0.3 วินาที)**:
+  1. **`UNIFIED DOWNTREND GUARD` ไม่ตรวจเช็ค `lastResolvedDumpLowPrice` และ `isDynamicRebound`**:
+     - เมื่อบอททำการปลดล็อกการกลับตัวสำเร็จ (`resolveRecovery`) และตั้งค่า `lastResolvedDumpLowPrice = $81,278.01` พร้อมสลับ `waitingForHigherLow = false`
+     - ใน Tick ถัดไป ตัว Guard ตรวจพบว่า `dow.isDowntrendDropActive = true` (เนื่องจากสวิงในอดีตยังติดป้าย LL) และ `waitingForHigherLow = false` จึงเข้าใจผิดว่าเป็นการทุบระลอกใหม่ จึงสั่งตั้ง `waitingForHigherLow = true` ซ้ำอีก
+     - จากนั้นใน Tick เดียวกัน `evaluateHigherLowRecovery` ก็ตรวจพบว่าราคาเด้งพ้นเกณฑ์แล้ว จึงสั่งปลดล็อก `waitingForHigherLow = false` ซ้ำอีก วนลูปไม่รู้จบทุก Tick
+  2. **`lastTrendSupportBreakKey` ถูกรีเซ็ตเป็น `undefined` ใน `resolveRecovery`**:
+     - ทำให้บอทลืมว่าเส้นรับเฉียงเส้นเดิมเคยหลุดไปแล้ว และเข้าสู่ลูปตรวจจับการหลุดเส้นรับเฉียงซ้ำๆ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.56`)**:
+  1. **เพิ่มการตรวจเช็ค `isAlreadyResolved` และ `isDynamicRebound` ใน [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts)**:
+     - ตราบใดที่ราคายังอยู่เหนือจุดต่ำสุดเดิมที่ปลดล็อกไปแล้ว (`activeDumpLow >= lastResolvedDumpLowPrice * 0.9995` และ `refPrice >= lastResolvedDumpLowPrice * 0.9995`) หรือเกิด Dynamic Rebound แล้ว ตัว Guard จะไม่เปิดสถานะ Pause ซ้ำอีก
+     - หากราคาทำจุดต่ำสุดใหม่หลุดต่ำกว่าจุดเดิมจริง ตัว Guard ถึงจะเปิดสถานะ Pause สำหรับคลื่นลูกใหม่
+  2. **คงค่า `lastTrendSupportBreakKey` ใน [`src/strategy/risk-manager.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/risk-manager.ts)**:
+     - ไม่ล้างค่า `lastTrendSupportBreakKey` ตอนฟื้นตัว เพื่อป้องกันไม่ให้เส้นรับเฉียงเส้นเดิมที่หลุดไปแล้วมาทริกเกอร์ซ้ำ
+  3. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.56` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 
