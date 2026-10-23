@@ -3402,6 +3402,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.65` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 86. Triangle Squeeze Buy-Only Pause & Forced Cut-Loss Elimination (`v0.2.66`)
+
+- **สาเหตุของปัญหา (ซื้อปุ๊บแล้วคัทลอสทิ้งทันทีในแท่งเดียวกันบน DreamDEX SOMI:USDSO)**:
+  1. **การบังคับเทขายขาดทุนแบบเหวี่ยงแห (`sellAll "CUT"`) ใน Squeeze Exit**:
+     - ในโค้ดเดิม [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts#L3410) มีคำสั่งว่า หาก `enableTriangleSqueezeExit` เปิดอยู่และเส้นเทรนด์ไลน์บีบตัวแตะ `1.50%` ให้สั่ง `sellAll(..., "CUT")` เทขายเหรียญทั้งหมดทิ้งทันที
+     - ส่งผลให้เมื่อบอทเพิ่งเข้าซื้อไม้ Buy Level 1 @ $0.17480 ไปได้เพียง 2 นาที พอระยะห่างบีบแตะ 1.50% บอทกลับสั่งคัทลอสขายทิ้งที่ $0.17420 ขาดทุนฟรีๆ ทั้งที่ราคายังอยู่สูงกว่า Floor มากและยังไม่ได้หลุดแนวรับจริง
+  2. **ไม่มี Buffer กั้นระหว่างจังหวะซื้อกับจังหวะ Squeeze**:
+     - `canBuy` เดิมเช็คแค่ `!this.isSqueezePaused` แต่ไม่ได้เช็คระยะห่างล่วงหน้า ทำให้ถ้าระยะห่างอยู่ที่ 1.51% บอทยังยอมให้เคาะซื้อ พอขยับมา 1.50% กลับสั่งคัททิ้งทันที
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.66`)**:
+  1. **Triangle Squeeze ทำหน้าที่หยุดซื้อเพิ่มเท่านั้น (Pause Buying Only)**:
+     - ปรับใน [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts#L3403): เมื่อเส้นเทรนด์ไลน์บีบตัวแตะเกณฑ์ ระบบจะสั่ง **ยกเลิกเฉพาะคำสั่งซื้อ (`cancelAllRestingOrders("BUY")`) และเข้าสู่ Standby หยุดรับของเพิ่ม**
+     - **ยกเลิกการบังคับคัทลอสทิ้งเด็ดขาด**: เหรียญที่ถืออยู่จะยังคงถือต่อไป และเปิดคำสั่งตั้งขายทำกำไรตาม Sell Targets ปกติ โดยจะยอมคัทลอสเฉพาะกรณีราคาหลุด Floor (`isBelowFloor`) หรือหลุด Buffer Stop Loss จริงเท่านั้น (เพิ่มออปชัน `liquidatePositionOnSqueeze: false` เป็น Default)
+  2. **เพิ่ม Pre-Squeeze Buy Buffer (`isNearSqueeze`)**:
+     - เพิ่มเงื่อนไขใน `canBuy`: หากระยะห่างเทรนด์ไลน์แคบลงมาใกล้เกณฑ์บีบตัว (`tlSpreadPct <= squeezeSpreadThreshold + 0.25%` เช่น $\le 1.75\%$) ระบบจะสั่ง **บล็อกการเข้าซื้อไม้ใหม่ตั้งแต่แรก** เพื่อไม่ให้ไปเปิดไม้อยู่บนปากเหวของการบีบตัว
+  3. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.66` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

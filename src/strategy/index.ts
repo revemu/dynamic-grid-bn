@@ -636,6 +636,7 @@ export class DynamicGrid implements IStrategyHost {
       orderExpireHours: this.cfg.orderExpireHours,
       cutLossMaxBidDiscountPct: this.cfg.cutLossMaxBidDiscountPct,
       enableTriangleSqueezeExit: this.cfg.enableTriangleSqueezeExit,
+      liquidatePositionOnSqueeze: this.cfg.liquidatePositionOnSqueeze,
       triangleSqueezeSpreadPct: this.cfg.triangleSqueezeSpreadPct,
       minTradeableChannelWidthPct: this.cfg.minTradeableChannelWidthPct,
       useTrueWick: this.cfg.useTrueWick,
@@ -3400,14 +3401,15 @@ export class DynamicGrid implements IStrategyHost {
       }
     }
 
-    // 1. Trigger Squeeze Exit: Liquidate position to cash & enter squeeze standby
+    // 1. Trigger Squeeze Standby: Pause buying & cancel resting buy orders
     if (!this.isPaused && enableSqueezeExit && isConverging && !this.isSqueezePaused) {
       this.isSqueezePaused = true;
+      const isHolding = this.baseHeld() > 0;
       this.log(
-        `🔺 [TRIANGLE SQUEEZE] Support ($${uptrendLine!.currentLinePrice.toFixed(6)}) & Resistance ($${downtrendLine!.currentLinePrice.toFixed(6)}) converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%) — Liquidating all ${this.baseHeld().toFixed(4)} ${this.baseAsset} to cash and standing by for channel expansion!`,
+        `🔺 [TRIANGLE SQUEEZE] Support ($${uptrendLine!.currentLinePrice.toFixed(6)}) & Resistance ($${downtrendLine!.currentLinePrice.toFixed(6)}) converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%) — Pausing accumulation and standing by for breakout/expansion!${isHolding ? ` (Holding ${this.baseHeld().toFixed(4)} ${this.baseAsset} - sell targets active)` : ""}`,
       );
-      await this.cancelAllRestingOrders(undefined, "Triangle squeeze: trendlines converging — liquidating and pausing");
-      if (this.baseHeld() > 0 && !isBelowFloor) {
+      await this.cancelAllRestingOrders("BUY", "Triangle squeeze: trendlines converging — pausing buy orders");
+      if (this.cfg.liquidatePositionOnSqueeze && isHolding && !isBelowFloor) {
         const exitBid = bestBid ?? effectiveMid;
         await this.sellAll(exitBid, "CUT");
       }
@@ -3564,11 +3566,12 @@ export class DynamicGrid implements IStrategyHost {
         squeezeTriggerStr = `Wait Breakout > ${tlResStr} or Breakdown < ${tlSupStr}`;
       }
 
+      const isHolding = this.baseHeld() > 0;
       botActionState = {
         code: "TRIANGLE_SQUEEZE_STANDBY",
-        title: "🔺 Triangle Squeeze Standby",
+        title: isHolding ? "🔺 Triangle Squeeze (Holding & Buys Paused)" : "🔺 Triangle Squeeze Standby",
         reason: isConverging
-          ? `Trendlines converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%)`
+          ? `Trendlines converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%)${isHolding ? ` • Holding $${inventoryQuote.toFixed(1)} (Sells Active)` : ""}`
           : `Channel width ${currentChannelWidthPct.toFixed(2)}% < ${minTradeableWidth.toFixed(1)}% tradeable threshold`,
         nextTrigger: squeezeTriggerStr,
         severity: "warning",
@@ -4171,7 +4174,8 @@ export class DynamicGrid implements IStrategyHost {
       this.sellOrdersActive = true;
     }
 
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive && (dow?.isSwingConfirmed !== false);
+    const isNearSqueeze = enableSqueezeExit && tlSpreadPct <= (squeezeSpreadThreshold + 0.25);
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive && (dow?.isSwingConfirmed !== false);
 
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {

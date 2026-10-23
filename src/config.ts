@@ -185,8 +185,10 @@ export const defaultStrategyConfig = {
   enableIocSellWhenExceeded: true,
 
   // ── Triangle Squeeze / Trendline Convergence ────────────────────────────
-  /** When true, liquidates position to cash and pauses when support and resistance trendlines converge. */
+  /** When true, pauses accumulation and enters standby when support and resistance trendlines converge. */
   enableTriangleSqueezeExit: false,
+  /** When true, forcibly liquidates open position to cash upon entering squeeze (default false: keep inventory & sell targets active). */
+  liquidatePositionOnSqueeze: false,
   /** Minimum spread (%) between resistance and support trendlines before triggering squeeze exit (default 1.5%). */
   triangleSqueezeSpreadPct: 1.5,
   /** Minimum channel width (%) required to resume trading after a squeeze exit (default 2.0%). */
