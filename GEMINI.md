@@ -3246,6 +3246,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.58` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 79. Elimination of Level Float-Down Chasing & Full Grid Ladder Buy Placement (`v0.2.59`)
+- **สาเหตุของปัญหา**:
+  1. **ตรรกะ Float-down ลากราคาซื้อมาตั้งชิดยอดแท่งเทียน ($82,056.98)**:
+     - ใน `v0.2.58` มีการใช้ `Math.min(lvlPrice, maxAllowedBuyPrice)` เมื่อราคาตลาดอยู่ที่ $82,056.98 ขณะที่ Buy Level 2 อยู่ที่ $82,172.00
+     - ระบบตรวจพบว่าราคาตลาดต่ำกว่า Buy Level 2 จึงลากราคาของ Buy Level 2 ลงมาวางที่ Best Bid ($82,056.98) ซึ่งกลายเป็นการตั้งซื้อชิดยอดแท่งเทียน ผิดหลักการของ Grid Trading ที่ต้องดักซื้อเมื่อราคาย่อตัว
+  2. **ข้อจำกัด `maxActiveMakerBuys = 2` ทำให้ไม่วางออเดอร์ที่เลเวล 4 และ 5**:
+     - เมื่อโควตาจำกัดไว้ที่ 2 ไม้ และไม้แรกถูกใช้ไปกับการลากราคา Level 2 มาเกาะยอดแท่ง ($82,056.98) ส่วนไม้อีกอันไปวางที่ Level 3 ($81,837.00)
+     - ส่งผลให้ Buy Level 4 ($81,502.00) และ Buy Level 5 ($81,167.00) ถูกตัดทิ้ง ไม่ได้วางบนกระดาน
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.59`)**:
+  1. **Strict Grid Price Placement ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts)**:
+     - ถอดตรรกะ `Math.min(lvlPrice, maxAllowedBuyPrice)` ออกอย่างสมบูรณ์
+     - คำสั่งซื้อแบบ Maker Limit ทุกไม้ **ต้องตั้งที่ราคากริดจริง (`lvlPrice`) ของตัวเองเท่านั้น** ห้ามลากราคาลงมาตั้งชิดแท่งเทียน
+     - เลเวลใดที่อยู่ $\ge$ `maxAllowedBuyPrice` (เช่น เลเวล 1 และ 2 เมื่อราคาอยู่ที่ $82,056) จะถูกตัดออกจาก `eligibleBuyIndices` โดยไม่ส่งซื้อ
+  2. **Uncap / Expand `maxActiveMakerBuys: 5` วางครบทุกไม้ใต้ราคา (5, 4, 3)**:
+     - ปรับให้บน Binance CEX รองรับการวางออเดอร์ซื้อใต้ราคาพร้อมกันครบทั้ง 5 ระดับ (`maxActiveBuys = isCexExchange ? 5 : ...`)
+     - ปรับค่าเริ่มต้น `maxActiveMakerBuys: 5` ใน [`src/config.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/config.ts)
+     - เมื่อราคาอยู่ที่ $82,056 เลเวลที่อยู่ใต้ราคาทั้งหมด (Buy Level 3 @ $81,837, Buy Level 4 @ $81,502, Buy Level 5 @ $81,167) จะถูกวางเป็น Limit Order รอรับการย่อตัวครบทั้ง 3 ไม้พร้อมกันทันที
+  3. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.59` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

@@ -9,7 +9,6 @@
 import type { IStrategyHost, OpenOrder } from "./types.js";
 import type { LotTracker } from "./lot-tracker.js";
 import type { TrendLine, DowStructure } from "../market-structure.js";
-import { roundToTick } from "../exchange/binance/client.js";
 
 export interface SyncBuyOrdersParams {
   buyLevels: number[];
@@ -309,34 +308,28 @@ export class BuyOrderSynchronizer {
         if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && lvl < this.host.lastBuyFillPrice * 0.999) {
           return false;
         }
+        // In MAKER_LIMIT mode: buy orders must strictly be placed below current market price!
+        // Levels at or above current market price are not eligible (waiting for price to dip below them).
+        if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && lvl >= maxAllowedBuyPrice) {
+          return false;
+        }
         return true;
       })
       .map(({ idx }) => idx);
 
-    // ── Staged Maker Buy Window Guard (Anti-Waterfall) ──────────────────
-    const maxActiveBuys = Math.max(1, Number(this.host.cfg.maxActiveMakerBuys ?? 2));
+    // ── Staged Maker Buy Window Guard ──────────────────────────────────
+    // On Binance CEX: place all active levels below price (up to 5 levels) so levels 5, 4, 3 are all active simultaneously.
+    // On DreamDEX: limit to maxActiveMakerBuys (default 2) to manage on-chain gas fees.
+    const configuredMaxBuys = Number(this.host.cfg.maxActiveMakerBuys);
+    const maxActiveBuys = isCexExchange
+      ? 5
+      : (Number.isFinite(configuredMaxBuys) && configuredMaxBuys > 0 ? configuredMaxBuys : 2);
 
-    // Levels above market price (where price has dipped below the grid level):
-    // Identify the nearest eligible unfulfilled level immediately above market price to allow Dip Rebalance
-    const unfulfilledAbovePrice = eligibleBuyIndices.filter((idx) => {
-      const lvl = effectiveBuyLevels[idx];
-      return lvl && lvl > maxAllowedBuyPrice;
-    });
-    unfulfilledAbovePrice.sort((a, b) => (effectiveBuyLevels[a] ?? 0) - (effectiveBuyLevels[b] ?? 0));
-    const closestDipLevelIdx = unfulfilledAbovePrice.length > 0 ? unfulfilledAbovePrice[0] : undefined;
-
-    // For resting maker buys: levels that can be placed (at or below market price, or the closest unfulfilled dip level)
-    // or levels that already hold an open resting buy order should be considered for the active maker buy window.
     const eligiblePlacableBuyIndices = eligibleBuyIndices.filter((idx) => {
       const lvl = effectiveBuyLevels[idx];
       if (!lvl) return false;
       const hasOpenBuy = openBuys.some((o) => (o.levelDesc && effectiveLevelNames[idx] && o.levelDesc.startsWith(effectiveLevelNames[idx])) || Math.abs(o.price - lvl) / lvl <= 0.001);
-      if (hasOpenBuy) return true;
-      if (lvl <= maxAllowedBuyPrice) return true;
-      if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && idx === closestDipLevelIdx && maxAllowedBuyPrice > 0) {
-        return true;
-      }
-      return false;
+      return hasOpenBuy || lvl <= maxAllowedBuyPrice;
     });
 
     const sortedEligibleByPriceDesc = [...eligiblePlacableBuyIndices].sort((a, b) => {
@@ -501,10 +494,7 @@ export class BuyOrderSynchronizer {
       const targetOrderQuote = Math.min(levelTrancheQuote, remainingCapacityForOrder);
 
       if (currentOpenBuyAtLvl) {
-        const targetLvlPrice = this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && maxAllowedBuyPrice > 0
-          ? roundToTick(Math.min(lvlPrice, maxAllowedBuyPrice), this.host.tickSize || 0.0001)
-          : lvlPrice;
-        const priceDiffRatio = Math.abs(currentOpenBuyAtLvl.price - targetLvlPrice) / targetLvlPrice;
+        const priceDiffRatio = Math.abs(currentOpenBuyAtLvl.price - lvlPrice) / lvlPrice;
         const priceTolerance = priceTol;
         const currentOrderNotional = currentOpenBuyAtLvl.notionalQuote !== undefined ? currentOpenBuyAtLvl.notionalQuote : currentOpenBuyAtLvl.notionalUsdso;
         const totalOpenBuysQuote = otherOpenBuysQuote + currentOrderNotional;
@@ -526,19 +516,19 @@ export class BuyOrderSynchronizer {
 
         if (priceDiffRatio > priceTolerance || needsResize) {
           const reason = priceDiffRatio > priceTolerance
-            ? `Channel shifted: aligning buy price ($${currentOpenBuyAtLvl.price.toFixed(6)} -> $${targetLvlPrice.toFixed(6)})`
+            ? `Channel shifted: aligning buy price ($${currentOpenBuyAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
             : isTotalExposureExceeded
             ? `Total buy exposure exceeded remaining capacity: adjusting order ($${currentOrderNotional.toFixed(2)} -> $${maxPossibleBudget.toFixed(2)})`
             : `Rebalancing buy quantity to match grid tranche ($${currentOrderNotional.toFixed(2)} -> $${maxPossibleBudget.toFixed(2)})`;
           await cancelOrderInternal(currentOpenBuyAtLvl, reason);
           this.host.openOrders = this.host.openOrders.filter((o) => o !== currentOpenBuyAtLvl);
 
-          const effectiveBuyQty = maxPossibleBudget / targetLvlPrice;
-          const isEligibleForReplacement = targetLvlPrice <= maxAllowedBuyPrice && canBuy;
+          const effectiveBuyQty = maxPossibleBudget / lvlPrice;
+          const isEligibleForReplacement = lvlPrice <= maxAllowedBuyPrice && canBuy;
           if (isEligibleForReplacement && effectiveBuyQty >= this.host.minQty && maxPossibleBudget >= minOrderNotional) {
             await placeRestingOrder(
               true,
-              targetLvlPrice,
+              lvlPrice,
               effectiveBuyQty,
               buyTargets[i] || 1.0,
               maxPossibleBudget,
@@ -578,19 +568,16 @@ export class BuyOrderSynchronizer {
         }
       }
 
-      const targetLvlPrice = this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && maxAllowedBuyPrice > 0
-        ? roundToTick(Math.min(lvlPrice, maxAllowedBuyPrice), this.host.tickSize || 0.0001)
-        : lvlPrice;
-      const isEligibleForNewOrder = targetLvlPrice <= maxAllowedBuyPrice && canBuy;
-      if (isEligibleForNewOrder && targetOrderQuote > 0 && targetLvlPrice > 0) {
+      const isEligibleForNewOrder = lvlPrice <= maxAllowedBuyPrice && canBuy;
+      if (isEligibleForNewOrder && targetOrderQuote > 0 && lvlPrice > 0) {
         const availableBudget = this.host.cfg.dryRun
           ? targetOrderQuote
           : Math.min(targetOrderQuote, this.host.walletQuoteBalance);
-        const desiredBuyQty = availableBudget / targetLvlPrice;
+        const desiredBuyQty = availableBudget / lvlPrice;
         if (desiredBuyQty >= this.host.minQty && availableBudget >= minOrderNotional) {
           await placeRestingOrder(
             true,
-            targetLvlPrice,
+            lvlPrice,
             desiredBuyQty,
             buyTargets[i] || 1.0,
             availableBudget,

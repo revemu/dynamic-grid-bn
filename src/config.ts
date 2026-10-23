@@ -145,8 +145,8 @@ export const defaultStrategyConfig = {
   minNetProfitPct: 0.25,
   /** Breakeven/micro-profit percentage required for LH Dynamic Escape during confirmed downtrend (LH+LL) to escape safely (default 0.06%). */
   breakevenEscapeProfitPct: 0.06,
-  /** Maximum number of active resting Maker buy limit orders placed simultaneously on book (default 2, preventing flash crash waterfalls). */
-  maxActiveMakerBuys: 2,
+  /** Maximum number of active resting Maker buy limit orders placed simultaneously on book (default 5 for full grid coverage on CEX). */
+  maxActiveMakerBuys: 5,
   /** When true, dynamically lowers sell target to a confirmed Lower High (LH) formed below Sell Target 1 while holding inventory (if profitable >= minNetProfitPct). */
   enableLhDynamicEscape: true,
   /**
