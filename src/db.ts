@@ -10,6 +10,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { calculateTradeRounds, type TradeRoundsResult, type TradeRound, type TradeRoundSummary } from "./trade-rounds.js";
 
+export function formatExplorerUrl(txHash?: string): string | undefined {
+  if (!txHash) return undefined;
+  return txHash.startsWith("0x") ? `https://explorer.somnia.network/tx/${txHash}` : undefined;
+}
+
 export interface Lot {
   price: number; // entry price
   qty: number;   // base remaining
@@ -1073,7 +1078,7 @@ export class BotDatabase {
             fillTxHash: isFilled ? ro.placedTxHash : undefined,
             fillTime: isFilled ? time : undefined,
             fillPrice: isFilled ? ro.price : undefined,
-            explorerUrl: ro.placedTxHash ? `https://explorer.somnia.network/tx/${ro.placedTxHash}` : undefined,
+            explorerUrl: formatExplorerUrl(ro.placedTxHash),
           };
           this.data.orders.push(newRecord);
           modified = true;
@@ -1218,7 +1223,7 @@ export class BotDatabase {
         createTxHash: eventData.txHash,
         txHash: eventData.txHash,
         dryRun: eventData.dryRun,
-        explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+        explorerUrl: formatExplorerUrl(eventData.txHash),
         symbol: targetSymbol,
         baseAsset: targetBase,
         quoteAsset: targetQuote,
@@ -1316,7 +1321,7 @@ export class BotDatabase {
           fillTxHash: eventData.txHash,
           txHash: eventData.txHash,
           dryRun: eventData.dryRun,
-          explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+          explorerUrl: formatExplorerUrl(eventData.txHash),
           symbol: targetSymbol,
           baseAsset: targetBase,
           quoteAsset: targetQuote,
@@ -1373,7 +1378,7 @@ export class BotDatabase {
         time: now,
         txHash: eventData.txHash,
         dryRun: eventData.dryRun,
-        explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+        explorerUrl: formatExplorerUrl(eventData.txHash),
         symbol: targetSymbol,
         baseAsset: targetBase,
         quoteAsset: targetQuote,
@@ -1438,7 +1443,7 @@ export class BotDatabase {
           time: now,
           txHash: eventData.txHash,
           dryRun: eventData.dryRun,
-          explorerUrl: eventData.txHash ? `https://explorer.somnia.network/tx/${eventData.txHash}` : undefined,
+          explorerUrl: formatExplorerUrl(eventData.txHash),
           symbol: targetSymbol,
           baseAsset: targetBase,
           quoteAsset: targetQuote,
@@ -1836,7 +1841,7 @@ export class BotDatabase {
       reason: trade.reason || "Manual Entry via Trade Manager",
       time: now,
       txHash: trade.txHash,
-      explorerUrl: trade.txHash ? `https://explorer.somnia.network/tx/${trade.txHash}` : undefined,
+      explorerUrl: formatExplorerUrl(trade.txHash),
     };
 
     this.data.orders.unshift(record);

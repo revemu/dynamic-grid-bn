@@ -137,7 +137,7 @@ export class BuyOrderSynchronizer {
 
     const isTrendSupportGuarded = Boolean(this.host.cfg.enableBuyAboveTrendSupport);
     const isDowntrendBreakoutConfirmed = Boolean(
-      activeDowntrendLine && (activeDowntrendLine.breakoutConfirmed || (activeDowntrendLine.brokenCandleCount ?? 0) >= 1)
+      activeDowntrendLine && (activeDowntrendLine.breakoutConfirmed || (activeDowntrendLine.brokenCandleCount ?? 0) >= 2)
     );
 
     const effectiveBuyLevels = [...buyLevels];

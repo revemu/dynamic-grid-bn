@@ -3293,6 +3293,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.60` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 81. Strict 2-Candle Trendline Breakout Confirmation (`isBroken`) & CEX Explorer URL Isolation (`v0.2.61`)
+
+- **สาเหตุของปัญหา**:
+  1. **การปลดเส้น Trendline เร็วเกินไปบนแท่งเดียว (`totalBrokenCandles > 0`)**:
+     - ใน [`src/market-structure/trendline-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/trendline-engine.ts) ตัวแปร `isBroken` ถูกกำหนดเป็น `isConfirmedAbove || totalBrokenCandles > 0`
+     - ส่งผลให้เมื่อมีแท่งเทียนปิดทะลุเส้น Trendline เพียงแค่ **1 แท่ง** (`totalBrokenCandles === 1`) ระบบจะเซ็ตให้ `isBroken: true` ทันที ทั้งๆ ที่ตามข้อกำหนดใน [`types.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/types.ts#L62) และตัวแปร `breakoutConfirmed` ระบุว่าต้องใช้การยืนยัน **2 แท่งปิด (`>= 2 candles`)**
+     - ผลกระทบ: ทำให้สถานะหลุด `Break 1/2 bars ⏳` ถูกข้ามไป และบอทรีบยกเลิกคำสั่งขาย/ซื้อที่อิงกับ Trendline เร็วเกินไปก่อนที่แท่งเทียนจะยืนยันการเบรกเอาต์จริง
+  2. **ลิงก์ Explorer ของคำสั่ง CEX Binance ผิดพลาด**:
+     - ใน [`src/db.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/db.ts) มีการฮาร์ดโค้ด `explorerUrl: https://explorer.somnia.network/tx/${txHash}` โดยไม่ตรวจสอบ ทำให้ Order ID ที่เป็นตัวเลขของ Binance Spot CEX ถูกนำไปต่อท้าย URL ของ Somnia Explorer
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.61`)**:
+  1. **Strict 2-Candle Confirmation ใน [`src/market-structure/trendline-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/trendline-engine.ts)**:
+     - ปรับทั้ง Downtrend Line และ Uptrend Line ให้กำหนด `isBroken: breakoutConfirmed`
+     - เมื่อแท่งแรกปิดทะลุเส้น บอทจะคงสถานะ `Break 1/2 bars ⏳` โดยยังไม่ถือว่าเส้นหลุด (`isBroken === false`) และยังไม่รีบถอนคำสั่งกริด
+     - เมื่อแท่งที่ 2 ปิดยืนยันทะลุเส้นจริง (`brokenCandleCount >= 2` หรือ `maxConsecutiveBroken >= 2`) ระบบจึงจะยืนยัน `breakoutConfirmed = true` และเซ็ต `isBroken = true`
+     - ปรับเงื่อนไข `isDowntrendBreakoutConfirmed` ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts) ให้เช็ค `>= 2` ให้สอดคล้องกัน 100%
+  2. **CEX vs On-Chain Explorer URL Isolation ใน [`src/db.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/db.ts)**:
+     - เพิ่มฟังก์ชัน `formatExplorerUrl(txHash?: string)` ตรวจสอบว่า `txHash` ต้องขึ้นต้นด้วย `0x` เท่านั้นจึงจะสร้างลิงก์ Somnia Explorer
+     - หากเป็น Order ID ทั่วไปของ CEX จะไม่สร้างลิงก์ Somnia Explorer
+  3. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.61` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
