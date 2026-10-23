@@ -269,9 +269,11 @@ export class SellOrderSynchronizer {
         const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
         const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
 
-        // Partial Scale Out: When exiting at Trendline Resistance, if position is substantial (>= 25% portfolio and 50% split >= minNotional * 1.5),
+        // Partial Scale Out: When exiting at Trendline Resistance, if position is substantial (>= 40% portfolio or holding multiple tranches >= 2 lots),
         // sell 50% at Trendline to de-risk, and keep 50% for standard upper grid targets / ceiling breakout run!
-        const shouldScaleOut = currentHoldFraction >= 0.25 && (held * 0.5 * effectiveTlSellPrice) >= (minOrderNotional * 1.5);
+        // If holding a single tranche (< 40%), exit 100% at Trendline to lock profit and recover full cash!
+        const isMultipleLots = (this.host.lots?.length ?? 0) >= 2;
+        const shouldScaleOut = (isMultipleLots || currentHoldFraction >= 0.40) && (held * 0.5 * effectiveTlSellPrice) >= (minOrderNotional * 1.5);
 
         if (isProfitOk) {
           const staleStandardSells = this.host.openOrders.filter(
@@ -298,10 +300,10 @@ export class SellOrderSynchronizer {
               const qtyDiffRatio = Math.abs(existingTlSell.qty - targetSellQty) / targetSellQty;
 
               if (tlPriceDiffRatio > 0.001 || qtyDiffRatio > 0.05) {
-                await cancelOrderInternal(
-                  existingTlSell,
-                  `${resDisplayName} price updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`,
-                );
+                const cancelReason = tlPriceDiffRatio > 0.001
+                  ? `${resDisplayName} price updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`
+                  : `Rebalancing ${resDisplayName} sell quantity (${existingTlSell.qty} -> ${targetSellQty} ${this.host.baseAsset})`;
+                await cancelOrderInternal(existingTlSell, cancelReason);
                 this.host.openOrders = this.host.openOrders.filter((o) => o !== existingTlSell);
                 this.host.saveState();
 
@@ -323,6 +325,52 @@ export class SellOrderSynchronizer {
                 orderNotional,
                 tlSellName,
               );
+            }
+          }
+
+          // If Scale Out is active, place the remaining 50% at the primary upper grid sell target so 100% inventory is covered
+          if (shouldScaleOut) {
+            const remainingScaleOutQty = roundToStep(held - targetSellQty, effStepSize, this.host.qtyPrecision);
+            const upperSellIdx = enabledSells.findIndex((en, idx) => en && (sellLevels[idx] ?? 0) > effectiveResistancePrice);
+            if (upperSellIdx >= 0 && remainingScaleOutQty >= this.host.minQty) {
+              const upperSellPrice = sellLevels[upperSellIdx];
+              const upperSellName = sellNames[upperSellIdx] || `Sell Target ${upperSellIdx + 1}`;
+              const upperNotional = remainingScaleOutQty * upperSellPrice;
+
+              if (upperNotional >= minOrderNotional) {
+                const existingUpperSell = this.host.openOrders.find(
+                  (o) => !o.isBid && o !== existingTlSell && o.levelDesc === upperSellName,
+                );
+                if (existingUpperSell) {
+                  const upperPriceDiff = Math.abs(existingUpperSell.price - upperSellPrice) / upperSellPrice;
+                  const upperQtyDiff = Math.abs(existingUpperSell.qty - remainingScaleOutQty) / remainingScaleOutQty;
+                  if (upperPriceDiff > 0.001 || upperQtyDiff > 0.05) {
+                    await cancelOrderInternal(
+                      existingUpperSell,
+                      `Rebalancing upper scale-out sell at ${upperSellName} (${existingUpperSell.qty} -> ${remainingScaleOutQty})`,
+                    );
+                    this.host.openOrders = this.host.openOrders.filter((o) => o !== existingUpperSell);
+                    this.host.saveState();
+                    await placeRestingOrder(
+                      false,
+                      upperSellPrice,
+                      remainingScaleOutQty,
+                      0.0,
+                      upperNotional,
+                      upperSellName,
+                    );
+                  }
+                } else {
+                  await placeRestingOrder(
+                    false,
+                    upperSellPrice,
+                    remainingScaleOutQty,
+                    0.0,
+                    upperNotional,
+                    upperSellName,
+                  );
+                }
+              }
             }
           }
         }

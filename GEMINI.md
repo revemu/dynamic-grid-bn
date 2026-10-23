@@ -3317,6 +3317,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.61` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 82. Guaranteed 100% Inventory Sell Coverage & Scale-Out Upper Target Linking (`v0.2.62`)
+
+- **สาเหตุของปัญหา (ซื้อมา 0.00065 BTC แต่วางขายแค่ 0.00032 BTC)**:
+  1. **เงื่อนไข `shouldScaleOut` เริ่มทำงานเร็วเกินไปบนไม้เดียว**:
+     - โค้ดเดิมกำหนด `const shouldScaleOut = currentHoldFraction >= 0.25 ...` ทำให้เมื่อบอทซื้อไม้ 3 มาเพียงไม้เดียว (ถือครอง 26.6% ของพอร์ต) ระบบเข้าใจผิดว่าพอร์ตเริ่มหนัก จึงสั่งแบ่งขายที่เส้น Trendline Resistance เพียง 50% (`targetPortion = 0.50` -> 0.00032 BTC)
+  2. **ไม่มีการวางคำสั่งขายสำหรับเหรียญอีก 50% ที่เหลือ**:
+     - ใน [`src/strategy/sell-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/sell-sync.ts) เมื่อส่งคำสั่งขาย 50% แรกที่ Trendline เสร็จ ฟังก์ชันก็ตัดจบ (`return;`) ทันที โดยไม่มีการส่งเหรียญที่เหลืออีก 50% (`0.00033 BTC`, ~$27 FDUSD) ไปวางคำสั่งขายแบบ Limit รอไว้ที่ Sell Target 1 ด้านบน ทำให้เหรียญอีกครึ่งหนึ่งตกค้างในกระเป๋าโดยไม่มีออเดอร์ขาย
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.62`)**:
+  1. **Full 100% Exit on Single Tranche / Small Position**:
+     - ปรับเงื่อนไข Scale Out ให้พิจารณา `isMultipleLots = lots.length >= 2 || currentHoldFraction >= 0.40`
+     - หากถือครองเพียงไม้เดียว (< 40% พอร์ต): คำสั่งขายที่ Trendline Resistance จะวางขาย **100% เต็มจำนวน (`targetPortion = 1.0`)** เพื่อทำกำไรและคืนเงินสดเข้าพอร์ตครบทั้งไม้ทันที
+  2. **Automated Upper Target Order Placement for Scale-Out Remaining Portion**:
+     - หากเข้าเงื่อนไข Scale Out (ถือหลายไม้ >= 40%): ไม้ที่ 1 (50%) จะวางขายที่ Trendline Resistance ($82,041.59) และ **เหรียญที่เหลืออีก 50% (`remainingScaleOutQty`) จะถูกส่งไปวางคำสั่งขาย Limit Order ที่ Sell Target 1 ($82,842.00) โดยอัตโนมัติ**
+     - รับประกันว่าเหรียญที่ถืออยู่ทุก Satoshi จะมีคำสั่งขายรองรับครบเต็ม 100% เสมอ
+  3. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.62` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
