@@ -3220,6 +3220,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.57` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 78. Min Profit Clamping for Trendline Exit Orders & Maker Dip Buy Adaptation (`v0.2.58`)
+- **สาเหตุของปัญหา**:
+  1. **Order Cancellation Flapping เมื่อเส้นกดลาดลง (Trendline Sell Drift Flapping)**:
+     - ใน [`src/strategy/sell-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/sell-sync.ts): เมื่อตั้งคำสั่ง `Sell TL Exit` ไว้สำเร็จที่ราคาปลอดภัย (เช่น $82,054.51 เมื่อ Avg Entry = $81,837.00 + กำไร 0.25% = $82,041.59)
+     - เนื่องจาก Downtrend Line มีความชันลาดลง (Negative Slope) เมื่อเวลาผ่านไป ระดับราคาเส้นกดตามสมการจะค่อยๆ ลดลงตามเวลา (Time Decay) เช่น ลดลงมาที่ $82,040.42
+     - โค้ดเดิมนำราคาเส้นกดใหม่ไปเทียบกับกำไรขั้นต่ำ ($82,041.59) พบว่าต่ำกว่าไป $1.17 ทำให้ `isProfitOk` กลายเป็น `false`
+     - โค้ดเดิมสั่งยกเลิกคำสั่งขายเดิมที่ $82,054.51 ทันที ทั้งๆ ที่ออเดอร์เดิมตั้งขายในราคากำไรปลอดภัยอยู่แล้ว ส่งผลให้ออเดอร์ตั้งแล้วถูกยกเลิก (Flapping) วนลูป
+  2. **คำสั่งซื้อ Buy Level หลุด/หายไปเมื่อราคาย่อตัวต่ำกว่าเลเวลในโหมด MAKER_LIMIT (Dip Level Skipping)**:
+     - เมื่อราคาดิ่งลงมาต่ำกว่า Buy Level 4 ($81,502) มาอยู่ที่ $81,400
+     - ในโหมด `MAKER_LIMIT`: โค้ดเดิมมีเงื่อนไข `lvl <= maxAllowedBuyPrice` ($81,502 <= $81,400 เป็น `false`) ทำให้บอทตัด Buy Level 4 ออกจากการตั้งซื้อ แล้วข้ามไปตั้งเฉพาะ Buy Level 5 ($81,167)
+     - ส่งผลให้เกิดช่องว่างขนาดใหญ่ใต้เส้น TL โดยไม่มีออเดอร์ซื้อดักไว้ที่ราคาตลาดปัจจุบัน จนกระทั่งราคาดีดกลับขึ้นมาแตะ $81,502 อีกครั้ง
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.58`)**:
+  1. **Clamp TL Exit Price to Min Profit Target ใน [`src/strategy/sell-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/sell-sync.ts)**:
+     - คำนวณ `minProfitTargetPrice = avgEntry * (1 + effectiveMinProfitPct / 100)`
+     - ถ้า `rawTargetSellPrice < minProfitTargetPrice` และแนวต้านยังอยู่ใกล้เป้ากำไร ให้ Clamp ราคาขายขั้นต่ำไว้ที่ `minProfitTargetPrice` เสมอ
+     - ห้าม Cancel ออเดอร์ `existingTlSell` ถ้าตัวออเดอร์เดิมที่วางอยู่มีราคา $\ge$ `minProfitTargetPrice` อยู่แล้ว ป้องกันอาการ Flapping อย่างสมบูรณ์
+  2. **Maker Dip Buy Adaptation ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts)**:
+     - ค้นหาเลเวลซื้อที่ใกล้ที่สุดเหนือราคาตลาดปัจจุบัน (`closestDipLevelIdx`)
+     - อนุญาตให้เลเวลนั้นเข้ามาอยู่ใน `eligiblePlacableBuyIndices` และปรับราคาเสนอซื้อลงมาดักเป็น Maker ที่ `targetLvlPrice = Math.min(lvlPrice, maxAllowedBuyPrice)` (ที่ Best Bid)
+     - ป้องกันไม่ให้บอทตัดเลเวลซื้อทิ้งเมื่อราคาย่อตัวลงมาต่ำกว่าเลเวล ทำให้ตั้งรับซื้อใต้เส้น TL ได้ทันทีอย่างต่อเนื่อง
+  3. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.58` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

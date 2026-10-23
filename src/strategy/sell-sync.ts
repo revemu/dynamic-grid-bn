@@ -191,7 +191,6 @@ export class SellOrderSynchronizer {
       const allSellNames = [...sellNames, "Sell TL Exit (Trendline)", "Sell Real Ceil Exit"];
       const frontRunRatio = isUsingRealCeil ? 0.0003 : 0.0008;
       const rawTargetSellPrice = effectiveResistancePrice * (1 - frontRunRatio);
-      const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, rawTargetSellPrice), this.host.tickSize || 0.0001);
 
       const mode = this.host.cfg.sellProfitMode || (this.host.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
       const avgEntry = this.lotTracker.getAvgEntryPrice();
@@ -209,7 +208,14 @@ export class SellOrderSynchronizer {
       const effectiveMinProfitPct = isDowntrendEscape
         ? (this.host.cfg.breakevenEscapeProfitPct ?? 0.06)
         : Math.max(0.20, this.host.cfg.minNetProfitPct ?? 0.25);
-      const isProfitOk = avgEntry <= 0 || effectiveTlSellPrice >= avgEntry * (1 + effectiveMinProfitPct / 100);
+      const minProfitTargetPrice = avgEntry > 0 ? avgEntry * (1 + effectiveMinProfitPct / 100) : 0;
+
+      // Clamp target sell price to at least minProfitTargetPrice if resistance is close to target (prevents cancel/place flapping on downward trendline drift)
+      const clampedTargetSellPrice = (minProfitTargetPrice > 0 && rawTargetSellPrice < minProfitTargetPrice && minProfitTargetPrice <= effectiveResistancePrice * 1.01)
+        ? minProfitTargetPrice
+        : rawTargetSellPrice;
+      const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, clampedTargetSellPrice), this.host.tickSize || 0.0001);
+      const isProfitOk = avgEntry <= 0 || effectiveTlSellPrice >= (minProfitTargetPrice * 0.9999);
 
       let existingTlSell = this.host.openOrders.find((o) => !o.isBid && (
         o.levelDesc === resSellName ||
@@ -218,10 +224,12 @@ export class SellOrderSynchronizer {
       ));
 
       if (!isProfitOk) {
-        if (existingTlSell) {
+        // Only cancel resting TL sell if its own placed price is truly below the min profit target!
+        // If the existing order was already placed at a profitable price, KEEP IT RESTING (do not cancel on theoretical line drift).
+        if (existingTlSell && existingTlSell.price < (minProfitTargetPrice * 0.999)) {
           await cancelOrderInternal(
             existingTlSell,
-            `${resDisplayName} price ($${effectiveTlSellPrice.toFixed(4)}) drifted below minimum profit target ($${(avgEntry * (1 + effectiveMinProfitPct / 100)).toFixed(4)}) — cancelling TL sell`,
+            `${resDisplayName} price ($${effectiveTlSellPrice.toFixed(4)}) drifted below minimum profit target ($${minProfitTargetPrice.toFixed(4)}) — cancelling TL sell`,
           );
           this.host.openOrders = this.host.openOrders.filter((o) => o !== existingTlSell);
           this.host.saveState();
@@ -368,7 +376,10 @@ export class SellOrderSynchronizer {
           const tlSellName = resSellName;
           const frontRunRatio = isUsingRealCeil ? 0.0003 : 0.0008;
           const rawTargetSellPrice = effectiveResistancePrice * (1 - frontRunRatio);
-          const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, rawTargetSellPrice), this.host.tickSize || 0.0001);
+          const clampedTargetSellPrice = (minProfitTargetPrice > 0 && rawTargetSellPrice < minProfitTargetPrice && minProfitTargetPrice <= effectiveResistancePrice * 1.01)
+            ? minProfitTargetPrice
+            : rawTargetSellPrice;
+          const effectiveTlSellPrice = roundToTick(Math.max(refPrice * 1.0005, clampedTargetSellPrice), this.host.tickSize || 0.0001);
 
           if (isProfitOk && refPrice < effectiveTlSellPrice) {
             const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
