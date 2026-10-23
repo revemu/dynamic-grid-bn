@@ -4179,6 +4179,7 @@ export class DynamicGrid implements IStrategyHost {
         activeDowntrendLine: downtrendLine ?? undefined,
         activeUptrendLine: uptrendLine ?? undefined,
         uptrendBroken,
+        liveRealCeil,
       });
     } else {
       await this.buySync.syncBuyOrders({
@@ -4195,6 +4196,7 @@ export class DynamicGrid implements IStrategyHost {
         activeDowntrendLine: downtrendLine ?? undefined,
         activeUptrendLine: uptrendLine ?? undefined,
         uptrendBroken,
+        liveRealCeil,
         dow,
         cancelAllRestingOrders: (side, reason) => this.orderExecutor.cancelAllRestingOrders(side, reason),
         cancelOrderInternal: (order, reason) => this.orderExecutor.cancelOrderInternal(order, reason),

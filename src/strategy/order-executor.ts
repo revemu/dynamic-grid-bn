@@ -1353,6 +1353,7 @@ export class OrderExecutor {
     activeDowntrendLine?: any;
     activeUptrendLine?: any;
     uptrendBroken?: boolean;
+    liveRealCeil?: number;
   }): Promise<void> {
     const {
       buyLevels,
@@ -1369,6 +1370,7 @@ export class OrderExecutor {
       activeDowntrendLine,
       activeUptrendLine,
       uptrendBroken,
+      liveRealCeil,
     } = params;
 
     if (this.host.openOrders.length > 0) {
@@ -1423,8 +1425,22 @@ export class OrderExecutor {
         }
       }
 
-      // Check trendline resistance filter (if descending trendline is active, cannot buy at or above TL)
-      if (activeDowntrendLine && !activeDowntrendLine.isBroken && currentBestAsk >= activeDowntrendLine.currentLinePrice) {
+      // Check resistance profit guard (cannot buy if price is at or too close to resistance to make profit)
+      const isTlActive = (this.host.cfg.enableSellBelowTrendResistance !== false) &&
+        Boolean(activeDowntrendLine && !activeDowntrendLine.isBroken);
+      const isRealCeilActive = (this.host.cfg.enableSellAtRealCeiling !== false) &&
+        liveRealCeil !== undefined && liveRealCeil > 0 && liveRealCeil < upperBound;
+      const effectiveResPrice = (isTlActive || isRealCeilActive)
+        ? Math.min(
+            isTlActive && activeDowntrendLine ? activeDowntrendLine.currentLinePrice : Infinity,
+            isRealCeilActive && liveRealCeil ? liveRealCeil : Infinity,
+          )
+        : Infinity;
+      const minResProfitMarginPct = Math.max(0.20, this.host.cfg.minNetProfitPct ?? 0.25) + 0.10;
+      const maxAllowedBuyUnderRes = effectiveResPrice < Infinity
+        ? effectiveResPrice * (1 - minResProfitMarginPct / 100)
+        : Infinity;
+      if (currentBestAsk >= maxAllowedBuyUnderRes) {
         targetTranches = 0;
       }
 

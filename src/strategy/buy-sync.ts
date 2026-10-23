@@ -24,6 +24,7 @@ export interface SyncBuyOrdersParams {
   activeDowntrendLine?: TrendLine;
   activeUptrendLine?: TrendLine;
   uptrendBroken?: boolean;
+  liveRealCeil?: number;
   dow?: DowStructure;
   cancelAllRestingOrders: (side?: "BUY" | "SELL", reason?: string) => Promise<void>;
   cancelOrderInternal: (order: OpenOrder, reason: string) => Promise<void>;
@@ -70,6 +71,7 @@ export class BuyOrderSynchronizer {
       activeDowntrendLine,
       activeUptrendLine,
       uptrendBroken,
+      liveRealCeil,
       dow,
       cancelAllRestingOrders,
       cancelOrderInternal,
@@ -139,6 +141,25 @@ export class BuyOrderSynchronizer {
     const isDowntrendBreakoutConfirmed = Boolean(
       activeDowntrendLine && (activeDowntrendLine.breakoutConfirmed || (activeDowntrendLine.brokenCandleCount ?? 0) >= 2)
     );
+
+    // ── Resistance Profit Margin Guard (Trendline & Real Ceil) ────────────
+    const isTlActive = (this.host.cfg.enableSellBelowTrendResistance !== false) &&
+      Boolean(activeDowntrendLine && !isDowntrendBreakoutConfirmed);
+    const isRealCeilActive = (this.host.cfg.enableSellAtRealCeiling !== false) &&
+      liveRealCeil !== undefined && liveRealCeil > 0 && liveRealCeil < upperBound;
+    const hasResistanceOverride = isTlActive || isRealCeilActive;
+    const effectiveResistancePrice = hasResistanceOverride
+      ? Math.min(
+          isTlActive && activeDowntrendLine ? activeDowntrendLine.currentLinePrice : Infinity,
+          isRealCeilActive && liveRealCeil ? liveRealCeil : Infinity,
+        )
+      : Infinity;
+
+    const effectiveMinProfitPct = Math.max(0.20, this.host.cfg.minNetProfitPct ?? 0.25);
+    const minResProfitMarginPct = effectiveMinProfitPct + 0.10;
+    const maxAllowedBuyUnderRes = effectiveResistancePrice < Infinity
+      ? effectiveResistancePrice * (1 - minResProfitMarginPct / 100)
+      : Infinity;
 
     const effectiveBuyLevels = [...buyLevels];
     const effectiveLevelNames = [...levelNames];
@@ -296,7 +317,7 @@ export class BuyOrderSynchronizer {
         if (currentHoldFraction >= 0.95) {
           return false;
         }
-        if (activeDowntrendLine && !isDowntrendBreakoutConfirmed && lvl >= activeDowntrendLine.currentLinePrice * 0.998) {
+        if (effectiveResistancePrice < Infinity && lvl >= maxAllowedBuyUnderRes) {
           return false;
         }
         if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && lvl < activeUptrendLine.currentLinePrice * 0.998) {
@@ -410,8 +431,13 @@ export class BuyOrderSynchronizer {
           cancelReason = isIntraCandleWaterfallActive
             ? `Intra-candle waterfall guard: price dumping post-buy — cancelling deep buy (${o.levelDesc}) until candle stabilizes`
             : `Buy fill cooldown: waiting ${Math.ceil((buyFillCooldownMs - (Date.now() - this.host.lastBuyFillTime)) / 1000)}s before placing deep buy (${o.levelDesc})`;
-        } else if (activeDowntrendLine && !isDowntrendBreakoutConfirmed && o.price >= activeDowntrendLine.currentLinePrice * 0.998) {
-          cancelReason = `Trendline resistance filter: buy @ $${o.price.toFixed(6)} >= TL $${activeDowntrendLine.currentLinePrice.toFixed(6)} — suppressed until breakout confirmed by closed candle`;
+        } else if (effectiveResistancePrice < Infinity && o.price >= maxAllowedBuyUnderRes) {
+          const marginPct = ((effectiveResistancePrice - o.price) / o.price) * 100;
+          const isTl = isTlActive && activeDowntrendLine && effectiveResistancePrice === activeDowntrendLine.currentLinePrice;
+          const resDisplayName = isTl ? "Trendline" : "Real S/R Ceil";
+          cancelReason = o.price >= effectiveResistancePrice
+            ? `${resDisplayName} resistance filter: buy @ $${o.price.toFixed(4)} >= ${resDisplayName} $${effectiveResistancePrice.toFixed(4)} — suppressed until breakout`
+            : `${resDisplayName} profit guard: buy @ $${o.price.toFixed(4)} too close to ${resDisplayName} $${effectiveResistancePrice.toFixed(4)} (margin ${marginPct.toFixed(2)}% < min ${minResProfitMarginPct.toFixed(2)}%) — suppressed until breakout`;
         } else if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && o.price < activeUptrendLine.currentLinePrice * 0.998) {
           cancelReason = `Trend support filter: buy @ $${o.price.toFixed(6)} < Support TL $${activeUptrendLine.currentLinePrice.toFixed(6)} — cancelled to prevent below-TL fill`;
         } else if (currentHoldFraction >= 0.95) {

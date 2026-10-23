@@ -3337,6 +3337,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.62` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 83. Dynamic Resistance Profit Margin Guard for Buy Levels (`v0.2.63`)
+
+- **สาเหตุของปัญหา (แนวซื้ออยู่ใกล้เส้นกด Downtrend Resistance จนทำกำไรไม่ได้)**:
+  1. **ระยะห่างแคบเกินกว่าจะทำกำไรขั้นต่ำได้**:
+     - เมื่อมีเส้นกด Downtrend Resistance (หรือ Real Ceiling) กดลงมาใกล้กับระดับแนวซื้อ (เช่น Buy Level 3 @ $81,837 ขณะที่เส้นกดอยู่ที่ $82,011.61) ระยะห่างระหว่างราคาซื้อกับเส้นกดมีเพียง **`+0.21%`**
+     - ระยะนี้ **น้อยกว่าเกณฑ์กำไรสุทธิขั้นต่ำที่ระบบต้องการ (`minNetProfitPct = 0.25%` + Buffer ค่าธรรมเนียม)**
+     - ส่งผลให้เมื่อบอทซื้อที่ราคานี้แล้ว จะไม่สามารถตั้งขายทำกำไรที่เส้นกดได้ และจำเป็นต้องดันราคาขายขึ้นไปอยู่ *เหนือเส้นกด* (เช่น $82,041.59) ซึ่งหากราคาเด้งมาชนแค่เส้นกดแล้วร่วงต่อ ออเดอร์ขายนี้จะไม่ถูกจับคู่ ทำให้เกิดภาวะติดดอย
+  2. **เงื่อนไขกรองในโค้ดเดิมแคบเกินไป (`lvl >= TL * 0.998`)**:
+     - ในโค้ดเดิมกำหนดกรองไว้เพียง `lvl >= TL * 0.998` ซึ่งคิดเป็นระยะห่างเพียงแค่ 0.20% ทำให้ Buy Level 3 ไม่ถูกตัดออก
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.63`)**:
+  1. **Dynamic Resistance Profit Margin Guard ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts) และ [`src/strategy/order-executor.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/order-executor.ts)**:
+     - คำนวณระยะกำไรขั้นต่ำรวม Buffer: `minResProfitMarginPct = Math.max(0.20, minNetProfitPct) + 0.10%` (~0.35%)
+     - คำนวณราคาซื้อสูงสุดที่อนุญาตใต้แนวต้าน: `maxAllowedBuyUnderRes = effectiveResistancePrice * (1 - minResProfitMarginPct / 100)`
+     - หาก Buy Level ใดมีราคา `lvl >= maxAllowedBuyUnderRes` (ระยะห่างถึงแนวต้านน้อยกว่ากำไรขั้นต่ำ):
+       👉 **ระบบจะตัดสิทธิ์และยกเลิกคำสั่งซื้อในแนวนั้นทันที** พร้อมระบุเหตุผล `Trendline profit guard: buy too close to TL (margin < min profit target) — suppressed until breakout`
+     - งบประมาณจะถูกกระจายลงไปยังแนวซื้อถัดไปที่มีระยะปลอดภัยและทำกำไรได้เต็มเม็ดเต็มหน่วย (เช่น Buy Level 4 @ $81,502 และ Buy Level 5 @ $81,167 ที่มีระยะห่าง $> +0.65\%$)
+     - เมื่อราคาเบรกเอาต์ทะลุผ่านเส้นกดและยืนยันแท่งเทียน 2 แท่งแล้ว แนวซื้อที่เคยถูกระงับจะกลับมาเปิดใช้งานตามปกติ
+  2. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.63` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
