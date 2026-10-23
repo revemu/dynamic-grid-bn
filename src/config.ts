@@ -113,8 +113,10 @@ export const defaultStrategyConfig = {
   enableBuyLevel2Recovery: true,
   /** When true, only places buy orders strictly above ascending Trend Support line and pauses buying if support breaks. */
   enableBuyAboveTrendSupport: false,
-  /** When true, automatically liquidates 100% inventory to cash and pauses buying (waits for Higher Low reversal) if price breaks below ascending Trend Support line. Default true. */
+  /** When true, pauses opening new buy orders (waits for Higher Low reversal or reclaim) if price breaks below ascending Trend Support line. Default true. */
   enableExitOnTrendSupportBreak: true,
+  /** When true, immediately liquidates 100% inventory to cash on trend support break. Default false (retains inventory and waits for reversal or 0% Floor cut). */
+  liquidateOnTrendSupportBreak: false,
   /** When true, only places sell orders strictly below descending Trendline Resistance. */
   enableSellBelowTrendResistance: false,
   /** When true, enables selling at the real frame (Real S/R Ceil) when it adjusts down, choosing the lower price between trendline and real ceiling. Default true. */
@@ -307,6 +309,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.breakevenEscapeProfitPct !== undefined) merged.breakevenEscapeProfitPct = Number(saved.breakevenEscapeProfitPct);
       if (saved.maxActiveMakerBuys !== undefined) merged.maxActiveMakerBuys = Number(saved.maxActiveMakerBuys);
       if (saved.enableExitOnTrendSupportBreak !== undefined) merged.enableExitOnTrendSupportBreak = Boolean(saved.enableExitOnTrendSupportBreak);
+      if (saved.liquidateOnTrendSupportBreak !== undefined) merged.liquidateOnTrendSupportBreak = Boolean(saved.liquidateOnTrendSupportBreak);
       if (saved.buySizingMode === "EQUAL" || saved.buySizingMode === "PYRAMID") {
         merged.buySizingMode = saved.buySizingMode;
       }

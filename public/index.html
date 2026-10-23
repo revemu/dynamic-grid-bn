@@ -939,11 +939,22 @@
 
               <div class="form-group switch-group">
                 <div class="switch-label-group">
-                  <span class="switch-title">🛡️ ขายล้างพอร์ตเมื่อหลุดเส้นรับ (Exit on Trend Support Break)</span>
-                  <span class="switch-desc">ขายเหรียญทิ้งหมด 100% เป็นเงินสดทันทีเมื่อราคาหลุดเส้น Uptrend Support ยกเลิกไม้ซื้อ และรอกลับตัว (HL Reversal)</span>
+                  <span class="switch-title">🛡️ หยุดซื้อเมื่อหลุดเส้นรับ (Pause Buys on Trend Support Break)</span>
+                  <span class="switch-desc">ยกเลิกไม้ซื้อและหยุดซื้อชั่วคราวเมื่อราคาหลุดเส้น Uptrend Support เพื่อไม่รับมีดตก ถือไม้เดิมไว้และรอยกตัว (HL / Reclaim)</span>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="cfg_enableExitOnTrendSupportBreak" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="form-group switch-group">
+                <div class="switch-label-group">
+                  <span class="switch-title">⚡ ขายล้างพอร์ตทันทีเมื่อหลุดเส้นรับ (Liquidate on Trend Support Break)</span>
+                  <span class="switch-desc">เทขายเหรียญทิ้งทั้งหมด 100% เป็นเงินสดทันทีเมื่อราคาหลุดเส้นรับ (ค่าเริ่มต้น: ปิด ไม่เทขาย ถือรอฟื้นตัวหรือคัทที่ 0% Floor)</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_liquidateOnTrendSupportBreak" />
                   <span class="slider"></span>
                 </label>
               </div>

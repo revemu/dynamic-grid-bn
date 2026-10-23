@@ -100,14 +100,31 @@ export class RiskManager {
       const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
       if (this.host.baseHeld() >= dustThreshold) {
         const dexBid = bestBid ?? effectiveMid;
-        this.host.log(
-          `🚨 [TREND SUPPORT BREAK] Price ($${refPrice.toFixed(6)}) broke below Support Trendline ($${uptrendLine.currentLinePrice.toFixed(6)}) — Liquidating 100% (${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset}) to ${this.host.quoteAsset} to prevent holding crash knife!`,
-        );
-        if (this.host.openOrders.length > 0) {
-          await cancelAllRestingOrders();
+        const shouldLiquidate = Boolean(this.host.cfg.liquidateOnTrendSupportBreak);
+        if (shouldLiquidate) {
+          this.host.log(
+            `🚨 [TREND SUPPORT BREAK] Price ($${refPrice.toFixed(6)}) broke below Support Trendline ($${uptrendLine.currentLinePrice.toFixed(6)}) — Liquidating 100% (${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset}) to ${this.host.quoteAsset} to prevent holding crash knife!`,
+          );
+          if (this.host.openOrders.length > 0) {
+            await cancelAllRestingOrders();
+          }
+          await sellAll(dexBid, "CUT");
+          this.host.lastCutLossTime = Date.now();
+          this.host.postCutSingleTrancheOnly = true;
+          this.host.iocBracketSellCycle = undefined;
+          this.host.stuckSince = undefined;
+          this.host.lastBuyFillTime = 0;
+          this.host.lastBuyFillPrice = 0;
+          this.host.lastBuyFillCandleTime = 0;
+        } else {
+          this.host.log(
+            `🛡️ [TREND SUPPORT BREAK] Price ($${refPrice.toFixed(6)}) broke below Support Trendline ($${uptrendLine.currentLinePrice.toFixed(6)}) — Cancelling resting buys and pausing new accumulation. Holding ${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset} to avoid panic selling; waiting for Higher Low reversal or reclaim!`,
+          );
+          const openBuys = this.host.openOrders.filter((o) => o.isBid);
+          if (openBuys.length > 0) {
+            await cancelAllRestingOrders("BUY", "Trend Support Broken — Cancel buys to avoid catching crash knife");
+          }
         }
-        await sellAll(dexBid, "CUT");
-        this.host.lastCutLossTime = Date.now();
         this.host.waitingForHigherLow = true;
         this.host.isFlatChannelShiftWaiting = false;
         this.host.isTrendSupportExitActive = true;
@@ -123,12 +140,6 @@ export class RiskManager {
         this.host.cutLossStage1Executed = false;
         this.host.cutLossStage1Price = undefined;
         this.host.cutLossStage1CandleTime = undefined;
-        this.host.postCutSingleTrancheOnly = true;
-        this.host.iocBracketSellCycle = undefined;
-        this.host.stuckSince = undefined;
-        this.host.lastBuyFillTime = 0;
-        this.host.lastBuyFillPrice = 0;
-        this.host.lastBuyFillCandleTime = 0;
         this.host.breakdownCandleTimes.clear();
         this.host.saveState();
         return true;

@@ -610,6 +610,7 @@ export class DynamicGrid implements IStrategyHost {
       iocSlippagePct: this.cfg.iocSlippagePct ?? 0.35,
       enableBuyAboveTrendSupport: this.cfg.enableBuyAboveTrendSupport !== false,
       enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
+      liquidateOnTrendSupportBreak: Boolean(this.cfg.liquidateOnTrendSupportBreak),
       enableSellBelowTrendResistance: this.cfg.enableSellBelowTrendResistance !== false,
       enableSellAtRealCeiling: this.cfg.enableSellAtRealCeiling !== false,
       sellProfitMode: this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"),
@@ -3459,10 +3460,14 @@ export class DynamicGrid implements IStrategyHost {
       const isFlatWait = this.isFlatChannelShiftWaiting;
       if (this.isTrendSupportExitActive) {
         const supPriceStr = this.trendSupportBreakPrice ? `$${this.trendSupportBreakPrice.toFixed(this.pricePrecision)}` : "Support TL";
+        const dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6;
+        const isHolding = this.baseHeld() >= dustThreshold;
         botActionState = {
           code: "TREND_SUPPORT_BROKEN",
-          title: "🛡️ Trend Support Broken (100% Cash)",
-          reason: `Support broke (${supPriceStr}) • Liquidated to Cash`,
+          title: isHolding ? "🛡️ Trend Support Broken (Holding & Buys Paused)" : "🛡️ Trend Support Broken (100% Cash)",
+          reason: isHolding
+            ? `Support broke (${supPriceStr}) • Buys Paused to Avoid Knife`
+            : `Support broke (${supPriceStr}) • 100% Cash Preserved`,
           nextTrigger: `Paused: Waiting Reversal / Higher Low > $${dumpLow.toFixed(this.pricePrecision)} or Stand > Buy L2 ($${effectiveBuyLevel2Target.toFixed(this.pricePrecision)})`,
           severity: "warning",
         };
@@ -3851,6 +3856,7 @@ export class DynamicGrid implements IStrategyHost {
           expireTime: o.expireTime,
         })),
         enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
+        liquidateOnTrendSupportBreak: Boolean(this.cfg.liquidateOnTrendSupportBreak),
         breakevenEscapeProfitPct: this.cfg.breakevenEscapeProfitPct ?? 0.06,
         maxActiveMakerBuys: this.cfg.maxActiveMakerBuys ?? 2,
         isBelowFloor,

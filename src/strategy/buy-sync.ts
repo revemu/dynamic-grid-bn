@@ -135,6 +135,8 @@ export class BuyOrderSynchronizer {
       activeUptrendLine.currentLinePrice < sellLevel1Limit
     );
 
+    const isTrendSupportGuarded = (this.host.cfg.enableBuyAboveTrendSupport !== false) || (this.host.cfg.enableExitOnTrendSupportBreak !== false);
+
     const effectiveBuyLevels = [...buyLevels];
     const effectiveLevelNames = [...levelNames];
 
@@ -294,7 +296,7 @@ export class BuyOrderSynchronizer {
         if (activeDowntrendLine && !activeDowntrendLine.isBroken && lvl >= activeDowntrendLine.currentLinePrice) {
           return false;
         }
-        if (this.host.cfg.enableBuyAboveTrendSupport !== false && isTlAboveBuyTarget && idx > 0 && activeUptrendLine && lvl < activeUptrendLine.currentLinePrice * 0.995) {
+        if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && lvl < activeUptrendLine.currentLinePrice * 0.998) {
           return false;
         }
         if (isLlContinuationBreakdown && structuralBreakdownLow && lvl < structuralBreakdownLow.price * 1.0005) {
@@ -398,8 +400,8 @@ export class BuyOrderSynchronizer {
             : `Buy fill cooldown: waiting ${Math.ceil((buyFillCooldownMs - (Date.now() - this.host.lastBuyFillTime)) / 1000)}s before placing deep buy (${o.levelDesc})`;
         } else if (activeDowntrendLine && !activeDowntrendLine.isBroken && o.price >= activeDowntrendLine.currentLinePrice) {
           cancelReason = `Trendline resistance filter: buy @ $${o.price.toFixed(6)} >= TL $${activeDowntrendLine.currentLinePrice.toFixed(6)} — suppressed`;
-        } else if (this.host.cfg.enableBuyAboveTrendSupport !== false && isTlAboveBuyTarget && activeUptrendLine && o.price < activeUptrendLine.currentLinePrice * 0.995) {
-          cancelReason = `Trend support filter: buy @ $${o.price.toFixed(6)} < Support TL $${activeUptrendLine.currentLinePrice.toFixed(6)} — suppressed while above TL`;
+        } else if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && o.price < activeUptrendLine.currentLinePrice * 0.998) {
+          cancelReason = `Trend support filter: buy @ $${o.price.toFixed(6)} < Support TL $${activeUptrendLine.currentLinePrice.toFixed(6)} — cancelled to prevent below-TL fill`;
         } else if (currentHoldFraction >= 0.95) {
           cancelReason = `Portfolio capacity full (${(currentHoldFraction * 100).toFixed(1)}%) — cancelling ${o.levelDesc}`;
         }

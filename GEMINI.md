@@ -3125,6 +3125,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.53` ใน `package.json`, `src/version.ts`, `public/index.html` (`style.css?v=2.4`, `app.js?v=3.28`) และ `GEMINI.md`
 
+---
+
+### 74. Trend Support Break Pause-and-Observe Architecture (`v0.2.54`)
+- **สาเหตุของปัญหา (ซื้อแล้ว Cut Loss ทันทีทั้งสองตัว)**:
+  1. **ความขัดแย้งของตรรกะในระบบ (Panic Sell on Trend Support Break vs Below-TL Buys)**:
+     - เมื่อเปิดใช้งาน `enableExitOnTrendSupportBreak = true` โค้ดเดิมใน `src/strategy/risk-manager.ts` ถูกออกแบบมาให้สั่ง `sellAll(..., "CUT")` เทขายล้างพอร์ต 100% ทันทีที่แท่งเทียน 15M ปิดหลุดเส้นเฉียง Uptrend Support Line
+     - แต่ใน `src/strategy/buy-sync.ts` กลับไม่มีการบล็อกการวางออเดอร์ซื้อใต้เส้นรับเฉียง (มีเงื่อนไข `isTlAboveBuyTarget` ล็อกไว้ ซึ่งจะทำงานเฉพาะเมื่อเส้นรับอยู่สูงกว่า Buy Level 1 เท่านั้น)
+     - ส่งผลให้บอทวางออเดอร์ซื้อไม้ล่างๆ (เช่น Buy L3 บน SOMI ที่ $0.17180 หรือ Buy L4 บน BTC ที่ $81,502) ที่อยู่ใต้เส้นรับเฉียง
+     - เมื่อราคาหย่อนลงมาจับคู่ซื้อปุ๊บ แล้วแท่งเทียนปิดใต้เส้นรับเฉียง Risk Manager จึงเข้าใจว่าหลุดแนวรับ และสั่ง Cut Loss เทขายทิ้งทันที เกิดอาการซื้อปุ๊บ คัทปั๊บ ขาดทุนค่าคอมและเสียเหรียญที่ก้นกรอบ ทั้งๆ ที่ราคายังอยู่ห่างจาก 0% Channel Floor อีกมาก
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.54`)**:
+  1. **สถาปัตยกรรมหยุดซื้อรอดูอาการ (Pause Buys & Observe, Retain Inventory)**:
+     - ใน [`src/strategy/risk-manager.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/risk-manager.ts):
+       - เมื่อราคาหลุดเส้น Uptrend Support ให้สั่ง **ยกเลิกคำสั่งซื้อทั้งหมดทันที (`cancelAllRestingOrders("BUY")`)** เพื่อไม่ให้ไปรับมีดตก
+       - **ไม่ขายเหรียญในมือทิ้ง (ไม่ Cut Loss)**: ถือครองเหรียญไม้เดิมไว้ตามปกติ เพื่อไม่ให้เกิดการขาดทุนฟรีจากการสะบัดของเส้นเฉียง (Whipsaw)
+       - สลับเข้าสู่สถานะ `waitingForHigherLow = true` และ `isTrendSupportExitActive = true` เพื่อเฝ้าระวังและติดตามจุดต่ำสุด (`breakdownLowPrice`)
+       - รองรับออปชัน `liquidateOnTrendSupportBreak` (ค่าเริ่มต้น: `false`) เผื่อกรณีที่ผู้ใช้ต้องการให้เทขายล้างพอร์ตทันที
+  2. **บล็อกคำสั่งซื้อใต้เส้นรับเฉียงอย่างเข้มงวด ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts)**:
+     - ตราบใดที่เปิด `enableBuyAboveTrendSupport` หรือ `enableExitOnTrendSupportBreak` และเส้นรับเฉียงยังทำงานอยู่ (`!activeUptrendLine.isBroken`) บอทจะ **ไม่อนุญาตให้วางคำสั่งซื้อใดๆ ที่อยู่ต่ำกว่าเส้นรับเฉียง (`lvl < activeUptrendLine.currentLinePrice * 0.998`)** และสั่งยกเลิกคำสั่งซื้อที่ค้างอยู่ใต้เส้นรับเฉียงทันที
+  3. **การกลับตัวและเริ่มเทรดใหม่โดยอัตโนมัติ (Reversal Recovery Engine)**:
+     - หากราคาไหลแรงจนหลุด 0% Channel Floor: ระบบ `evaluateCutLoss` ของกรอบ Floor จะทำหน้าที่ตัดขาดทุนรักษาเงินต้นตามปกติ
+     - หากราคาไหลไม่เยอะและมียกตัว (เกิด Dow Higher Low `HL`, หรือปิดยืนเหนือ Buy Level 2, หรือทะลุ Downtrend Line Breakout): ระบบจะปลดล็อก `waitingForHigherLow = false` และกลับมาเปิดรับซื้อตามรอบกริดอย่างปลอดภัย โดยที่เหรียญเดิมที่ถืออยู่ก็ยังอยู่ครบ นำไปขายทำกำไรที่เป้า Take Profit ด้านบนได้ตามปกติ
+  4. **อัปเดต UI Web Dashboard ใน [`public/index.html`](file:///c:/Sites/github/dynamic-grid-bn/public/index.html) & [`public/app.js`](file:///c:/Sites/github/dynamic-grid-bn/public/app.js)**:
+     - ปรับชื่อสวิตช์เป็น `🛡️ หยุดซื้อเมื่อหลุดเส้นรับ (Pause Buys on Trend Support Break)`
+     - เพิ่มสวิตช์ `⚡ ขายล้างพอร์ตทันทีเมื่อหลุดเส้นรับ (Liquidate on Trend Support Break)` (Default: ปิด)
+     - ปรับป้ายสถานะ Banner: `🛡️ Trend Support Broken (Holding & Buys Paused)`
+  5. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.54` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 
