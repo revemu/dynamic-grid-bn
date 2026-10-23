@@ -205,7 +205,7 @@ export class SellOrderSynchronizer {
       );
       const drawdownPct = avgEntry > 0 ? ((avgEntry - refPrice) / avgEntry) * 100 : 0;
       const isHeavyDrawdown = Boolean(drawdownPct >= 2.0 && currentHoldFraction >= 0.60);
-      const isDowntrendEscape = Boolean(isDowntrendActive || isStuckPosition || isHeavyDrawdown);
+      const isDowntrendEscape = Boolean(isHeavyDrawdown || isStuckPosition);
       const effectiveMinProfitPct = isDowntrendEscape
         ? (this.host.cfg.breakevenEscapeProfitPct ?? 0.06)
         : Math.max(0.20, this.host.cfg.minNetProfitPct ?? 0.25);
@@ -258,13 +258,20 @@ export class SellOrderSynchronizer {
           this.host.log(`🔗 [RES SELL] Re-linked resting SELL order #${existingTlSell.onChainOrderId || existingTlSell.id} @ $${existingTlSell.price.toFixed(6)} to ${tlSellName}`);
         }
 
+        const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
+        const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
+
+        // Partial Scale Out: When exiting at Trendline Resistance, if position is substantial (>= 25% portfolio and 50% split >= minNotional * 1.5),
+        // sell 50% at Trendline to de-risk, and keep 50% for standard upper grid targets / ceiling breakout run!
+        const shouldScaleOut = currentHoldFraction >= 0.25 && (held * 0.5 * effectiveTlSellPrice) >= (minOrderNotional * 1.5);
+
         if (isProfitOk) {
           const staleStandardSells = this.host.openOrders.filter(
-            (o) => !o.isBid && o !== existingTlSell && o.levelDesc && sellNames.includes(o.levelDesc),
+            (o) => !o.isBid && o !== existingTlSell && o.levelDesc && sellNames.includes(o.levelDesc) && (!shouldScaleOut || o.price <= effectiveResistancePrice),
           );
           if (staleStandardSells.length > 0) {
             for (const o of staleStandardSells) {
-              await cancelOrderInternal(o, `${resDisplayName} override: cancelling standard grid sells — switching to ${resDisplayName} sell`);
+              await cancelOrderInternal(o, `${resDisplayName} override: cancelling standard grid sells below resistance — switching to ${resDisplayName} sell`);
             }
             this.host.openOrders = this.host.openOrders.filter((o) => !staleStandardSells.includes(o));
             this.host.saveState();
@@ -273,9 +280,8 @@ export class SellOrderSynchronizer {
 
         const isBelowSellPrice = refPrice < effectiveTlSellPrice;
         if (isProfitOk && isBelowSellPrice && held >= this.host.minQty) {
-          const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
-          const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
-          const targetSellQty = roundToStep(held, effStepSize, this.host.qtyPrecision);
+          const targetPortion = shouldScaleOut ? 0.50 : 1.0;
+          const targetSellQty = roundToStep(held * targetPortion, effStepSize, this.host.qtyPrecision);
           const orderNotional = targetSellQty * effectiveTlSellPrice;
 
           if (targetSellQty >= this.host.minQty && orderNotional >= minOrderNotional) {

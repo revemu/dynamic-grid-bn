@@ -3154,6 +3154,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.54` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 75. Fast Rebound Reclaim, Early Candle Action & Trendline Scale Out (`v0.2.55`)
+- **สาเหตุของปัญหา**:
+  1. **การยืนยันยกตัวกลับมาช้าเกินไป (Lagging 45 นาที)**:
+     - เมื่อเกิดจุดต่ำสุด (เช่น $81,278.01) เกณฑ์เดิมต้องรอสวิง Dow ปิดครบ 3 แท่งขวา (45 นาที) หรือต้องรอให้ราคาพุ่งขึ้นไปสูงถึง Buy Level 2 ($82,172 หรือ +1.10% จากก้น)
+     - ทำให้บอทแช่อยู่ในสถานะ Pause นานเกินไป พลาดจุดซื้อที่ดีที่สุดที่ก้นกรอบ
+  2. **ขายออกใต้เส้นกดกำไรสั้นเกินไป (+0.06%)**:
+     - `isDowntrendEscape` เดิมเปิดใช้งานเมื่อไหร่ก็ตามที่เกิดคลื่นขาลง ทำให้เกณฑ์กำไรขั้นต่ำถูกกดลงเหลือ `breakevenEscapeProfitPct` (0.06%) แม้จะถือไม้เล็กๆ แค่ 1 ไม้
+  3. **เทขายก้อนเดียว 100% ที่เส้นกด (All-at-once Exit)**:
+     - เมื่อราคาแตะเส้นกด บอทจะเทขายเหรียญทิ้งทั้งหมด 100% ทำให้หากราคาทะลุเบรกเอาท์ขึ้นไปหาเพดานด้านบน จะไม่มีเหรียญเหลือไปขายทำกำไรคำใหญ่
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.55`)**:
+  1. **Dynamic Rebound Reclaim ใน [`src/strategy/risk-manager.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/risk-manager.ts)**:
+     - หากแท่งเทียนปิดเขียวและยืนเหนือจุดต่ำสุดของการทุบ (`trackedLow`) ได้ $\ge +0.35\%$ บอทจะปลดล็อก `waitingForHigherLow = false` และกลับมาเปิดรับซื้อตามรอบกริดทันที โดยไม่ต้องรอให้พุ่งไปถึง Buy Level 2 ข้างบน
+  2. **Early Price Action Reversal ใน [`src/strategy/risk-manager.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/risk-manager.ts)**:
+     - ตรวจจับแท่งเทียนกลับตัว Price Action: **Bullish Engulfing (แท่งเขียวกลืนกินแท่งแดง)** หรือ **Rejection Hammer / Pinbar (ไส้ล่างยาว $\ge 45\%$ ปิดเขียว)** เหนือก้นเหว ช่วยให้ปลดล็อกการกลับตัวได้ภายใน 1-2 แท่งเทียน
+  3. **Min Net Profit Guard ใน [`src/strategy/sell-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/sell-sync.ts)**:
+     - จำกัดการลดกำไรลงเหลือ 0.06% เฉพาะกรณีฉุกเฉินจริง (Drawdown $\ge 2\%$ และถือของ $\ge 60\%$) หากเป็นไม้ปกติจะบังคับกำไรสุทธิขั้นต่ำ $\ge 0.20\%$ เสมอ
+  4. **Partial Scale Out บนเส้นกด Trendline Resistance ใน [`src/strategy/sell-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/sell-sync.ts)**:
+     - เมื่อถือเหรียญ $\ge 25\%$ ของพอร์ต ให้แบ่งขายทำกำไรที่เส้นกดเพียง **50%** เพื่อลดความเสี่ยง และคงเหลืออีก **50%** ไว้ลุ้นขายทำกำไรที่เป้าหมายกริดด้านบนหรือเพดาน Ceiling หากเกิดการเบรกเอาท์
+  5. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.55` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

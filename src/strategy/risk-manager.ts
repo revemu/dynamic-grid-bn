@@ -466,6 +466,51 @@ export class RiskManager {
       refPrice >= trackedLow * 1.002,
     );
 
+    // 1.5 Dynamic Rebound Reclaim: Confirmed Closed Candle closed green & standing >= +0.35% above dump low
+    const reboundThresholdPct = 0.35;
+    const isDynamicReboundReclaimed = Boolean(
+      !isBelowFloor &&
+      confirmedLastClosed &&
+      confirmedLastClosed.close >= confirmedLastClosed.open * 0.9995 && // Green/neutral body
+      confirmedLastClosed.close >= trackedLow * (1 + reboundThresholdPct / 100) &&
+      refPrice >= trackedLow * (1 + (reboundThresholdPct * 0.8) / 100) &&
+      refPrice > lowerBound
+    );
+
+    // 1.6 Early Price Action Reversal: Bullish Engulfing or Hammer / Pinbar Rejection off the dump low
+    const isEarlyCandleReversal = Boolean(
+      !isBelowFloor &&
+      closedCandlesList.length >= 2 &&
+      (() => {
+        const curr = closedCandlesList[closedCandlesList.length - 1];
+        const prev = closedCandlesList[closedCandlesList.length - 2];
+        if (!curr || !prev) return false;
+        if (curr.close < trackedLow * 1.002) return false;
+
+        const range = curr.high - curr.low;
+        if (range <= 0) return false;
+
+        // Pattern A: Bullish Engulfing off bottom
+        const isBullishEngulfing =
+          prev.close < prev.open && // Prev was red
+          curr.close > curr.open && // Curr is green
+          curr.close >= prev.open * 0.9995 && // Engulfs prior open
+          curr.open <= prev.close * 1.0005 &&
+          curr.close >= trackedLow * 1.003;
+
+        // Pattern B: Strong Hammer / Pinbar Rejection
+        const lowerWick = Math.min(curr.open, curr.close) - curr.low;
+        const lowerWickRatio = lowerWick / range;
+        const isPinbarRejection =
+          lowerWickRatio >= 0.45 && // Lower wick >= 45% of bar
+          curr.close >= curr.open * 0.9995 && // Bullish or neutral body
+          curr.close >= prev.close * 0.9995 &&
+          curr.close >= trackedLow * 1.0025;
+
+        return isBullishEngulfing || isPinbarRejection;
+      })()
+    );
+
     // 2. Resolve via Trendline Breakout (>= 2 confirmed candles)
     const isTlBreakoutResolved = Boolean(
       !isBelowFloor &&
@@ -497,6 +542,15 @@ export class RiskManager {
     } else if (isCandleStandingAboveBuy2) {
       resolveRecovery(
         `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle $${confirmedLastClosed!.close.toFixed(6)} >= Buy Level 2 $${effectiveBuyLevel2Target.toFixed(6)}) — Breakdown resolved, enabling recovery entry!`,
+      );
+    } else if (isDynamicReboundReclaimed) {
+      const gainPct = ((confirmedLastClosed!.close - trackedLow) / trackedLow) * 100;
+      resolveRecovery(
+        `🚀 DYNAMIC REBOUND RECLAIM CONFIRMED @ $${refPrice.toFixed(6)} (Closed green $${confirmedLastClosed!.close.toFixed(6)} +${gainPct.toFixed(2)}% >= +${reboundThresholdPct}% above dump low $${trackedLow.toFixed(6)}) — Breakdown resolved, enabling accumulation!`,
+      );
+    } else if (isEarlyCandleReversal) {
+      resolveRecovery(
+        `🕯️ EARLY CANDLE REVERSAL CONFIRMED @ $${refPrice.toFixed(6)} (Bullish Engulfing/Hammer off dump low $${trackedLow.toFixed(6)}) — Early reversal confirmed, enabling accumulation!`,
       );
     } else if (isTlBreakoutResolved) {
       const brokenCount = dow?.downtrendLine?.brokenCandleCount ?? 2;
