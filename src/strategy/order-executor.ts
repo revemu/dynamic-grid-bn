@@ -1398,7 +1398,7 @@ export class OrderExecutor {
       let matchedBuyPrice: number | undefined;
 
       const isTlAboveBuyTarget = Boolean(
-        (this.host.cfg.enableBuyAboveTrendSupport !== false) &&
+        Boolean(this.host.cfg.enableBuyAboveTrendSupport) &&
         activeUptrendLine &&
         !activeUptrendLine.isBroken &&
         refPrice >= activeUptrendLine.currentLinePrice * 0.995 &&

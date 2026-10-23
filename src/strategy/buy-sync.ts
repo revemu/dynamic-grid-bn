@@ -127,7 +127,7 @@ export class BuyOrderSynchronizer {
 
     // Check if Uptrend Support Line is active and sits above standard enabled buy targets
     const isTlAboveBuyTarget = Boolean(
-      (this.host.cfg.enableBuyAboveTrendSupport !== false) &&
+      Boolean(this.host.cfg.enableBuyAboveTrendSupport) &&
       activeUptrendLine &&
       !activeUptrendLine.isBroken &&
       refPrice >= activeUptrendLine.currentLinePrice * 0.995 &&
@@ -135,7 +135,7 @@ export class BuyOrderSynchronizer {
       activeUptrendLine.currentLinePrice < sellLevel1Limit
     );
 
-    const isTrendSupportGuarded = (this.host.cfg.enableBuyAboveTrendSupport !== false) || (this.host.cfg.enableExitOnTrendSupportBreak !== false);
+    const isTrendSupportGuarded = Boolean(this.host.cfg.enableBuyAboveTrendSupport);
     const isDowntrendBreakoutConfirmed = Boolean(
       activeDowntrendLine && (activeDowntrendLine.breakoutConfirmed || (activeDowntrendLine.brokenCandleCount ?? 0) >= 1)
     );

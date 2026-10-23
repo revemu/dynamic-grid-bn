@@ -3653,7 +3653,7 @@
       setCheck("cfg_dowTrendFilter", data.dowTrendFilter);
       setCheck("cfg_trendlineFilter", data.trendlineFilter);
       setCheck("cfg_enableBuyLevel2Recovery", data.enableBuyLevel2Recovery !== false);
-      setCheck("cfg_enableBuyAboveTrendSupport", data.enableBuyAboveTrendSupport !== false);
+      setCheck("cfg_enableBuyAboveTrendSupport", Boolean(data.enableBuyAboveTrendSupport));
       setCheck("cfg_enableExitOnTrendSupportBreak", data.enableExitOnTrendSupportBreak !== false);
       setCheck("cfg_liquidateOnTrendSupportBreak", Boolean(data.liquidateOnTrendSupportBreak));
       setCheck("cfg_enableSellBelowTrendResistance", data.enableSellBelowTrendResistance !== false);

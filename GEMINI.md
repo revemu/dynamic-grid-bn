@@ -3269,6 +3269,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.59` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 80. Decoupling Trend Support Break from Below-Support Buys & Restoring Buy Level 5 (`v0.2.60`)
+
+- **สาเหตุของปัญหา (Buy Level 5 ไม่ถูกวางคำสั่งซื้อ)**:
+  1. **การผูกเงื่อนไขผิดพลาดใน `isTrendSupportGuarded` (`src/strategy/buy-sync.ts`)**:
+     - ในโค้ดเดิมมีเงื่อนไข `const isTrendSupportGuarded = (this.host.cfg.enableBuyAboveTrendSupport !== false) || (this.host.cfg.enableExitOnTrendSupportBreak !== false);`
+     - เนื่องจากฟังก์ชันความปลอดภัย `enableExitOnTrendSupportBreak` เปิดใช้งานเป็น `true` โดยเริ่มต้น (เพื่อรับมือกรณีแท่งเทียนทุบหลุดเส้นเฉียง) การนำมาเชื่อมด้วย `||` ทำให้ตัวแปร `isTrendSupportGuarded` ถูกบังคับเป็น `true` ตลอดเวลา แม้ว่าการตั้งค่า `enableBuyAboveTrendSupport` บนเซิร์ฟเวอร์จะปิดเป็น `false` ก็ตาม
+  2. **คำสั่งซื้อ Buy Level 5 ($81,167) ถูกคัดทิ้งอย่างไม่ถูกต้อง**:
+     - เมื่อมีเส้นรับขาขึ้น Uptrend Support Line อยู่ที่ $81,404.57 และ `isTrendSupportGuarded === true` ระบบจะคัดกรองว่า `lvl < activeUptrendLine.currentLinePrice * 0.998` ($81,167 < $81,241.76) ทำให้ Buy Level 5 ถูกคัดออกจาก `eligibleBuyIndices`
+     - งบประมาณ $200 ทั้งหมดจึงถูกเทกระจายไปให้เฉพาะ Level 3 ($88.38) และ Level 4 ($110.84) จนเกลี้ยงวงเงิน และไม่มีการวางคำสั่งซื้อดักที่ Buy Level 5 บริเวณฐาน Floor ($81,100)
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.60`)**:
+  1. **Decouple `isTrendSupportGuarded` ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts)**:
+     - ปลดล็อค `isTrendSupportGuarded = Boolean(this.host.cfg.enableBuyAboveTrendSupport)` อย่างแท้จริง โดยไม่นำ `enableExitOnTrendSupportBreak` มาผูกมัด
+     - `enableExitOnTrendSupportBreak` จะทำหน้าที่เฉพาะเมื่อราคา "หลุดเส้นเฉียงจริง" ผ่าน `risk-manager.ts` และ `isTrendSupportExitActive` เท่านั้น ไม่ใช่การห้ามวางคำสั่งซื้อปกติใต้เส้นเฉียงในขณะที่ราคายังอยู่ด้านบน
+  2. **Boolean Type Normalization ทั่วทั้งระบบ**:
+     - ปรับการอ่านค่า `enableBuyAboveTrendSupport` ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts), [`src/strategy/order-executor.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/order-executor.ts), [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts), [`src/config.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/config.ts) และ [`public/app.js`](file:///c:/Sites/github/dynamic-grid-bn/public/app.js) ให้ใช้ `Boolean(cfg.enableBuyAboveTrendSupport)` อย่างสม่ำเสมอ เพื่อเคารพค่าเริ่มต้น `false`
+  3. **วางคำสั่งซื้อครบทุกระดับใต้ราคาอย่างสมบูรณ์**:
+     - เมื่อราคาอยู่ที่ ~$82,015 คำสั่งซื้อใต้ราคาทั้งหมด (Buy Level 3 @ $81,837, Buy Level 4 @ $81,502 และ Buy Level 5 @ $81,167) จะถูกวางพร้อมกันครบทั้ง 3 ไม้
+     - งบ $200 ถูกกระจายตามน้ำหนัก Pyramid อย่างสมดุล: Level 3 (~$53.33), Level 4 (~$66.67), Level 5 (~$80.00)
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.60` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

@@ -608,7 +608,7 @@ export class DynamicGrid implements IStrategyHost {
       enableSellAboveBuyLevel1: this.cfg.enableSellAboveBuyLevel1 !== false,
       orderExecutionMode: this.cfg.orderExecutionMode ?? "IOC_BRACKET",
       iocSlippagePct: this.cfg.iocSlippagePct ?? 0.35,
-      enableBuyAboveTrendSupport: this.cfg.enableBuyAboveTrendSupport !== false,
+      enableBuyAboveTrendSupport: Boolean(this.cfg.enableBuyAboveTrendSupport),
       enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
       liquidateOnTrendSupportBreak: Boolean(this.cfg.liquidateOnTrendSupportBreak),
       enableSellBelowTrendResistance: this.cfg.enableSellBelowTrendResistance !== false,
@@ -3324,7 +3324,7 @@ export class DynamicGrid implements IStrategyHost {
     const downtrendLine = dow?.downtrendLine;
     const trendlineFiltered = Boolean(this.cfg.trendlineFilter && this.waitingForHigherLow && downtrendLine && !downtrendLine.isBroken);
     const uptrendBroken = Boolean(
-      (this.cfg.enableBuyAboveTrendSupport !== false) &&
+      Boolean(this.cfg.enableBuyAboveTrendSupport) &&
       ((uptrendLine && (uptrendLine.isBroken || refPrice < uptrendLine.currentLinePrice)) ||
       dow?.uptrendBreakdownConfirmed)
     );
@@ -3354,7 +3354,7 @@ export class DynamicGrid implements IStrategyHost {
     let tlBuyPrice: number | undefined;
     const sellLevel1Cap = sellLevels[0] ?? upperBound;
     if (
-      (this.cfg.enableBuyAboveTrendSupport !== false) &&
+      Boolean(this.cfg.enableBuyAboveTrendSupport) &&
       uptrendLine &&
       !uptrendLine.isBroken &&
       refPrice >= uptrendLine.currentLinePrice * 0.995 &&

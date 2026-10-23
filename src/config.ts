@@ -308,6 +308,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.minNetProfitPct !== undefined) merged.minNetProfitPct = Number(saved.minNetProfitPct);
       if (saved.breakevenEscapeProfitPct !== undefined) merged.breakevenEscapeProfitPct = Number(saved.breakevenEscapeProfitPct);
       if (saved.maxActiveMakerBuys !== undefined) merged.maxActiveMakerBuys = Number(saved.maxActiveMakerBuys);
+      if (saved.enableBuyAboveTrendSupport !== undefined) merged.enableBuyAboveTrendSupport = Boolean(saved.enableBuyAboveTrendSupport);
       if (saved.enableExitOnTrendSupportBreak !== undefined) merged.enableExitOnTrendSupportBreak = Boolean(saved.enableExitOnTrendSupportBreak);
       if (saved.liquidateOnTrendSupportBreak !== undefined) merged.liquidateOnTrendSupportBreak = Boolean(saved.liquidateOnTrendSupportBreak);
       if (saved.buySizingMode === "EQUAL" || saved.buySizingMode === "PYRAMID") {
