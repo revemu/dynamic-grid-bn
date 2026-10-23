@@ -3372,7 +3372,7 @@ export class DynamicGrid implements IStrategyHost {
 
     // ── Triangle Squeeze / Trendline Convergence Detection ────────────────────
     const enableSqueezeExit = this.cfg.enableTriangleSqueezeExit ?? true;
-    const squeezeSpreadThreshold = this.cfg.triangleSqueezeSpreadPct ?? 1.0;
+    const squeezeSpreadThreshold = this.cfg.triangleSqueezeSpreadPct ?? 1.5;
     const minTradeableWidth = this.cfg.minTradeableChannelWidthPct ?? this.cfg.minChannelWidthPct ?? 2.0;
     const currentChannelWidthPct = gridZone?.zoneWidthPct ?? (lowerBound > 0 ? ((upperBound - lowerBound) / lowerBound) * 100 : 0);
 
@@ -3553,13 +3553,24 @@ export class DynamicGrid implements IStrategyHost {
         severity: "warning",
       };
     } else if (this.isSqueezePaused) {
+      const tlResStr = downtrendLine ? `$${downtrendLine.currentLinePrice.toFixed(this.pricePrecision)}` : "Res";
+      const tlSupStr = uptrendLine ? `$${uptrendLine.currentLinePrice.toFixed(this.pricePrecision)}` : "Sup";
+      let squeezeTriggerStr = "";
+      if (isConverging && downtrendLine && uptrendLine) {
+        squeezeTriggerStr = `Wait Breakout > ${tlResStr} or Breakdown < ${tlSupStr}`;
+      } else if (currentChannelWidthPct < minTradeableWidth) {
+        squeezeTriggerStr = `Wait channel expansion >= ${minTradeableWidth.toFixed(1)}%`;
+      } else {
+        squeezeTriggerStr = `Wait Breakout > ${tlResStr} or Breakdown < ${tlSupStr}`;
+      }
+
       botActionState = {
         code: "TRIANGLE_SQUEEZE_STANDBY",
         title: "🔺 Triangle Squeeze Standby",
         reason: isConverging
           ? `Trendlines converging (Spread ${tlSpreadPct.toFixed(2)}% <= ${squeezeSpreadThreshold.toFixed(1)}%)`
           : `Channel width ${currentChannelWidthPct.toFixed(2)}% < ${minTradeableWidth.toFixed(1)}% tradeable threshold`,
-        nextTrigger: `Waiting channel expansion >= ${minTradeableWidth.toFixed(1)}%`,
+        nextTrigger: squeezeTriggerStr,
         severity: "warning",
       };
     } else if (isTlBuyTrigger && tlBuyPrice !== undefined) {

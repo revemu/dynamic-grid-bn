@@ -184,7 +184,7 @@ export class TrendlineEngine {
 
           const confirmedLastCandle = candles[n - 1]?.isClosed === true ? candles[n - 1] : candles[n - 2];
           const isConfirmedAbove = Boolean(confirmedLastCandle && confirmedLastCandle.close > currentLinePrice * 1.0005);
-          const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
+          const breakoutConfirmed = (maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2) && isConfirmedAbove;
 
           if (breakoutConfirmed) {
             downtrendBreakoutConfirmed = true;
@@ -347,7 +347,7 @@ export class TrendlineEngine {
 
           const confirmedLastCandle = candles[n - 1]?.isClosed === true ? candles[n - 1] : candles[n - 2];
           const isConfirmedBelow = Boolean(confirmedLastCandle && confirmedLastCandle.close < currentLinePrice * 0.9995);
-          const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
+          const breakoutConfirmed = (maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2) && isConfirmedBelow;
 
           if (breakoutConfirmed) {
             uptrendBreakdownConfirmed = true;

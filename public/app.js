@@ -3660,7 +3660,7 @@
       setCheck("cfg_enableSellAtRealCeiling", data.enableSellAtRealCeiling !== false);
       setVal("cfg_sellProfitMode", data.sellProfitMode || (data.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"));
       setCheck("cfg_enableTriangleSqueezeExit", data.enableTriangleSqueezeExit !== false);
-      setVal("cfg_triangleSqueezeSpreadPct", data.triangleSqueezeSpreadPct ?? 1.0);
+      setVal("cfg_triangleSqueezeSpreadPct", data.triangleSqueezeSpreadPct ?? 1.5);
       setVal("cfg_minTradeableChannelWidthPct", data.minTradeableChannelWidthPct ?? 2.0);
       setVal("cfg_orderExecutionMode", data.orderExecutionMode || "IOC_BRACKET");
       setVal("cfg_iocSlippagePct", data.iocSlippagePct ?? 0.35);

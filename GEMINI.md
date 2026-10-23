@@ -3360,6 +3360,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.63` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 84. Trendline Active Reclaim & Squeeze Standby Trigger Clarity (`v0.2.64`)
+
+- **สาเหตุและจุดที่ปรับปรุง**:
+  1. **Strict Active Reclaim & Fake Breakout Protection ใน [`src/market-structure/trendline-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/trendline-engine.ts)**:
+     - ในโค้ดเดิม `breakoutConfirmed` คิดเพียง `maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2` โดยไม่ได้บังคับว่าแท่งเทียนที่ปิดล่าสุด (`confirmedLastCandle`) จะต้องยังคงยืนอยู่ข้ามเส้น (`isConfirmedAbove` / `isConfirmedBelow`)
+     - หากในอดีตเคยมีแท่งเทียน 2 แท่งที่แลบข้ามเส้นไปแล้วราคาทุบกลับเข้ามาในกรอบ (Fakeout) เส้นเทรนด์ไลน์จะยังคงค้างสถานะว่าถูกทำลายไปแล้ว (`isBroken = true`)
+     - **การแก้ไข**: บังคับให้ `breakoutConfirmed` ต้องมี `&& isConfirmedAbove` (สำหรับ Downtrend Line) และ `&& isConfirmedBelow` (สำหรับ Uptrend Line) เพื่อรองรับกรณีราคากลับเข้ามาในกรอบ (Reclaim) และป้องกัน Fakeout ได้ 100%
+  2. **Dashboard Dynamic Next-Trigger Levels ใน [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts)**:
+     - ปรับปรุงแถบสถานะแบนเนอร์ `🔺 Triangle Squeeze Standby` ให้แสดงราคาเป้าหมายจริงที่กำลังรอเบรกเอาต์ เช่น:
+       - DEX (SOMI): `Wait Breakout > $0.1767 (Res) or Breakdown < $0.1742 (Sup)`
+       - CEX (BTC): `Wait Breakout > $82,045 (Res) or Breakdown < $81,550 (Sup)`
+       แทนข้อความเดิมที่ขึ้นคงที่ว่า `Waiting channel expansion >= 2.5%` ทั้งที่ความกว้างของกรอบปัจจุบันกว้างเกิน 2.5% อยู่แล้ว
+  3. **Default `triangleSqueezeSpreadPct` เป็น 1.5% ใน [`src/config.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/config.ts)**:
+     - ปรับค่าเริ่มต้นของระยะบีบตัวของสามเหลี่ยมจาก `1.0%` เป็น `1.5%` เพื่อให้เหมาะสมกับแท่งเทียน 15m ของตลาดคริปโต และตรงกับการตั้งค่าที่เหมาะสมบนกระดานจริง
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.64` ใน `package.json`, `src/version.ts`, `public/app.js` และ `GEMINI.md`
+
+
 
 
 

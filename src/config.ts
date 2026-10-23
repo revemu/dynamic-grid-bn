@@ -187,8 +187,8 @@ export const defaultStrategyConfig = {
   // ── Triangle Squeeze / Trendline Convergence ────────────────────────────
   /** When true, liquidates position to cash and pauses when support and resistance trendlines converge. */
   enableTriangleSqueezeExit: false,
-  /** Minimum spread (%) between resistance and support trendlines before triggering squeeze exit (default 1.0%). */
-  triangleSqueezeSpreadPct: 1.0,
+  /** Minimum spread (%) between resistance and support trendlines before triggering squeeze exit (default 1.5%). */
+  triangleSqueezeSpreadPct: 1.5,
   /** Minimum channel width (%) required to resume trading after a squeeze exit (default 2.0%). */
   minTradeableChannelWidthPct: 2.0,
 
