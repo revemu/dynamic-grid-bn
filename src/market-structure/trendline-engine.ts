@@ -168,9 +168,10 @@ export class TrendlineEngine {
           for (let i = bestP2.index + 1; i < n; i++) {
             const c = candles[i];
             if (!c) continue;
+            // Strict Confirmed Candle Breakout: Only count fully closed candles as confirmed broken candles!
+            if (i === n - 1 && c.isClosed !== true) continue;
             const lineVal = bestP1.price + bestSlope * (c.time - bestP1.time);
-            const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
-            if (testPrice > lineVal * 1.0005) {
+            if (c.close > lineVal * 1.0005) {
               totalBrokenCandles++;
               consecutiveBrokenCandles++;
               if (consecutiveBrokenCandles > maxConsecutiveBroken) {
@@ -181,8 +182,8 @@ export class TrendlineEngine {
             }
           }
 
-          const latestCandleTestPrice = Math.max(currentPrice, candles[n - 1]?.close ?? currentPrice);
-          const isCurrentlyAbove = latestCandleTestPrice > currentLinePrice * 1.0005;
+          const confirmedLastCandle = candles[n - 1]?.isClosed === true ? candles[n - 1] : candles[n - 2];
+          const isConfirmedAbove = Boolean(confirmedLastCandle && confirmedLastCandle.close > currentLinePrice * 1.0005);
           const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
 
           if (breakoutConfirmed) {
@@ -194,7 +195,7 @@ export class TrendlineEngine {
             p2: bestP2,
             slope: bestSlope,
             currentLinePrice,
-            isBroken: isCurrentlyAbove || totalBrokenCandles > 0,
+            isBroken: isConfirmedAbove || totalBrokenCandles > 0,
             breakoutPct: ((currentPrice - currentLinePrice) / currentLinePrice) * 100,
             brokenCandleCount: totalBrokenCandles,
             breakoutConfirmed,
@@ -330,9 +331,10 @@ export class TrendlineEngine {
           for (let i = bestV2.index + 1; i < n; i++) {
             const c = candles[i];
             if (!c) continue;
+            // Strict Confirmed Candle Breakout: Only count fully closed candles as confirmed broken candles!
+            if (i === n - 1 && c.isClosed !== true) continue;
             const lineVal = bestV1.price + bestSlope * (c.time - bestV1.time);
-            const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
-            if (testPrice < lineVal * 0.9995) {
+            if (c.close < lineVal * 0.9995) {
               totalBrokenCandles++;
               consecutiveBrokenCandles++;
               if (consecutiveBrokenCandles > maxConsecutiveBroken) {
@@ -343,8 +345,8 @@ export class TrendlineEngine {
             }
           }
 
-          const latestCandleTestPrice = Math.min(currentPrice, candles[n - 1]?.close ?? currentPrice);
-          const isCurrentlyBelow = latestCandleTestPrice < currentLinePrice * 0.9995;
+          const confirmedLastCandle = candles[n - 1]?.isClosed === true ? candles[n - 1] : candles[n - 2];
+          const isConfirmedBelow = Boolean(confirmedLastCandle && confirmedLastCandle.close < currentLinePrice * 0.9995);
           const breakoutConfirmed = maxConsecutiveBroken >= 2 || totalBrokenCandles >= 2;
 
           if (breakoutConfirmed) {
@@ -356,7 +358,7 @@ export class TrendlineEngine {
             p2: bestV2,
             slope: bestSlope,
             currentLinePrice,
-            isBroken: isCurrentlyBelow || totalBrokenCandles > 0,
+            isBroken: isConfirmedBelow || totalBrokenCandles > 0,
             breakoutPct: ((currentLinePrice - currentPrice) / currentLinePrice) * 100,
             brokenCandleCount: totalBrokenCandles,
             breakoutConfirmed,

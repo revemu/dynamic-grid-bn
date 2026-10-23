@@ -136,6 +136,9 @@ export class BuyOrderSynchronizer {
     );
 
     const isTrendSupportGuarded = (this.host.cfg.enableBuyAboveTrendSupport !== false) || (this.host.cfg.enableExitOnTrendSupportBreak !== false);
+    const isDowntrendBreakoutConfirmed = Boolean(
+      activeDowntrendLine && (activeDowntrendLine.breakoutConfirmed || (activeDowntrendLine.brokenCandleCount ?? 0) >= 1)
+    );
 
     const effectiveBuyLevels = [...buyLevels];
     const effectiveLevelNames = [...levelNames];
@@ -293,7 +296,7 @@ export class BuyOrderSynchronizer {
         if (currentHoldFraction >= 0.95) {
           return false;
         }
-        if (activeDowntrendLine && !activeDowntrendLine.isBroken && lvl >= activeDowntrendLine.currentLinePrice) {
+        if (activeDowntrendLine && !isDowntrendBreakoutConfirmed && lvl >= activeDowntrendLine.currentLinePrice * 0.998) {
           return false;
         }
         if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && lvl < activeUptrendLine.currentLinePrice * 0.998) {
@@ -398,8 +401,8 @@ export class BuyOrderSynchronizer {
           cancelReason = isIntraCandleWaterfallActive
             ? `Intra-candle waterfall guard: price dumping post-buy — cancelling deep buy (${o.levelDesc}) until candle stabilizes`
             : `Buy fill cooldown: waiting ${Math.ceil((buyFillCooldownMs - (Date.now() - this.host.lastBuyFillTime)) / 1000)}s before placing deep buy (${o.levelDesc})`;
-        } else if (activeDowntrendLine && !activeDowntrendLine.isBroken && o.price >= activeDowntrendLine.currentLinePrice) {
-          cancelReason = `Trendline resistance filter: buy @ $${o.price.toFixed(6)} >= TL $${activeDowntrendLine.currentLinePrice.toFixed(6)} — suppressed`;
+        } else if (activeDowntrendLine && !isDowntrendBreakoutConfirmed && o.price >= activeDowntrendLine.currentLinePrice * 0.998) {
+          cancelReason = `Trendline resistance filter: buy @ $${o.price.toFixed(6)} >= TL $${activeDowntrendLine.currentLinePrice.toFixed(6)} — suppressed until breakout confirmed by closed candle`;
         } else if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && o.price < activeUptrendLine.currentLinePrice * 0.998) {
           cancelReason = `Trend support filter: buy @ $${o.price.toFixed(6)} < Support TL $${activeUptrendLine.currentLinePrice.toFixed(6)} — cancelled to prevent below-TL fill`;
         } else if (currentHoldFraction >= 0.95) {

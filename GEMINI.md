@@ -3198,6 +3198,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.56` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 77. Strict Confirmed Closed Candle Trendline Breakout Architecture (`v0.2.57`)
+- **สาเหตุของปัญหา (บอทรีบปลดล็อกเส้นกด Downtrend Line จากไส้เทียน แล้วเข้าซื้อที่ยอดไส้เทียน)**:
+  1. **ตรวจจับการทะลุเส้นกดจากราคา Real-time ชั่วคราว (Intra-candle wick breakout)**:
+     - ใน `src/market-structure/trendline-engine.ts`: ตัวแปร `isCurrentlyAbove` ใช้ `latestCandleTestPrice > currentLinePrice * 1.0005` ซึ่งอิงจาก `Math.max(currentPrice, ...)`
+     - ทันทีที่ราคาแลบไส้เทียนข้ามเส้นกด (เช่น แหย่แตะ $81,840 ตอน 08:47 น.) ตัวแปร `isBroken` จะกลายเป็น `true` ทันที แม้ว่าแท่ง 15M จะยังไม่ปิดแท่ง
+  2. **`buy-sync.ts` ปลดล็อกการซื้อเหนือเส้นกดทันทีที่ `isBroken = true`**:
+     - เมื่อ `isBroken = true` โค้ดใน `buy-sync.ts` ถือว่าเส้นกดถูกทำลายแล้ว จึงยอมให้ส่งคำสั่งซื้อ Buy Level 3 ที่ราคา $81,837 (ซึ่งอยู่สูงกว่าเส้นกด $81,797)
+     - ส่งผลให้บอทเข้าซื้อที่ปลายยอดของไส้เทียน ($81,837) ก่อนที่ราคาจะทุบรูดกลับลงมาปิดแท่งเทียนใต้เส้นกด ($81,735) กลายเป็น False Breakout ติดดอยกลางอากาศ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.57`)**:
+  1. **นับการทะลุเส้นกดเฉพาะแท่งเทียนที่ปิดสมบูรณ์แล้ว ใน [`src/market-structure/trendline-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/trendline-engine.ts)**:
+     - การนับ `brokenCandleCount` และ `isBroken` สำหรับ Downtrend Line (และ Uptrend Line) จะนับเฉพาะแท่งเทียนที่ปิดสมบูรณ์แล้วเท่านั้น (`c.isClosed === true && c.close > lineVal * 1.0005`)
+     - ไส้เทียนของแท่งที่กำลังวิ่งอยู่ (Live candle) จะ **ไม่ถูกนำมานับ** เป็นแท่งทะลุเด็ดขาด
+  2. **บังคับ `isDowntrendBreakoutConfirmed` ก่อนอนุญาตให้ซื้อเหนือเส้นกด ใน [`src/strategy/buy-sync.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/buy-sync.ts)**:
+     - ตราบใดที่ยังไม่มีแท่งเทียนปิดยืนเหนือเส้นกดจริง (`!isDowntrendBreakoutConfirmed` ซึ่งต้องมีแท่งปิดเหนือเส้นกดอย่างน้อย 1 แท่ง หรือ `breakoutConfirmed`):
+       - บอทจะ **ห้ามวางคำสั่งซื้อใดๆ ที่ระดับราคา $\ge$ เส้นกด Downtrend Line (`lvl >= activeDowntrendLine.currentLinePrice * 0.998`) โดยเด็ดขาด**
+       - และคำสั่งซื้อเดิมที่ค้างอยู่ $\ge$ เส้นกดจะถูกยกเลิก (Suppressed) ทันที เพื่อป้องกันไม่ให้ไปดักซื้อชนเพดานของเส้นกด
+  3. **Typecheck & Version Bump**:
+     - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.57` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 
