@@ -153,14 +153,16 @@ export class DowStructureEngine {
     lastHh?: SwingPoint,
     lastLl?: SwingPoint,
     annotatedSwings?: DowSwingPoint[],
+    customCandles?: Candle[],
   ): {
     downtrendLine?: TrendLine;
     uptrendLine?: TrendLine;
     downtrendBreakoutConfirmed?: boolean;
     uptrendBreakdownConfirmed?: boolean;
   } {
+    const candlesToUse = customCandles ?? this.candleManager.getCandles();
     return TrendlineEngine.calculateTrendlines(
-      this.candleManager.getCandles(),
+      candlesToUse,
       this.swingHighs,
       this.swingLows,
       this.candleManager.getStructureLookback(),
@@ -310,6 +312,7 @@ export class DowStructureEngine {
       lastHh,
       lastLl,
       waveCycle.annotatedSwings,
+      candles,
     );
 
     // 7. Downtrend Drop Detection

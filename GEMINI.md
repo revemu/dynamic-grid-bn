@@ -3380,6 +3380,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.64` ใน `package.json`, `src/version.ts`, `public/app.js` และ `GEMINI.md`
 
+---
+
+### 85. Confirmed Closed Candles Only Trendline Calculation & Jitter Elimination (`v0.2.65`)
+
+- **สาเหตุของปัญหา (เทรนด์ไลน์ขยับสลับยอดไปมาตามแท่งเทียนปัจจุบันที่ยังไม่ปิด & เข้าซื้อผิดจังหวะที่ยอดแท่งเทียน)**:
+  1. **การนำ `currentPrice` และแท่งเทียนสดที่ยังไม่ปิดมาคิดคะแนน 1,000 คะแนน**:
+     - ใน [`src/market-structure/trendline-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/trendline-engine.ts#L118) โค้ดเดิมมีการนำแท่งเทียน `i === n - 1` (Live Candle) และ `currentPrice` มานับการแตะ/หลุดเทรนด์ไลน์
+     - เมื่อราคา Real-time ขยับขึ้นหรือลงเพียงเล็กน้อย สถานะ `isUnbroken` จะพลิกไปมา ทำให้คะแนนลดลง/เพิ่มขึ้นถึง **1,000 คะแนน** ส่งผลให้เส้นเทรนด์ไลน์สลับคู่ยอด-เหว (P1, P2) ไปมาแบบสดๆ ตลอดเวลา
+  2. **`useOnlyClosedCandles: false` ถูกฮาร์ดโค้ดใน Main Loop**:
+     - ใน [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts#L2591) ตอนดึง `liveDow` ทุก 1 วินาที มีการส่ง `useOnlyClosedCandles: false` ทำให้เส้นเทรนด์ไลน์ถูกวาดใหม่ตาม Noise ของราคาสด
+  3. **หลุด Squeeze Standby และตั้งซื้อที่ยอดแท่งเทียน ($82,172)**:
+     - เมื่อแท่งเทียนพุ่งทำไส้ขึ้นไป การที่เทรนด์ไลน์คำนวณตามราคาสดทำให้เข้าใจผิดว่าเบรกเอาต์แล้ว บอทจึงปลดล็อก Standby ก่อนแท่งปิด และรีบวางคำสั่ง Buy Level 2 ที่ $82,172 จนโดน Match ติดดอยตอนแท่งเทียนทุบกลืนกินลงมา
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.65`)**:
+  1. **Confirmed Closed Candles Only ใน [`src/market-structure/trendline-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/trendline-engine.ts)**:
+     - ในลูปค้นหาและให้คะแนนเทรนด์ไลน์ (ทั้ง Downtrend และ Uptrend) บังคับข้ามแท่งเทียนที่ยังไม่ปิด (`if (i === n - 1 && c.isClosed !== true) continue;`)
+     - ตัดการใช้ `currentPrice` และการตรวจสอบ Envelope บนแท่งเทียนสด เพื่อให้คะแนนและความชันของเส้นเทรนด์ไลน์นิ่งสนิท 100% ตราบใดที่แท่งเทียน 15m ยังไม่ปิด
+  2. **ส่งต่อ `useOnlyClosedCandles` อย่างถูกต้อง**:
+     - ใน [`src/market-structure/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/index.ts#L162) และ [`src/strategy/index.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/index.ts#L2591) ส่งต่อ `candles` (Closed Candles) เข้าสู่ `calculateTrendlines` เมื่อเปิด `adjustChannelOnClosedOnly: true`
+  3. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.65` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

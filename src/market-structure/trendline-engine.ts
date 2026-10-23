@@ -104,6 +104,8 @@ export class TrendlineEngine {
           for (let i = p1.index; i < n; i++) {
             const c = candles[i];
             if (!c) continue;
+            // Ignore live unclosed candle during envelope & touch scoring to prevent jitter
+            if (i === n - 1 && c.isClosed !== true) continue;
             const lineVal = p1.price + slope * (c.time - p1.time);
             const effHigh = getEffectiveHigh(c, useTrueWick, wickThresholdPct);
             // Between P1 and P2, no candle close or effective high may pierce above the resistance envelope
@@ -115,8 +117,7 @@ export class TrendlineEngine {
               candleTouches++;
             }
             if (i > p2.index) {
-              const testPrice = i === n - 1 ? Math.max(currentPrice, c.close) : c.close;
-              if (testPrice > lineVal * 1.0005) {
+              if (c.close > lineVal * 1.0005) {
                 postP2BrokenCandles++;
                 consecutiveBroken++;
                 if (consecutiveBroken > maxConsecutiveBroken) maxConsecutiveBroken = consecutiveBroken;
@@ -270,6 +271,8 @@ export class TrendlineEngine {
           for (let i = v1.index; i < n; i++) {
             const c = candles[i];
             if (!c) continue;
+            // Ignore live unclosed candle during envelope & touch scoring to prevent jitter
+            if (i === n - 1 && c.isClosed !== true) continue;
             const lineVal = v1.price + slope * (c.time - v1.time);
             const effLow = getEffectiveLow(c, useTrueWick, wickThresholdPct);
             // Between V1 and V2, no candle close or effective low may deeply violate the support envelope
@@ -281,8 +284,7 @@ export class TrendlineEngine {
               candleTouches++;
             }
             if (i > v2.index) {
-              const testPrice = i === n - 1 ? Math.min(currentPrice, c.close) : c.close;
-              if (testPrice < lineVal * 0.9995) {
+              if (c.close < lineVal * 0.9995) {
                 postV2BrokenCandles++;
                 consecutiveBroken++;
                 if (consecutiveBroken > maxConsecutiveBroken) maxConsecutiveBroken = consecutiveBroken;
@@ -293,7 +295,7 @@ export class TrendlineEngine {
           }
           if (violates) continue;
 
-          const isUnbroken = maxConsecutiveBroken < 2 && postV2BrokenCandles < 2 && currentPrice >= currentLinePrice * 0.998;
+          const isUnbroken = maxConsecutiveBroken < 2 && postV2BrokenCandles < 2;
           const isActiveFloorAnchor = Boolean(activeValley && v1.index === activeValley.index);
           // Prioritize unbroken active lines, activeValley anchor, recent v2, swing touches, and candle touches
           const score =

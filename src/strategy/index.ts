@@ -2588,7 +2588,7 @@ export class DynamicGrid implements IStrategyHost {
         narrowChannelSellBufferPct: this.cfg.narrowChannelSellBufferPct,
         buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
         sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
-        useOnlyClosedCandles: false,
+        useOnlyClosedCandles: adjustOnClosedOnly,
       });
 
       dow = liveDow ?? this.confirmedChannel!.dow;
