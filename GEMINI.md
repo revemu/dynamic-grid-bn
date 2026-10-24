@@ -3649,6 +3649,18 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.76` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
+---
+
+### 97. Dynamic Strategy Hot-Swapping (`v0.2.77`)
+
+- **การสลับกลยุทธ์แบบ Hot-Swap ขณะบอทรันอยู่ (`src/index.ts`)**:
+  - ปรับตัวแปร `let grid: IStrategy` ใน `src/index.ts` ให้รองรับการสลับกลยุทธ์ทันทีเมื่อได้รับค่า `s.strategyType` ที่เปลี่ยนไปจากหน้า Dashboard Settings หรือ API
+  - ทำการยกเลิกคำสั่งค้างเดิมของกลยุทธ์เก่าอย่างปลอดภัย (`await grid.cancelAllOrdersUser()`) จากนั้นสร้างอินสแตนซ์ของกลยุทธ์ใหม่ (`grid = createStrategy(...)`) และเชื่อมต่อ Event Stream กับ Telemetry เข้ากับ Dashboard แบบ Real-time ทันทีโดยไม่ต้องรีสตาร์ท Process
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ปรับเวอร์ชันเป็น `v0.2.77` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
+
+
 
 
 

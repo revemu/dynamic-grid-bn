@@ -245,7 +245,7 @@ async function main(): Promise<void> {
       `trendFilter=${config.dowTrendFilter} (${config.trendTimeframe})`,
   );
 
-  const grid: IStrategy = createStrategy(config.strategyType, {
+  let grid: IStrategy = createStrategy(config.strategyType, {
     exchange,
     symbolInfo,
     config,
@@ -428,6 +428,32 @@ async function main(): Promise<void> {
           throw err;
         } finally {
           grid.setSwitchingSymbol(false);
+        }
+      }
+
+      // 3. Handle Strategy Type switch dynamically (e.g. Dynamic Grid <-> Swing Trade)
+      if (s.strategyType && s.strategyType !== prevConfig.strategyType) {
+        log(`🔄 [STRATEGY SWITCH] Switching active strategy from ${prevConfig.strategyType || "dynamic_grid"} to ${s.strategyType}...`);
+        try {
+          await grid.cancelAllOrdersUser();
+          grid = createStrategy(s.strategyType, {
+            exchange,
+            symbolInfo,
+            config: { ...grid.getRuntimeConfig(), strategyType: s.strategyType },
+            atrSource: atrSource!,
+            log,
+            macroDowEngine,
+            localTrendEngine,
+            htfDowEngine,
+          });
+          grid.onEvent((event) => {
+            dashboard.broadcast(event.type, event.data);
+          });
+          await grid.syncOnChainOrders();
+          grid.emitTelemetryTick();
+          log(`✅ [STRATEGY SWITCH] Active strategy is now: ${grid.name} (${grid.strategyType})`);
+        } catch (stratErr) {
+          log(`⚠️ Failed to switch strategy dynamically: ${(stratErr as Error).message}`);
         }
       }
 
