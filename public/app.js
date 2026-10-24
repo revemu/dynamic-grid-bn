@@ -1757,10 +1757,21 @@
         ? ` • Real Floor: $${fmtPrice(data.liveCalculatedBottomBound)}`
         : "";
       clampStr = `🔒 100% Locked${realCeilStr}${realFloorStr} • ${clampStr}`;
+    } else if (data.canEstablishChannel === false) {
+      const gateBadge = data.gateStatus === "DOWNTREND_NO_CHANNEL"
+        ? "🛑 ขาลง (Downtrend) — ปิดกรอบงดรับมีด"
+        : data.gateStatus === "WAITING_FOR_BASE_CONFIRMATION"
+          ? "⏳ หลุดฐาน — รอสร้างฐาน HL ใหม่"
+          : data.gateStatus === "UNSAFE_FLOOR_PROXIMITY"
+            ? `⚠️ Floor ชิดราคาเกินไป (< ${(data.minFloorProximityPct || 1.5).toFixed(1)}%)`
+            : "⚪ พักรอโครงสร้าง";
+      clampStr = `${gateBadge} • ${clampStr}`;
     }
 
     if (elChannelStatusText) {
-      if (data.isSwingConfirmed === false && !data.isChannelLocked) {
+      if (data.canEstablishChannel === false && !data.isChannelLocked) {
+        elChannelStatusText.textContent = `Channel: ⏸️ ${data.gateReason || "ปิดกรอบรอเงื่อนไขเทรนด์"}`;
+      } else if (data.isSwingConfirmed === false && !data.isChannelLocked) {
         elChannelStatusText.textContent = `Channel: ไม่มีกรอบที่เข้าเกณฑ์ (หยุดรอสวิง)`;
       } else {
         elChannelStatusText.textContent = `Channel: ${widthPct.toFixed(2)}% (${clampStr})`;

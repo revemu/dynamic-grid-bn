@@ -28,9 +28,11 @@ import { SwingDetector } from "./swing-detector.js";
 import { DowEngine } from "./dow-engine.js";
 import { TrendlineEngine } from "./trendline-engine.js";
 import { ChannelEngine } from "./channel-engine.js";
+import { RegimeChannelGate } from "./regime-gate.js";
 
 export * from "./types.js";
 export * from "./volume-profile.js";
+export * from "./regime-gate.js";
 export { getEffectiveHigh, getEffectiveLow, CandleManager } from "./candle-manager.js";
 export { SwingDetector } from "./swing-detector.js";
 export { DowEngine } from "./dow-engine.js";
@@ -283,22 +285,7 @@ export class DowStructureEngine {
     // 4. Dow Theory Market Regime
     const regime = DowEngine.determineMarketRegime(this.swingHighs, this.swingLows, isSwingConfirmed);
 
-    // 5. Grid Zone
-    const { gridZone, finalSpan, centerPrice, floorBuffer, cutLossBound } = ChannelEngine.buildGridZone(
-      upperBound,
-      bottomBound,
-      price,
-      isSwingConfirmed,
-      mode,
-      clampStatus,
-      anchorSide,
-      rawWidthPct,
-      minWidthPct,
-      maxWidthPct,
-      options,
-    );
-
-    // 6. Trendlines
+    // 5. Trendlines
     const lastHh = waveCycle.lastHh;
     const lastLl = waveCycle.lastLl;
     const {
@@ -316,7 +303,7 @@ export class DowStructureEngine {
       candles,
     );
 
-    // 7. Downtrend Drop Detection
+    // 6. Downtrend Drop Detection
     const hasValidChannel = isSwingConfirmed && bottomBound > 0 && upperBound > 0;
     const { isDowntrendDropActive, downtrendDropLow } = DowEngine.detectDowntrendDrop(
       candles,
@@ -327,12 +314,42 @@ export class DowStructureEngine {
       activeValley,
       bottomBound,
       upperBound,
-      finalSpan,
+      upperBound > bottomBound ? upperBound - bottomBound : 0,
       price,
       hasValidChannel,
       useTrueWick,
       wickThreshFraction,
       downtrendBreakoutConfirmed,
+    );
+
+    // 7. Trend-Gated Structural Channel Gate (Decoupled Module)
+    const gateEvaluation = RegimeChannelGate.evaluateGate({
+      price,
+      proposedFloor: bottomBound,
+      proposedCeiling: upperBound,
+      regime,
+      waveCycle,
+      lastCanonicalLow,
+      lastCanonicalHigh,
+      isDowntrendDropActive,
+      minFloorProximityPct: options?.minFloorProximityPct ?? 1.5,
+      enableTrendGating: options?.enableTrendGating !== false,
+    });
+
+    // 8. Grid Zone
+    const { gridZone, finalSpan, centerPrice, floorBuffer, cutLossBound } = ChannelEngine.buildGridZone(
+      upperBound,
+      bottomBound,
+      price,
+      isSwingConfirmed,
+      mode,
+      clampStatus,
+      anchorSide,
+      rawWidthPct,
+      minWidthPct,
+      maxWidthPct,
+      options,
+      gateEvaluation,
     );
 
     const lastHigh = this.swingHighs[this.swingHighs.length - 1];

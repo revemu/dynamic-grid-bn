@@ -2543,6 +2543,8 @@ export class DynamicGrid implements IStrategyHost {
         useOnlyClosedCandles: adjustOnClosedOnly,
         volumeProfile,
         htfStructure,
+        minFloorProximityPct: this.cfg.minFloorProximityPct,
+        enableTrendGating: this.cfg.enableTrendChannelGating,
       });
       gridZone = dow?.gridZone;
 
@@ -2632,6 +2634,8 @@ export class DynamicGrid implements IStrategyHost {
         useOnlyClosedCandles: adjustOnClosedOnly,
         volumeProfile,
         htfStructure,
+        minFloorProximityPct: this.cfg.minFloorProximityPct,
+        enableTrendGating: this.cfg.enableTrendChannelGating,
       });
 
       dow = liveDow ?? this.confirmedChannel!.dow;
@@ -3954,6 +3958,11 @@ export class DynamicGrid implements IStrategyHost {
         val: gridZone?.val,
         htfFloor: gridZone?.htfFloor,
         htfCeil: gridZone?.htfCeil,
+        canEstablishChannel: gridZone?.canEstablishChannel,
+        gateStatus: gridZone?.gateStatus,
+        gateReason: gridZone?.gateReason,
+        actualFloorProximityPct: gridZone?.actualFloorProximityPct,
+        minFloorProximityPct: gridZone?.minFloorProximityPct,
         isChannelLocked: Boolean(isHoldingPosition && lockChannelInPosition && this.lockedChannel),
         liveCalculatedUpperBound: dow?.isSwingConfirmed && (dow.upperBound ?? 0) > 0 ? (dow.gridZone?.upperBound ?? dow.upperBound) : undefined,
         liveCalculatedBottomBound: dow?.isSwingConfirmed && (dow.bottomBound ?? 0) > 0 ? (dow.gridZone?.bottomBound ?? dow.bottomBound) : undefined,
@@ -4233,7 +4242,7 @@ export class DynamicGrid implements IStrategyHost {
     }
 
     const isNearSqueeze = enableSqueezeExit && tlSpreadPct <= (squeezeSpreadThreshold + 0.25);
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && !isWaterfallDropping && this.buyOrdersActive && (dow?.isSwingConfirmed !== false);
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && !isWaterfallDropping && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && (gridZone?.canEstablishChannel !== false);
 
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {

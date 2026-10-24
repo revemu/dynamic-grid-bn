@@ -1,5 +1,6 @@
 import type { Candle, SwingPoint, CandidatePoint, GridZone, ChannelOptions } from "./types.js";
 import { getEffectiveHigh, getEffectiveLow } from "./candle-manager.js";
+import type { ChannelGateEvaluation } from "./regime-gate.js";
 
 export interface CalculatedBounds {
   upperBound: number;
@@ -328,6 +329,7 @@ export class ChannelEngine {
     minWidthPct?: number,
     maxWidthPct?: number,
     options?: ChannelOptions,
+    gateEvaluation?: ChannelGateEvaluation,
   ): { gridZone: GridZone; finalSpan: number; centerPrice: number; floorBuffer: number; cutLossBound: number } {
     const hasValidChannel = isSwingConfirmed && bottomBound > 0 && upperBound > 0;
     const floorBuffer = hasValidChannel ? ((options?.floorBufferPct ?? 0.0) / 100) * bottomBound : 0;
@@ -372,8 +374,11 @@ export class ChannelEngine {
     const buyPcts = options?.buyLevelPcts && options.buyLevelPcts.length > 0 ? options.buyLevelPcts : defaultBuyPcts;
     const sellPcts = options?.sellLevelPcts && options.sellLevelPcts.length > 0 ? options.sellLevelPcts : defaultSellPcts;
 
-    // Grid Levels in Buy Zone
-    const buyLevels = hasValidChannel
+    // Evaluate Trend / Regime Gate
+    const canEstablish = gateEvaluation ? gateEvaluation.canEstablishChannel : true;
+
+    // Grid Levels in Buy Zone (Suppressed to empty if trend/regime gate rejects channel)
+    const buyLevels = (hasValidChannel && canEstablish)
       ? (mode === "VOLUME_PROFILE_HTF"
           ? (() => {
               // Discount Accumulation Zone: strictly below VAL (Value Area Low) down towards bottomBound
@@ -444,6 +449,11 @@ export class ChannelEngine {
       val: options?.volumeProfile?.val,
       htfFloor: options?.htfStructure?.floor,
       htfCeil: options?.htfStructure?.ceiling,
+      canEstablishChannel: canEstablish,
+      gateStatus: gateEvaluation?.gateStatus ?? (hasValidChannel ? "VALID_CHANNEL" : "WARMUP"),
+      gateReason: gateEvaluation?.gateReason,
+      actualFloorProximityPct: gateEvaluation?.actualFloorProximityPct,
+      minFloorProximityPct: gateEvaluation?.safeFloorProximityPct,
     };
 
     return {

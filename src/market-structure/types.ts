@@ -3,6 +3,7 @@
  */
 
 import type { VolumeProfileResult } from "./volume-profile.js";
+import type { ChannelGateStatus } from "./regime-gate.js";
 
 export interface Candle {
   time: number; // Unix timestamp in seconds
@@ -54,6 +55,11 @@ export interface GridZone {
   val?: number;             // Volume Profile: Value Area Low
   htfFloor?: number;        // HTF (4H) Major Structural Floor
   htfCeil?: number;         // HTF (4H) Major Structural Ceiling
+  canEstablishChannel?: boolean; // false when trend is downtrend, breaking lows, or floor too close
+  gateStatus?: ChannelGateStatus; // "VALID_CHANNEL" | "DOWNTREND_NO_CHANNEL" | "WAITING_FOR_BASE_CONFIRMATION" | "UNSAFE_FLOOR_PROXIMITY" | "WARMUP"
+  gateReason?: string;           // Explanation for UI and logs
+  actualFloorProximityPct?: number; // % distance from price to floor
+  minFloorProximityPct?: number;    // configured safe distance %
 }
 
 export interface TrendLinePoint {
@@ -160,4 +166,6 @@ export interface ChannelOptions {
     ceiling: number;
     swings?: SwingPoint[];
   };
+  minFloorProximityPct?: number;        // minimum safe % distance from current price to floor (e.g. 1.5% for BTC, 3.5% for SOMI)
+  enableTrendGating?: boolean;           // enforce trend & regime gate checks for channel creation (default true)
 }

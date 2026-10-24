@@ -3501,6 +3501,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.69` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 90. Decoupled Trend-Gated Structural Channel Architecture (`v0.2.70`)
+
+- **สถาปัตยกรรมและวัตถุประสงค์ (Regime-Gated Channel Engine)**:
+  1. **แยกโมดูลอิสระ (`src/market-structure/regime-gate.ts`)**:
+     - แยกตรรกะการตรวจสอบสภาวะตลาด (Market Regime Gate) ออกจาก `strategy/index.ts` อย่างเด็ดขาดตามหลัก Single Responsibility
+     - โมดูล `RegimeChannelGate` ทำหน้าที่ประเมินและตัดสินใจว่า "ตลาดอนุญาตให้เปิดกรอบ Grid และวางไม้ซื้อหรือไม่"
+  2. **4 เสาหลักของ Trend Gating (4 Core Pillars)**:
+     - **Pillar 1 (No Channel in a Downtrend)**: หากตลาดอยู่ในสภาวะ Dow Downtrend (LH+LL / Bear Wave) $\rightarrow$ ประกาศสถานะ `DOWNTREND_NO_CHANNEL` ปิดกรอบการซื้อทิ้ง 100% ถือเงินสด ไม่วางไม้รับมีดเด็ดขาด
+     - **Pillar 2 (Base Confirmation Protocol)**: หากราคาเพิ่งทุบหลุดฐาน (BOS / Breaking Lows) $\rightarrow$ เข้าสู่สถานะ `WAITING_FOR_BASE_CONFIRMATION` รอจนกว่าราคาจะสร้างฐาน Higher Low (HL) ยืนยันสำเร็จ จึงอนุญาตให้เปิดกรอบใหม่
+     - **Pillar 3 (Safe Floor Proximity Buffer)**: บอทจะปฏิเสธการเปิดกรอบหาก Floor อยู่ใกล้ราคาปัจจุบันเกินไป (`actualFloorProximityPct < minFloorProximityPct`) เช่น ต่ำกว่า 1.5% บน BTC เพื่อป้องกันการโดน Cut Loss ทันทีที่ก้นเหว
+     - **Pillar 4 (Channel Invalidation on Breakdown)**: เมื่อหลุด Floor และ Cut Loss แล้ว กรอบเดิมจะถูกทำลายทิ้งทันที ห้ามขยับ Floor ไหลตามราคาลงไปเรื่อยๆ
+  3. **Zero Buy Ladder on Invalidation**:
+     - เมื่อ `canEstablishChannel === false` เมธอด `ChannelEngine.buildGridZone` จะส่งกลับ `buyLevels = []` (ไม่มีไม้ซื้อใดๆ ทั้งสิ้น) ปกป้องเงินทุน 100%
+     - แสดงป้ายแจ้งเตือนชัดเจนบน Dashboard: `🛑 ขาลง (Downtrend) — ปิดกรอบงดรับมีด`, `⏳ หลุดฐาน — รอสร้างฐาน HL ใหม่`, `⚠️ Floor ชิดราคาเกินไป`
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.70` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

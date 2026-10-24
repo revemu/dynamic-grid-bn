@@ -232,6 +232,10 @@ export const defaultStrategyConfig = {
   atrBufferMultiplier: 0.75,
   /** When true, activates micro-timeframe momentum analysis to pause buying during consecutive heavy red dump bars (waterfall knife). Default true. */
   enableWaterfallKnifeGuard: true,
+  /** When true, enforces Trend-Gated Structural Channel (disables channel creation in downtrends or breaking lows). Default true. */
+  enableTrendChannelGating: true,
+  /** Minimum safe % distance from current price to floor before a channel can be opened (default 1.5%). Prevents dangerously close floors. */
+  minFloorProximityPct: 1.5,
   /** Use true wick (candle high/low) for swing pivots instead of body clipping (default false). */
   useTrueWick: false,
   /** Rejection wick threshold (% of candle range) to clip to candle body when useTrueWick is false (default 50.0%). */
@@ -313,6 +317,8 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.dashboardPort !== undefined) merged.dashboardPort = Number(saved.dashboardPort);
       if (saved.htfTimeframe !== undefined) merged.htfTimeframe = String(saved.htfTimeframe);
       if (saved.vpLookbackBars !== undefined) merged.vpLookbackBars = Number(saved.vpLookbackBars);
+      if (saved.enableTrendChannelGating !== undefined) merged.enableTrendChannelGating = Boolean(saved.enableTrendChannelGating);
+      if (saved.minFloorProximityPct !== undefined) merged.minFloorProximityPct = Number(saved.minFloorProximityPct);
       if (saved.enableNarrowChannelCollapse !== undefined) merged.enableNarrowChannelCollapse = Boolean(saved.enableNarrowChannelCollapse);
       if (saved.adjustChannelOnClosedOnly !== undefined) merged.adjustChannelOnClosedOnly = Boolean(saved.adjustChannelOnClosedOnly);
       if (saved.cutLossOnBufferOnly !== undefined) merged.cutLossOnBufferOnly = Boolean(saved.cutLossOnBufferOnly);
