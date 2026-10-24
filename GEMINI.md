@@ -3881,6 +3881,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `node --check public/app.js` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.88` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 109. Fix Top KPI Position Value, Cost Basis & Real-Time Unrealized PnL in Swing Mode (`v0.2.89`)
+
+- **การแก้ไขปัญหาการ์ดด้านบนแสดง $0.00 และ ทุนเฉลี่ย --.-- ในโหมด Swing Trade**:
+  - **สาเหตุ**:
+    1. ใน `src/strategy/swing/index.ts` ฟังก์ชัน `emitTelemetryTick()` ส่งมูลค่าพอร์ตเป็นชื่อ `positionUsdso` แต่ไม่ได้ส่ง `inventoryUsdso`, `unrealizedPnl` และ `avgEntryPrice` ทำให้การ์ด `ของที่มีถือครอง (HELD POSITION)` แสดง `$0.00` และการ์ด `กำไร/ขาดทุน ที่ยังไม่ขาย (UNREALIZED)` แสดง `+$0.00 (+0.00%) ทุนเฉลี่ย: --.--`
+    2. ตัวเลข Load แสดง `299.3%` เนื่องจาก `maxInventoryQuote` ใน DB เป็น 50 (ค่ากริดเดิม) แต่งบที่ Swing Trade ซื้อคือ 70% ของกระเป๋า (~$150)
+  - **การแก้ไข**:
+    1. ใน `src/strategy/swing/index.ts`: คำนวณ `unrealizedPnl` สดจาก `(currentMid - activePosition.entryPrice) * activePosition.qty`, คำนวณ `unrealizedPnlPct` และส่ง `inventoryUsdso`, `inventoryQuote`, `avgEntryPrice` พร้อมปรับฐาน `maxInventoryQuote` ให้สอดคล้องกับงบจริงของไม้ที่ถือ
+    2. ใน `public/app.js`: เพิ่ม Fallback ดึง `data.activePosition.entryPrice` และคำนวณ `upnl` สด เพื่อให้การ์ดแสดงมูลค่าจริง (~$150), ต้นทุนจริง (`$80,985.02`), กำไร/ขาดทุน Real-time PnL และสัดส่วน Load (100%) อย่างถูกต้อง
+    3. ขยับ Asset Version ใน `public/index.html` เป็น `app.js?v=3.32` และ `style.css?v=3.32`
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - `node --check public/app.js` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.89` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

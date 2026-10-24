@@ -2186,11 +2186,17 @@
 
     // Lots & Position Count
     const lots = data.lots || [];
-    const holdPct = data.currentHoldPct !== undefined ? data.currentHoldPct : 0;
-    const invUsd = data.inventoryUsdso || 0;
-    const maxInvUsd = data.maxInventoryUsdso || 90;
+    const invUsd = data.inventoryUsdso !== undefined
+      ? data.inventoryUsdso
+      : (data.positionQuote || data.positionUsdso || (data.activePosition && data.mid ? data.activePosition.qty * data.mid : 0));
+    const maxInvUsd = data.maxInventoryQuote || data.maxInventoryUsdso || 90;
     let totalBase = 0;
     lots.forEach((lot) => totalBase += (lot.qty || 0));
+    if (totalBase === 0 && data.activePosition?.qty) {
+      totalBase = data.activePosition.qty;
+    }
+    const rawHoldPct = data.currentHoldPct !== undefined ? data.currentHoldPct : (maxInvUsd > 0 ? (invUsd / maxInvUsd) * 100 : 0);
+    const holdPct = Math.min(100, Math.max(0, rawHoldPct));
 
     // 🔒 Lock Trading Pair & Exchange controls when holding active position
     isHoldingActivePosition = (Array.isArray(lots) && lots.length > 0) ||
@@ -2301,10 +2307,15 @@
     if (elInventoryUsd) elInventoryUsd.textContent = `$${invUsd.toFixed(2)}`;
     if (elInventoryProgress) elInventoryProgress.style.width = `${invPct}%`;
 
-    // 3. Top KPI: Unrealized Profit
-    const upnl = data.unrealizedPnl || 0;
-    const costBasis = (data.avgEntryPrice && data.avgEntryPrice > 0 && totalBase > 0) ? (totalBase * data.avgEntryPrice) : invUsd;
-    const upnlPct = costBasis > 0 ? (upnl / costBasis) * 100 : (invUsd > 0 ? (upnl / invUsd) * 100 : 0);
+    // 3. Top KPI: Unrealized Profit & Cost Basis
+    const posEntry = data.avgEntryPrice || data.activePosition?.entryPrice || (lots.length > 0 && totalBase > 0 ? (lots.reduce((s, l) => s + (l.price * l.qty), 0) / totalBase) : 0);
+    const upnl = data.unrealizedPnl !== undefined
+      ? data.unrealizedPnl
+      : (posEntry > 0 && totalBase > 0 && data.mid ? (data.mid - posEntry) * totalBase : 0);
+    const costBasis = (posEntry > 0 && totalBase > 0) ? (totalBase * posEntry) : invUsd;
+    const upnlPct = data.unrealizedPnlPct !== undefined
+      ? data.unrealizedPnlPct
+      : (costBasis > 0 ? (upnl / costBasis) * 100 : (invUsd > 0 ? (upnl / invUsd) * 100 : 0));
     const upnlStr = (upnl >= 0 ? "+$" : "-$") + Math.abs(upnl).toFixed(2);
     const upnlPctStr = (upnl >= 0 ? "+" : "") + upnlPct.toFixed(2) + "%";
 
@@ -2321,7 +2332,7 @@
       elTopUnrealizedBadge.className = "kpi-badge " + (upnl > 0 ? "badge-buy-pill" : upnl < 0 ? "badge-sell-pill" : "badge-neutral");
     }
 
-    const avgPrice = data.avgEntryPrice && data.avgEntryPrice > 0 ? `$${fmtPrice(data.avgEntryPrice)}` : "--.--";
+    const avgPrice = posEntry > 0 ? `$${fmtPrice(posEntry)}` : "--.--";
     if (elPosAvgEntry) elPosAvgEntry.textContent = avgPrice;
     if (elPosAvgEntrySub) elPosAvgEntrySub.textContent = avgPrice;
 

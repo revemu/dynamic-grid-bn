@@ -739,7 +739,24 @@ export class SwingTraderStrategy implements IStrategy {
     const invUsd = this.activePosition ? this.activePosition.qty * currentMid : (baseHeldVal * currentMid);
     const somiVal = this.walletBaseBalance * currentMid;
     const totalVal = somiVal + this.walletQuoteBalance;
-    const maxInv = this.cfg.maxInventoryQuote ?? 50;
+    const maxInv = this.activePosition
+      ? Math.max(this.cfg.maxInventoryQuote ?? 50, this.activePosition.notionalQuote)
+      : (this.walletQuoteBalance > 0 ? this.walletQuoteBalance * ((this.cfg.swingMaxPositionPct ?? 60) / 100) : (this.cfg.maxInventoryQuote ?? 50));
+
+    // Calculate Real-time Unrealized PnL and Average Entry Price
+    let unrealizedPnl = 0;
+    let avgEntryPrice = 0;
+    let unrealizedPnlPct = 0;
+    if (this.activePosition && this.activePosition.entryPrice > 0 && this.activePosition.qty > 0) {
+      avgEntryPrice = this.activePosition.entryPrice;
+      unrealizedPnl = (currentMid - this.activePosition.entryPrice) * this.activePosition.qty;
+      unrealizedPnlPct = ((currentMid - this.activePosition.entryPrice) / this.activePosition.entryPrice) * 100;
+    } else if (this.lots.length > 0 && baseHeldVal > 0) {
+      const totalCost = this.lots.reduce((sum, l) => sum + (l.price * l.qty), 0);
+      avgEntryPrice = totalCost / baseHeldVal;
+      unrealizedPnl = (currentMid - avgEntryPrice) * baseHeldVal;
+      unrealizedPnlPct = avgEntryPrice > 0 ? ((currentMid - avgEntryPrice) / avgEntryPrice) * 100 : 0;
+    }
 
     const floor = structure?.bottomBound ?? 0;
     const ceil = structure?.upperBound ?? 0;
@@ -811,12 +828,17 @@ export class SwingTraderStrategy implements IStrategy {
       lots: this.lots,
       positionUsdso: invUsd,
       positionQuote: invUsd,
+      inventoryUsdso: invUsd,
+      inventoryQuote: invUsd,
       maxInventoryQuote: maxInv,
       maxInventoryUsdso: maxInv,
-      currentHoldPct,
+      currentHoldPct: maxInv > 0 ? Math.min(100, (invUsd / maxInv) * 100) : 0,
       targetHoldingPct,
       targetInventoryQuote,
       targetInventoryUsdso: targetInventoryQuote,
+      unrealizedPnl,
+      unrealizedPnlPct,
+      avgEntryPrice,
       realizedPnl: this.realizedPnl,
       tradeRealizedPnl: this.realizedPnl,
       dryRun: Boolean(this.cfg.dryRun),
