@@ -81,13 +81,6 @@ export class ChannelEngine {
       const vp = options?.volumeProfile;
       const htf = options?.htfStructure;
 
-      // 1. Determine Floor (Support):
-      // Prioritize 4H HTF structural floor (major macro support below price)
-      // If HTF floor is breached or not yet loaded, anchor to VP Value Area Low (VAL),
-      // or lowest unbroken valley in 15m.
-      const htfFloor = (htf?.floor && htf.floor > 0 && htf.floor <= price) ? htf.floor : 0;
-      const valFloor = (vp?.val && vp.val > 0 && vp.val <= price) ? vp.val : 0;
-
       const candidateLows = confirmedLows.filter((l) => l.price <= price);
       const isUnbrokenValley = (v: SwingPoint): boolean =>
         !confirmedLows.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
@@ -97,20 +90,6 @@ export class ChannelEngine {
       const unbrokenValleys = candidateLows
         .filter(isUnbrokenValley)
         .sort((a, b) => b.price - a.price);
-
-      if (htfFloor > 0) {
-        bottomBound = htfFloor;
-      } else if (valFloor > 0) {
-        bottomBound = valFloor;
-      } else if (unbrokenValleys.length > 0) {
-        bottomBound = unbrokenValleys[0]!.price;
-      } else {
-        bottomBound = 0;
-      }
-
-      // 2. Determine Ceiling (Resistance):
-      const htfCeil = (htf?.ceiling && htf.ceiling > price) ? htf.ceiling : 0;
-      const vahCeil = (vp?.vah && vp.vah > price) ? vp.vah : 0;
 
       const candidateHighs = confirmedHighs.filter((h) => h.price >= price);
       const isUnbrokenPeak = (p: SwingPoint): boolean =>
@@ -122,16 +101,55 @@ export class ChannelEngine {
         .filter(isUnbrokenPeak)
         .sort((a, b) => a.price - b.price);
 
-      if (htfCeil > 0) {
-        upperBound = htfCeil;
-      } else if (vahCeil > 0) {
+      // 1. Tactical Floor Selection (Support must be within tactical maxChannelWidthPct):
+      const maxSpanFloor = price * (maxChannelWidthPct / 100);
+      const valFloor = (vp?.val && vp.val > 0 && vp.val <= price && (price - vp.val) <= maxSpanFloor) ? vp.val : 0;
+      const htfFloorCandidate = (htf?.floor && htf.floor > 0 && htf.floor <= price && (price - htf.floor) <= maxSpanFloor) ? htf.floor : 0;
+
+      if (valFloor > 0) {
+        bottomBound = valFloor;
+      } else if (unbrokenValleys.length > 0) {
+        bottomBound = unbrokenValleys[0]!.price;
+      } else if (htfFloorCandidate > 0) {
+        bottomBound = htfFloorCandidate;
+      } else {
+        bottomBound = 0;
+      }
+
+      // 2. Tactical Ceiling Selection (Resistance must yield width in [minChannelWidthPct, maxChannelWidthPct]):
+      const minSpan = price * (minChannelWidthPct / 100);
+      const maxSpan = price * (maxChannelWidthPct / 100);
+
+      const vahCeil = (vp?.vah && vp.vah > price && bottomBound > 0 && (vp.vah - bottomBound) >= minSpan && (vp.vah - bottomBound) <= maxSpan)
+        ? vp.vah
+        : 0;
+      const htfCeilCandidate = (htf?.ceiling && htf.ceiling > price && bottomBound > 0 && (htf.ceiling - bottomBound) >= minSpan && (htf.ceiling - bottomBound) <= maxSpan)
+        ? htf.ceiling
+        : 0;
+
+      if (vahCeil > 0) {
         upperBound = vahCeil;
       } else if (unbrokenPeaks.length > 0) {
-        const minSpan = price * (minChannelWidthPct / 100);
-        const wideEnough = unbrokenPeaks.find((p) => bottomBound > 0 && (p.price - bottomBound) >= minSpan);
-        upperBound = wideEnough ? wideEnough.price : unbrokenPeaks[0]!.price;
+        const validPeak = unbrokenPeaks.find((p) => bottomBound > 0 && (p.price - bottomBound) >= minSpan && (p.price - bottomBound) <= maxSpan);
+        upperBound = validPeak ? validPeak.price : (unbrokenPeaks[0]!.price > bottomBound ? unbrokenPeaks[0]!.price : 0);
+      } else if (htfCeilCandidate > 0) {
+        upperBound = htfCeilCandidate;
       } else {
         upperBound = 0;
+      }
+
+      // If Tactical Floor/Ceiling couldn't find a valid span, fall back to unbroken 15m swings
+      if (upperBound <= 0 || bottomBound <= 0 || (upperBound - bottomBound) < minSpan || (upperBound - bottomBound) > maxSpan) {
+        if (unbrokenValleys.length > 0) {
+          for (const v of unbrokenValleys) {
+            const p = unbrokenPeaks.find((pk) => (pk.price - v.price) >= minSpan && (pk.price - v.price) <= maxSpan);
+            if (p) {
+              bottomBound = v.price;
+              upperBound = p.price;
+              break;
+            }
+          }
+        }
       }
 
       // 3. Strict Structural Validity — Zero Floating Bounds (Every level touches real price action)

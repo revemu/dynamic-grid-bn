@@ -1,4 +1,5 @@
 import { DowStructureEngine } from "./market-structure/index.js";
+import { VolumeProfileEngine } from "./market-structure/volume-profile.js";
 
 export interface Candle {
   time: number;
@@ -28,6 +29,7 @@ export interface BacktestConfig {
   name: string;
   budget: number;
   sellProfitMode: "GRID_CASHFLOW" | "PORTFOLIO_AVG_PROFIT";
+  channelMode?: "DOW_SWINGS" | "VOLUME_PROFILE_HTF" | "DOW_ATR_CLAMP";
   minChannelWidthPct: number;
   maxChannelWidthPct: number;
   buyWeights: number[];
@@ -93,11 +95,16 @@ export function runSimulation(symbol: string, candles: Candle[], cfg: BacktestCo
 
   for (let i = warmupCount; i < candles.length; i++) {
     const c = candles[i]!;
+    let volumeProfile;
+    if (cfg.channelMode === "VOLUME_PROFILE_HTF") {
+      volumeProfile = VolumeProfileEngine.calculate(engine.getCandles(), 192);
+    }
     const structure = engine.getStructure(c.open, c.open, {
-      mode: "DOW_SWINGS",
+      mode: cfg.channelMode || "DOW_SWINGS",
       minChannelWidthPct: cfg.minChannelWidthPct,
       maxChannelWidthPct: cfg.maxChannelWidthPct,
       floorBufferPct: cfg.floorBufferPct,
+      volumeProfile,
     });
 
     const isSwingConfirmed = structure.isSwingConfirmed;
@@ -298,12 +305,25 @@ async function main() {
       name: "3. Optimized Dynamic Adaptive (Narrow 1.5% / Cashflow)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
+      channelMode: "DOW_SWINGS",
       minChannelWidthPct: 1.5,
       maxChannelWidthPct: 5.0,
       buyWeights: [12, 16, 20, 24, 28],
       minNetProfitPct: 0.30,
       cutLossMode: "CONFIRMED_CLOSE",
       floorBufferPct: 0.25,
+    },
+    {
+      name: "4. Volume Profile Tactical (Hybrid VP & 15M Swings)",
+      budget: 200,
+      sellProfitMode: "GRID_CASHFLOW",
+      channelMode: "VOLUME_PROFILE_HTF",
+      minChannelWidthPct: 2.0,
+      maxChannelWidthPct: 6.0,
+      buyWeights: [10, 15, 20, 25, 30],
+      minNetProfitPct: 0.25,
+      cutLossMode: "CONFIRMED_CLOSE",
+      floorBufferPct: 0.35,
     },
   ];
 

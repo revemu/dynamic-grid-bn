@@ -3815,6 +3815,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.85` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 106. Tactical Volume Profile & 15M Swing Channel Anchoring with Multi-Profile Backtest (`v0.2.86`)
+
+- **การแยกบทบาทระหว่าง Tactical Execution Channel กับ Strategic 4H Outer S/R**:
+  - ใน `src/market-structure/channel-engine.ts` (`VOLUME_PROFILE_HTF` mode):
+    - แก้ไขข้อผิดพลาดที่ดึง `htfFloor` และ `htfCeil` ของแท่ง 4H ข้ามหลายวันมาเป็น Floor/Ceiling โดยตรง (ซึ่งทำให้กรอบถ่างกว้างถึง 13%–16% จนราคาแกว่งไม่ถึงเป้าขาย)
+    - เปลี่ยนมากำหนด Floor & Ceiling จาก **Tactical 15M Structure**:
+      - Floor: อิง Volume Profile Value Area Low (`valFloor`) หรือสวิงเหว 15M ล่าสุด (`unbrokenValleys[0]`) ภายในช่วง `maxChannelWidthPct`
+      - Ceiling: อิง Volume Profile Value Area High (`vahCeil`) หรือสวิงยอด 15M ล่าสุด (`unbrokenPeaks`) ที่ให้ความกว้างอยู่ในเกณฑ์ `[minChannelWidthPct, maxChannelWidthPct]` (~2.5% – 5.0%)
+      - สวิง 4H HTF (`htfFloor`, `htfCeil`) ยังคงถูกส่งไปแสดงเป็นเส้นแนวรับต้านใหญ่ `🏛️ 4H CEIL` และ `🏛️ 4H FLOOR` บนชาร์ตสำหรับคุมภาพใหญ่ โดยไม่มาทำลาย Tactical Execution Box
+- **อัปเกรด `src/backtest.ts` และผลการทดสอบ Backtest จริง**:
+  - รองรับการทดสอบโหมด `VOLUME_PROFILE_HTF` และคำนวณ Volume Profile ย้อนหลังร่วมกับแท่งเทียน
+  - ผล Backtest 1,000 แท่ง 15M (~10.4 วัน) แสดงให้เห็นชัดเจน:
+    - **ETHFDUSD** (ตลาดตก -4.96%): Profile 4 (Volume Profile Tactical) ได้กำไร **+0.43%** สวนตลาด (เป็นโปรไฟล์เดียวที่ชนะตลาด) Max Drawdown ลดลงเหลือเพียง **3.96%**
+    - **BTCUSDT** (ตลาดตก -2.98%): ได้ Cashflow **+$3.66** Win Rate **94.4%** (142 ไม้)
+    - **SOMIUSDT** (ตลาดดัมพ์รุนแรง -13.73%): เสียหายน้อยที่สุดเพียง **-3.63%** (จากเดิมที่ Profile 1 เสียหาย -10.74%) และ Max Drawdown ลดลงจาก 11.27% เหลือ **6.94%**
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.86` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
