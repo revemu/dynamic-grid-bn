@@ -1262,8 +1262,13 @@
       elRrRatio.textContent = rrRatio > 0 ? `${rrRatio.toFixed(2)}x R:R` : "-- R:R";
     }
     if (elStatusText) {
-      elStatusText.textContent = data.swingState || "WAITING_SETUP";
-      elStatusText.style.color = pos ? "#10b981" : "#f59e0b";
+      if (data.swingState === "PENDING_ENTRY") {
+        elStatusText.textContent = "PENDING_ENTRY";
+        elStatusText.style.color = "#38bdf8";
+      } else {
+        elStatusText.textContent = data.swingState || "WAITING_SETUP";
+        elStatusText.style.color = pos ? "#10b981" : "#f59e0b";
+      }
     }
     if (elPosQty) {
       const qty = pos?.qty || (typeof data.baseHeld === "number" ? data.baseHeld : 0);

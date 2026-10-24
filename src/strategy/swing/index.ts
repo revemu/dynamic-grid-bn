@@ -23,7 +23,7 @@ import type {
 import type { SwingStrategyConfig } from "./config.js";
 import { SwingSignalDetector, type SwingSignalResult } from "./signals.js";
 
-export type SwingTradeState = "WAITING_SETUP" | "IN_POSITION" | "TP1_REACHED" | "EXITING";
+export type SwingTradeState = "WAITING_SETUP" | "PENDING_ENTRY" | "IN_POSITION" | "TP1_REACHED" | "EXITING";
 
 export interface ActiveSwingPosition {
   entryTime: number;
@@ -39,6 +39,22 @@ export interface ActiveSwingPosition {
   trailingStopPrice?: number;
   signalType: string;
   reason: string;
+  entryOrderId?: string;
+  tp1OrderId?: string;
+  tp2OrderId?: string;
+}
+
+export interface PendingSwingEntry {
+  orderId: string;
+  price: number;
+  qty: number;
+  placedTime: number;
+  stopLossPrice: number;
+  tp1Price: number;
+  tp2Price: number;
+  signalType: string;
+  reason: string;
+  riskRewardRatio: number;
 }
 
 export class SwingTraderStrategy implements IStrategy {
@@ -66,6 +82,7 @@ export class SwingTraderStrategy implements IStrategy {
   // Swing Strategy Specific State
   public swingState: SwingTradeState = "WAITING_SETUP";
   public activePosition?: ActiveSwingPosition;
+  public pendingEntryOrder?: PendingSwingEntry;
   public lastSignal?: SwingSignalResult;
   public lastRefPrice = 0;
   public realizedPnl = 0;
@@ -73,6 +90,7 @@ export class SwingTraderStrategy implements IStrategy {
   public ask = 0;
   public mid = 0;
   private lastBalanceRefreshTime = 0;
+  private lastOrderSyncTime = 0;
 
   private eventListeners: ((event: StrategyEvent) => void)[] = [];
 
@@ -100,6 +118,13 @@ export class SwingTraderStrategy implements IStrategy {
         this.swingState = (savedState as any).swingState || "IN_POSITION";
         this.log(
           `[SwingTrader] 🔄 Recovered active swing position for ${this.symbolInfo.symbol} from database (Entry: $${this.activePosition?.entryPrice.toFixed(4)}, Qty: ${this.activePosition?.qty})`,
+        );
+      }
+      if ((savedState as any).pendingEntryOrder) {
+        this.pendingEntryOrder = (savedState as any).pendingEntryOrder;
+        this.swingState = "PENDING_ENTRY";
+        this.log(
+          `[SwingTrader] 🔄 Recovered pending maker entry for ${this.symbolInfo.symbol} from database (Price: $${this.pendingEntryOrder?.price.toFixed(4)}, Qty: ${this.pendingEntryOrder?.qty})`,
         );
       }
       if (typeof savedState.realizedPnl === "number") {
@@ -234,8 +259,93 @@ export class SwingTraderStrategy implements IStrategy {
 
   public handleWsExecutionReport(rep: any): void {
     if (!rep) return;
-    if (rep.orderStatus === "FILLED" || rep.orderStatus === "PARTIALLY_FILLED") {
-      this.log(`⚡ [SwingTrader WS] Execution report: order ${rep.orderId} ${rep.orderStatus} @ ${rep.lastFilledPrice}`);
+    const orderId = String(rep.orderId);
+    const status = rep.orderStatus;
+    const lastPrice = Number(rep.lastFilledPrice || 0);
+
+    this.log(`⚡ [SwingTrader WS] Execution report: order ${orderId} ${status} @ ${lastPrice}`);
+
+    if (status === "FILLED" || status === "PARTIALLY_FILLED") {
+      // Check if this report is for pendingEntryOrder
+      if (this.pendingEntryOrder && String(this.pendingEntryOrder.orderId) === orderId) {
+        if (status === "FILLED") {
+          const p = this.pendingEntryOrder;
+          const execPrice = lastPrice > 0 ? lastPrice : p.price;
+          const swingCfg: SwingStrategyConfig = {
+            minRiskReward: this.cfg.swingMinRiskReward ?? 2.0,
+            stopLossBufferPct: this.cfg.swingStopLossBufferPct ?? 0.5,
+            maxPositionPct: this.cfg.swingMaxPositionPct ?? 60.0,
+            tp1CloseRatio: this.cfg.swingTp1CloseRatio ?? 0.5,
+            tp1TargetType: this.cfg.swingTp1TargetType ?? "CENTER_POC",
+            tp2TargetType: this.cfg.swingTp2TargetType ?? "SWING_HIGH_HH",
+            trailingActivationPct: this.cfg.swingTrailingActivationPct ?? 1.5,
+            trailingPullbackPct: this.cfg.swingTrailingPullbackPct ?? 0.8,
+            enableHlBaseEntry: this.cfg.swingEnableHlBaseEntry ?? true,
+            enableTrendlineBreakoutEntry: this.cfg.swingEnableTrendlineBreakoutEntry ?? true,
+            enableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry ?? true,
+          };
+          this.onSwingEntryFilled(orderId, execPrice, p.qty, execPrice * p.qty, p, swingCfg).catch(() => {});
+        }
+      } else if (this.activePosition) {
+        const pos = this.activePosition;
+        if (pos.tp1OrderId && String(pos.tp1OrderId) === orderId && status === "FILLED") {
+          const execPrice = lastPrice > 0 ? lastPrice : pos.tp1Price;
+          const exitQty = this.roundQty(pos.qty * (this.cfg.swingTp1CloseRatio ?? 0.5));
+          const pnl = (execPrice - pos.entryPrice) * exitQty;
+          this.realizedPnl += pnl;
+          pos.tp1Executed = true;
+          pos.qty = this.roundQty(pos.qty - exitQty);
+          pos.stopLossPrice = pos.entryPrice;
+          pos.tp1OrderId = undefined;
+          this.swingState = "TP1_REACHED";
+          this.saveState(true);
+          this.log(`[SwingTrader] 🎯 WS: TP1 Filled at $${execPrice.toFixed(4)}! SL moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — 100% Risk-Free!`);
+          this.emit({
+            type: "order",
+            data: {
+              id: `ord_${Date.now()}_tp1`,
+              orderId,
+              symbol: this.symbolInfo.symbol,
+              side: "SELL",
+              price: execPrice,
+              qty: exitQty,
+              notionalQuote: execPrice * exitQty,
+              levelDesc: "Swing TP1 Target (Maker)",
+              status: "FILLED",
+              realizedPnl: pnl,
+              placedTime: Date.now(),
+              fillTime: Date.now(),
+            },
+          });
+        } else if (pos.tp2OrderId && String(pos.tp2OrderId) === orderId && status === "FILLED") {
+          const execPrice = lastPrice > 0 ? lastPrice : pos.tp2Price;
+          const exitQty = pos.qty;
+          const pnl = (execPrice - pos.entryPrice) * exitQty;
+          this.realizedPnl += pnl;
+          this.emit({
+            type: "order",
+            data: {
+              id: `ord_${Date.now()}_tp2`,
+              orderId,
+              symbol: this.symbolInfo.symbol,
+              side: "SELL",
+              price: execPrice,
+              qty: exitQty,
+              notionalQuote: execPrice * exitQty,
+              levelDesc: "Swing TP2 Target (Maker)",
+              status: "FILLED",
+              realizedPnl: pnl,
+              placedTime: Date.now(),
+              fillTime: Date.now(),
+            },
+          });
+          this.lots = [];
+          this.activePosition = undefined;
+          this.swingState = "WAITING_SETUP";
+          this.saveState(true);
+          this.log(`[SwingTrader] 🚀 WS: TP2 Filled at $${execPrice.toFixed(4)}! Position closed.`);
+        }
+      }
       this.syncOnChainOrders().catch(() => {});
     }
   }
@@ -288,17 +398,28 @@ export class SwingTraderStrategy implements IStrategy {
   public async syncOnChainOrders(): Promise<void> {
     try {
       const orders = await this.binance.getOpenOrders(this.symbolInfo.symbol);
-      this.openOrders = orders.map((o) => ({
-        id: String(o.orderId),
-        isBid: o.side === "BUY",
-        price: o.price,
-        qty: o.origQty,
-        targetFraction: 0,
-        notionalQuote: o.price * o.origQty,
-        notionalUsdso: o.price * o.origQty,
-        levelDesc: "Swing Order",
-        placedTime: o.time || Date.now(),
-      }));
+      this.openOrders = orders.map((o) => {
+        let desc = "Swing Order";
+        const oIdStr = String(o.orderId);
+        if (this.pendingEntryOrder && String(this.pendingEntryOrder.orderId) === oIdStr) {
+          desc = "Swing Entry (Maker Limit)";
+        } else if (this.activePosition?.tp1OrderId && String(this.activePosition.tp1OrderId) === oIdStr) {
+          desc = "Swing TP1 (Maker Limit)";
+        } else if (this.activePosition?.tp2OrderId && String(this.activePosition.tp2OrderId) === oIdStr) {
+          desc = "Swing TP2 (Maker Limit)";
+        }
+        return {
+          id: oIdStr,
+          isBid: o.side === "BUY",
+          price: o.price,
+          qty: o.origQty,
+          targetFraction: 0,
+          notionalQuote: o.price * o.origQty,
+          notionalUsdso: o.price * o.origQty,
+          levelDesc: desc,
+          placedTime: o.time || Date.now(),
+        };
+      });
     } catch (e) {
       this.log(`[SwingTrader] Failed to sync open orders: ${e}`);
     }
@@ -335,6 +456,11 @@ export class SwingTraderStrategy implements IStrategy {
       await this.binance.cancelAllOpenOrders(this.symbolInfo.symbol);
       count = this.openOrders.length;
       this.openOrders = [];
+      this.pendingEntryOrder = undefined;
+      if (this.activePosition) {
+        this.activePosition.tp1OrderId = undefined;
+        this.activePosition.tp2OrderId = undefined;
+      }
       this.saveState(true);
       this.log(`[SwingTrader] All open orders cancelled by user`);
     } catch (e) {
@@ -345,6 +471,25 @@ export class SwingTraderStrategy implements IStrategy {
 
   public async sellAllUser(reason?: string): Promise<{ success: boolean; soldQty: number; price: number; error?: string; }> {
     this.log(`[SwingTrader] Market sell requested: ${reason || "Emergency market sell by user"}`);
+    
+    // First, cancel any resting entry or TP orders
+    if (this.pendingEntryOrder) {
+      try {
+        await this.binance.cancelOrder(this.symbolInfo.symbol, this.pendingEntryOrder.orderId);
+      } catch {}
+      this.pendingEntryOrder = undefined;
+    }
+    if (this.activePosition) {
+      if (this.activePosition.tp1OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.activePosition.tp1OrderId); } catch {}
+        this.activePosition.tp1OrderId = undefined;
+      }
+      if (this.activePosition.tp2OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.activePosition.tp2OrderId); } catch {}
+        this.activePosition.tp2OrderId = undefined;
+      }
+    }
+
     const held = this.baseHeld();
     const qty = this.roundQty(held);
     if (qty >= (this.symbolInfo.minQty || 0.0001)) {
@@ -385,6 +530,7 @@ export class SwingTraderStrategy implements IStrategy {
         this.swingState = "WAITING_SETUP";
         this.saveState(true);
         await this.refreshWalletBalances();
+        await this.syncOnChainOrders();
         return { success: true, soldQty: qty, price: execPrice };
       } catch (e: any) {
         this.log(`[SwingTrader] Sell execution failed: ${e}`);
@@ -395,6 +541,18 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public async resetBotState(opts?: any): Promise<{ success: boolean; }> {
+    if (this.pendingEntryOrder) {
+      try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.pendingEntryOrder.orderId); } catch {}
+      this.pendingEntryOrder = undefined;
+    }
+    if (this.activePosition) {
+      if (this.activePosition.tp1OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.activePosition.tp1OrderId); } catch {}
+      }
+      if (this.activePosition.tp2OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.activePosition.tp2OrderId); } catch {}
+      }
+    }
     this.lots = [];
     this.activePosition = undefined;
     this.swingState = "WAITING_SETUP";
@@ -408,6 +566,18 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public async resetPosition(): Promise<{ success: boolean; clearedLots: number; }> {
+    if (this.pendingEntryOrder) {
+      try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.pendingEntryOrder.orderId); } catch {}
+      this.pendingEntryOrder = undefined;
+    }
+    if (this.activePosition) {
+      if (this.activePosition.tp1OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.activePosition.tp1OrderId); } catch {}
+      }
+      if (this.activePosition.tp2OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, this.activePosition.tp2OrderId); } catch {}
+      }
+    }
     const count = this.lots.length;
     this.lots = [];
     this.activePosition = undefined;
@@ -422,6 +592,7 @@ export class SwingTraderStrategy implements IStrategy {
     if (saved) {
       this.lots = saved.lots || [];
       this.activePosition = (saved as any).activeSwingPosition;
+      this.pendingEntryOrder = (saved as any).pendingEntryOrder;
       this.swingState = (saved as any).swingState || "WAITING_SETUP";
     }
     this.log(`[SwingTrader] State reloaded from database`);
@@ -436,6 +607,7 @@ export class SwingTraderStrategy implements IStrategy {
         realizedPnl: this.realizedPnl,
         tradeRealizedPnl: this.realizedPnl,
         activeSwingPosition: this.activePosition,
+        pendingEntryOrder: this.pendingEntryOrder,
         swingState: this.swingState,
       } as any);
     } catch (e) {
@@ -484,11 +656,17 @@ export class SwingTraderStrategy implements IStrategy {
       this.bid = tob.bestBid;
       this.ask = tob.bestAsk;
 
-      // Periodically refresh wallet balances from exchange
+      // Periodically refresh wallet balances from exchange (every 10s)
       const now = Date.now();
       if (now - this.lastBalanceRefreshTime > 10_000) {
         this.lastBalanceRefreshTime = now;
         await this.refreshWalletBalances().catch(() => {});
+      }
+
+      // Periodically sync open orders from exchange (every 4s)
+      if (now - this.lastOrderSyncTime > 4000) {
+        this.lastOrderSyncTime = now;
+        await this.syncOnChainOrders().catch(() => {});
       }
 
       const volumeProfile = this.getVolumeProfile();
@@ -527,11 +705,14 @@ export class SwingTraderStrategy implements IStrategy {
       const candles = this.dowEngine?.getCandles() ?? [];
 
       if (!this.isPaused) {
-        // 1. Manage Active Position (SL / TP / Trailing Stop)
         if (this.activePosition) {
+          // 1. Manage Active Position (SL / TP / Trailing Stop)
           await this.manageActivePosition(refPrice, swingCfg);
+        } else if (this.pendingEntryOrder) {
+          // 2. Manage Pending Maker Entry Order
+          await this.managePendingEntryOrder(refPrice, swingCfg);
         } else {
-          // 2. Scan for New Entry Setup
+          // 3. Scan for New Entry Setup
           const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
           this.lastSignal = signal;
           if (signal.hasSignal && this.swingState === "WAITING_SETUP") {
@@ -550,9 +731,203 @@ export class SwingTraderStrategy implements IStrategy {
     }
   }
 
+  private async managePendingEntryOrder(refPrice: number, cfg: SwingStrategyConfig): Promise<void> {
+    if (!this.pendingEntryOrder) return;
+    const p = this.pendingEntryOrder;
+
+    // 1. Check if price dropped below stop loss level -> setup is broken, cancel immediately!
+    if (refPrice <= p.stopLossPrice) {
+      this.log(
+        `[SwingTrader] 🛑 Cancelling pending entry order ${p.orderId}: Price broke below Stop Loss ($${refPrice.toFixed(4)} <= $${p.stopLossPrice.toFixed(4)})`,
+      );
+      try {
+        await this.binance.cancelOrder(this.symbolInfo.symbol, p.orderId);
+      } catch (e) {
+        this.log(`[SwingTrader] Cancel pending order failed: ${e}`);
+      }
+      this.pendingEntryOrder = undefined;
+      this.swingState = "WAITING_SETUP";
+      this.saveState(true);
+      await this.syncOnChainOrders();
+      return;
+    }
+
+    // 2. Check if price surged away upwards (>1.5% from entry) -> train left, cancel and wait for another setup
+    if (refPrice > p.price * 1.015) {
+      this.log(
+        `[SwingTrader] ⚠️ Cancelling pending entry order ${p.orderId}: Price surged away (+${(((refPrice - p.price) / p.price) * 100).toFixed(2)}%) without fill`,
+      );
+      try {
+        await this.binance.cancelOrder(this.symbolInfo.symbol, p.orderId);
+      } catch (e) {
+        this.log(`[SwingTrader] Cancel pending order failed: ${e}`);
+      }
+      this.pendingEntryOrder = undefined;
+      this.swingState = "WAITING_SETUP";
+      this.saveState(true);
+      await this.syncOnChainOrders();
+      return;
+    }
+
+    // 3. Check order fill status via exchange if placed > 2 seconds ago
+    const ageMs = Date.now() - p.placedTime;
+    if (ageMs > 2000) {
+      try {
+        const orderInfo = await this.binance.getOrder(this.symbolInfo.symbol, p.orderId);
+        if (orderInfo.status === "FILLED") {
+          const fillPrice = orderInfo.price || p.price;
+          const execQty = orderInfo.executedQty || p.qty;
+          this.log(`[SwingTrader] 🎯 Pending Maker Limit Entry FILLED @ $${fillPrice.toFixed(4)} (Qty: ${execQty})`);
+          await this.onSwingEntryFilled(p.orderId, fillPrice, execQty, fillPrice * execQty, p, cfg);
+        } else if (orderInfo.status === "CANCELED" || orderInfo.status === "EXPIRED" || orderInfo.status === "REJECTED") {
+          this.log(`[SwingTrader] Pending Maker Limit Entry was ${orderInfo.status} on exchange`);
+          this.pendingEntryOrder = undefined;
+          this.swingState = "WAITING_SETUP";
+          this.saveState(true);
+          await this.syncOnChainOrders();
+        }
+      } catch (e) {
+        // Query error ignored or order still open
+      }
+    }
+  }
+
+  private async placeMakerTakeProfitOrders(pos: ActiveSwingPosition, cfg: SwingStrategyConfig): Promise<void> {
+    const minQty = this.symbolInfo.minQty || 0.0001;
+    const minNotional = this.symbolInfo.minNotional || 5;
+
+    // Calculate TP1 and TP2 quantities
+    const tp1Ratio = cfg.tp1CloseRatio > 0 && cfg.tp1CloseRatio < 1 ? cfg.tp1CloseRatio : 0.5;
+    const tp1Qty = this.roundQty(pos.qty * tp1Ratio);
+    const tp2Qty = this.roundQty(pos.qty - tp1Qty);
+
+    const tp1Notional = tp1Qty * pos.tp1Price;
+    const tp2Notional = tp2Qty * pos.tp2Price;
+
+    // If split is too small for minQty or minNotional, place single full TP at TP1
+    if (tp1Qty < minQty || tp1Notional < minNotional || tp2Qty < minQty || tp2Notional < minNotional) {
+      if (!pos.tp1OrderId && pos.qty >= minQty) {
+        try {
+          const res = await this.binance.placeOrder({
+            symbol: this.symbolInfo.symbol,
+            side: "SELL",
+            type: "LIMIT",
+            price: pos.tp1Price,
+            qty: pos.qty,
+          });
+          pos.tp1OrderId = String(res.orderId);
+          this.log(`[SwingTrader] 🎯 Resting Maker Limit TP placed at $${pos.tp1Price.toFixed(4)} (100% Qty: ${pos.qty}, OrderId: ${res.orderId})`);
+        } catch (e) {
+          this.log(`[SwingTrader] Failed to place resting TP limit order: ${e}`);
+        }
+      }
+      await this.syncOnChainOrders();
+      this.saveState(true);
+      return;
+    }
+
+    // Place TP1 limit order
+    if (!pos.tp1OrderId && !pos.tp1Executed) {
+      try {
+        const res = await this.binance.placeOrder({
+          symbol: this.symbolInfo.symbol,
+          side: "SELL",
+          type: "LIMIT",
+          price: pos.tp1Price,
+          qty: tp1Qty,
+        });
+        pos.tp1OrderId = String(res.orderId);
+        this.log(`[SwingTrader] 🎯 Resting Maker Limit TP1 placed at $${pos.tp1Price.toFixed(4)} (Qty: ${tp1Qty}, OrderId: ${res.orderId})`);
+      } catch (e) {
+        this.log(`[SwingTrader] Failed to place resting TP1 limit order: ${e}`);
+      }
+    }
+
+    // Place TP2 limit order
+    if (!pos.tp2OrderId) {
+      try {
+        const res = await this.binance.placeOrder({
+          symbol: this.symbolInfo.symbol,
+          side: "SELL",
+          type: "LIMIT",
+          price: pos.tp2Price,
+          qty: tp2Qty,
+        });
+        pos.tp2OrderId = String(res.orderId);
+        this.log(`[SwingTrader] 🚀 Resting Maker Limit TP2 placed at $${pos.tp2Price.toFixed(4)} (Qty: ${tp2Qty}, OrderId: ${res.orderId})`);
+      } catch (e) {
+        this.log(`[SwingTrader] Failed to place resting TP2 limit order: ${e}`);
+      }
+    }
+
+    await this.syncOnChainOrders();
+    this.saveState(true);
+  }
+
+  private async onSwingEntryFilled(
+    orderId: string,
+    fillPrice: number,
+    qty: number,
+    notionalQuote: number,
+    signal: { stopLossPrice: number; tp1Price: number; tp2Price: number; signalType?: string; reason?: string },
+    cfg: SwingStrategyConfig,
+  ): Promise<void> {
+    this.activePosition = {
+      entryTime: Date.now(),
+      entryPrice: fillPrice,
+      qty,
+      notionalQuote,
+      stopLossPrice: this.roundPrice(signal.stopLossPrice),
+      tp1Price: this.roundPrice(signal.tp1Price),
+      tp2Price: this.roundPrice(signal.tp2Price),
+      tp1Executed: false,
+      highestPriceSinceEntry: fillPrice,
+      trailingStopActive: false,
+      signalType: signal.signalType || "SWING",
+      reason: signal.reason || "",
+      entryOrderId: orderId,
+    };
+
+    this.lots.push({
+      price: fillPrice,
+      qty,
+      time: Date.now(),
+    });
+
+    this.pendingEntryOrder = undefined;
+    this.swingState = "IN_POSITION";
+    this.saveState(true);
+
+    this.emit({
+      type: "order",
+      data: {
+        id: `ord_${Date.now()}_buy`,
+        orderId,
+        symbol: this.symbolInfo.symbol,
+        side: "BUY",
+        price: fillPrice,
+        qty,
+        notionalQuote,
+        levelDesc: `Swing Entry (${signal.signalType || "SWING"})`,
+        status: "FILLED",
+        placedTime: Date.now(),
+        fillTime: Date.now(),
+      },
+    });
+
+    this.log(`[SwingTrader] 🚀 Swing Position Opened @ $${fillPrice.toFixed(4)} (Qty: ${qty})`);
+    await this.refreshWalletBalances();
+
+    // In MAKER_LIMIT mode: immediately place resting TP1 & TP2 limit sell orders!
+    if (this.cfg.orderExecutionMode === "MAKER_LIMIT") {
+      await this.placeMakerTakeProfitOrders(this.activePosition, cfg);
+    }
+  }
+
   private async manageActivePosition(refPrice: number, cfg: SwingStrategyConfig): Promise<void> {
     if (!this.activePosition) return;
     const pos = this.activePosition;
+    const isMakerMode = this.cfg.orderExecutionMode === "MAKER_LIMIT";
 
     // Track highest price seen since entry
     if (refPrice > pos.highestPriceSinceEntry) {
@@ -577,10 +952,113 @@ export class SwingTraderStrategy implements IStrategy {
 
     if (refPrice <= effectiveSl) {
       this.log(`[SwingTrader] 🛑 Stop Loss / Trailing Stop triggered at $${refPrice.toFixed(4)} <= $${effectiveSl.toFixed(4)}`);
+      // First cancel any resting TP orders
+      if (pos.tp1OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+        pos.tp1OrderId = undefined;
+      }
+      if (pos.tp2OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+        pos.tp2OrderId = undefined;
+      }
       await this.sellAllUser("Swing Stop Loss Triggered");
       return;
     }
 
+    // ── If MAKER_LIMIT Mode: Place or verify resting Limit TP orders ─────────
+    if (isMakerMode) {
+      if (!pos.tp1Executed && !pos.tp1OrderId && !pos.tp2OrderId) {
+        await this.placeMakerTakeProfitOrders(pos, cfg);
+      }
+
+      // Check TP1 resting order fill
+      if (!pos.tp1Executed && pos.tp1OrderId) {
+        try {
+          const o1 = await this.binance.getOrder(this.symbolInfo.symbol, pos.tp1OrderId);
+          if (o1.status === "FILLED") {
+            const execPrice = o1.price || pos.tp1Price;
+            const exitQty = o1.executedQty || this.roundQty(pos.qty * cfg.tp1CloseRatio);
+            const pnl = (execPrice - pos.entryPrice) * exitQty;
+            this.realizedPnl += pnl;
+
+            pos.tp1Executed = true;
+            pos.qty = this.roundQty(pos.qty - exitQty);
+            // 🛡️ Move Stop Loss to Breakeven
+            pos.stopLossPrice = pos.entryPrice;
+            pos.tp1OrderId = undefined;
+            this.swingState = "TP1_REACHED";
+            this.saveState(true);
+            this.log(`[SwingTrader] 🎯 Resting Maker TP1 FILLED @ $${execPrice.toFixed(4)}! SL moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — 100% Risk-Free!`);
+
+            this.emit({
+              type: "order",
+              data: {
+                id: `ord_${Date.now()}_tp1`,
+                orderId: String(o1.orderId),
+                symbol: this.symbolInfo.symbol,
+                side: "SELL",
+                price: execPrice,
+                qty: exitQty,
+                notionalQuote: execPrice * exitQty,
+                levelDesc: `Swing TP1 Target (Maker)`,
+                status: "FILLED",
+                realizedPnl: pnl,
+                placedTime: (o1 as any).time || (o1 as any).transactTime || Date.now(),
+                fillTime: Date.now(),
+              },
+            });
+
+            await this.refreshWalletBalances();
+            await this.syncOnChainOrders();
+            return;
+          }
+        } catch {}
+      }
+
+      // Check TP2 resting order fill
+      if (pos.tp2OrderId) {
+        try {
+          const o2 = await this.binance.getOrder(this.symbolInfo.symbol, pos.tp2OrderId);
+          if (o2.status === "FILLED") {
+            const execPrice = o2.price || pos.tp2Price;
+            const exitQty = o2.executedQty || pos.qty;
+            const pnl = (execPrice - pos.entryPrice) * exitQty;
+            this.realizedPnl += pnl;
+
+            this.emit({
+              type: "order",
+              data: {
+                id: `ord_${Date.now()}_tp2`,
+                orderId: String(o2.orderId),
+                symbol: this.symbolInfo.symbol,
+                side: "SELL",
+                price: execPrice,
+                qty: exitQty,
+                notionalQuote: execPrice * exitQty,
+                levelDesc: `Swing TP2 Target (Maker)`,
+                status: "FILLED",
+                realizedPnl: pnl,
+                placedTime: (o2 as any).time || (o2 as any).transactTime || Date.now(),
+                fillTime: Date.now(),
+              },
+            });
+
+            this.lots = [];
+            this.activePosition = undefined;
+            this.swingState = "WAITING_SETUP";
+            this.saveState(true);
+            this.log(`[SwingTrader] 🚀 Resting Maker TP2 FILLED @ $${execPrice.toFixed(4)}! Trade cycle complete.`);
+            await this.refreshWalletBalances();
+            await this.syncOnChainOrders();
+            return;
+          }
+        } catch {}
+      }
+
+      return;
+    }
+
+    // ── If IOC_BRACKET Mode: Execute reactive Market/IOC orders ──────────────
     // ── Check Take Profit 1 ──────────────────────────────────────────────────
     if (!pos.tp1Executed && refPrice >= pos.tp1Price) {
       const exitQty = this.roundQty(pos.qty * cfg.tp1CloseRatio);
@@ -649,8 +1127,18 @@ export class SwingTraderStrategy implements IStrategy {
       return;
     }
 
-    // 🛡️ Bug 2 Fix: Apply roundQty to satisfy lot size & precision filters
-    const rawQty = maxBudget / price;
+    const isMakerMode = this.cfg.orderExecutionMode === "MAKER_LIMIT";
+
+    // Determine entry limit price:
+    // If MAKER_LIMIT: buy at bestBid (or signal price if lower/equal) to ensure resting on book as maker
+    let entryPrice = price;
+    if (isMakerMode && this.bid && this.bid > 0) {
+      entryPrice = Math.min(this.bid, price);
+    }
+    entryPrice = this.roundPrice(entryPrice);
+
+    // Apply roundQty to satisfy lot size & precision filters
+    const rawQty = maxBudget / entryPrice;
     const qty = this.roundQty(rawQty);
 
     if (qty < (this.symbolInfo.minQty || 0.0001)) {
@@ -658,62 +1146,63 @@ export class SwingTraderStrategy implements IStrategy {
       return;
     }
 
-    this.log(
-      `[SwingTrader] 🚀 Executing Swing Entry (${signal.signalType}) at $${price.toFixed(4)} | Budget: $${maxBudget.toFixed(2)} | Qty: ${qty} | SL: $${signal.stopLossPrice.toFixed(4)} | TP1: $${signal.tp1Price.toFixed(4)} | TP2: $${signal.tp2Price.toFixed(4)} | R:R: ${signal.riskRewardRatio.toFixed(2)}`,
-    );
-
-    try {
-      await this.binance.placeOrder({
-        symbol: this.symbolInfo.symbol,
-        side: "BUY",
-        type: "MARKET",
-        qty,
-      });
-
-      this.activePosition = {
-        entryTime: Date.now(),
-        entryPrice: price,
-        qty,
-        notionalQuote: maxBudget,
-        stopLossPrice: this.roundPrice(signal.stopLossPrice),
-        tp1Price: this.roundPrice(signal.tp1Price),
-        tp2Price: this.roundPrice(signal.tp2Price),
-        tp1Executed: false,
-        highestPriceSinceEntry: price,
-        trailingStopActive: false,
-        signalType: signal.signalType || "SWING",
-        reason: signal.reason,
-      };
-
-      this.lots.push({
-        price,
-        qty,
-        time: Date.now(),
-      });
-
-      this.swingState = "IN_POSITION";
-      this.saveState(true);
-
-      this.emit({
-        type: "order",
-        data: {
-          id: `ord_${Date.now()}_buy`,
-          orderId: String(Date.now()),
+    if (isMakerMode) {
+      this.log(
+        `[SwingTrader] ⏳ Placing Maker Limit Entry Buy at $${entryPrice.toFixed(4)} | Budget: $${maxBudget.toFixed(2)} | Qty: ${qty} | SL: $${signal.stopLossPrice.toFixed(4)} | TP1: $${signal.tp1Price.toFixed(4)} | TP2: $${signal.tp2Price.toFixed(4)}`,
+      );
+      try {
+        const res = await this.binance.placeOrder({
           symbol: this.symbolInfo.symbol,
           side: "BUY",
-          price,
+          type: "LIMIT",
+          price: entryPrice,
           qty,
-          notionalQuote: maxBudget,
-          levelDesc: `Swing Entry (${signal.signalType || "SWING"})`,
-          status: "FILLED",
-          placedTime: Date.now(),
-          fillTime: Date.now(),
-        },
-      });
+        });
 
-      await this.refreshWalletBalances();
-    } catch (e) {
-      this.log(`[SwingTrader] Swing Entry failed: ${e}`);
+        const orderIdStr = String(res.orderId);
+
+        // Check if filled immediately (some exchanges or dryRun fill limit immediately)
+        if (res.status === "FILLED") {
+          await this.onSwingEntryFilled(orderIdStr, entryPrice, qty, maxBudget, signal, cfg);
+        } else {
+          // Resting on orderbook
+          this.pendingEntryOrder = {
+            orderId: orderIdStr,
+            price: entryPrice,
+            qty,
+            placedTime: Date.now(),
+            stopLossPrice: this.roundPrice(signal.stopLossPrice),
+            tp1Price: this.roundPrice(signal.tp1Price),
+            tp2Price: this.roundPrice(signal.tp2Price),
+            signalType: signal.signalType || "SWING",
+            reason: signal.reason,
+            riskRewardRatio: signal.riskRewardRatio,
+          };
+          this.swingState = "PENDING_ENTRY";
+          this.saveState(true);
+          await this.syncOnChainOrders();
+          this.log(`[SwingTrader] 📌 Resting Maker Limit Buy active (OrderId: ${orderIdStr}). Waiting for fill.`);
+        }
+      } catch (e) {
+        this.log(`[SwingTrader] Maker Limit Entry placement failed: ${e}`);
+      }
+    } else {
+      // IOC_BRACKET mode (MARKET / IOC execution)
+      this.log(
+        `[SwingTrader] 🚀 Executing Swing Entry (${signal.signalType}) at $${price.toFixed(4)} | Budget: $${maxBudget.toFixed(2)} | Qty: ${qty} | SL: $${signal.stopLossPrice.toFixed(4)} | TP1: $${signal.tp1Price.toFixed(4)} | TP2: $${signal.tp2Price.toFixed(4)} | R:R: ${signal.riskRewardRatio.toFixed(2)}`,
+      );
+      try {
+        const res = await this.binance.placeOrder({
+          symbol: this.symbolInfo.symbol,
+          side: "BUY",
+          type: "MARKET",
+          qty,
+        });
+        const execPrice = res.price || price;
+        await this.onSwingEntryFilled(String(res.orderId || Date.now()), execPrice, qty, maxBudget, signal, cfg);
+      } catch (e) {
+        this.log(`[SwingTrader] Swing Entry failed: ${e}`);
+      }
     }
   }
 
@@ -847,6 +1336,7 @@ export class SwingTraderStrategy implements IStrategy {
       strategyName: this.name,
       swingState: this.swingState,
       activePosition: this.activePosition,
+      pendingEntryOrder: this.pendingEntryOrder,
       lastSignal: this.lastSignal,
       openOrders: this.openOrders,
       regime: structure?.regime ?? "RANGE",
@@ -934,6 +1424,14 @@ export class SwingTraderStrategy implements IStrategy {
             reason: "Live chart, market structure & wallet active. Order execution suspended.",
             nextTrigger: "Click 'Resume' button to activate live trading",
             severity: "warning",
+          }
+        : this.pendingEntryOrder
+        ? {
+            code: "PENDING_ENTRY",
+            title: "⏳ Maker Limit Entry Placed",
+            reason: `Resting limit buy at $${this.pendingEntryOrder.price.toFixed(4)} (${this.pendingEntryOrder.qty} ${this.symbolInfo.baseAsset}). SL: $${this.pendingEntryOrder.stopLossPrice.toFixed(4)}`,
+            nextTrigger: `Wait dip to $${this.pendingEntryOrder.price.toFixed(4)}`,
+            severity: "info",
           }
         : {
             code: this.activePosition ? "IN_SWING_TRADE" : "WAITING_SWING_SETUP",

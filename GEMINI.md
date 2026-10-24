@@ -3883,20 +3883,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-### 109. Fix Top KPI Position Value, Cost Basis & Real-Time Unrealized PnL in Swing Mode (`v0.2.89`)
+### 110. Full Maker Limit Order Execution for Swing Trading Mode (`v0.2.90`)
 
-- **การแก้ไขปัญหาการ์ดด้านบนแสดง $0.00 และ ทุนเฉลี่ย --.-- ในโหมด Swing Trade**:
-  - **สาเหตุ**:
-    1. ใน `src/strategy/swing/index.ts` ฟังก์ชัน `emitTelemetryTick()` ส่งมูลค่าพอร์ตเป็นชื่อ `positionUsdso` แต่ไม่ได้ส่ง `inventoryUsdso`, `unrealizedPnl` และ `avgEntryPrice` ทำให้การ์ด `ของที่มีถือครอง (HELD POSITION)` แสดง `$0.00` และการ์ด `กำไร/ขาดทุน ที่ยังไม่ขาย (UNREALIZED)` แสดง `+$0.00 (+0.00%) ทุนเฉลี่ย: --.--`
-    2. ตัวเลข Load แสดง `299.3%` เนื่องจาก `maxInventoryQuote` ใน DB เป็น 50 (ค่ากริดเดิม) แต่งบที่ Swing Trade ซื้อคือ 70% ของกระเป๋า (~$150)
-  - **การแก้ไข**:
-    1. ใน `src/strategy/swing/index.ts`: คำนวณ `unrealizedPnl` สดจาก `(currentMid - activePosition.entryPrice) * activePosition.qty`, คำนวณ `unrealizedPnlPct` และส่ง `inventoryUsdso`, `inventoryQuote`, `avgEntryPrice` พร้อมปรับฐาน `maxInventoryQuote` ให้สอดคล้องกับงบจริงของไม้ที่ถือ
-    2. ใน `public/app.js`: เพิ่ม Fallback ดึง `data.activePosition.entryPrice` และคำนวณ `upnl` สด เพื่อให้การ์ดแสดงมูลค่าจริง (~$150), ต้นทุนจริง (`$80,985.02`), กำไร/ขาดทุน Real-time PnL และสัดส่วน Load (100%) อย่างถูกต้อง
-    3. ขยับ Asset Version ใน `public/index.html` เป็น `app.js?v=3.32` และ `style.css?v=3.32`
+- **การพัฒนาระบบคำสั่ง Maker Limit เต็มรูปแบบสำหรับ Swing Trading Mode (`orderExecutionMode: "MAKER_LIMIT"`)**:
+  - **ที่มาและความต้องการ**: เดิมบอท Swing Trade ส่งคำสั่งเข้าและออกด้วย `MARKET` / `IOC` เท่านั้น ซึ่งเสียค่า Fee Taker สูงและอาจเกิด Slippage ผู้ใช้ต้องการให้บอทในโหมด Swing Trade รองรับการตั้ง Maker Limit Orders เพื่อรับสิทธิประโยชน์ค่าธรรมเนียมต่ำ (0% Maker / 0.075%) และไม่ต้องไล่ราคา
+  - **สถาปัตยกรรมและการทำงานของ Maker Limit ใน `src/strategy/swing/index.ts`**:
+    1. **Maker Limit Entry (`executeSwingEntry`)**:
+       - เมื่อเกิดสัญญาณ Swing Entry Setup ระบบจะคำนวณราคา Limit จาก `bestBid` (หรือ `price` หากต่ำกว่า) เพื่อให้คำสั่งวางดักรออยู่ที่ส่วนหัวของสมุดคำสั่ง (Resting Maker)
+       - ส่งคำสั่ง `type: "LIMIT"` ไปยังกระดานเทรด (Binance / DreamDEX)
+       - หากคำสั่งยังไม่ Fill ทันที ระบบจะเข้าสู่สถานะ `PENDING_ENTRY` และบันทึก `pendingEntryOrder` พร้อมราคา SL และ TP
+       - **ระบบยกเลิกอัตโนมัติ (Safety Guard & Invalidation)**: หากราคาหลุดลงต่ำกว่า Stop Loss หรือวิ่งพุ่งหนีขึ้นไป (>1.5% จากราคา Entry) โดยยังไม่ติดไม้ บอทจะยกเลิกคำสั่ง Maker Entry บนกระดานทันที เพื่อป้องกันไม่ให้ไปรับของในจุดที่โครงสร้างเสีย
+    2. **Resting Maker Limit Take Profit Orders (TP1 & TP2)**:
+       - ทันทีที่คำสั่ง Entry ถูกจับคู่ (Filled) ไม่ว่าจะจาก WebSocket `executionReport` หรือ REST sync:
+         - บอทจะคำนวณแบ่งออเดอร์ Take Profit 1 (50% qty @ `tp1Price`) และ Take Profit 2 (50% qty @ `tp2Price`)
+         - วางคำสั่ง Limit Sell ดักรอไว้บนสมุดคำสั่งของกระดานทันที (Resting Maker Sells) และเก็บ `tp1OrderId` กับ `tp2OrderId`
+         - คำสั่งเหล่านี้จะปรากฏในตาราง Open Orders และเส้นบนกราฟของแดชบอร์ดทันที
+       - **รองรับไม้เทรดเดิม (Retroactive Placement for Active Positions)**: หากบอทเปิดขึ้นมาหรือรีสตาร์ตในขณะที่ถือไม้ในโหมด `MAKER_LIMIT` อยู่แล้ว (เช่น ไม้ BTC ปัจจุบัน) แต่ยังไม่มี resting TP orders ระบบจะตรวจสอบและวางคำสั่ง Limit Sell TP1 & TP2 บนกระดานให้อัตโนมัติทันที
+    3. **การจับคู่และการขยับ Break Even**:
+       - เมื่อราคาขึ้นไปแตะและคำสั่ง Maker TP1 ถูก Fill:
+         - บอทบันทึกสถานะ `tp1Executed = true` พร้อมรับรู้กำไร Realized PnL
+         - **🛡️ เลื่อน Stop Loss ขึ้นมาที่ทุนทันที (Breakeven $entryPrice)** ทำให้สถานะเทรดกลายเป็น Risk-Free 100%
+       - เมื่อราคาขึ้นไปแตะและคำสั่ง Maker TP2 ถูก Fill:
+         - คำสั่งสุดท้ายปิดสมบูรณ์ ปิดรอบเทรดสำเร็จ และรีเซ็ตสถานะกลับเป็น `WAITING_SETUP`
+    4. **Emergency Stop Loss Invalidation**:
+       - หากราคาวิ่งลงมาหลุด `effectiveSl` (รวมถึง Trailing Stop):
+         - บอทจะทำการ **ยกเลิกคำสั่ง TP1 และ TP2 ที่วางค้างอยู่บนกระดานก่อนทันที** เพื่อปลดล็อก Base Asset
+         - จากนั้นส่งคำสั่ง `MARKET` Sell ขายตัดขาดทุนฉุกเฉินทันทีเพื่อความปลอดภัยสูงสุด
+    5. **การจัดการคำสั่งจากผู้ใช้ (Manual Controls & Reset)**:
+       - เมธอด `sellAllUser`, `cancelAllOrdersUser`, `resetPosition`, `resetBotState` ถูกปรับปรุงให้ตรวจจับและยกเลิกคำสั่ง `pendingEntryOrder`, `tp1OrderId`, `tp2OrderId` ทั้งหมดบนกระดานเทรดก่อนดำเนินการเสมอ
+  - **การอัปเดต Dashboard UI (`public/app.js`)**:
+    - รองรับสถานะ `PENDING_ENTRY` พร้อมแสดงสีฟ้าไฮไลต์ในกล่อง Battle Plan
+    - แสดงป้ายกำกับคำสั่ง Open Orders ชัดเจน: `Swing Entry (Maker Limit)`, `Swing TP1 (Maker Limit)`, `Swing TP2 (Maker Limit)`
 - **Typecheck & Version Bump**:
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - `node --check public/app.js` ผ่าน 100% (0 errors)
-  - ขยับเวอร์ชันเป็น `v0.2.89` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+  - ขยับเวอร์ชันเป็น `v0.2.90` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
 
 
