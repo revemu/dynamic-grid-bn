@@ -9,7 +9,7 @@
 import type { IExchangeClient, ExchangeSymbolInfo } from "../../exchange/types.js";
 import type { Config } from "../../config.js";
 import type { AtrSource } from "../../types.js";
-import { type DowStructureEngine, type Candle, type DowStructure } from "../../market-structure.js";
+import { type DowStructureEngine, type Candle } from "../../market-structure.js";
 import { BotDatabase, getDatabase } from "../../db.js";
 import type {
   IStrategy,
@@ -49,9 +49,9 @@ export class SwingTraderStrategy implements IStrategy {
   public cfg: Config;
   public atrSource: AtrSource;
   public readonly log: (msg: string, extra?: unknown) => void;
-  public readonly dowEngine?: DowStructureEngine;
-  public readonly localTrendEngine?: DowStructureEngine;
-  public readonly htfDowEngine?: DowStructureEngine;
+  public dowEngine?: DowStructureEngine;
+  public localTrendEngine?: DowStructureEngine;
+  public htfDowEngine?: DowStructureEngine;
 
   public db: BotDatabase;
   public lots: Lot[] = [];
@@ -77,19 +77,30 @@ export class SwingTraderStrategy implements IStrategy {
     this.cfg = ctx.config;
     this.atrSource = ctx.atrSource;
     this.log = ctx.log;
-    this.macroDowEngine = ctx.macroDowEngine;
+    this.dowEngine = ctx.macroDowEngine;
     this.localTrendEngine = ctx.localTrendEngine;
     this.htfDowEngine = ctx.htfDowEngine;
 
     this.db = getDatabase({ dbPath: this.cfg.dbPath });
     this.isPaused = this.cfg.startPaused ?? false;
-  }
 
-  public get macroDowEngine(): DowStructureEngine | undefined {
-    return this.dowEngine;
-  }
-  public set macroDowEngine(val: DowStructureEngine | undefined) {
-    (this as any).dowEngine = val;
+    // 🛡️ Recover persisted state from database across reboots
+    const savedState = this.db.getState(this.symbolInfo.symbol);
+    if (savedState) {
+      if (Array.isArray(savedState.lots) && savedState.lots.length > 0) {
+        this.lots = [...savedState.lots];
+      }
+      if ((savedState as any).activeSwingPosition) {
+        this.activePosition = (savedState as any).activeSwingPosition;
+        this.swingState = (savedState as any).swingState || "IN_POSITION";
+        this.log(
+          `[SwingTrader] 🔄 Recovered active swing position for ${this.symbolInfo.symbol} from database (Entry: $${this.activePosition?.entryPrice.toFixed(4)}, Qty: ${this.activePosition?.qty})`,
+        );
+      }
+      if (typeof savedState.realizedPnl === "number") {
+        this.realizedPnl = savedState.realizedPnl;
+      }
+    }
   }
 
   public getIntervalMs(): number {
@@ -163,6 +174,20 @@ export class SwingTraderStrategy implements IStrategy {
     }
   }
 
+  public roundPrice(price: number): number {
+    const tick = this.symbolInfo.tickSize || 0.0001;
+    const precision = this.symbolInfo.pricePrecision ?? 4;
+    const stepped = Math.round(price / tick) * tick;
+    return parseFloat(stepped.toFixed(precision));
+  }
+
+  public roundQty(qty: number): number {
+    const step = this.symbolInfo.stepSize || 0.0001;
+    const precision = this.symbolInfo.qtyPrecision ?? 4;
+    const stepped = Math.floor(qty / step) * step;
+    return parseFloat(stepped.toFixed(precision));
+  }
+
   public async refreshWalletBalances(): Promise<any> {
     try {
       const b = await this.binance.getAccountBalances(this.symbolInfo.symbol);
@@ -231,6 +256,7 @@ export class SwingTraderStrategy implements IStrategy {
       await this.binance.cancelAllOpenOrders(this.symbolInfo.symbol);
       count = this.openOrders.length;
       this.openOrders = [];
+      this.saveState(true);
       this.log(`[SwingTrader] All open orders cancelled by user`);
     } catch (e) {
       this.log(`[SwingTrader] Cancel all orders error: ${e}`);
@@ -241,19 +267,21 @@ export class SwingTraderStrategy implements IStrategy {
   public async sellAllUser(): Promise<{ success: boolean; soldQty: number; price: number; error?: string; }> {
     this.log(`[SwingTrader] Emergency market sell requested by user`);
     const held = this.baseHeld();
-    if (held > (this.symbolInfo.minQty || 0.0001)) {
+    const qty = this.roundQty(held);
+    if (qty >= (this.symbolInfo.minQty || 0.0001)) {
       try {
         const res = await this.binance.placeOrder({
           symbol: this.symbolInfo.symbol,
           side: "SELL",
           type: "MARKET",
-          qty: held,
+          qty,
         });
         this.lots = [];
         this.activePosition = undefined;
         this.swingState = "WAITING_SETUP";
+        this.saveState(true);
         await this.refreshWalletBalances();
-        return { success: true, soldQty: held, price: res.price || this.lastRefPrice };
+        return { success: true, soldQty: qty, price: res.price || this.lastRefPrice };
       } catch (e: any) {
         this.log(`[SwingTrader] Emergency sell failed: ${e}`);
         return { success: false, soldQty: 0, price: 0, error: e?.message };
@@ -267,6 +295,9 @@ export class SwingTraderStrategy implements IStrategy {
     this.activePosition = undefined;
     this.swingState = "WAITING_SETUP";
     this.openOrders = [];
+    if (opts?.resetPnl) {
+      this.realizedPnl = 0;
+    }
     this.saveState(true);
     this.log(`[SwingTrader] Bot state reset`);
     return { success: true };
@@ -283,11 +314,29 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public reloadState(): void {
-    this.log(`[SwingTrader] State reloaded`);
+    const saved = this.db.getState(this.symbolInfo.symbol);
+    if (saved) {
+      this.lots = saved.lots || [];
+      this.activePosition = (saved as any).activeSwingPosition;
+      this.swingState = (saved as any).swingState || "WAITING_SETUP";
+    }
+    this.log(`[SwingTrader] State reloaded from database`);
   }
 
   public saveState(immediate = false): void {
-    // Persistent state record
+    try {
+      this.db.saveState({
+        symbol: this.symbolInfo.symbol,
+        lots: this.lots,
+        openOrders: this.openOrders,
+        realizedPnl: this.realizedPnl,
+        tradeRealizedPnl: this.realizedPnl,
+        activeSwingPosition: this.activePosition,
+        swingState: this.swingState,
+      } as any);
+    } catch (e) {
+      this.log(`[SwingTrader] Failed to persist state: ${e}`);
+    }
   }
 
   // ── Main Execution Loop ──────────────────────────────────────────────────
@@ -296,6 +345,9 @@ export class SwingTraderStrategy implements IStrategy {
 
     try {
       const tob = await this.binance.getTopOfBook(this.symbolInfo.symbol);
+      // 🛡️ Bug 1 Fix: TopOfBook safety guard
+      if (!tob || !tob.bestBid || !tob.bestAsk) return;
+
       const refPrice = (tob.bestBid + tob.bestAsk) / 2;
       this.lastRefPrice = refPrice;
 
@@ -354,7 +406,7 @@ export class SwingTraderStrategy implements IStrategy {
       pos.trailingStopActive = true;
       const trailingFloor = pos.highestPriceSinceEntry * (1 - cfg.trailingPullbackPct / 100);
       if (!pos.trailingStopPrice || trailingFloor > pos.trailingStopPrice) {
-        pos.trailingStopPrice = trailingFloor;
+        pos.trailingStopPrice = this.roundPrice(trailingFloor);
       }
     }
 
@@ -371,26 +423,31 @@ export class SwingTraderStrategy implements IStrategy {
 
     // ── Check Take Profit 1 ──────────────────────────────────────────────────
     if (!pos.tp1Executed && refPrice >= pos.tp1Price) {
-      const exitQty = pos.qty * cfg.tp1CloseRatio;
-      this.log(`[SwingTrader] 🎯 TP1 Target reached ($${refPrice.toFixed(4)} >= $${pos.tp1Price.toFixed(4)}) — Closing ${(cfg.tp1CloseRatio * 100).toFixed(0)}% (${exitQty.toFixed(2)})`);
-      try {
-        await this.binance.placeOrder({
-          symbol: this.symbolInfo.symbol,
-          side: "SELL",
-          type: "MARKET",
-          qty: exitQty,
-        });
-        pos.tp1Executed = true;
-        pos.qty -= exitQty;
-        // Raise Stop Loss to Breakeven to guarantee risk-free trade!
-        pos.stopLossPrice = pos.entryPrice;
-        this.swingState = "TP1_REACHED";
-        this.log(`[SwingTrader] 🛡️ Stop Loss moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — Trade is now 100% Risk-Free!`);
-        await this.refreshWalletBalances();
-      } catch (e) {
-        this.log(`[SwingTrader] TP1 execution failed: ${e}`);
+      const exitQty = this.roundQty(pos.qty * cfg.tp1CloseRatio);
+      if (exitQty >= (this.symbolInfo.minQty || 0.0001)) {
+        this.log(
+          `[SwingTrader] 🎯 TP1 Target reached ($${refPrice.toFixed(4)} >= $${pos.tp1Price.toFixed(4)}) — Closing ${(cfg.tp1CloseRatio * 100).toFixed(0)}% (${exitQty.toFixed(4)})`,
+        );
+        try {
+          await this.binance.placeOrder({
+            symbol: this.symbolInfo.symbol,
+            side: "SELL",
+            type: "MARKET",
+            qty: exitQty,
+          });
+          pos.tp1Executed = true;
+          pos.qty = this.roundQty(pos.qty - exitQty);
+          // 🛡️ Raise Stop Loss to Breakeven to guarantee risk-free trade!
+          pos.stopLossPrice = pos.entryPrice;
+          this.swingState = "TP1_REACHED";
+          this.saveState(true);
+          this.log(`[SwingTrader] 🛡️ Stop Loss moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — Trade is now 100% Risk-Free!`);
+          await this.refreshWalletBalances();
+        } catch (e) {
+          this.log(`[SwingTrader] TP1 execution failed: ${e}`);
+        }
+        return;
       }
-      return;
     }
 
     // ── Check Take Profit 2 ──────────────────────────────────────────────────
@@ -403,22 +460,32 @@ export class SwingTraderStrategy implements IStrategy {
   private async executeSwingEntry(signal: SwingSignalResult, price: number, cfg: SwingStrategyConfig): Promise<void> {
     await this.refreshWalletBalances();
     const availableQuote = this.walletQuoteBalance;
-    const maxBudget = (availableQuote * (cfg.maxPositionPct / 100));
+    const maxBudget = availableQuote * (cfg.maxPositionPct / 100);
 
     if (maxBudget < (this.symbolInfo.minNotional || 5)) {
       this.log(`[SwingTrader] Insufficient quote balance for swing trade ($${availableQuote.toFixed(2)} available)`);
       return;
     }
 
-    const qty = maxBudget / price;
-    this.log(`[SwingTrader] 🚀 Executing Swing Entry (${signal.signalType}) at $${price.toFixed(4)} | Budget: $${maxBudget.toFixed(2)} | SL: $${signal.stopLossPrice.toFixed(4)} | TP1: $${signal.tp1Price.toFixed(4)} | TP2: $${signal.tp2Price.toFixed(4)} | R:R: ${signal.riskRewardRatio.toFixed(2)}`);
+    // 🛡️ Bug 2 Fix: Apply roundQty to satisfy lot size & precision filters
+    const rawQty = maxBudget / price;
+    const qty = this.roundQty(rawQty);
+
+    if (qty < (this.symbolInfo.minQty || 0.0001)) {
+      this.log(`[SwingTrader] Computed qty ${qty} is less than exchange minQty ${this.symbolInfo.minQty}`);
+      return;
+    }
+
+    this.log(
+      `[SwingTrader] 🚀 Executing Swing Entry (${signal.signalType}) at $${price.toFixed(4)} | Budget: $${maxBudget.toFixed(2)} | Qty: ${qty} | SL: $${signal.stopLossPrice.toFixed(4)} | TP1: $${signal.tp1Price.toFixed(4)} | TP2: $${signal.tp2Price.toFixed(4)} | R:R: ${signal.riskRewardRatio.toFixed(2)}`,
+    );
 
     try {
-      const order = await this.binance.placeOrder({
+      await this.binance.placeOrder({
         symbol: this.symbolInfo.symbol,
         side: "BUY",
         type: "MARKET",
-        qty: qty,
+        qty,
       });
 
       this.activePosition = {
@@ -426,9 +493,9 @@ export class SwingTraderStrategy implements IStrategy {
         entryPrice: price,
         qty,
         notionalQuote: maxBudget,
-        stopLossPrice: signal.stopLossPrice,
-        tp1Price: signal.tp1Price,
-        tp2Price: signal.tp2Price,
+        stopLossPrice: this.roundPrice(signal.stopLossPrice),
+        tp1Price: this.roundPrice(signal.tp1Price),
+        tp2Price: this.roundPrice(signal.tp2Price),
         tp1Executed: false,
         highestPriceSinceEntry: price,
         trailingStopActive: false,
@@ -443,6 +510,7 @@ export class SwingTraderStrategy implements IStrategy {
       });
 
       this.swingState = "IN_POSITION";
+      this.saveState(true);
       await this.refreshWalletBalances();
     } catch (e) {
       this.log(`[SwingTrader] Swing Entry failed: ${e}`);
@@ -464,21 +532,31 @@ export class SwingTraderStrategy implements IStrategy {
       walletQuoteBalance: this.walletQuoteBalance,
       openOrders: this.openOrders,
       regime: structure?.regime ?? "RANGE",
-      channel: structure ? {
-        floor: structure.bottomBound,
-        center: structure.centerPrice,
-        ceiling: structure.upperBound,
-      } : undefined,
+      channel: structure
+        ? {
+            floor: structure.bottomBound,
+            center: structure.centerPrice,
+            ceiling: structure.upperBound,
+          }
+        : undefined,
+      // 🛡️ Bug 5: Supply SL, TP1, and TP2 lines for TradingView Lightweight Charts rendering
+      buyLevels: this.activePosition ? [this.activePosition.entryPrice] : [],
+      sellLevels: this.activePosition ? [this.activePosition.tp1Price, this.activePosition.tp2Price] : [],
+      cutLossBound: this.activePosition ? this.activePosition.stopLossPrice : (structure?.cutLossBound ?? 0),
       botAction: {
         code: this.activePosition ? "IN_SWING_TRADE" : "WAITING_SWING_SETUP",
         title: this.activePosition
-          ? (this.activePosition.tp1Executed ? "🚀 TP1 Done — Trailing Trend" : "📈 Swing Position Active")
+          ? this.activePosition.tp1Executed
+            ? "🚀 TP1 Done — Trailing Trend"
+            : "📈 Swing Position Active"
           : "🔍 Scanning for Swing Setup",
         reason: this.activePosition
-          ? `Holding ${this.activePosition.qty.toFixed(2)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP: $${this.activePosition.tp2Price.toFixed(4)})`
-          : (this.lastSignal?.reason || "Waiting for confirmed Higher Low or Trendline Breakout"),
+          ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`
+          : this.lastSignal?.reason || "Waiting for confirmed Higher Low or Trendline Breakout",
         nextTrigger: this.activePosition
-          ? (this.activePosition.tp1Executed ? `TP2: >$${this.activePosition.tp2Price.toFixed(4)}` : `TP1: >$${this.activePosition.tp1Price.toFixed(4)}`)
+          ? this.activePosition.tp1Executed
+            ? `TP2: >$${this.activePosition.tp2Price.toFixed(4)}`
+            : `TP1: >$${this.activePosition.tp1Price.toFixed(4)}`
           : "Wait HL Base Confirm",
         severity: this.activePosition ? "info" : "warning",
       },

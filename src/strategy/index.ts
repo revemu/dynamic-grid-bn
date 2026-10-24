@@ -977,6 +977,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       newSettings.minChannelWidthPct !== undefined ||
       newSettings.maxChannelWidthPct !== undefined ||
       newSettings.floorBufferPct !== undefined ||
+      newSettings.minFloorProximityPct !== undefined ||
+      newSettings.enableTrendChannelGating !== undefined ||
       newSettings.srLookbackCandles !== undefined ||
       newSettings.useTrueWick !== undefined ||
       newSettings.wickThresholdPct !== undefined ||

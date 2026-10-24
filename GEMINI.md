@@ -3630,6 +3630,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.75` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
+---
+
+### 96. Swing Trader Production Hardening & Settings Invalidation Fix (`v0.2.76`)
+
+- **การแก้ไขบั๊ก 5 จุดสำคัญจากการ Audit โค้ด**:
+  1. **TopOfBook Undefined Guard (`src/strategy/swing/index.ts`)**:
+     - ป้องกัน Bot Crash จากการเรียก `tob.bestBid` ขณะที่ WebSocket หรือเน็ตเวิร์กยังดึงข้อมูลไม่ทัน
+  2. **Order Precision & StepSize Rounding (`src/strategy/swing/index.ts`)**:
+     - เพิ่มฟังก์ชัน `roundQty(qty)` และ `roundPrice(price)` สำหรับคำสั่ง Swing Trade ป้องกันการถูกกระดานปฏิเสธด้วย `Filter failure: LOT_SIZE`
+  3. **State Persistence Across Bot Restarts (`src/strategy/swing/index.ts`)**:
+     - เชื่อมต่อ `saveState()` และเพิ่มการกู้คืน `activePosition` จากฐานข้อมูลใน Constructor ป้องกันการสูญเสียการติดตาม Stop Loss / TP เมื่อเซิร์ฟเวอร์รีสตาร์ท
+  4. **Settings Cache Invalidation in DynamicGrid (`src/strategy/index.ts`)**:
+     - เพิ่ม `minFloorProximityPct` และ `enableTrendChannelGating` เข้าในเงื่อนไขการเคลียร์ `confirmedChannel = undefined` ทำให้เมื่อผู้ใช้ปรับระยะความปลอดภัย กรอบราคาจะถูกรีเซ็ตและคำนวณใหม่ในทันที
+  5. **Telemetry Visual Lines for Charts (`src/strategy/swing/index.ts`)**:
+     - ส่งค่า `cutLossBound` (Stop Loss), `buyLevels` (Entry), และ `sellLevels` (TP1, TP2) เข้า Telemetry เพื่อให้ชาร์ต TradingView วาดเส้นระดับราคาแบบ Real-time
+  6. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.76` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
+
+
 
 
 
