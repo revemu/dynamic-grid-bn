@@ -214,8 +214,11 @@ export class DreamDexClient implements IExchangeClient {
       transport: http(this.rpcUrl),
     });
 
-    if (opts.privateKey) {
-      this.setPrivateKey(opts.privateKey);
+    const rawKey = opts.privateKey?.trim();
+    if (rawKey && rawKey !== "******") {
+      this.setPrivateKey(rawKey);
+    } else if (process.env.DREAMDEX_PRIVATE_KEY || process.env.PRIVATE_KEY) {
+      this.setPrivateKey((process.env.DREAMDEX_PRIVATE_KEY || process.env.PRIVATE_KEY)!);
     }
   }
 

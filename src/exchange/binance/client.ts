@@ -120,16 +120,18 @@ export class BinanceClient implements IExchangeClient {
   private symbolInfoCache = new Map<string, BinanceSymbolInfo>();
 
   constructor(opts: BinanceClientOptions = {}) {
-    this.apiKey = opts.apiKey || process.env.BINANCE_API_KEY || "";
-    this.apiSecret = opts.apiSecret || process.env.BINANCE_API_SECRET || "";
+    const rawKey = opts.apiKey?.trim();
+    this.apiKey = (rawKey && rawKey !== "******") ? rawKey : (process.env.BINANCE_API_KEY || "");
+    const rawSecret = opts.apiSecret?.trim();
+    this.apiSecret = (rawSecret && rawSecret !== "******") ? rawSecret : (process.env.BINANCE_API_SECRET || "");
     this.baseUrl = (opts.baseUrl || process.env.BINANCE_BASE_URL || "https://api.binance.com").replace(/\/+$/, "");
     this.recvWindow = opts.recvWindow ?? 5000;
     this.log = opts.log ?? ((msg: string) => console.log(`[binance-client] ${msg}`));
   }
 
   public updateCredentials(apiKey?: string, apiSecret?: string, baseUrl?: string): void {
-    if (apiKey !== undefined) this.apiKey = apiKey.trim();
-    if (apiSecret !== undefined) this.apiSecret = apiSecret.trim();
+    if (apiKey !== undefined && apiKey !== "******" && apiKey.trim() !== "") this.apiKey = apiKey.trim();
+    if (apiSecret !== undefined && apiSecret !== "******" && apiSecret.trim() !== "") this.apiSecret = apiSecret.trim();
     if (baseUrl !== undefined) this.baseUrl = baseUrl.trim().replace(/\/+$/, "");
   }
 

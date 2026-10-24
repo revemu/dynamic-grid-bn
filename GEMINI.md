@@ -3696,6 +3696,21 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.79` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 100. Strict API Key Masking Guard & Swing Trader Wallet Balance Telemetry (`v0.2.80`)
+
+- **ระบบป้องกันการบันทึกค่า Masking ปลอมปน (Strict Masking Guard)**:
+  - แก้ไข `loadConfigFromDatabase()` ใน `src/config.ts`: ป้องกันไม่ให้ค่า `"******"` ในฐานข้อมูลมาเขียนทับ API Key / Private Key จริงจาก `.env`
+  - แก้ไข `BinanceClient` (`src/exchange/binance/client.ts`) และ `DreamDexClient` (`src/exchange/dreamdex/client.ts`): หากได้รับ `apiKey` หรือ `privateKey` ที่เป็น `"******"` ให้ Fallback กลับไปอ่าน Key จริงจาก Environment Variables อัตโนมัติ แก้ปัญหา Binance API แจ้งข้อผิดพลาด `Illegal characters found in parameter 'apiKey'`
+  - ใน `src/index.ts` และกลยุทธ์ทั้งสอง: ลบฟิลด์ `"******"` ก่อนส่งเข้าคอนฟิกหรือบันทึกลงฐานข้อมูล `settings.db.json` ป้องกันไม่ให้เขียนทับค่าจริงลงดิสก์
+- **ซิงค์ยอดเงินคงเหลือในกระเป๋าและ Telemetry ใน `SwingTraderStrategy` (`src/strategy/swing/index.ts`)**:
+  - เรียก `refreshWalletBalances()` อัตโนมัติทุก 10 วินาทีในลูป `tick()` และเรียกทันทีตอนเริ่มต้นคลาส
+  - เติมฟิลด์ข้อมูล `mid`, `baseAsset`, `quoteAsset`, `walletAddress`, `walletSomiBalance`, `walletUsdsoBalance`, `walletTotalValueQuote`, `baseHeld`, `lots`, `positionUsdso`, `maxInventoryQuote` ลงใน `emitTelemetryTick()` ทำให้แดชบอร์ดแสดงผลยอดเงิน Spot Wallet และ Position Held ได้สมบูรณ์ 100%
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.80` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

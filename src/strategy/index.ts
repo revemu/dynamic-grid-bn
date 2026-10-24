@@ -1005,14 +1005,16 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       this.pendingConfirmedChannelUpdate = true;
     }
     this.syncDowEngineSettings();
-    const configToPersist = {
+    const configToPersist: Record<string, any> = {
       ...this.db.getAllSettings(),
       ...this.getRuntimeConfig(),
-      // Ensure real secrets are persisted in DB if provided
-      binanceApiKey: this.cfg.binanceApiKey,
-      binanceApiSecret: this.cfg.binanceApiSecret,
-      dreamdexPrivateKey: this.cfg.dreamdexPrivateKey,
     };
+    if (this.cfg.binanceApiKey && this.cfg.binanceApiKey !== "******") configToPersist.binanceApiKey = this.cfg.binanceApiKey;
+    if (this.cfg.binanceApiSecret && this.cfg.binanceApiSecret !== "******") configToPersist.binanceApiSecret = this.cfg.binanceApiSecret;
+    if (this.cfg.dreamdexPrivateKey && this.cfg.dreamdexPrivateKey !== "******") configToPersist.dreamdexPrivateKey = this.cfg.dreamdexPrivateKey;
+    if (configToPersist.binanceApiKey === "******") delete configToPersist.binanceApiKey;
+    if (configToPersist.binanceApiSecret === "******") delete configToPersist.binanceApiSecret;
+    if (configToPersist.dreamdexPrivateKey === "******") delete configToPersist.dreamdexPrivateKey;
     this.db.setSettings(configToPersist);
     const sanitizedLog = { ...newSettings };
     if (sanitizedLog.binanceApiKey) sanitizedLog.binanceApiKey = "******";

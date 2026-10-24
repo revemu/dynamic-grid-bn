@@ -437,7 +437,19 @@ async function main(): Promise<void> {
         try {
           await grid.cancelAllOrdersUser();
           const targetStrategyType = s.strategyType;
-          const mergedConfig = { ...grid.getRuntimeConfig(), ...s, strategyType: targetStrategyType };
+          const currentConfig = grid.getRuntimeConfig();
+          const cleanS = { ...s };
+          if (cleanS.binanceApiKey === "******") delete cleanS.binanceApiKey;
+          if (cleanS.binanceApiSecret === "******") delete cleanS.binanceApiSecret;
+          if (cleanS.dreamdexPrivateKey === "******") delete cleanS.dreamdexPrivateKey;
+          const mergedConfig = {
+            ...currentConfig,
+            ...cleanS,
+            strategyType: targetStrategyType,
+            binanceApiKey: grid.getRealBinanceApiKey() || config.binanceApiKey,
+            binanceApiSecret: grid.getRealBinanceApiSecret() || config.binanceApiSecret,
+            dreamdexPrivateKey: grid.getRealDreamdexPrivateKey() || config.dreamdexPrivateKey,
+          };
           grid = createStrategy(targetStrategyType, {
             exchange,
             symbolInfo,

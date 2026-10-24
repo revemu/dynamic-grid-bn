@@ -334,8 +334,15 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       } else if (saved.maxSessionLossUsdso !== undefined) {
         merged.maxSessionLossQuote = Number(saved.maxSessionLossUsdso);
       }
-      if (saved.binanceApiKey !== undefined) merged.binanceApiKey = String(saved.binanceApiKey);
-      if (saved.binanceApiSecret !== undefined) merged.binanceApiSecret = String(saved.binanceApiSecret);
+      if (saved.binanceApiKey !== undefined && saved.binanceApiKey !== "******" && String(saved.binanceApiKey).trim() !== "") {
+        merged.binanceApiKey = String(saved.binanceApiKey).trim();
+      }
+      if (saved.binanceApiSecret !== undefined && saved.binanceApiSecret !== "******" && String(saved.binanceApiSecret).trim() !== "") {
+        merged.binanceApiSecret = String(saved.binanceApiSecret).trim();
+      }
+      if (saved.dreamdexPrivateKey !== undefined && saved.dreamdexPrivateKey !== "******" && String(saved.dreamdexPrivateKey).trim() !== "") {
+        merged.dreamdexPrivateKey = String(saved.dreamdexPrivateKey).trim();
+      }
       if (saved.binanceBaseUrl !== undefined) merged.binanceBaseUrl = String(saved.binanceBaseUrl);
       if (saved.binanceWsBase !== undefined) merged.binanceWsBase = String(saved.binanceWsBase);
       if (saved.dryRun !== undefined) merged.dryRun = Boolean(saved.dryRun);

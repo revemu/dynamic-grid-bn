@@ -71,6 +71,7 @@ export class SwingTraderStrategy implements IStrategy {
   public bid = 0;
   public ask = 0;
   public mid = 0;
+  private lastBalanceRefreshTime = 0;
 
   private eventListeners: ((event: StrategyEvent) => void)[] = [];
 
@@ -104,6 +105,7 @@ export class SwingTraderStrategy implements IStrategy {
         this.realizedPnl = savedState.realizedPnl;
       }
     }
+    this.refreshWalletBalances().catch(() => {});
   }
 
   public getIntervalMs(): number {
@@ -115,21 +117,27 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public getRealDreamdexPrivateKey(): string | undefined {
-    return this.cfg.dreamdexPrivateKey;
+    const k = this.cfg.dreamdexPrivateKey;
+    return (k && k !== "******") ? k : (process.env.DREAMDEX_PRIVATE_KEY || process.env.PRIVATE_KEY);
   }
 
   public getRealBinanceApiKey(): string | undefined {
-    return this.cfg.binanceApiKey;
+    const k = this.cfg.binanceApiKey;
+    return (k && k !== "******") ? k : process.env.BINANCE_API_KEY;
   }
 
   public getRealBinanceApiSecret(): string | undefined {
-    return this.cfg.binanceApiSecret;
+    const s = this.cfg.binanceApiSecret;
+    return (s && s !== "******") ? s : process.env.BINANCE_API_SECRET;
   }
 
   public getRuntimeConfig(): any {
     return {
       ...this.cfg,
       strategyType: "swing_trade",
+      binanceApiKey: this.cfg.binanceApiKey ? "******" : "",
+      binanceApiSecret: this.cfg.binanceApiSecret ? "******" : "",
+      dreamdexPrivateKey: this.cfg.dreamdexPrivateKey ? "******" : "",
       swingMinRiskReward: this.cfg.swingMinRiskReward ?? 2.0,
       swingStopLossBufferPct: this.cfg.swingStopLossBufferPct ?? 0.5,
       swingMaxPositionPct: this.cfg.swingMaxPositionPct ?? 60.0,
@@ -151,7 +159,11 @@ export class SwingTraderStrategy implements IStrategy {
     if (cleanSettings.dreamdexPrivateKey === "******") delete cleanSettings.dreamdexPrivateKey;
     this.cfg = { ...this.cfg, ...cleanSettings, strategyType: "swing_trade" };
     try {
-      this.db.setSettings(this.cfg);
+      const toPersist: Record<string, any> = { ...this.db.getAllSettings(), ...this.cfg };
+      if (toPersist.binanceApiKey === "******") delete toPersist.binanceApiKey;
+      if (toPersist.binanceApiSecret === "******") delete toPersist.binanceApiSecret;
+      if (toPersist.dreamdexPrivateKey === "******") delete toPersist.dreamdexPrivateKey;
+      this.db.setSettings(toPersist);
     } catch (e: any) {
       this.log(`[SwingTrader] Save settings error: ${e}`);
     }
@@ -401,6 +413,16 @@ export class SwingTraderStrategy implements IStrategy {
 
       const refPrice = (tob.bestBid + tob.bestAsk) / 2;
       this.lastRefPrice = refPrice;
+      this.mid = refPrice;
+      this.bid = tob.bestBid;
+      this.ask = tob.bestAsk;
+
+      // Periodically refresh wallet balances from exchange
+      const now = Date.now();
+      if (now - this.lastBalanceRefreshTime > 10_000) {
+        this.lastBalanceRefreshTime = now;
+        this.refreshWalletBalances().catch(() => {});
+      }
 
       // Extract market structure
       const structure = this.dowEngine?.getStructure(refPrice, undefined, {
@@ -570,17 +592,40 @@ export class SwingTraderStrategy implements IStrategy {
 
   public emitTelemetryTick(): void {
     const structure = this.dowEngine?.getStructure(this.lastRefPrice, undefined);
+    const currentMid = this.mid || this.lastRefPrice;
+    const baseHeldVal = this.baseHeld();
+    const invUsd = this.activePosition ? this.activePosition.qty * currentMid : (baseHeldVal * currentMid);
+    const somiVal = this.walletBaseBalance * currentMid;
+    const totalVal = somiVal + this.walletQuoteBalance;
+    const maxInv = this.cfg.maxInventoryQuote ?? 50;
+
     const telemetry = {
+      time: Math.floor(Date.now() / 1000),
+      mid: currentMid,
+      refPrice: currentMid,
       symbol: this.symbolInfo.symbol,
-      refPrice: this.lastRefPrice,
+      baseAsset: this.symbolInfo.baseAsset,
+      quoteAsset: this.symbolInfo.quoteAsset,
+      walletAddress: (this.binance as any).walletAddress || (this.binance as any).getAddress?.() || "",
+      walletBaseBalance: this.walletBaseBalance,
+      walletQuoteBalance: this.walletQuoteBalance,
+      walletSomiBalance: this.walletBaseBalance,
+      walletUsdsoBalance: this.walletQuoteBalance,
+      walletTotalValueQuote: totalVal,
+      walletTotalValueUsdso: totalVal,
+      baseHeld: baseHeldVal,
+      lots: this.lots,
+      positionUsdso: invUsd,
+      positionQuote: invUsd,
+      maxInventoryQuote: maxInv,
+      maxInventoryUsdso: maxInv,
+      dryRun: Boolean(this.cfg.dryRun),
       isPaused: this.isPaused,
       strategyType: this.strategyType,
       strategyName: this.name,
       swingState: this.swingState,
       activePosition: this.activePosition,
       lastSignal: this.lastSignal,
-      walletBaseBalance: this.walletBaseBalance,
-      walletQuoteBalance: this.walletQuoteBalance,
       openOrders: this.openOrders,
       regime: structure?.regime ?? "RANGE",
       channel: structure
@@ -611,7 +656,6 @@ export class SwingTraderStrategy implements IStrategy {
           : "Wait HL Base Confirm",
         severity: this.activePosition ? "info" : "warning",
       },
-      time: Math.floor(Date.now() / 1000),
     };
 
     this.emit({
