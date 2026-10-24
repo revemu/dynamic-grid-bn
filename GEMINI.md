@@ -3755,6 +3755,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.82` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 103. Independent HTF Candle Pipeline, Zero Floating Channel Bounds & Multi-Timeframe Chart Dashboard (`v0.2.83`)
+
+- **สาเหตุที่กรอบราคาดูลอยและ Higher Timeframe / Volume Profile ไม่ช่วยยึดแนวรับแนวต้าน**:
+  1. ใน `ChannelEngine` (`VOLUME_PROFILE_HTF` mode): มีตรรกะ Clamp ความกว้างขั้นต่ำแบบลอย (`upperBound = bottomBound + minHybridSpan`) เมื่อสวิงคลื่นจริงแคบกว่า `minChannelWidthPct` ทำให้บอทบวกเลขขึ้นไปดื้อๆ กลายเป็นเพดานลอยอยู่กลางอากาศ โดยไม่มีแท่งเทียนหรือยอดสวิงใดๆ รองรับ
+  2. ใน `SwingTraderStrategy`: มี `htfDowEngine` อยู่แล้วแต่ไม่ได้ส่งผลการคำนวณ `htfStructure` และ `VolumeProfileEngine` เข้า `dowEngine.getStructure(...)` ทำให้ค่า `htfFloor`, `htfCeil`, `poc`, `vah`, `val` กลายเป็นค่าว่าง (`undefined`)
+  3. แดชบอร์ดและชาร์ต TradingView ไม่มีระบบแยกเก็บแท่งเทียน Higher Timeframe (4H HTF) ทำให้ผู้ใช้มองไม่เห็นภาพหลายๆ TF ย้อนหลัง และไม่มีเส้นแสดงแนวรับแนวต้านสำคัญระดับโครงสร้างใหญ่
+- **การแยกเก็บชุดข้อมูลแท่งเทียน HTF และประมวลผลอิสระ (Independent HTF Candle Pipeline)**:
+  - ใน `src/server.ts`: เพิ่ม `htfCandles: Candle[] = []`, เมธอด `setInitialHtfCandles()` และ `addHtfCandle()` พร้อมส่งสัญญาณ SSE (`htf_candles_batch`, `htf_candle`) และเปิด API Endpoint `/api/candles/htf` รวมทั้งส่งไปใน `/api/state`
+  - ใน `src/index.ts`: เพิ่มจำนวนการโหลดแท่งเทียน HTF ย้อนหลังจาก 150 เป็น 300 แท่ง (ครอบคลุม 50 วันสำหรับ 4H หรือ 12.5 วันสำหรับ 1H) และเชื่อมต่อ `htfFeed.onCandle` เข้ากับ `dashboard.addHtfCandle` แบบ Real-time
+- **ระบบ Zero Floating Channel Bounds (ทุกระดับราคาต้องเกาะโครงสร้างจริง 100%)**:
+  - ใน `src/market-structure/channel-engine.ts`: ปลดตรรกะ Clamp ลอยตัว (`bottomBound + minHybridSpan`) ออกทั้งหมด โดยเพดานและพื้นต้องเกาะสวิงยืนยันจริง (`unbrokenPeaks`, `unbrokenValleys`), แนวรับต้านโครงสร้างใหญ่ (`htfCeil`, `htfFloor`) หรือขอบเขต Volume Profile (`vahCeil`, `valFloor`) เท่านั้น หากโครงสร้างยังไม่ชัดเจนจะตั้งค่าเป็น 0 รอการยืนยันฐาน
+- **การเชื่อมโยง HTF และ Volume Profile เข้ากับ Swing Trader**:
+  - ใน `src/strategy/swing/index.ts`: เพิ่มเมธอด `getVolumeProfile()` และ `getHtfStructure(refPrice)` และส่งเข้าไปในการคำนวณ `dowEngine.getStructure(...)` ทั้งใน `tick()` และ `emitTelemetryTick()` พร้อมส่ง `htfFloor`, `htfCeil`, `poc`, `vah`, `val` สู่หน้าแดชบอร์ด
+- **ระบบสลับแท่งเทียน Multi-Timeframe และเส้นแนวรับแนวต้าน 4H S/R บนหน้าแดชบอร์ด UI**:
+  - ใน `public/index.html` และ `public/style.css`: เพิ่มปุ่มสลับแท่งเทียน Timeframe `<div class="timeframe-selector-group"><button class="tf-btn active" id="btnTf15m">15M</button><button class="tf-btn" id="btnTf4h">4H (HTF)</button></div>` และปุ่มเปิด/ปิดเส้น 4H S/R: `<button class="btn-tool active" id="btnToggleHtfLines">🏛️ 4H S/R</button>`
+  - ใน `public/app.js`: แคชแท่งเทียนแยก 2 ชุด (`cachedPrimaryCandles` และ `cachedHtfCandles`) สามารถกดสลับดูแท่งเทียน 15M หรือ 4H ได้ทันทีโดยไม่สะดุด
+  - วาดเส้นระดับราคาโครงสร้างใหญ่บนชาร์ต:
+    - เส้น `🏛️ 4H CEIL` (สีม่วงลาเวนเดอร์ `#a855f7`)
+    - เส้น `🏛️ 4H FLOOR` (สีม่วงเข้ม `#7c3aed`)
+    - เส้น `📊 POC` (Point of Control สีเหลืองอำพัน `#f59e0b`)
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.83` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

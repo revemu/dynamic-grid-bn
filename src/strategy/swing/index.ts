@@ -10,6 +10,7 @@ import type { IExchangeClient, ExchangeSymbolInfo } from "../../exchange/types.j
 import type { Config } from "../../config.js";
 import type { AtrSource } from "../../types.js";
 import { type DowStructureEngine, type Candle } from "../../market-structure.js";
+import { VolumeProfileEngine, type VolumeProfileResult } from "../../market-structure/volume-profile.js";
 import { BotDatabase, getDatabase } from "../../db.js";
 import type {
   IStrategy,
@@ -442,6 +443,32 @@ export class SwingTraderStrategy implements IStrategy {
     }
   }
 
+  private getVolumeProfile(): VolumeProfileResult | undefined {
+    if (this.cfg.channelMode === "VOLUME_PROFILE_HTF") {
+      const macroCandles = this.dowEngine?.getCandles() ?? [];
+      return VolumeProfileEngine.calculate(macroCandles, this.cfg.vpLookbackBars ?? 192);
+    }
+    return undefined;
+  }
+
+  private getHtfStructure(refPrice: number): { floor: number; ceiling: number; swings?: any[] } | undefined {
+    if (this.htfDowEngine) {
+      const htfDow = this.htfDowEngine.getStructure(refPrice, undefined, {
+        mode: "DOW_SWINGS",
+        minChannelWidthPct: 3.0,
+        maxChannelWidthPct: 25.0,
+      });
+      if (htfDow && htfDow.bottomBound > 0 && htfDow.upperBound > 0) {
+        return {
+          floor: htfDow.bottomBound,
+          ceiling: htfDow.upperBound,
+          swings: htfDow.swingLows,
+        };
+      }
+    }
+    return undefined;
+  }
+
   // ── Main Execution Loop ──────────────────────────────────────────────────
   public async tick(): Promise<void> {
     if (this.isSwitchingSymbol) return;
@@ -464,6 +491,9 @@ export class SwingTraderStrategy implements IStrategy {
         await this.refreshWalletBalances().catch(() => {});
       }
 
+      const volumeProfile = this.getVolumeProfile();
+      const htfStructure = this.getHtfStructure(refPrice);
+
       // Extract market structure
       const structure = this.dowEngine?.getStructure(refPrice, undefined, {
         mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
@@ -475,6 +505,8 @@ export class SwingTraderStrategy implements IStrategy {
         wickThresholdPct: this.cfg.wickThresholdPct,
         srLookbackCandles: this.cfg.srLookbackCandles,
         useOnlyClosedCandles: this.cfg.adjustChannelOnClosedOnly,
+        volumeProfile,
+        htfStructure,
       });
 
       const swingCfg: SwingStrategyConfig = {
@@ -684,6 +716,9 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public emitTelemetryTick(): void {
+    const volumeProfile = this.getVolumeProfile();
+    const htfStructure = this.getHtfStructure(this.lastRefPrice);
+
     const structure = this.dowEngine?.getStructure(this.lastRefPrice, undefined, {
       mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
       minChannelWidthPct: this.cfg.minChannelWidthPct,
@@ -694,6 +729,8 @@ export class SwingTraderStrategy implements IStrategy {
       wickThresholdPct: this.cfg.wickThresholdPct,
       srLookbackCandles: this.cfg.srLookbackCandles,
       useOnlyClosedCandles: this.cfg.adjustChannelOnClosedOnly,
+      volumeProfile,
+      htfStructure,
     });
     const currentMid = this.mid || this.lastRefPrice;
     const baseHeldVal = this.baseHeld();
@@ -795,6 +832,11 @@ export class SwingTraderStrategy implements IStrategy {
       channelMode: this.cfg.channelMode || "DOW_SWINGS",
       clampStatus: structure?.gridZone?.clampStatus ?? "NATURAL_SWING",
       isSwingConfirmed: structure?.isSwingConfirmed ?? false,
+      poc: structure?.gridZone?.poc,
+      vah: structure?.gridZone?.vah,
+      val: structure?.gridZone?.val,
+      htfFloor: structure?.gridZone?.htfFloor ?? htfStructure?.floor,
+      htfCeil: structure?.gridZone?.htfCeil ?? htfStructure?.ceiling,
       canEstablishChannel: true,
       isChannelLocked: false,
       activePeak: structure?.activePeak ? { time: structure.activePeak.time, price: structure.activePeak.price } : undefined,

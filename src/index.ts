@@ -139,9 +139,10 @@ async function main(): Promise<void> {
       config.htfTimeframe,
       config.binanceBaseUrl,
       log,
-      150,
+      300,
       true,
     );
+    dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
 
     macroFeed?.stop();
     tradingFeed?.stop();
@@ -194,6 +195,7 @@ async function main(): Promise<void> {
     htfFeed.onCandle((candle, isClosed) => {
       if (isClosed) {
         htfDowEngine.addCandle(candle);
+        dashboard.addHtfCandle(candle, isClosed);
       }
     });
 
@@ -569,9 +571,10 @@ async function main(): Promise<void> {
               htfTf,
               config.binanceBaseUrl,
               log,
-              150,
+              300,
               true,
             );
+            dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
             log(`🔄 Reloaded HTF candles (${htfTf}) following settings update`);
 
             htfFeed?.stop();
@@ -581,7 +584,7 @@ async function main(): Promise<void> {
                 interval: htfTf,
                 wsBase: config.binanceWsBase,
                 staleMs: config.binanceStaleMs,
-                initialCandleCount: 150,
+                initialCandleCount: 300,
               },
               config.atrLookback,
               (msg) => log(`[htf ${htfTf}] ${msg}`),
@@ -589,6 +592,7 @@ async function main(): Promise<void> {
             htfFeed.onCandle((candle, isClosed) => {
               if (isClosed) {
                 htfDowEngine.addCandle(candle);
+                dashboard.addHtfCandle(candle, isClosed);
               }
             });
             htfFeed.start();
@@ -616,6 +620,7 @@ async function main(): Promise<void> {
   });
 
   dashboard.setInitialCandles(macroDowEngine.getCandles());
+  dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
   dashboard.setInitialOrders(grid.getRecentOrders());
   dashboard.start();
 

@@ -105,7 +105,7 @@ export class ChannelEngine {
       } else if (unbrokenValleys.length > 0) {
         bottomBound = unbrokenValleys[0]!.price;
       } else {
-        bottomBound = price * 0.95; // 5% below price fallback
+        bottomBound = 0;
       }
 
       // 2. Determine Ceiling (Resistance):
@@ -127,29 +127,35 @@ export class ChannelEngine {
       } else if (vahCeil > 0) {
         upperBound = vahCeil;
       } else if (unbrokenPeaks.length > 0) {
-        upperBound = unbrokenPeaks[0]!.price;
+        const minSpan = price * (minChannelWidthPct / 100);
+        const wideEnough = unbrokenPeaks.find((p) => bottomBound > 0 && (p.price - bottomBound) >= minSpan);
+        upperBound = wideEnough ? wideEnough.price : unbrokenPeaks[0]!.price;
       } else {
-        upperBound = price * 1.05; // 5% above price fallback
+        upperBound = 0;
       }
 
-      // 3. Width safety checks:
-      const minHybridSpan = Math.max(price * (minChannelWidthPct / 100), price * 0.025);
-      if (upperBound - bottomBound < minHybridSpan) {
-        upperBound = bottomBound + minHybridSpan;
+      // 3. Strict Structural Validity — Zero Floating Bounds (Every level touches real price action)
+      if (upperBound > 0 && bottomBound > 0 && upperBound > bottomBound) {
+        isSwingConfirmed = true;
+        clampStatus = "NATURAL_SWING";
+        anchorSide = "LOWER_FLOOR";
+        activeValley = unbrokenValleys.find((v) => Math.abs(v.price - bottomBound) / v.price < 0.005) ?? unbrokenValleys[0];
+        activePeak = unbrokenPeaks.find((p) => Math.abs(p.price - upperBound) / p.price < 0.005) ?? unbrokenPeaks[0];
+        rawWidthPct = ((upperBound - bottomBound) / bottomBound) * 100;
+        minWidthPct = minChannelWidthPct;
+        maxWidthPct = maxChannelWidthPct;
+      } else {
+        isSwingConfirmed = false;
+        clampStatus = "WARMUP";
+        upperBound = 0;
+        bottomBound = 0;
+        activePeak = unbrokenPeaks[0];
+        activeValley = unbrokenValleys[0];
+        anchorSide = "NONE";
+        rawWidthPct = undefined;
+        minWidthPct = minChannelWidthPct;
+        maxWidthPct = maxChannelWidthPct;
       }
-      const maxHybridSpan = price * (maxChannelWidthPct / 100);
-      if (upperBound - bottomBound > maxHybridSpan) {
-        upperBound = bottomBound + maxHybridSpan;
-      }
-
-      isSwingConfirmed = true;
-      clampStatus = "NATURAL_SWING";
-      anchorSide = "LOWER_FLOOR";
-      activeValley = unbrokenValleys[0];
-      activePeak = unbrokenPeaks[0];
-      rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
-      minWidthPct = minChannelWidthPct;
-      maxWidthPct = maxChannelWidthPct;
     } else {
       // 🔒 Active Wave Support-First + Sub-Wave Peak Bypass + Unobstructed Wave Box Architecture:
       // 1. กรองเฉพาะเหวยืนยันใต้ราคาที่ยังไม่ถูกทุบหลุด (unbrokenValleys) และยอดยืนยันเหนือราคาที่ยังไม่ถูกเบรกทะลุ (unbrokenPeaks)

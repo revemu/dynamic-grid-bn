@@ -35,6 +35,7 @@ export class DashboardServer {
   private server?: http.Server;
   private clients: Set<http.ServerResponse> = new Set();
   private candles: Candle[] = [];
+  private htfCandles: Candle[] = [];
   private recentOrders: any[] = [];
   private latestTick: any = null;
   private db: BotDatabase;
@@ -107,6 +108,36 @@ export class DashboardServer {
       this.candles.splice(0, this.candles.length - this.maxCandles);
     }
     this.broadcast("candles_batch", { candles: this.candles });
+  }
+
+  setInitialHtfCandles(candles: Candle[]): void {
+    const map = new Map<number, Candle>();
+    for (const c of candles) {
+      if (c && typeof c.time === "number" && Number.isFinite(c.close)) {
+        map.set(c.time, c);
+      }
+    }
+    this.htfCandles = Array.from(map.values()).sort((a, b) => a.time - b.time);
+    if (this.htfCandles.length > 300) {
+      this.htfCandles.splice(0, this.htfCandles.length - 300);
+    }
+    this.broadcast("htf_candles_batch", { candles: this.htfCandles });
+  }
+
+  addHtfCandle(candle: Candle, isClosed: boolean): void {
+    if (!candle || typeof candle.time !== "number" || !Number.isFinite(candle.close)) return;
+
+    const idx = this.htfCandles.findIndex((c) => c.time === candle.time);
+    if (idx >= 0) {
+      this.htfCandles[idx] = candle;
+    } else {
+      this.htfCandles.push(candle);
+      this.htfCandles.sort((a, b) => a.time - b.time);
+      if (this.htfCandles.length > 300) {
+        this.htfCandles.splice(0, this.htfCandles.length - 300);
+      }
+    }
+    this.broadcast("htf_candle", { candle, isClosed });
   }
 
   setInitialOrders(orders: any[]): void {
@@ -234,10 +265,18 @@ export class DashboardServer {
         JSON.stringify({
           versionInfo: APP_VERSION_INFO,
           candles: this.candles,
+          htfCandles: this.htfCandles,
           orders: this.recentOrders.slice(0, 150),
           latestTick: this.latestTick,
         }),
       );
+      return;
+    }
+
+    // Higher Timeframe Candles API
+    if (pathname === "/api/candles/htf") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ candles: this.htfCandles }));
       return;
     }
 

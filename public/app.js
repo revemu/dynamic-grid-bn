@@ -661,6 +661,13 @@
   let lineSwingTp1 = null;
   let lineSwingTp2 = null;
   let lineSwingSl = null;
+  let lineHtfCeil = null;
+  let lineHtfFloor = null;
+  let linePoc = null;
+  let showHtfLines = true;
+  let currentActiveTimeframe = "15m";
+  let cachedPrimaryCandles = [];
+  let cachedHtfCandles = [];
 
   function initChart() {
     if (chart && candleSeries) return;
@@ -906,6 +913,42 @@
         });
       }
 
+      const btnToggleHtfLines = document.getElementById("btnToggleHtfLines");
+      if (btnToggleHtfLines) {
+        btnToggleHtfLines.addEventListener("click", () => {
+          showHtfLines = !showHtfLines;
+          btnToggleHtfLines.classList.toggle("active", showHtfLines);
+          if (!showHtfLines) {
+            if (lineHtfCeil) { try { candleSeries.removePriceLine(lineHtfCeil); } catch (_) {} lineHtfCeil = null; }
+            if (lineHtfFloor) { try { candleSeries.removePriceLine(lineHtfFloor); } catch (_) {} lineHtfFloor = null; }
+            if (linePoc) { try { candleSeries.removePriceLine(linePoc); } catch (_) {} linePoc = null; }
+          } else if (pendingTick) {
+            updateTick(pendingTick);
+          }
+        });
+      }
+
+      const btnTf15m = document.getElementById("btnTf15m");
+      const btnTf4h = document.getElementById("btnTf4h");
+      if (btnTf15m) {
+        btnTf15m.addEventListener("click", () => {
+          if (currentActiveTimeframe === "15m") return;
+          currentActiveTimeframe = "15m";
+          btnTf15m.classList.add("active");
+          if (btnTf4h) btnTf4h.classList.remove("active");
+          applyCurrentTimeframeCandles();
+        });
+      }
+      if (btnTf4h) {
+        btnTf4h.addEventListener("click", () => {
+          if (currentActiveTimeframe === "4h") return;
+          currentActiveTimeframe = "4h";
+          btnTf4h.classList.add("active");
+          if (btnTf15m) btnTf15m.classList.remove("active");
+          applyCurrentTimeframeCandles();
+        });
+      }
+
       // If candles or tick were received before chart finished initializing, apply now!
       if (pendingCandles && pendingCandles.length > 0) {
         updateCandles(pendingCandles);
@@ -959,12 +1002,8 @@
     }
   }
 
-  function updateCandles(candles) {
-    if (!candles || candles.length === 0) return;
-    pendingCandles = candles;
-    if (!candleSeries || !chart) return;
-
-    // Deduplicate by time and sort ascending
+  function formatCandles(candles) {
+    if (!candles || candles.length === 0) return [];
     const timeMap = new Map();
     for (const c of candles) {
       if (c && typeof c.time === "number" && [c.open, c.high, c.low, c.close].every(Number.isFinite)) {
@@ -977,8 +1016,13 @@
         });
       }
     }
+    return Array.from(timeMap.values()).sort((a, b) => a.time - b.time);
+  }
 
-    const cleanCandles = Array.from(timeMap.values()).sort((a, b) => a.time - b.time);
+  function applyCurrentTimeframeCandles() {
+    if (!candleSeries || !chart) return;
+    const targetList = currentActiveTimeframe === "4h" ? cachedHtfCandles : cachedPrimaryCandles;
+    const cleanCandles = formatCandles(targetList);
     if (cleanCandles.length > 0) {
       try {
         candleSeries.setData(cleanCandles);
@@ -992,8 +1036,25 @@
         updateOrderBadgesPositions();
         updateSwingBadgesPositions();
       } catch (err) {
-        console.error("Failed to set candle data:", err);
+        console.error("Failed to set candle data for timeframe:", currentActiveTimeframe, err);
       }
+    }
+  }
+
+  function updateCandles(candles) {
+    if (!candles || candles.length === 0) return;
+    cachedPrimaryCandles = candles;
+    pendingCandles = candles;
+    if (currentActiveTimeframe === "15m") {
+      applyCurrentTimeframeCandles();
+    }
+  }
+
+  function updateHtfCandles(candles) {
+    if (!candles || candles.length === 0) return;
+    cachedHtfCandles = candles;
+    if (currentActiveTimeframe === "4h") {
+      applyCurrentTimeframeCandles();
     }
   }
 
@@ -1009,25 +1070,64 @@
       close: Number(candle.close),
     };
 
-    if (pendingCandles) {
-      const idx = pendingCandles.findIndex((c) => c.time === formatted.time);
-      if (idx >= 0) pendingCandles[idx] = formatted;
-      else pendingCandles.push(formatted);
+    if (cachedPrimaryCandles) {
+      const idx = cachedPrimaryCandles.findIndex((c) => c.time === formatted.time);
+      if (idx >= 0) cachedPrimaryCandles[idx] = formatted;
+      else cachedPrimaryCandles.push(formatted);
     }
+    pendingCandles = cachedPrimaryCandles;
 
-    latestCandle = formatted;
-    renderOhlc(latestCandle);
+    if (currentActiveTimeframe === "15m") {
+      latestCandle = formatted;
+      renderOhlc(latestCandle);
 
-    if (candleSeries) {
-      try {
-        candleSeries.update(formatted);
-        latestCandleTime = Math.max(latestCandleTime, candle.time);
-        updateOrderBadgesPositions();
-        updateSwingBadgesPositions();
-      } catch (err) {
-        console.warn("Error updating single candle:", err);
+      if (candleSeries) {
+        try {
+          candleSeries.update(formatted);
+          latestCandleTime = Math.max(latestCandleTime, candle.time);
+          updateOrderBadgesPositions();
+          updateSwingBadgesPositions();
+        } catch (err) {
+          console.warn("Error updating single candle:", err);
+        }
       }
     }
+  }
+
+  function updateSingleHtfCandle(candle) {
+    if (!candle || typeof candle.time !== "number") return;
+    if (![candle.open, candle.high, candle.low, candle.close].every(Number.isFinite)) return;
+
+    const formatted = {
+      time: candle.time,
+      open: Number(candle.open),
+      high: Number(candle.high),
+      low: Number(candle.low),
+      close: Number(candle.close),
+    };
+
+    if (cachedHtfCandles) {
+      const idx = cachedHtfCandles.findIndex((c) => c.time === formatted.time);
+      if (idx >= 0) cachedHtfCandles[idx] = formatted;
+      else cachedHtfCandles.push(formatted);
+    }
+
+    if (currentActiveTimeframe === "4h") {
+      latestCandle = formatted;
+      renderOhlc(latestCandle);
+
+      if (candleSeries) {
+        try {
+          candleSeries.update(formatted);
+          latestCandleTime = Math.max(latestCandleTime, candle.time);
+          updateOrderBadgesPositions();
+          updateSwingBadgesPositions();
+        } catch (err) {
+          console.warn("Error updating single HTF candle:", err);
+        }
+      }
+    }
+  }
   }
 
   function updateSwingTradePlanUI(data) {
@@ -2376,6 +2476,49 @@
         lineCutLossBound = null;
       }
 
+      // 3.2 4H HTF Major Support / Resistance & POC Lines
+      if (showHtfLines && data.htfCeil && data.htfCeil > 0) {
+        lineHtfCeil = setPriceLine(lineHtfCeil, {
+          price: data.htfCeil,
+          color: "#a855f7",
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "🏛️ 4H CEIL",
+        });
+      } else if (lineHtfCeil) {
+        try { candleSeries.removePriceLine(lineHtfCeil); } catch (_) {}
+        lineHtfCeil = null;
+      }
+
+      if (showHtfLines && data.htfFloor && data.htfFloor > 0) {
+        lineHtfFloor = setPriceLine(lineHtfFloor, {
+          price: data.htfFloor,
+          color: "#7c3aed",
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: "🏛️ 4H FLOOR",
+        });
+      } else if (lineHtfFloor) {
+        try { candleSeries.removePriceLine(lineHtfFloor); } catch (_) {}
+        lineHtfFloor = null;
+      }
+
+      if (showHtfLines && data.poc && data.poc > 0) {
+        linePoc = setPriceLine(linePoc, {
+          price: data.poc,
+          color: "#f59e0b",
+          lineWidth: 1.5,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "📊 POC",
+        });
+      } else if (linePoc) {
+        try { candleSeries.removePriceLine(linePoc); } catch (_) {}
+        linePoc = null;
+      }
+
       // 4. Intermediate Grid Levels in Buy and Sell Zones OR Dedicated Swing Trade Lines
       if (data.strategyType === "swing_trade") {
         // Clear grid levels
@@ -3567,6 +3710,9 @@
         } else {
           loadFallbackCandles();
         }
+        if (data.htfCandles && data.htfCandles.length > 0) {
+          updateHtfCandles(data.htfCandles);
+        }
         const initialEvents = (Array.isArray(data.orders) ? data.orders : []).sort(
           (a, b) => (a.time || a.placedTime || a.timestamp || 0) - (b.time || b.placedTime || b.timestamp || 0),
         );
@@ -3651,12 +3797,32 @@
       }
     });
 
+    sse.addEventListener("htf_candles_batch", (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (Array.isArray(payload.candles) && payload.candles.length > 0) {
+          updateHtfCandles(payload.candles);
+        }
+      } catch (err) {
+        console.error("Malformed htf_candles_batch event:", err);
+      }
+    });
+
     sse.addEventListener("candle", (e) => {
       try {
         const payload = JSON.parse(e.data);
         if (payload.candle) updateSingleCandle(payload.candle);
       } catch (err) {
         console.error("Malformed candle event:", err);
+      }
+    });
+
+    sse.addEventListener("htf_candle", (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload.candle) updateSingleHtfCandle(payload.candle);
+      } catch (err) {
+        console.error("Malformed htf_candle event:", err);
       }
     });
 
