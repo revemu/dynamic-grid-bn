@@ -18,7 +18,7 @@ import type { IExchangeClient, ExchangeSymbolInfo } from "../exchange/types.js";
 import { ORDER_TYPE, shiftBps, spreadBps, createStatusLogger } from "../utils.js";
 import type { Config } from "../config.js";
 import type { AtrSource } from "../types.js";
-import type { DowStructureEngine, DowStructure, GridZone, Candle } from "../market-structure.js";
+import { type DowStructureEngine, type DowStructure, type GridZone, type Candle, VolumeProfileEngine, type VolumeProfileResult } from "../market-structure.js";
 import { BotDatabase, getDatabase, type StrategyStateRecord, type TradeRecord, type OrderActivityRecord, type GasLogRecord, type LockedChannel } from "../db.js";
 
 import type { Lot, OpenOrder, StrategyEvent, GridPersistedState, ConfirmedChannelState, IStrategyHost } from "./types.js";
@@ -205,6 +205,7 @@ export class DynamicGrid implements IStrategyHost {
     public readonly log: (msg: string, extra?: unknown) => void,
     public readonly dowEngine?: DowStructureEngine,
     public readonly localTrendEngine?: DowStructureEngine,
+    public readonly htfDowEngine?: DowStructureEngine,
   ) {
     this.symbol = symbolInfo.symbol;
     this.baseAsset = symbolInfo.baseAsset;
@@ -587,6 +588,11 @@ export class DynamicGrid implements IStrategyHost {
       if (this.cfg.wickThresholdPct !== undefined) this.localTrendEngine.setWickThresholdPct(this.cfg.wickThresholdPct);
       if (this.cfg.useTrueWick !== undefined) this.localTrendEngine.setUseTrueWick(this.cfg.useTrueWick);
       if (this.cfg.maxCandleCount !== undefined) this.localTrendEngine.setMaxCandles(this.cfg.maxCandleCount);
+    }
+    if (this.htfDowEngine) {
+      if (this.cfg.wickThresholdPct !== undefined) this.htfDowEngine.setWickThresholdPct(this.cfg.wickThresholdPct);
+      if (this.cfg.useTrueWick !== undefined) this.htfDowEngine.setUseTrueWick(this.cfg.useTrueWick);
+      if (this.cfg.maxCandleCount !== undefined) this.htfDowEngine.setMaxCandles(this.cfg.maxCandleCount);
     }
   }
 
@@ -2490,6 +2496,29 @@ export class DynamicGrid implements IStrategyHost {
     let buyLevels: number[];
     let sellLevels: number[];
 
+    // Hybrid Mode Support: Volume Profile & 4H HTF Structural Anchor
+    let volumeProfile: VolumeProfileResult | undefined;
+    if (this.cfg.channelMode === "VOLUME_PROFILE_HTF") {
+      const macroCandles = this.dowEngine?.getCandles() ?? [];
+      volumeProfile = VolumeProfileEngine.calculate(macroCandles, this.cfg.vpLookbackBars ?? 192);
+    }
+
+    let htfStructure: { floor: number; ceiling: number; swings?: any[] } | undefined;
+    if (this.htfDowEngine) {
+      const htfDow = this.htfDowEngine.getStructure(refPrice, undefined, {
+        mode: "DOW_SWINGS",
+        minChannelWidthPct: 3.0,
+        maxChannelWidthPct: 25.0,
+      });
+      if (htfDow && htfDow.bottomBound > 0 && htfDow.upperBound > 0) {
+        htfStructure = {
+          floor: htfDow.bottomBound,
+          ceiling: htfDow.upperBound,
+          swings: htfDow.swingLows,
+        };
+      }
+    }
+
     if (needChannelRecalc) {
       const calculationPrice = (adjustOnClosedOnly && lastClosedCandle) ? lastClosedCandle.close : refPrice;
 
@@ -2512,6 +2541,8 @@ export class DynamicGrid implements IStrategyHost {
         buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
         sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
         useOnlyClosedCandles: adjustOnClosedOnly,
+        volumeProfile,
+        htfStructure,
       });
       gridZone = dow?.gridZone;
 
@@ -2599,6 +2630,8 @@ export class DynamicGrid implements IStrategyHost {
         buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
         sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
         useOnlyClosedCandles: adjustOnClosedOnly,
+        volumeProfile,
+        htfStructure,
       });
 
       dow = liveDow ?? this.confirmedChannel!.dow;
@@ -3916,6 +3949,11 @@ export class DynamicGrid implements IStrategyHost {
         minWidthPct: gridZone?.minWidthPct,
         maxWidthPct: gridZone?.maxWidthPct,
         anchorSide: gridZone?.anchorSide ?? "NONE",
+        poc: gridZone?.poc,
+        vah: gridZone?.vah,
+        val: gridZone?.val,
+        htfFloor: gridZone?.htfFloor,
+        htfCeil: gridZone?.htfCeil,
         isChannelLocked: Boolean(isHoldingPosition && lockChannelInPosition && this.lockedChannel),
         liveCalculatedUpperBound: dow?.isSwingConfirmed && (dow.upperBound ?? 0) > 0 ? (dow.gridZone?.upperBound ?? dow.upperBound) : undefined,
         liveCalculatedBottomBound: dow?.isSwingConfirmed && (dow.bottomBound ?? 0) > 0 ? (dow.gridZone?.bottomBound ?? dow.bottomBound) : undefined,

@@ -30,6 +30,7 @@ import { TrendlineEngine } from "./trendline-engine.js";
 import { ChannelEngine } from "./channel-engine.js";
 
 export * from "./types.js";
+export * from "./volume-profile.js";
 export { getEffectiveHigh, getEffectiveLow, CandleManager } from "./candle-manager.js";
 export { SwingDetector } from "./swing-detector.js";
 export { DowEngine } from "./dow-engine.js";

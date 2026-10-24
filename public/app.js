@@ -1739,8 +1739,10 @@
     const widthPct = data.zoneWidthPct !== undefined ? data.zoneWidthPct : 0;
     let clampStr = data.isSwingConfirmed === false && !data.isChannelLocked
       ? "⚪ ไม่มีกรอบสวิงที่เข้าเกณฑ์ (หยุดรอสวิง)"
-      : data.channelMode === "DOW_SWINGS"
-        ? `Pure Dow Swings`
+      : data.channelMode === "VOLUME_PROFILE_HTF"
+        ? `Hybrid VP + 4H HTF (${widthPct.toFixed(1)}%${data.poc ? ` • POC: $${fmtPrice(data.poc)}` : ""}${data.val ? ` • VAL: $${fmtPrice(data.val)}` : ""})`
+        : data.channelMode === "DOW_SWINGS"
+          ? `Pure Dow Swings`
         : data.clampStatus === "CLAMPED_MIN"
           ? `Clamped Min (${(data.minWidthPct || 0).toFixed(1)}%)`
           : data.clampStatus === "CLAMPED_MAX"

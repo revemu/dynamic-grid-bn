@@ -230,10 +230,11 @@ export class CandleManager {
         const high = Number(k[2]);
         const low = Number(k[3]);
         const close = Number(k[4]);
+        const volume = Number(k[5]) || 0;
 
         if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
           const isClosed = closeTime <= nowSec;
-          candleMap.set(time, { time, open, high, low, close, isClosed });
+          candleMap.set(time, { time, open, high, low, close, volume, isClosed });
         }
       }
       this.candles = Array.from(candleMap.values()).sort((a, b) => a.time - b.time);

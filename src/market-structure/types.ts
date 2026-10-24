@@ -2,12 +2,15 @@
  * Market structure type definitions and interfaces.
  */
 
+import type { VolumeProfileResult } from "./volume-profile.js";
+
 export interface Candle {
   time: number; // Unix timestamp in seconds
   open: number;
   high: number;
   low: number;
   close: number;
+  volume?: number;
   isClosed?: boolean;
 }
 
@@ -40,12 +43,17 @@ export interface GridZone {
   isBelowFloor: boolean;    // Price < cutLossBound (Trigger cut loss)
   isAboveCeiling: boolean;  // Price >= 100% (Trigger 100% take profit)
   zoneWidthPct: number;     // Width of channel in percentage
-  channelMode?: string;     // Mode: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR"
+  channelMode?: string;     // Mode: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF"
   clampStatus?: "NATURAL_SWING" | "CLAMPED_MIN" | "CLAMPED_MAX" | "WARMUP";
   rawWidthPct?: number;     // Unclamped swing width in %
   minWidthPct?: number;     // Minimum width % limit
   maxWidthPct?: number;     // Maximum width % limit
   anchorSide?: "LOWER_FLOOR" | "UPPER_CEILING" | "NONE";
+  poc?: number;             // Volume Profile: Point of Control
+  vah?: number;             // Volume Profile: Value Area High
+  val?: number;             // Volume Profile: Value Area Low
+  htfFloor?: number;        // HTF (4H) Major Structural Floor
+  htfCeil?: number;         // HTF (4H) Major Structural Ceiling
 }
 
 export interface TrendLinePoint {
@@ -128,7 +136,7 @@ export interface DowStructure {
 }
 
 export interface ChannelOptions {
-  mode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR";
+  mode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
   minChannelWidthPct?: number; // for DOW_SWINGS & FIXED_PCT_CLAMP (e.g. 1.8%)
   maxChannelWidthPct?: number; // for DOW_SWINGS & FIXED_PCT_CLAMP (e.g. 4.0%)
   atrMinMultiplier?: number;   // for DOW_ATR_CLAMP (default 2.5x ATR)
@@ -146,4 +154,10 @@ export interface ChannelOptions {
   buyLevelPcts?: number[];              // percentage allocations for buy levels (default [42, 32, 22, 12, 2])
   sellLevelPcts?: number[];             // percentage allocations for sell levels (default [52, 62, 72, 82, 92])
   useOnlyClosedCandles?: boolean;       // calculate structure and channel bounds strictly on closed candles
+  volumeProfile?: VolumeProfileResult;  // Volume Profile result (POC, VAH, VAL)
+  htfStructure?: {
+    floor: number;
+    ceiling: number;
+    swings?: SwingPoint[];
+  };
 }

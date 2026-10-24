@@ -93,11 +93,12 @@ export class BinanceAtrFeed implements AtrSource {
         const high = Number(k[2]);
         const low = Number(k[3]);
         const close = Number(k[4]);
+        const volume = Number(k[5]) || 0;
 
         if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
           this.latestPrice = close;
           const isClosed = Number.isFinite(closeTimeMs) ? closeTimeMs <= nowMs : true;
-          const candle: Candle = { time, open, high, low, close, isClosed };
+          const candle: Candle = { time, open, high, low, close, volume, isClosed };
           if (isClosed) {
             this.onClosedBar(high, low, close);
           }
@@ -143,11 +144,12 @@ export class BinanceAtrFeed implements AtrSource {
       const high = Number(k.h);
       const low = Number(k.l);
       const close = Number(k.c);
+      const volume = Number(k.v) || 0;
       const isClosed = k.x === true;
 
       if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
         this.latestPrice = close;
-        const candle: Candle = { time, open, high, low, close, isClosed };
+        const candle: Candle = { time, open, high, low, close, volume, isClosed };
         for (const listener of this.candleListeners) {
           listener(candle, isClosed);
         }

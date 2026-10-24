@@ -75,6 +75,80 @@ export class ChannelEngine {
       rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
       minWidthPct = (minSpan / price) * 100;
       maxWidthPct = (maxSpan / price) * 100;
+    } else if (mode === "VOLUME_PROFILE_HTF") {
+      // 🚀 Hybrid: Volume Profile (POC/VAH/VAL) + 4H HTF Structural Anchor Mode
+      const vp = options?.volumeProfile;
+      const htf = options?.htfStructure;
+
+      // 1. Determine Floor (Support):
+      // Prioritize 4H HTF structural floor (major macro support below price)
+      // If HTF floor is breached or not yet loaded, anchor to VP Value Area Low (VAL),
+      // or lowest unbroken valley in 15m.
+      const htfFloor = (htf?.floor && htf.floor > 0 && htf.floor <= price) ? htf.floor : 0;
+      const valFloor = (vp?.val && vp.val > 0 && vp.val <= price) ? vp.val : 0;
+
+      const candidateLows = confirmedLows.filter((l) => l.price <= price);
+      const isUnbrokenValley = (v: SwingPoint): boolean =>
+        !confirmedLows.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
+        !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price) &&
+        !candles.some((c) => c.time > v.time && getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price);
+
+      const unbrokenValleys = candidateLows
+        .filter(isUnbrokenValley)
+        .sort((a, b) => b.price - a.price);
+
+      if (htfFloor > 0) {
+        bottomBound = htfFloor;
+      } else if (valFloor > 0) {
+        bottomBound = valFloor;
+      } else if (unbrokenValleys.length > 0) {
+        bottomBound = unbrokenValleys[0]!.price;
+      } else {
+        bottomBound = price * 0.95; // 5% below price fallback
+      }
+
+      // 2. Determine Ceiling (Resistance):
+      const htfCeil = (htf?.ceiling && htf.ceiling > price) ? htf.ceiling : 0;
+      const vahCeil = (vp?.vah && vp.vah > price) ? vp.vah : 0;
+
+      const candidateHighs = confirmedHighs.filter((h) => h.price >= price);
+      const isUnbrokenPeak = (p: SwingPoint): boolean =>
+        !confirmedHighs.some((later) => (later.index > p.index || later.time > p.time) && later.price > p.price) &&
+        !(candidatePeak && candidatePeak.time > p.time && candidatePeak.price > p.price) &&
+        !candles.some((c) => c.time > p.time && getEffectiveHigh(c, useTrueWick, wickThresholdPct) > p.price);
+
+      const unbrokenPeaks = candidateHighs
+        .filter(isUnbrokenPeak)
+        .sort((a, b) => a.price - b.price);
+
+      if (htfCeil > 0) {
+        upperBound = htfCeil;
+      } else if (vahCeil > 0) {
+        upperBound = vahCeil;
+      } else if (unbrokenPeaks.length > 0) {
+        upperBound = unbrokenPeaks[0]!.price;
+      } else {
+        upperBound = price * 1.05; // 5% above price fallback
+      }
+
+      // 3. Width safety checks:
+      const minHybridSpan = Math.max(price * (minChannelWidthPct / 100), price * 0.025);
+      if (upperBound - bottomBound < minHybridSpan) {
+        upperBound = bottomBound + minHybridSpan;
+      }
+      const maxHybridSpan = price * (maxChannelWidthPct / 100);
+      if (upperBound - bottomBound > maxHybridSpan) {
+        upperBound = bottomBound + maxHybridSpan;
+      }
+
+      isSwingConfirmed = true;
+      clampStatus = "NATURAL_SWING";
+      anchorSide = "LOWER_FLOOR";
+      activeValley = unbrokenValleys[0];
+      activePeak = unbrokenPeaks[0];
+      rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;
+      minWidthPct = minChannelWidthPct;
+      maxWidthPct = maxChannelWidthPct;
     } else {
       // 🔒 Active Wave Support-First + Sub-Wave Peak Bypass + Unobstructed Wave Box Architecture:
       // 1. กรองเฉพาะเหวยืนยันใต้ราคาที่ยังไม่ถูกทุบหลุด (unbrokenValleys) และยอดยืนยันเหนือราคาที่ยังไม่ถูกเบรกทะลุ (unbrokenPeaks)
@@ -259,7 +333,13 @@ export class ChannelEngine {
     const floorBuffer = hasValidChannel ? ((options?.floorBufferPct ?? 0.0) / 100) * bottomBound : 0;
     const cutLossBound = hasValidChannel ? bottomBound - floorBuffer : 0;
     const finalSpan = hasValidChannel ? upperBound - bottomBound : 0;
-    const centerPrice = hasValidChannel ? bottomBound + finalSpan * 0.5 : price;
+    let centerPrice = hasValidChannel ? bottomBound + finalSpan * 0.5 : price;
+    if (mode === "VOLUME_PROFILE_HTF" && options?.volumeProfile?.poc) {
+      const poc = options.volumeProfile.poc;
+      if (poc > bottomBound && poc < upperBound) {
+        centerPrice = poc;
+      }
+    }
 
     // Position percentage in channel: 0% at floor, 50% at center, 100% at ceiling
     const positionPct = finalSpan > 0 ? ((price - bottomBound) / finalSpan) * 100 : 50;
@@ -294,16 +374,47 @@ export class ChannelEngine {
 
     // Grid Levels in Buy Zone
     const buyLevels = hasValidChannel
-      ? (isNarrowChannel
-          ? [bottomBound * (1 + buyBufferFrac)]
-          : buyPcts.map((pct) => bottomBound + finalSpan * (pct / 100)))
+      ? (mode === "VOLUME_PROFILE_HTF"
+          ? (() => {
+              // Discount Accumulation Zone: strictly below VAL (Value Area Low) down towards bottomBound
+              const vp = options?.volumeProfile;
+              const val = vp?.val;
+              const maxBuyPrice = (val && val > bottomBound && val < upperBound)
+                ? Math.min(val, centerPrice)
+                : bottomBound + finalSpan * 0.45;
+              const buySpan = maxBuyPrice - bottomBound;
+              const count = 5;
+              const levels: number[] = [];
+              for (let i = 0; i < count; i++) {
+                const frac = 0.95 - (i * (0.85 / (count - 1)));
+                levels.push(Number((bottomBound + buySpan * frac).toFixed(6)));
+              }
+              return levels;
+            })()
+          : (isNarrowChannel
+              ? [bottomBound * (1 + buyBufferFrac)]
+              : buyPcts.map((pct) => bottomBound + finalSpan * (pct / 100))))
       : [];
 
     // Grid Levels in Sell Zone
     const sellLevels = hasValidChannel
-      ? (isNarrowChannel
-          ? [upperBound * (1 - sellBufferFrac)]
-          : sellPcts.map((pct) => bottomBound + finalSpan * (pct / 100)))
+      ? (mode === "VOLUME_PROFILE_HTF"
+          ? (() => {
+              // Profit Taking Targets: from POC up to VAH and UpperBound
+              const vp = options?.volumeProfile;
+              const vah = vp?.vah && vp.vah > centerPrice ? Math.min(vp.vah, upperBound) : upperBound;
+              const levels: number[] = [];
+              levels.push(Number(centerPrice.toFixed(6)));
+              const midSpan = vah - centerPrice;
+              levels.push(Number((centerPrice + midSpan * 0.35).toFixed(6)));
+              levels.push(Number((centerPrice + midSpan * 0.70).toFixed(6)));
+              levels.push(Number(vah.toFixed(6)));
+              levels.push(Number(upperBound.toFixed(6)));
+              return levels;
+            })()
+          : (isNarrowChannel
+              ? [upperBound * (1 - sellBufferFrac)]
+              : sellPcts.map((pct) => bottomBound + finalSpan * (pct / 100))))
       : [];
 
     const zoneWidthPct = bottomBound > 0 ? (finalSpan / bottomBound) * 100 : 0;
@@ -328,6 +439,11 @@ export class ChannelEngine {
       minWidthPct,
       maxWidthPct,
       anchorSide,
+      poc: options?.volumeProfile?.poc,
+      vah: options?.volumeProfile?.vah,
+      val: options?.volumeProfile?.val,
+      htfFloor: options?.htfStructure?.floor,
+      htfCeil: options?.htfStructure?.ceiling,
     };
 
     return {

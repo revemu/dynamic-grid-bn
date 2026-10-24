@@ -87,6 +87,8 @@ export const defaultStrategyConfig = {
   dowTimeframe: "15m",
   /** Faster micro timeframe used for localized execution timing, drop momentum & knife guard (default "5m"). */
   tradingTimeframe: "5m",
+  /** Higher timeframe (HTF) used for major structural anchor support/resistance floors and ceilings (default "4h"). */
+  htfTimeframe: "4h",
   get trendTimeframe(): string { return this.dowTimeframe; },
   set trendTimeframe(v: string) { this.dowTimeframe = v; },
   /** Lowercase Binance symbol to stream klines for. */
@@ -197,12 +199,15 @@ export const defaultStrategyConfig = {
   // ── Support & Resistance Channel Calculation Mode ────────────────────────
   /**
    * Channel boundary calculation mode:
-   * 1. "DOW_SWINGS" (Default): Pure Dow Swings with progressive nearest-swing expansion outward from current price.
+   * 1. "DOW_SWINGS": Pure Dow Swings with progressive nearest-swing expansion outward from current price.
    * 2. "DOW_ATR_CLAMP": Dow Theory Swings with dynamic ATR min/max width clamping & true wick support.
    * 3. "FIXED_PCT_CLAMP": Dow Theory Swings clamped to fixed min/max percentage width.
    * 4. "DONCHIAN_ATR": Adaptive Donchian Channel (Highest High & Lowest Low of lookback bars) + ATR buffer.
+   * 5. "VOLUME_PROFILE_HTF" (Default): Hybrid Volume Profile (POC/VAH/VAL) + 4H HTF Structural Anchor.
    */
-  channelMode: "DOW_SWINGS" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR",
+  channelMode: "VOLUME_PROFILE_HTF" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF",
+  /** Lookback bars for Volume Profile calculation on macro candles (default 192 = 48 hours on 15m). */
+  vpLookbackBars: 192,
   /** Min channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 1.8%). */
   minChannelWidthPct: 1.8,
   /** Max channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 6.0%). */
@@ -306,6 +311,8 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.dryRun !== undefined) merged.dryRun = Boolean(saved.dryRun);
       if (saved.timezone !== undefined) merged.timezone = String(saved.timezone);
       if (saved.dashboardPort !== undefined) merged.dashboardPort = Number(saved.dashboardPort);
+      if (saved.htfTimeframe !== undefined) merged.htfTimeframe = String(saved.htfTimeframe);
+      if (saved.vpLookbackBars !== undefined) merged.vpLookbackBars = Number(saved.vpLookbackBars);
       if (saved.enableNarrowChannelCollapse !== undefined) merged.enableNarrowChannelCollapse = Boolean(saved.enableNarrowChannelCollapse);
       if (saved.adjustChannelOnClosedOnly !== undefined) merged.adjustChannelOnClosedOnly = Boolean(saved.adjustChannelOnClosedOnly);
       if (saved.cutLossOnBufferOnly !== undefined) merged.cutLossOnBufferOnly = Boolean(saved.cutLossOnBufferOnly);

@@ -3473,6 +3473,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.68` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 89. Hybrid Volume Profile (POC/VAH/VAL) + 4H HTF Structural Anchor Mode (`v0.2.69`)
+
+- **สถาปัตยกรรมและวัตถุประสงค์ (Hybrid Volume Profile + 4H HTF Anchor)**:
+  1. **4H HTF Major Structural Anchor (`htfDowEngine` & `htfTimeframe: "4h"`)**:
+     - ยกระดับกรอบราคาจากสวิงย่อย 15m ที่แคบเกินไป (2% - 4%) สู่กรอบสวิงมหภาคระดับสถาบัน 4H (Institutional Hard Floor & Ceiling)
+     - โหลดข้อมูลแท่งเทียน 4H อัตโนมัติ 150 แท่ง (ย้อนหลัง 25 วัน) และเชื่อมต่อ WebSocket kline stream 4H สดผ่าน `htfFeed`
+     - ยึดแนวรับ 4H Swing Low ที่ยังไม่ถูกทำลายใต้ราคาเป็น Hard Floor ทำให้กรอบราคาขยายกว้างอย่างปลอดภัย (เช่น 5% - 15%) ไส้เทียน 15m ไม่สามารถทะลุคัทลอสได้ง่ายอีกต่อไป
+  2. **Volume Profile Engine (`src/market-structure/volume-profile.ts`)**:
+     - คำนวณการกระจายตัวของโวลุ่มการซื้อขายแบบ Rolling 48 ชั่วโมง (192 แท่ง 15m) แบ่งเป็น 60 Price Bins
+     - ค้นหา **Point of Control (POC)**: ระดับราคาที่มีการจับคู่ซื้อขายสะสมหนาแน่นที่สุด (Liquidity Magnet) กำหนดเป็น Center Price (จุดสมดุล / Take Profit หลักของการเด้ง Reversion)
+     - คำนวณ **Value Area (70% Volume)**:
+       - **VAL (Value Area Low)**: ขอบล่างของพื้นที่มูลค่ายุติธรรม
+       - **VAH (Value Area High)**: ขอบบนของพื้นที่มูลค่ายุติธรรม
+  3. **Smart Money Discount Buy & Profit-Taking Distribution**:
+     - **"ไม่ซื้อของแพง" (No Buying in Premium/Fair Zone)**:
+       - หากราคาอยู่เหนือ VAL (ในโซน POC หรือ VAH) บอทจะไม่วางไม้ซื้อเด็ดขาด
+       - เมื่อราคาหลุดต่ำกว่า VAL ลงมาสู่โซนลดราคา (Discount Accumulation Zone) ระหว่าง VAL ถึง 4H Floor บอทจะเริ่มทะยอยวางไม้สะสม 5 ระดับความลึก
+     - **Institutional Sell Targets**:
+       - วางเป้าขายทำกำไร 5 ระดับ: Target 1 ที่ POC -> Targets 2-3 ระหว่าง POC ถึง VAH -> Target 4 ที่ VAH -> Target 5 ที่ 4H Ceiling
+  4. **Full Multi-Exchange Support & Telemetry**:
+     - อัปเดต Feed ทั้ง Binance Spot และ Somnia DreamDEX ให้บันทึก Kline Volume เข้าสู่ `Candle.volume`
+     - ส่งค่า `poc`, `vah`, `val`, `htfFloor`, `htfCeil` ผ่าน Telemetry และแสดงสถานะบน Dashboard HUD
+  5. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.69` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
