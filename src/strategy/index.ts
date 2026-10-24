@@ -2562,11 +2562,19 @@ export class DynamicGrid implements IStrategyHost {
       const hasRealChannel = Boolean(dow?.isSwingConfirmed && lowerBound > 0 && upperBound > lowerBound);
       buyLevels = gridZone?.buyLevels && gridZone.buyLevels.length > 0
         ? [...gridZone.buyLevels]
-        : (hasRealChannel ? buyPcts.map((pct) => lowerBound + rawSpan * (pct / 100)) : []);
+        : (hasRealChannel
+            ? (this.cfg.channelMode === "VOLUME_PROFILE_HTF"
+                ? buyPcts.map((pct) => lowerBound + Math.max(0.0001, centerPrice - lowerBound) * (pct / 50))
+                : buyPcts.map((pct) => lowerBound + rawSpan * (pct / 100)))
+            : []);
 
       sellLevels = gridZone?.sellLevels && gridZone.sellLevels.length > 0
         ? [...gridZone.sellLevels]
-        : (hasRealChannel ? sellPcts.map((pct) => lowerBound + rawSpan * (pct / 100)) : []);
+        : (hasRealChannel
+            ? (this.cfg.channelMode === "VOLUME_PROFILE_HTF"
+                ? sellPcts.map((pct) => centerPrice + Math.max(0.0001, upperBound - centerPrice) * ((pct - 50) / 50))
+                : sellPcts.map((pct) => lowerBound + rawSpan * (pct / 100)))
+            : []);
 
       lowerBound = this.roundPrice(lowerBound);
       upperBound = this.roundPrice(upperBound);

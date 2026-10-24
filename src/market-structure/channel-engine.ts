@@ -377,17 +377,17 @@ export class ChannelEngine {
     // Evaluate Trend / Regime Gate
     const canEstablish = gateEvaluation ? gateEvaluation.canEstablishChannel : true;
 
-    // Grid Levels in Buy Zone (Suppressed to empty if trend/regime gate rejects channel)
-    const buyLevels = (hasValidChannel && canEstablish)
+    // Grid Levels in Buy Zone (Strictly calculated in discount zone below Center & VAL)
+    const buyLevels = hasValidChannel
       ? (mode === "VOLUME_PROFILE_HTF"
           ? (() => {
-              // Discount Accumulation Zone: strictly below VAL (Value Area Low) down towards bottomBound
+              // Discount Accumulation Zone: strictly below VAL (Value Area Low) and strictly below Center Price (POC)
               const vp = options?.volumeProfile;
               const val = vp?.val;
               const maxBuyPrice = (val && val > bottomBound && val < upperBound)
-                ? Math.min(val, centerPrice)
-                : bottomBound + finalSpan * 0.45;
-              const buySpan = maxBuyPrice - bottomBound;
+                ? Math.min(val, centerPrice * 0.995)
+                : Math.min(centerPrice * 0.995, bottomBound + finalSpan * 0.45);
+              const buySpan = Math.max(0.0001, maxBuyPrice - bottomBound);
               const count = 5;
               const levels: number[] = [];
               for (let i = 0; i < count; i++) {

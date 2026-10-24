@@ -3515,11 +3515,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - **Pillar 3 (Safe Floor Proximity Buffer)**: บอทจะปฏิเสธการเปิดกรอบหาก Floor อยู่ใกล้ราคาปัจจุบันเกินไป (`actualFloorProximityPct < minFloorProximityPct`) เช่น ต่ำกว่า 1.5% บน BTC เพื่อป้องกันการโดน Cut Loss ทันทีที่ก้นเหว
      - **Pillar 4 (Channel Invalidation on Breakdown)**: เมื่อหลุด Floor และ Cut Loss แล้ว กรอบเดิมจะถูกทำลายทิ้งทันที ห้ามขยับ Floor ไหลตามราคาลงไปเรื่อยๆ
   3. **Zero Buy Ladder on Invalidation**:
-     - เมื่อ `canEstablishChannel === false` เมธอด `ChannelEngine.buildGridZone` จะส่งกลับ `buyLevels = []` (ไม่มีไม้ซื้อใดๆ ทั้งสิ้น) ปกป้องเงินทุน 100%
+     - เมื่อ `canEstablishChannel === false` เมธอด `ChannelEngine.buildGridZone` ส่งสถานะ Gate ปฏิเสธ ป้องกันการส่งคำสั่งซื้อเด็ดขาด
      - แสดงป้ายแจ้งเตือนชัดเจนบน Dashboard: `🛑 ขาลง (Downtrend) — ปิดกรอบงดรับมีด`, `⏳ หลุดฐาน — รอสร้างฐาน HL ใหม่`, `⚠️ Floor ชิดราคาเกินไป`
   4. **Typecheck & Version Bump**:
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.70` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+---
+
+### 91. Synchronized Ladder & Dynamic Grid Level Partitioning (`v0.2.71`)
+
+- **สาเหตุของปัญหาเส้นระดับราคาและ Ladder เหลื่อมล้ำกัน (Level Overlap Bug)**:
+  1. **Buy Level 1 อยู่เหนือ Center และ Sell Targets**: ในโหมด `VOLUME_PROFILE_HTF` เมื่อ `canEstablishChannel === false` เมธอด `buildGridZone` เคยคืนค่า `buyLevels = []` ทำให้ใน `strategy/index.ts` ถอยไปใช้ Fallback คำนวณ `buyPcts` (`[42, 32, 22, 12, 2]`) จากช่วงความกว้างทั้งกรอบ (`rawSpan`) ส่งผลให้ Buy Level 1 ($82,388) พุ่งทะลุข้าม Center ($81,887) และข้าม Sell Target 1 ($81,807) จนเกิดภาพเส้นระดับไขว้กันผิดฝั่ง
+  2. **Ladder ฝั่งขวาของแดชบอร์ดไม่ซิงค์กับข้อมูลจริง**: ใน `public/app.js` ตัวแปร `ladderSteps` ฮาร์ดโค้ดสูตรราคา `floor + span * (buyPcts[i] / 100)` และเขียนทับราคาบน DOM ในรอบ loop ทำให้ราคาบนบันไดขวามือไม่ตรงกับ `data.buyLevels` และ `data.sellLevels` ที่แบ็กเอนด์คำนวณมาจริง
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.71`)**:
+  1. **Strict Geometric Partitioning ใน Channel Engine (`src/market-structure/channel-engine.ts`)**:
+     - คำนวณเส้น `buyLevels` ใน Discount Zone เสมอ โดยกำหนดเพดานสูงสุดของไม้ซื้อ `maxBuyPrice = Math.min(val, centerPrice * 0.995)` ทำให้ไม้ซื้อทั้งหมดอยู่ต่ำกว่า Center (POC) และ VAL เสมอ 100% ไม่มีการล้นข้ามไปฝั่ง Sell Zone
+     - การควบคุมความปลอดภัยในการเทรด (Safety Gating) ถูกแยกขาดให้ควบคุมผ่านธง `canEstablishChannel` และเงื่อนไขการส่งออเดอร์ใน Strategy โดยไม่ทำให้โครงสร้างเรขาคณิตของระดับราคาผิดเพี้ยน
+  2. **Strict Half-Channel Fallback Scaling (`src/strategy/index.ts` & `public/app.js`)**:
+     - หากเกิดกรณี Fallback ขึ้น ในโหมด `VOLUME_PROFILE_HTF` จะสเกล `buyPcts` ภายในช่วง `[lowerBound, centerPrice]` เท่านั้น และสเกล `sellPcts` ภายในช่วง `[centerPrice, upperBound]` เท่านั้น ป้องกันการทะลุข้ามแดนโดยเด็ดขาด
+  3. **Real-time Synced Ladder UI & Dynamic Percentage Badges (`public/app.js`)**:
+     - ปรับปรุง `ladderSteps` ให้ผูกราคากับ `sLevels` และ `bLevels` ของจริงจากแบ็กเอนด์โดยตรง
+     - คำนวณเปอร์เซ็นต์จริงบนบันได (`effBuyPcts`, `effSellPcts`, `centerPct`) ตามสัดส่วนจริงของกรอบราคา เพื่อให้ป้ายเปอร์เซ็นต์และตำแหน่งไฮไลต์ `activeStep` สะท้อนตำแหน่งราคาจริงอย่างแม่นยำ
+     - อัปเกรดการจับคู่ออเดอร์ `candidateSteps` ให้ระบุฝั่ง `isBuy` / `isSell` และ `levelIndex` อย่างชัดเจน ป้องกันการจับคู่ออเดอร์ผิดชั้น
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.71` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
 
 
