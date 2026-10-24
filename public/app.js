@@ -1675,7 +1675,8 @@
     const elLogoBadge = document.getElementById("logoBadge");
     if (elLogoBadge) {
       const isDreamdex = (data.exchange || "").toLowerCase() === "dreamdex" || rawSymbol.includes(":") || rawSymbol.includes("USDSO");
-      elLogoBadge.textContent = isDreamdex ? "DREAMDEX SPOT" : "BINANCE GRID";
+      const stratSuffix = (data.strategyType === "swing_trade" || (data.strategyName && data.strategyName.includes("Swing"))) ? "SWING" : "GRID";
+      elLogoBadge.textContent = isDreamdex ? `DREAMDEX ${stratSuffix}` : `BINANCE ${stratSuffix}`;
     }
 
     // Dry Run vs Live Trading Mode Badge
@@ -3590,9 +3591,24 @@
     const twoStageEnabled = document.getElementById("cfg_enableTwoStageCutLoss")?.checked ?? true;
     const grpStage2 = document.getElementById("group_stage2Multiplier");
     if (grpStage2) grpStage2.style.display = twoStageEnabled ? "" : "none";
+
+    const stratType = document.getElementById("cfg_strategyType")?.value || "dynamic_grid";
+    const tabBtnSwing = document.getElementById("tabBtnSwing");
+    if (tabBtnSwing) {
+      if (stratType === "swing_trade") {
+        tabBtnSwing.textContent = "🏹 5. สวิงเทรด ⭐ (เปิดใช้งาน)";
+        tabBtnSwing.style.borderColor = "#6366f1";
+        tabBtnSwing.style.color = "#a5b4fc";
+      } else {
+        tabBtnSwing.textContent = "🏹 5. สวิงเทรด (Swing Trade)";
+        tabBtnSwing.style.borderColor = "";
+        tabBtnSwing.style.color = "";
+      }
+    }
   }
 
   [
+    "cfg_strategyType",
     "cfg_orderExecutionMode",
     "cfg_useTrueWick",
     "cfg_enableNarrowChannelCollapse",
@@ -3731,6 +3747,18 @@
       setCheck("cfg_sell_t3", enabledSells[2] !== false);
       setCheck("cfg_sell_t4", enabledSells[3] !== false);
       setCheck("cfg_sell_t5", enabledSells[4] !== false);
+
+      setVal("cfg_swingMinRiskReward", data.swingMinRiskReward ?? 2.0);
+      setVal("cfg_swingStopLossBufferPct", data.swingStopLossBufferPct ?? 0.5);
+      setVal("cfg_swingMaxPositionPct", data.swingMaxPositionPct ?? 60.0);
+      setVal("cfg_swingTp1CloseRatio", data.swingTp1CloseRatio !== undefined ? Math.round(data.swingTp1CloseRatio * 100) : 50);
+      setVal("cfg_swingTp1TargetType", data.swingTp1TargetType || "CENTER_POC");
+      setVal("cfg_swingTp2TargetType", data.swingTp2TargetType || "SWING_HIGH_HH");
+      setVal("cfg_swingTrailingActivationPct", data.swingTrailingActivationPct ?? 1.5);
+      setVal("cfg_swingTrailingPullbackPct", data.swingTrailingPullbackPct ?? 0.8);
+      setCheck("cfg_swingEnableHlBaseEntry", data.swingEnableHlBaseEntry !== false);
+      setCheck("cfg_swingEnableTrendlineBreakoutEntry", data.swingEnableTrendlineBreakoutEntry !== false);
+      setCheck("cfg_swingEnableSupportRetestEntry", data.swingEnableSupportRetestEntry !== false);
 
       updateGridSimulatorPreview();
       updateSettingsConditionalVisibility();
@@ -3960,6 +3988,17 @@
         document.getElementById("cfg_sell_t4") ? document.getElementById("cfg_sell_t4").checked : true,
         document.getElementById("cfg_sell_t5") ? document.getElementById("cfg_sell_t5").checked : true,
       ],
+      swingMinRiskReward: parseFloat(document.getElementById("cfg_swingMinRiskReward")?.value) || 2.0,
+      swingStopLossBufferPct: parseFloat(document.getElementById("cfg_swingStopLossBufferPct")?.value) || 0.5,
+      swingMaxPositionPct: parseFloat(document.getElementById("cfg_swingMaxPositionPct")?.value) || 60.0,
+      swingTp1CloseRatio: (parseFloat(document.getElementById("cfg_swingTp1CloseRatio")?.value) || 50) / 100,
+      swingTp1TargetType: document.getElementById("cfg_swingTp1TargetType")?.value || "CENTER_POC",
+      swingTp2TargetType: document.getElementById("cfg_swingTp2TargetType")?.value || "SWING_HIGH_HH",
+      swingTrailingActivationPct: parseFloat(document.getElementById("cfg_swingTrailingActivationPct")?.value) || 1.5,
+      swingTrailingPullbackPct: parseFloat(document.getElementById("cfg_swingTrailingPullbackPct")?.value) || 0.8,
+      swingEnableHlBaseEntry: document.getElementById("cfg_swingEnableHlBaseEntry") ? document.getElementById("cfg_swingEnableHlBaseEntry").checked : true,
+      swingEnableTrendlineBreakoutEntry: document.getElementById("cfg_swingEnableTrendlineBreakoutEntry") ? document.getElementById("cfg_swingEnableTrendlineBreakoutEntry").checked : true,
+      swingEnableSupportRetestEntry: document.getElementById("cfg_swingEnableSupportRetestEntry") ? document.getElementById("cfg_swingEnableSupportRetestEntry").checked : true,
     };
 
     try {

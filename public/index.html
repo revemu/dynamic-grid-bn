@@ -515,6 +515,7 @@
           <button class="tab-btn" data-tab="tab-structure">📊 2. กรอบราคา &amp; โครงสร้าง</button>
           <button class="tab-btn" data-tab="tab-risk">🛡️ 3. ความเสี่ยง &amp; Cut Loss</button>
           <button class="tab-btn" data-tab="tab-api">🔌 4. กระดานเทรด &amp; ระบบ</button>
+          <button class="tab-btn" id="tabBtnSwing" data-tab="tab-swing">🏹 5. สวิงเทรด (Swing Trade)</button>
         </div>
 
         <!-- ═══════════════════ TAB 1: กริด & การออกคำสั่ง (Grid & Execution) ═══════════════════ -->
@@ -1375,6 +1376,148 @@
                 <div class="input-with-unit">
                   <input type="number" id="cfg_dashboardPort" placeholder="3333" min="1024" max="65535" />
                   <span class="unit">PORT</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══════════════════ TAB 5: กลยุทธ์สวิงเทรด (Swing Trade Strategy) ═══════════════════ -->
+        <div class="tab-pane" id="tab-swing">
+          <!-- Section 5.1: สัญญาณเข้าซื้อ & อัตราความเสี่ยง (Entry Signals & Risk Management) -->
+          <div class="cfg-section-card">
+            <div class="cfg-section-header">
+              <span class="cfg-section-title">🏹 สัญญาณเข้าซื้อ &amp; อัตราความเสี่ยง (Entry Signals &amp; Risk/Reward)</span>
+              <span class="cfg-section-desc">กำหนดอัตรา Risk:Reward ขั้นต่ำ, ระยะ Stop Loss ใต้ฐานสวิง และสัดส่วนเงินลงทุนต่อไม้</span>
+            </div>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="cfg_swingMinRiskReward">
+                  อัตราผลตอบแทนต่อความเสี่ยงขั้นต่ำ (Min Risk:Reward)
+                  <span class="help-tip" title="คำสั่งซื้อจะทำงานเมื่อคำนวณเป้าหมายกำไร (TP) เทียบกับจุดตัดขาดทุน (SL) ได้ R:R ไม่ต่ำกว่าค่านี้ (ค่าแนะนำ 2.0x)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_swingMinRiskReward" step="0.1" min="1.0" max="10.0" />
+                  <span class="unit">R:R</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_swingStopLossBufferPct">
+                  ระยะ Stop Loss ใต้ฐานสวิง (Stop Loss Buffer)
+                  <span class="help-tip" title="ระยะบัฟเฟอร์เปอร์เซ็นต์ใต้จุดต่ำสุดของฐาน Higher Low (HL) เพื่อป้องกันโดนแลบไส้หลุดแนวรับ (เช่น 0.4% - 0.8%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_swingStopLossBufferPct" step="0.05" min="0.1" max="5.0" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_swingMaxPositionPct">
+                  สัดส่วนเงินลงทุนสูงสุดต่อไม้ (Max Position Allocation)
+                  <span class="help-tip" title="เปอร์เซ็นต์ของเงินคงเหลือในกระเป๋าที่จะใช้เปิดออเดอร์ในแต่ละรอบสวิง (เช่น 60%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_swingMaxPositionPct" step="5" min="10" max="100" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group switch-group">
+                <div class="switch-label-group">
+                  <span class="switch-title">⭐ สัญญาณกลับตัวยกฐาน Higher Low (HL Base)</span>
+                  <span class="switch-desc">เปิดเข้าซื้อเมื่อเกิดแท่งเทียนยืนยันฐาน Higher Low พร้อม R:R ถึงเป้าหมาย</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_swingEnableHlBaseEntry" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="form-group switch-group">
+                <div class="switch-label-group">
+                  <span class="switch-title">🚀 สัญญาณเบรคเอาท์เส้นกด (Trendline Breakout)</span>
+                  <span class="switch-desc">เปิดเข้าซื้อเมื่อแท่งเทียนปิดทะลุเส้นกด Downtrend Resistance ขึ้นไป</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_swingEnableTrendlineBreakoutEntry" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="form-group switch-group">
+                <div class="switch-label-group">
+                  <span class="switch-title">🔄 สัญญาณรีเทสต์แนวรับสำคัญ (Support Retest)</span>
+                  <span class="switch-desc">เปิดเข้าซื้อเมื่อราคาย่อทดสอบแนวรับเส้นแนวโน้มหรือสวิง HL เดิมแล้วไม่หลุด</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_swingEnableSupportRetestEntry" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 5.2: การปิดทำกำไร & Trailing Stop (Take Profit & Trailing) -->
+          <div class="cfg-section-card">
+            <div class="cfg-section-header">
+              <span class="cfg-section-title">🏆 การปิดทำกำไร &amp; ล็อคกำไรตามเทรนด์ (Take Profit &amp; Trailing)</span>
+              <span class="cfg-section-desc">กำหนดสัดส่วนการแบ่งขายทำกำไรไม้แรก (TP1) และระบบ Trailing Stop เพื่อรันเทรนด์ไม้สอง (TP2)</span>
+            </div>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="cfg_swingTp1CloseRatio">
+                  สัดส่วนการปิดทำกำไร TP1 (TP1 Close Ratio)
+                  <span class="help-tip" title="เปอร์เซ็นต์ของไม้ที่จะแบ่งขายทำกำไรเมื่อถึงเป้าหมายแรก (เช่น 50% = ขายครึ่งหนึ่งแล้วเลื่อนจุด SL มาบังทุน)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_swingTp1CloseRatio" step="5" min="10" max="100" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_swingTp1TargetType">
+                  รูปแบบเป้าหมายแรก TP1 (TP1 Target Type)
+                  <span class="help-tip" title="เลือกการคำนวณเป้า TP1: กึ่งกลางกรอบราคา (Center POC) หรือคำนวณตาม % กำไรคงที่">ℹ️</span>
+                </label>
+                <select id="cfg_swingTp1TargetType" class="form-select">
+                  <option value="CENTER_POC">🎯 กึ่งกลางกรอบราคา (Center POC)</option>
+                  <option value="FIXED_PCT">📈 กำไรเปอร์เซ็นต์คงที่ (Fixed R:R %)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_swingTp2TargetType">
+                  รูปแบบเป้าหมายสอง TP2 (TP2 Target Type)
+                  <span class="help-tip" title="เลือกการปิดกำไรไม้ที่เหลือ: ยอดสวิงเดิม (Swing High / HH) หรือเปิดระบบ Trailing Stop รันเทรนด์">ℹ️</span>
+                </label>
+                <select id="cfg_swingTp2TargetType" class="form-select">
+                  <option value="SWING_HIGH_HH">🏔️ ยอดสวิงเดิม (Swing High / HH)</option>
+                  <option value="TRAILING_STOP">🏃‍♂️ ล็อคกำไรตามเทรนด์ (Trailing Stop)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_swingTrailingActivationPct">
+                  ระยะกำไรเพื่อเปิด Trailing Stop (Activation %)
+                  <span class="help-tip" title="เมื่อกำไรแตะถึงระดับนี้ ระบบ Trailing Stop จะเริ่มทำงานเพื่อล็อคผลกำไรตามราคา (เช่น 1.5%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_swingTrailingActivationPct" step="0.1" min="0.5" max="10.0" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_swingTrailingPullbackPct">
+                  ระยะยอมย่อล็อคกำไร Trailing Stop (Pullback %)
+                  <span class="help-tip" title="หากราคาทำจุดสูงสุดใหม่แล้วย่อตัวกลับลงมาแตะระยะนี้ ระบบจะสั่งปิดทำกำไรไม้ที่เหลือทันที (เช่น 0.8%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_swingTrailingPullbackPct" step="0.05" min="0.2" max="5.0" />
+                  <span class="unit">%</span>
                 </div>
               </div>
             </div>

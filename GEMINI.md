@@ -3660,6 +3660,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ปรับเวอร์ชันเป็น `v0.2.77` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
+---
+
+### 98. Pluggable Multi-Strategy Persistence & Full Swing Trade UI Configuration (`v0.2.78`)
+
+- **การรักษาค่าคอนฟิกข้ามกลยุทธ์ (Cross-Strategy Configuration Persistence)**:
+  - แก้ไข `DynamicGrid.getRuntimeConfig()` ใน `src/strategy/index.ts` ให้ส่งคืน `strategyType` และชุดพารามิเตอร์ของ `swing*` ทั้งหมด เพื่อป้องกันการตัดฟิลด์ทิ้งเมื่อดึงค่าคอนฟิกผ่าน `/api/config` หรือบันทึกลงฐานข้อมูล
+  - ปรับ `DynamicGrid.updateRuntimeSettings()` ให้ผสานการตั้งค่าเดิมจากฐานข้อมูล (`this.db.getAllSettings()`) ทำให้การตั้งค่าของกลยุทธ์อื่นๆ ไม่ถูกลบทับโดยไม่ได้ตั้งใจ
+  - ปรับ `SwingTraderStrategy.getRuntimeConfig()` และ `updateRuntimeSettings()` ใน `src/strategy/swing/index.ts` ให้คืนค่า `strategyType: "swing_trade"` และชุดพารามิเตอร์ครบถ้วน
+- **ระบบ Hot-Swap สมบูรณ์แบบ (`src/index.ts`)**:
+  - เมื่อมีการสลับ `s.strategyType` จะส่งชุดค่าคอนฟิกใหม่ทั้งหมด (`s`) เข้าสู่อินสแตนซ์กลยุทธ์ใหม่ พร้อมสั่ง `grid.updateRuntimeSettings(s)` และบันทึก `strategyType` ลงฐานข้อมูล `settings.db.json` ทันที (`grid.getDatabase().setSetting("strategyType", targetStrategyType)`) เพื่อให้บอทจำกลยุทธ์ที่เลือกไว้หลังรีสตาร์ทเซิร์ฟเวอร์
+- **เพิ่มหน้าต่างตั้งค่า Swing Trade ใน Dashboard UI (`public/index.html` & `public/app.js`)**:
+  - เพิ่มแท็บ **🏹 5. สวิงเทรด (Swing Trade)** ในหน้า Settings Modal บนเว็บแดชบอร์ด
+  - การ์ดที่ 1: **🏹 สัญญาณเข้าซื้อ & อัตราความเสี่ยง**: Min Risk:Reward, Stop Loss Buffer %, Max Position Allocation %, สวิตช์เปิด/ปิดสัญญาณ HL Base, Trendline Breakout, Support Retest
+  - การ์ดที่ 2: **🏆 การปิดทำกำไร & ล็อคกำไรตามเทรนด์**: TP1 Close Ratio %, TP1 Target Type (Center POC / Fixed R:R), TP2 Target Type (Swing High HH / Trailing Stop), Trailing Activation %, Trailing Pullback %
+  - เพิ่มการตรวจสอบและไฮไลท์แท็บสวิงเทรด `🏹 5. สวิงเทรด ⭐ (เปิดใช้งาน)` อัตโนมัติเมื่อเลือกโหมด Swing Trade
+  - ปรับป้าย Top Brand Logo Badge ให้แสดง `BINANCE SWING` หรือ `DREAMDEX SWING` เมื่อกลยุทธ์ที่รันอยู่เป็น Swing Trade
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.78` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

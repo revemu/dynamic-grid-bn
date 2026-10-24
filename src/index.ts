@@ -436,16 +436,20 @@ async function main(): Promise<void> {
         log(`🔄 [STRATEGY SWITCH] Switching active strategy from ${prevConfig.strategyType || "dynamic_grid"} to ${s.strategyType}...`);
         try {
           await grid.cancelAllOrdersUser();
-          grid = createStrategy(s.strategyType, {
+          const targetStrategyType = s.strategyType;
+          const mergedConfig = { ...grid.getRuntimeConfig(), ...s, strategyType: targetStrategyType };
+          grid = createStrategy(targetStrategyType, {
             exchange,
             symbolInfo,
-            config: { ...grid.getRuntimeConfig(), strategyType: s.strategyType },
+            config: mergedConfig,
             atrSource: atrSource!,
             log,
             macroDowEngine,
             localTrendEngine,
             htfDowEngine,
           });
+          grid.updateRuntimeSettings(s);
+          grid.getDatabase().setSetting("strategyType", targetStrategyType);
           grid.onEvent((event) => {
             dashboard.broadcast(event.type, event.data);
           });

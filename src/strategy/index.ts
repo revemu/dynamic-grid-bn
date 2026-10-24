@@ -677,6 +677,18 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       enableLhDynamicEscape: this.cfg.enableLhDynamicEscape !== false,
       enableTwoStageCutLoss: this.cfg.enableTwoStageCutLoss !== false,
       cutLossStage2Multiplier: this.cfg.cutLossStage2Multiplier ?? 2.0,
+      strategyType: (this.cfg as any).strategyType || this.strategyType || "dynamic_grid",
+      swingMinRiskReward: (this.cfg as any).swingMinRiskReward ?? 2.0,
+      swingStopLossBufferPct: (this.cfg as any).swingStopLossBufferPct ?? 0.5,
+      swingMaxPositionPct: (this.cfg as any).swingMaxPositionPct ?? 60.0,
+      swingTp1CloseRatio: (this.cfg as any).swingTp1CloseRatio ?? 0.5,
+      swingTp1TargetType: (this.cfg as any).swingTp1TargetType ?? "CENTER_POC",
+      swingTp2TargetType: (this.cfg as any).swingTp2TargetType ?? "SWING_HIGH_HH",
+      swingTrailingActivationPct: (this.cfg as any).swingTrailingActivationPct ?? 1.5,
+      swingTrailingPullbackPct: (this.cfg as any).swingTrailingPullbackPct ?? 0.8,
+      swingEnableHlBaseEntry: (this.cfg as any).swingEnableHlBaseEntry !== false,
+      swingEnableTrendlineBreakoutEntry: (this.cfg as any).swingEnableTrendlineBreakoutEntry !== false,
+      swingEnableSupportRetestEntry: (this.cfg as any).swingEnableSupportRetestEntry !== false,
     };
   }
 
@@ -821,7 +833,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
 
   public updateRuntimeSettings(newSettings: Record<string, any>): Record<string, any> {
     for (const [key, val] of Object.entries(newSettings)) {
-      if (key in this.cfg && val !== undefined) {
+      if (val !== undefined) {
         // If updating secret/key and user kept the masked placeholder, do not overwrite
         if ((key === "binanceApiKey" || key === "binanceApiSecret" || key === "dreamdexPrivateKey") && val === "******") continue;
         if (key === "enabledBuyLevels" && Array.isArray(val)) {
@@ -994,6 +1006,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     }
     this.syncDowEngineSettings();
     const configToPersist = {
+      ...this.db.getAllSettings(),
       ...this.getRuntimeConfig(),
       // Ensure real secrets are persisted in DB if provided
       binanceApiKey: this.cfg.binanceApiKey,

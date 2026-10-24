@@ -124,17 +124,35 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public getRuntimeConfig(): any {
-    return { ...this.cfg };
+    return {
+      ...this.cfg,
+      strategyType: "swing_trade",
+      swingMinRiskReward: this.cfg.swingMinRiskReward ?? 2.0,
+      swingStopLossBufferPct: this.cfg.swingStopLossBufferPct ?? 0.5,
+      swingMaxPositionPct: this.cfg.swingMaxPositionPct ?? 60.0,
+      swingTp1CloseRatio: this.cfg.swingTp1CloseRatio ?? 0.5,
+      swingTp1TargetType: this.cfg.swingTp1TargetType ?? "CENTER_POC",
+      swingTp2TargetType: this.cfg.swingTp2TargetType ?? "SWING_HIGH_HH",
+      swingTrailingActivationPct: this.cfg.swingTrailingActivationPct ?? 1.5,
+      swingTrailingPullbackPct: this.cfg.swingTrailingPullbackPct ?? 0.8,
+      swingEnableHlBaseEntry: this.cfg.swingEnableHlBaseEntry !== false,
+      swingEnableTrendlineBreakoutEntry: this.cfg.swingEnableTrendlineBreakoutEntry !== false,
+      swingEnableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry !== false,
+    };
   }
 
   public updateRuntimeSettings(s: any): Record<string, any> {
-    this.cfg = { ...this.cfg, ...s };
+    const cleanSettings = { ...s };
+    if (cleanSettings.binanceApiKey === "******") delete cleanSettings.binanceApiKey;
+    if (cleanSettings.binanceApiSecret === "******") delete cleanSettings.binanceApiSecret;
+    if (cleanSettings.dreamdexPrivateKey === "******") delete cleanSettings.dreamdexPrivateKey;
+    this.cfg = { ...this.cfg, ...cleanSettings, strategyType: "swing_trade" };
     try {
       this.db.setSettings(this.cfg);
     } catch (e: any) {
       this.log(`[SwingTrader] Save settings error: ${e}`);
     }
-    return { ...this.cfg };
+    return this.getRuntimeConfig();
   }
 
   public setPaused(paused: boolean): boolean {
