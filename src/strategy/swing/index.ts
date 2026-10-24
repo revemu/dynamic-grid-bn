@@ -254,14 +254,15 @@ export class SwingTraderStrategy implements IStrategy {
   public async refreshWalletBalances(): Promise<any> {
     try {
       const b = await this.binance.getAccountBalances(this.symbolInfo.symbol);
-      this.walletBaseBalance = b.baseFree;
-      this.walletQuoteBalance = b.quoteFree;
+      this.walletBaseBalance = b.baseFree ?? 0;
+      this.walletQuoteBalance = b.quoteFree ?? 0;
+      const addr = (this.binance as any).getWalletAddress?.() || `${this.symbolInfo.baseAsset}/${this.symbolInfo.quoteAsset}`;
       return {
-        base: b.baseFree,
-        quote: b.quoteFree,
-        somi: b.baseFree,
-        usdso: b.quoteFree,
-        address: "",
+        base: this.walletBaseBalance,
+        quote: this.walletQuoteBalance,
+        somi: this.walletBaseBalance,
+        usdso: this.walletQuoteBalance,
+        address: addr,
       };
     } catch (e) {
       this.log(`[SwingTrader] Failed to fetch balances: ${e}`);
@@ -404,7 +405,7 @@ export class SwingTraderStrategy implements IStrategy {
 
   // ── Main Execution Loop ──────────────────────────────────────────────────
   public async tick(): Promise<void> {
-    if (this.isPaused || this.isSwitchingSymbol) return;
+    if (this.isSwitchingSymbol) return;
 
     try {
       const tob = await this.binance.getTopOfBook(this.symbolInfo.symbol);
@@ -421,7 +422,7 @@ export class SwingTraderStrategy implements IStrategy {
       const now = Date.now();
       if (now - this.lastBalanceRefreshTime > 10_000) {
         this.lastBalanceRefreshTime = now;
-        this.refreshWalletBalances().catch(() => {});
+        await this.refreshWalletBalances().catch(() => {});
       }
 
       // Extract market structure
@@ -445,16 +446,23 @@ export class SwingTraderStrategy implements IStrategy {
         enableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry ?? true,
       };
 
-      // 1. Manage Active Position (SL / TP / Trailing Stop)
-      if (this.activePosition) {
-        await this.manageActivePosition(refPrice, swingCfg);
+      // Only execute entries/exits if bot is NOT paused
+      if (!this.isPaused) {
+        // 1. Manage Active Position (SL / TP / Trailing Stop)
+        if (this.activePosition) {
+          await this.manageActivePosition(refPrice, swingCfg);
+        } else {
+          // 2. Scan for New Entry Setup
+          const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg);
+          this.lastSignal = signal;
+          if (signal.hasSignal && this.swingState === "WAITING_SETUP") {
+            await this.executeSwingEntry(signal, refPrice, swingCfg);
+          }
+        }
       } else {
-        // 2. Scan for New Entry Setup
+        // In paused mode, scan for signals for UI preview
         const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg);
         this.lastSignal = signal;
-        if (signal.hasSignal && this.swingState === "WAITING_SETUP") {
-          await this.executeSwingEntry(signal, refPrice, swingCfg);
-        }
       }
 
       this.emitTelemetryTick();
@@ -639,23 +647,31 @@ export class SwingTraderStrategy implements IStrategy {
       buyLevels: this.activePosition ? [this.activePosition.entryPrice] : [],
       sellLevels: this.activePosition ? [this.activePosition.tp1Price, this.activePosition.tp2Price] : [],
       cutLossBound: this.activePosition ? this.activePosition.stopLossPrice : (structure?.cutLossBound ?? 0),
-      botAction: {
-        code: this.activePosition ? "IN_SWING_TRADE" : "WAITING_SWING_SETUP",
-        title: this.activePosition
-          ? this.activePosition.tp1Executed
-            ? "🚀 TP1 Done — Trailing Trend"
-            : "📈 Swing Position Active"
-          : "🔍 Scanning for Swing Setup",
-        reason: this.activePosition
-          ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`
-          : this.lastSignal?.reason || "Waiting for confirmed Higher Low or Trendline Breakout",
-        nextTrigger: this.activePosition
-          ? this.activePosition.tp1Executed
-            ? `TP2: >$${this.activePosition.tp2Price.toFixed(4)}`
-            : `TP1: >$${this.activePosition.tp1Price.toFixed(4)}`
-          : "Wait HL Base Confirm",
-        severity: this.activePosition ? "info" : "warning",
-      },
+      botAction: this.isPaused
+        ? {
+            code: "PAUSED",
+            title: "⏸️ Strategy Paused (Monitoring Mode)",
+            reason: "Live chart, market structure & wallet active. Order execution suspended.",
+            nextTrigger: "Click 'Resume' button to activate live trading",
+            severity: "warning",
+          }
+        : {
+            code: this.activePosition ? "IN_SWING_TRADE" : "WAITING_SWING_SETUP",
+            title: this.activePosition
+              ? this.activePosition.tp1Executed
+                ? "🚀 TP1 Done — Trailing Trend"
+                : "📈 Swing Position Active"
+              : "🔍 Scanning for Swing Setup",
+            reason: this.activePosition
+              ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`
+              : this.lastSignal?.reason || "Waiting for confirmed Higher Low or Trendline Breakout",
+            nextTrigger: this.activePosition
+              ? this.activePosition.tp1Executed
+                ? `TP2: >$${this.activePosition.tp2Price.toFixed(4)}`
+                : `TP1: >$${this.activePosition.tp1Price.toFixed(4)}`
+              : "Wait HL Base Confirm",
+            severity: this.activePosition ? "info" : "warning",
+          },
     };
 
     this.emit({

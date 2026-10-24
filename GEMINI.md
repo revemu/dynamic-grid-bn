@@ -3711,6 +3711,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.80` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 101. Continuous Background Polling & Paused Monitoring Mode for Swing Trader (`v0.2.81`)
+
+- **การแยกการทำงาน Background ออกจากคำสั่งเทรด (Decoupled Background Loop & Execution Gating)**:
+  - แก้ไข `SwingTraderStrategy.tick()` ใน `src/strategy/swing/index.ts`: นำ `if (this.isPaused) return;` ที่ขวางอยู่บนสุดของลูปออก
+  - ทำให้แม้บอทจะบูตขึ้นมาในสถานะ `startPaused: true` ตัวบอทจะยังคง:
+    - ดึงราคา `getTopOfBook` (`mid`, `bid`, `ask`, `refPrice`) แบบ Real-time
+    - เรียก `refreshWalletBalances()` ทุก 10 วินาที เพื่อดึงยอดคงเหลือในกระเป๋าจริงมาแสดงบนแดชบอร์ด
+    - คำนวณ Dow Theory Market Structure และกรอบ Channel สำหรับแสดงผลบนชาร์ตแบบสด
+    - ส่ง Telemetry และแสดงสถานะ `⏸️ Strategy Paused (Monitoring Mode)` บนแดชบอร์ด
+    - บล็อกเฉพาะการเปิด/ปิดออเดอร์ (`manageActivePosition`, `executeSwingEntry`) จนกว่าจะกด Resume
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.81` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
