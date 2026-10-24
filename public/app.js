@@ -2094,6 +2094,9 @@
       clampStr = `${gateBadge} • ${clampStr}`;
     }
 
+    if (elChannelStatusPill) {
+      elChannelStatusPill.style.display = data.strategyType === "swing_trade" ? "none" : "";
+    }
     if (elChannelStatusText) {
       if (data.canEstablishChannel === false && !data.isChannelLocked) {
         elChannelStatusText.textContent = `Channel: ⏸️ ${data.gateReason || "ปิดกรอบรอเงื่อนไขเทรนด์"}`;
@@ -2454,8 +2457,10 @@
 
     // ── Update Price Lines on Chart ──────────────────────────────────────────
     if (candleSeries) {
-      // 1. 100% Upper Bound (Full Exit) - Solid Fuchsia / Magenta
-      if (data.upperBound && data.bottomBound) {
+      const isSwingMode = data.strategyType === "swing_trade";
+
+      // 1. 100% Upper Bound (Full Exit) - Solid Fuchsia / Magenta (Grid Mode Only)
+      if (!isSwingMode && data.upperBound && data.bottomBound) {
         lineUpperBound = setPriceLine(lineUpperBound, {
           price: data.upperBound,
           color: "#d946ef",
@@ -2471,6 +2476,7 @@
 
       // 1.1 Real Current Calculated Resistance Bound (Dashed Fuchsia / Magenta Line)
       if (
+        !isSwingMode &&
         data.isChannelLocked &&
         data.liveCalculatedUpperBound
       ) {
@@ -2489,6 +2495,7 @@
 
       // 1.2 Real Current Calculated Support Bound (Dashed Purple Line, if differs from locked floor)
       if (
+        !isSwingMode &&
         data.isChannelLocked &&
         data.liveCalculatedBottomBound &&
         Math.abs(data.liveCalculatedBottomBound - data.bottomBound) / data.bottomBound > 0.001
@@ -2506,8 +2513,8 @@
         lineLiveCalculatedBottomBound = null;
       }
 
-      // 2. 50% Channel Center (Midline) - Dashed Amber (Subtle Background)
-      if (data.centerPrice && data.bottomBound && data.upperBound) {
+      // 2. 50% Channel Center (Midline) - Dashed Amber (Grid Mode Only)
+      if (!isSwingMode && data.centerPrice && data.bottomBound && data.upperBound) {
         lineCenter = setPriceLine(lineCenter, {
           price: data.centerPrice,
           color: "rgba(251, 191, 36, 0.45)",
@@ -2521,8 +2528,8 @@
         lineCenter = null;
       }
 
-      // 3. 0% Lower Bound (Structural Grid Floor) - Solid Purple
-      if (data.bottomBound && data.upperBound) {
+      // 3. 0% Lower Bound (Structural Grid Floor) - Solid Purple (Grid Mode Only)
+      if (!isSwingMode && data.bottomBound && data.upperBound) {
         lineBottomBound = setPriceLine(lineBottomBound, {
           price: data.bottomBound,
           color: "#c084fc",
@@ -2536,8 +2543,8 @@
         lineBottomBound = null;
       }
 
-      // 3.1 Cut Loss Trigger Buffer Line - Dashed Slate Silver
-      if (data.cutLossBound && data.cutLossBound < data.bottomBound) {
+      // 3.1 Cut Loss Trigger Buffer Line - Dashed Slate Silver (Grid Mode Only)
+      if (!isSwingMode && data.cutLossBound && data.cutLossBound < data.bottomBound) {
         const bufDelta = data.bottomBound - data.cutLossBound;
         const bufPct = (bufDelta / data.bottomBound) * 100;
         lineCutLossBound = setPriceLine(lineCutLossBound, {

@@ -3333,7 +3333,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .glow-ladder-card {
-  flex: 1.05;
+  flex: 1.45;
   padding: 8px 10px;
   gap: 4px;
 }
@@ -3355,7 +3355,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 /* 4. Right Sidebar Multi-Tab Dock (Trades, Open Orders, Holding Lots, Logs) */
 .sidebar-activity-card {
-  flex: 1;
+  flex: 0.85;
   padding: 8px 10px;
 }
 
@@ -3560,65 +3560,77 @@ input:checked + .slider:before { transform: translateX(20px); }
 .swing-trade-plan-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 5px;
+  padding: 6px 8px;
   background: rgba(15, 23, 42, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  margin-top: 8px;
+  border-radius: 10px;
+  margin-top: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .stp-signal-banner {
-  padding: 10px 12px;
+  padding: 6px 10px;
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(16, 185, 129, 0.08));
   border: 1px solid rgba(99, 102, 241, 0.25);
   border-left: 4px solid #6366f1;
-  border-radius: 8px;
+  border-radius: 7px;
+  flex-shrink: 0;
 }
 
 .stp-signal-type {
-  font-size: 0.85rem;
+  font-size: 0.76rem;
   font-weight: 700;
   color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stp-signal-desc {
-  font-size: 0.72rem;
+  font-size: 0.67rem;
   color: #94a3b8;
-  margin-top: 3px;
-  line-height: 1.3;
+  margin-top: 2px;
+  line-height: 1.25;
 }
 
 .stp-progress-track-wrap {
-  padding: 10px 12px;
+  padding: 6px 10px;
   background: rgba(15, 23, 42, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  border-radius: 7px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 5px;
+  flex-shrink: 0;
 }
 
 .stp-progress-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.72rem;
+  gap: 6px;
+  font-size: 0.68rem;
 }
 
 .stp-progress-title {
   color: #94a3b8;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .stp-progress-status {
   font-weight: 700;
   font-family: var(--font-mono);
+  white-space: nowrap;
+  font-size: 0.68rem;
 }
 
 .stp-progress-bar-bg {
   position: relative;
-  height: 8px;
+  height: 7px;
   background: rgba(255, 255, 255, 0.08);
   border-radius: 4px;
   overflow: visible;
@@ -3634,7 +3646,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 .stp-progress-pin {
   position: absolute;
-  top: -4px;
+  top: -3px;
   left: 0%;
   transform: translateX(-50%);
   display: flex;
@@ -3645,8 +3657,8 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .stp-pin-glow {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   background: #ffffff;
   box-shadow: 0 0 10px #38bdf8, 0 0 4px #ffffff;
@@ -3660,7 +3672,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 .stp-progress-nodes {
   display: flex;
   justify-content: space-between;
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 700;
   font-family: var(--font-mono);
   padding: 0 2px;
@@ -3695,17 +3707,18 @@ input:checked + .slider:before { transform: translateX(20px); }
 .stp-levels-container {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .stp-level-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 5px 8px;
   background: rgba(15, 23, 42, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  border-radius: 6px;
   transition: all 0.2s ease;
 }
 
@@ -3715,7 +3728,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .stp-level-row.stp-tp2 {
-  border-left: 4px solid #06b6d4 !important;
+  border-left: 3px solid #06b6d4 !important;
 }
 .stp-tp2 .stp-level-badge {
   background: rgba(6, 182, 212, 0.15);
@@ -3724,7 +3737,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .stp-level-row.stp-tp1 {
-  border-left: 4px solid #f59e0b !important;
+  border-left: 3px solid #f59e0b !important;
 }
 .stp-tp1 .stp-level-badge {
   background: rgba(245, 158, 11, 0.15);
@@ -3733,7 +3746,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .stp-level-row.stp-entry {
-  border-left: 4px solid #10b981 !important;
+  border-left: 3px solid #10b981 !important;
 }
 .stp-entry .stp-level-badge {
   background: rgba(16, 185, 129, 0.15);
@@ -3742,7 +3755,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .stp-level-row.stp-sl {
-  border-left: 4px solid #ef4444 !important;
+  border-left: 3px solid #ef4444 !important;
 }
 .stp-sl .stp-level-badge {
   background: rgba(239, 68, 68, 0.15);
@@ -3751,11 +3764,11 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .stp-level-badge {
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 800;
-  padding: 3px 6px;
+  padding: 2px 5px;
   border-radius: 4px;
-  min-width: 44px;
+  min-width: 38px;
   text-align: center;
   flex-shrink: 0;
 }
@@ -3764,24 +3777,28 @@ input:checked + .slider:before { transform: translateX(20px); }
   display: flex;
   flex-direction: column;
   flex: 1;
-  margin-left: 10px;
-  margin-right: 10px;
+  min-width: 0;
+  margin-left: 8px;
+  margin-right: 6px;
 }
 
 .stp-level-name {
-  font-size: 0.76rem;
+  font-size: 0.70rem;
   font-weight: 600;
   color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stp-level-action {
-  font-size: 0.68rem;
+  font-size: 0.63rem;
   color: #94a3b8;
   margin-top: 1px;
 }
 
 .stp-level-price {
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-family: monospace;
   font-weight: 700;
   color: #f8fafc;
@@ -3791,10 +3808,11 @@ input:checked + .slider:before { transform: translateX(20px); }
 .stp-footer-stats {
   display: flex;
   justify-content: space-around;
-  padding: 10px;
+  padding: 5px 8px;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
 .stp-stat-item {
@@ -3805,18 +3823,18 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .stp-stat-label {
-  font-size: 0.65rem;
+  font-size: 0.58rem;
   font-weight: 700;
   color: #64748b;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
 }
 
 .stp-stat-val {
-  font-size: 0.82rem;
+  font-size: 0.74rem;
   font-weight: 700;
   font-family: monospace;
   color: #f8fafc;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 

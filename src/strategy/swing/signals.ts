@@ -105,41 +105,53 @@ export class SwingSignalDetector {
       gridZone,
     } = structure;
 
-    // ── 1. Identify Major Support Floor (Previous Major LL) ───────────────────
-    const validLows: number[] = [];
-    if (bottomBound > 0) validLows.push(bottomBound);
-    if (activeValley?.price && activeValley.price > 0) validLows.push(activeValley.price);
-    if (Array.isArray(swingLows)) {
-      for (const s of swingLows) {
-        if (s.price > 0 && s.price <= price * 1.05) validLows.push(s.price);
+    // ── 1. Identify Major Support Floor (Previous Major LL of Current Wave) ───
+    let majorFloor = bottomBound > 0 ? bottomBound : price * 0.95;
+    let majorFloorTime = activeValley?.time ?? 0;
+
+    const recentLows = Array.isArray(swingLows) ? swingLows.slice(-8) : [];
+    const candidateLows: { price: number; time: number }[] = [];
+    if (activeValley?.price && activeValley.price > 0) {
+      candidateLows.push({ price: activeValley.price, time: activeValley.time });
+    }
+    for (const s of recentLows) {
+      if (s.price > 0 && s.price <= price * 1.03) {
+        candidateLows.push({ price: s.price, time: s.time });
       }
     }
     if (waveCycle?.annotatedSwings) {
-      for (const s of waveCycle.annotatedSwings) {
-        if (s.type === "LOW" && s.price > 0 && s.price <= price * 1.05) {
-          validLows.push(s.price);
+      for (const s of waveCycle.annotatedSwings.slice(-12)) {
+        if (s.type === "LOW" && s.price > 0 && s.price <= price * 1.03) {
+          candidateLows.push({ price: s.price, time: s.time });
         }
       }
     }
-    const majorFloor = validLows.length > 0 ? Math.min(...validLows) : (bottomBound > 0 ? bottomBound : price * 0.95);
-
-    // ── 2. Identify Major Resistance Ceiling (Post-Bottom HH / High) ──────────
-    const validHighs: number[] = [];
-    if (upperBound > 0) validHighs.push(upperBound);
-    if (activePeak?.price && activePeak.price > 0) validHighs.push(activePeak.price);
-    if (Array.isArray(swingHighs)) {
-      for (const s of swingHighs) {
-        if (s.price > majorFloor) validHighs.push(s.price);
+    if (candidateLows.length > 0) {
+      let lowest = candidateLows[0]!;
+      for (const c of candidateLows) {
+        if (c.price < lowest.price) lowest = c;
       }
+      majorFloor = lowest.price;
+      majorFloorTime = lowest.time;
     }
-    if (waveCycle?.annotatedSwings) {
-      for (const s of waveCycle.annotatedSwings) {
-        if (s.type === "HIGH" && s.price > majorFloor) {
+
+    // ── 2. Identify Major Resistance Ceiling (Post-Bottom HH / Active Peak) ───
+    const validHighs: number[] = [];
+    if (activePeak?.price && activePeak.price > majorFloor) {
+      validHighs.push(activePeak.price);
+    }
+    if (upperBound > majorFloor) {
+      validHighs.push(upperBound);
+    }
+    if (Array.isArray(swingHighs)) {
+      for (const s of swingHighs.slice(-8)) {
+        // Only anchor to peaks formed during/after the major low (or recent active wave)
+        if (s.price > majorFloor && (majorFloorTime === 0 || s.time >= majorFloorTime)) {
           validHighs.push(s.price);
         }
       }
     }
-    let majorCeil = validHighs.length > 0 ? Math.max(...validHighs) : (upperBound > 0 ? upperBound : majorFloor * 1.08);
+    let majorCeil = validHighs.length > 0 ? Math.max(...validHighs) : (upperBound > majorFloor ? upperBound : majorFloor * 1.06);
 
     // Ensure minimum healthy swing width (>= 3.0% span to avoid peanut micro-channels)
     let majorSpan = majorCeil - majorFloor;
@@ -151,14 +163,16 @@ export class SwingSignalDetector {
     // ── 3. Calculate Planned Levels & Risk:Reward ─────────────────────────────
     const slBuffer = Math.max(0.3, config.stopLossBufferPct) / 100;
     const plannedSl = majorFloor * (1 - slBuffer);
-    // Planned entry is just above the LL floor (~0.8% - 1.2% above floor)
+    // Planned entry is just above the LL floor (~8% of wave span above floor)
     const plannedEntry = majorFloor + (majorSpan * 0.08);
-    // TP1 is Mid-Wave (POC / Center / ~50% - 55% retracement)
-    const plannedTp1 = centerPrice > plannedEntry && centerPrice < majorCeil
-      ? centerPrice
-      : majorFloor + (majorSpan * 0.52);
-    // TP2 is Retest of Major High / HH
-    const plannedTp2 = majorCeil * 0.995;
+    // TP1 is Mid-Wave (~50% retracement of the major wave)
+    const midWavePrice = majorFloor + (majorSpan * 0.50);
+    const pocPrice = gridZone?.poc ?? 0;
+    const plannedTp1 = (pocPrice > plannedEntry * 1.015 && pocPrice < majorCeil * 0.98)
+      ? pocPrice
+      : midWavePrice;
+    // TP2 is Retest of Post-Bottom Major High / HH
+    const plannedTp2 = majorCeil * 0.996;
 
     const plannedRisk = plannedEntry - plannedSl;
     const plannedAvgReward = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio)) - plannedEntry;

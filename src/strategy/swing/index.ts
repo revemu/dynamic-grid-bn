@@ -795,6 +795,8 @@ export class SwingTraderStrategy implements IStrategy {
       time: Math.floor(Date.now() / 1000),
       mid: currentMid,
       refPrice: currentMid,
+      bestBid: this.bid || currentMid,
+      bestAsk: this.ask || currentMid,
       symbol: this.symbolInfo.symbol,
       baseAsset: this.symbolInfo.baseAsset,
       quoteAsset: this.symbolInfo.quoteAsset,

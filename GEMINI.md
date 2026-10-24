@@ -3863,6 +3863,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `node --check public/app.js` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.87` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 108. Clean Swing Chart (Remove Grid Channel Lines) & Compact Swing Targets Sidebar Layout (`v0.2.88`)
+
+- **การล้างเส้นกรอบ Grid Channel ออกจากกราฟเมื่ออยู่ในโหมด Swing Trade (`public/app.js`)**:
+  - ในโหมด `swing_trade` (`isSwingMode = data.strategyType === "swing_trade"`): ระบบจะลบและไม่วาดเส้นกรอบของโหมด Grid (`lineUpperBound`, `lineCenter`, `lineBottomBound`, `lineCutLossBound`, `lineLiveCalculatedUpperBound`, `lineLiveCalculatedBottomBound`) รวมถึงซ่อนป้าย `channelStatusPill` ด้านบนซ้ายของกราฟ เพื่อให้แสดงเฉพาะเส้นเป้าหมายของ Swing (`ENTRY`, `TP1`, `TP2`, `SL`) และเส้น `4H S/R` (เมื่อกดเปิด) อย่างสะอาดตา ไม่ซ้อนทับกัน
+- **การยึดเพดาน `majorCeil` จากยอดหลังฐาน LL ปัจจุบัน (`src/strategy/swing/signals.ts`)**:
+  - แก้ไขการคำนวณ `majorCeil` ให้คัดกรองเฉพาะสวิงยอด (`swingHighs`) ที่เกิดขึ้นหลังจากเวลาของฐาน `majorFloor` (`s.time >= majorFloorTime`) หรือยึด `activePeak` / `upperBound` ป้องกันไม่ให้ดึงยอดเก่าข้ามวันก่อนการทุบมาตั้งเป็น `TP2`
+- **การแก้ไข Layout กรอบ Swing Targets ด้านขวาไม่ให้เหลื่อมและโดนตัดขอบล่าง (`public/style.css`, `public/index.html`, `src/strategy/swing/index.ts`, `src/server.ts`)**:
+  - ขยายสัดส่วน `.glow-ladder-card` (`flex: 1.45`) และปรับ `.swing-trade-plan-card` ให้เป็น Compact Layout (`padding: 6px 8px`, `gap: 5px`, `flex: 1`, `min-height: 0`, `overflow-y: auto`)
+  - ปรับขนาดฟอนต์และใส่ `white-space: nowrap` ใน `.stp-progress-header`, `.stp-signal-type`, `.stp-level-name` เพื่อป้องกันข้อความตัดบรรทัดซ้อนเหลื่อมกัน และแสดงครบทั้ง `Banner`, `Progress Bar`, `TP2`, `TP1`, `ENTRY`, `SL` และ `RISK:REWARD` ในหน้าจอเดียว
+  - เพิ่ม `bestBid` และ `bestAsk` ใน Telemetry ของ `SwingTraderStrategy` เพื่อให้แถบ `BEST BID / Spread / BEST ASK` ด้านบนแสดงราคาสดตามปกติ
+  - เพิ่ม Header `"Cache-Control": "no-cache, no-store, must-revalidate"` ใน `src/server.ts` และขยับ Asset Version เป็น `style.css?v=3.31`, `app.js?v=3.31`
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - `node --check public/app.js` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.88` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 
