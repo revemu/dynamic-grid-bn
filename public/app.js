@@ -945,7 +945,18 @@
           currentActiveTimeframe = "4h";
           btnTf4h.classList.add("active");
           if (btnTf15m) btnTf15m.classList.remove("active");
-          applyCurrentTimeframeCandles();
+          if (!cachedHtfCandles || cachedHtfCandles.length === 0) {
+            fetch("/api/candles/htf")
+              .then((res) => res.json())
+              .then((data) => {
+                if (data.candles && data.candles.length > 0) {
+                  updateHtfCandles(data.candles);
+                }
+              })
+              .catch((err) => console.warn("Failed to fetch HTF candles:", err));
+          } else {
+            applyCurrentTimeframeCandles();
+          }
         });
       }
 
@@ -1127,7 +1138,6 @@
         }
       }
     }
-  }
   }
 
   function updateSwingTradePlanUI(data) {
@@ -2528,7 +2538,7 @@
           title: "",
         });
       } else if (lineCutLossBound) {
-        candleSeries.removePriceLine(lineCutLossBound);
+        try { candleSeries.removePriceLine(lineCutLossBound); } catch (_) {}
         lineCutLossBound = null;
       }
 

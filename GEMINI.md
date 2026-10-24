@@ -3801,6 +3801,20 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.84` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 105. Syntax Error Fix in Frontend JavaScript & Cache Buster Bump (`v0.2.85`)
+
+- **การแก้ไข Syntax Error ใน Frontend**:
+  - ใน `public/app.js`: ลบเครื่องหมายปีกกาปิด `}` ที่เกินมา 1 ตัวในบรรทัดที่ 1131 ที่ต่อท้ายฟังก์ชัน `updateSingleHtfCandle` ซึ่งเป็นสาเหตุของ `Uncaught SyntaxError: Unexpected token 'function' (at app.js:1133:3)` ทำให้สคริปต์หน้าเว็บไม่ทำงาน
+  - ห่อหุ้ม `candleSeries.removePriceLine(lineCutLossBound)` ด้วย `try...catch` เพื่อป้องกัน Unhandled Exception เวลาลบเส้นราคาที่หมดอายุ
+  - เพิ่ม Fallback ให้ปุ่ม `4H (HTF)` ดึง `/api/candles/htf` อัตโนมัติเมื่อกดคลิก หากข้อมูลในแคชยังไม่ถูกโหลด
+  - ขยับ Asset Version ใน `public/index.html` เป็น `app.js?v=3.29` เพื่อล้าง Browser Cache
+- **Typecheck & Syntax Validation**:
+  - `node --check public/app.js` ผ่าน 100% (0 errors)
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.85` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
