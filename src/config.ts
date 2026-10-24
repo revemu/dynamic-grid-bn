@@ -105,8 +105,8 @@ export const defaultStrategyConfig = {
   // ── Dow Theory & Market Structure Bounds ──────────────────────────────────
   /** Number of bars on left & right to confirm a pivot swing high/low (default 3). */
   dowSwingLookback: 3,
-  /** When true, pauses opening new buy orders during a confirmed Dow downtrend (LH+LL). Default false. */
-  dowTrendFilter: false,
+  /** When true, pauses opening new buy orders during a confirmed Dow downtrend (LH+LL). Default true. */
+  dowTrendFilter: true,
   /** When true, pauses opening new buy orders while price is under a descending Downtrend Line until breakout. Default false. */
   trendlineFilter: false,
   /** When true, allows resuming buy orders if price stands/closes above Buy Level 2 (30% Zone) for at least 1 candle after a floor breakdown. */

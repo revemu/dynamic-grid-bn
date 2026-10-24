@@ -89,6 +89,7 @@ export class DynamicGrid implements IStrategyHost {
   public cutLossStage1Executed = false;
   public cutLossStage1Price?: number;
   public cutLossStage1CandleTime?: number;
+  public cutLossStage1Time?: number;
   public lastBuyFillTime = 0;
   public lastBuyFillPrice = 0;
   public lastBuyFillCandleTime = 0;
@@ -439,6 +440,7 @@ export class DynamicGrid implements IStrategyHost {
     this.cutLossStage1Executed = false;
     this.cutLossStage1Price = undefined;
     this.cutLossStage1CandleTime = undefined;
+    this.cutLossStage1Time = undefined;
     this.needsBuyRebalance = true;
     this.needsSellRebalance = true;
     this.inFlightOrders.clear();
@@ -1583,6 +1585,7 @@ export class DynamicGrid implements IStrategyHost {
     this.cutLossStage1Executed = false;
     this.cutLossStage1Price = undefined;
     this.cutLossStage1CandleTime = undefined;
+    this.cutLossStage1Time = undefined;
     this.stuckSince = undefined;
     this.bufferBreakStartTime = undefined;
     this.db.saveLockedChannel(this.getSymbolKey(), undefined);

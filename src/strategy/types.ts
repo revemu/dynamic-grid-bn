@@ -126,6 +126,7 @@ export interface IStrategyHost {
   cutLossStage1Executed: boolean;
   cutLossStage1Price?: number;
   cutLossStage1CandleTime?: number;
+  cutLossStage1Time?: number;
   bufferBreakStartTime?: number;
   breakdownCandleTimes: Set<number>;
   breakdownFloorPrice?: number;

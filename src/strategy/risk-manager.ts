@@ -140,6 +140,8 @@ export class RiskManager {
         this.host.cutLossStage1Executed = false;
         this.host.cutLossStage1Price = undefined;
         this.host.cutLossStage1CandleTime = undefined;
+        this.host.cutLossStage1Time = undefined;
+        this.host.cutLossStage1Time = undefined;
         this.host.breakdownCandleTimes.clear();
         this.host.saveState();
         return true;
@@ -249,9 +251,12 @@ export class RiskManager {
       const canDoStage1Split =
         !this.host.cutLossStage1Executed &&
         isTwoStageEnabled &&
-        !isBelowStage2Bound &&
         (heldNow * dexBidForCut >= minNotionalForSplit * 2.1);
 
+      // Stage 2 Cooldown & Closed Candle Protection:
+      // Prevent Stage 2 from firing 2 seconds after Stage 1 during momentary flash wicks!
+      const stage1ElapsedMs = this.host.cutLossStage1Time ? (Date.now() - this.host.cutLossStage1Time) : Infinity;
+      const isStage2MinElapsed = stage1ElapsedMs >= 60_000; // at least 60s cooldown to allow bounce limit order to work
       const isStage2CandleClosed = Boolean(
         this.host.cutLossStage1Executed &&
         latestClosedCandle &&
@@ -260,7 +265,17 @@ export class RiskManager {
         this.host.cutLossStage1Price !== undefined &&
         latestClosedCandle.close < this.host.cutLossStage1Price
       );
-      const isStage2Triggered = Boolean(this.host.cutLossStage1Executed && (isBelowStage2Bound || isStage2CandleClosed));
+      // Catastrophic flash drop (> 3.5x buffer) bypasses cooldown
+      const catastrophicStage2Bound = lowerBound - bufferAmount * Math.max(3.5, stage2Mult * 1.5);
+      const isCatastrophicStage2 = refPrice < catastrophicStage2Bound;
+
+      const isStage2Triggered = Boolean(
+        this.host.cutLossStage1Executed && (
+          isStage2CandleClosed ||
+          (isBelowStage2Bound && isStage2MinElapsed) ||
+          isCatastrophicStage2
+        )
+      );
 
       const isFloorCandleCut = (!cutLossOnBufferOnly || canDoStage1Split) && (confirmedCandlesCount >= (this.host.cfg.cutLossConfirmCandles ?? 1));
       const shouldExecuteCut = isFastBufferCut || isFloorCandleCut || isStage2Triggered;
@@ -309,9 +324,11 @@ export class RiskManager {
                     : `EMERGENCY FAST CUT (> ${Math.round(bufferDelayMs / 1000)}s BELOW BUFFER): Price $${refPrice.toFixed(6)} stayed below Buffer $${cutLossBound.toFixed(6)} for ${(bufferBreakElapsedMs / 1000).toFixed(0)}s`))
             : (isStage2CandleClosed
                 ? `CLOSED CANDLE CONFIRMED BELOW STAGE 1 CUT: ${lastClosedStr}Price $${refPrice.toFixed(6)} < Stage 1 $${(this.host.cutLossStage1Price ?? 0).toFixed(6)}`
-                : (isBelowStage2Bound
-                    ? `PRICE REACHED STAGE 2 BOUND: Price $${refPrice.toFixed(6)} < $${stage2CutBound.toFixed(6)}`
-                    : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`));
+                : (isCatastrophicStage2
+                    ? `CATASTROPHIC STAGE 2 BREAK: Price $${refPrice.toFixed(6)} < $${catastrophicStage2Bound.toFixed(6)}`
+                    : (isBelowStage2Bound && isStage2MinElapsed
+                        ? `PRICE STAYED BELOW STAGE 2 BOUND (>60s): Price $${refPrice.toFixed(6)} < $${stage2CutBound.toFixed(6)}`
+                        : `1 CLOSED CANDLE CONFIRMED BELOW FLOOR: ${lastClosedStr}Price $${refPrice.toFixed(6)} closed below Floor $${lowerBound.toFixed(6)}`)));
 
           if (canDoStage1Split) {
             const effStepSize = this.host.stepSize || (this.host.qtyPrecision ? 10 ** -this.host.qtyPrecision : 1e-6);
@@ -327,6 +344,7 @@ export class RiskManager {
               this.host.cutLossStage1Executed = true;
               this.host.cutLossStage1Price = refPrice;
               this.host.cutLossStage1CandleTime = latestClosedCandle?.time ?? 0;
+              this.host.cutLossStage1Time = Date.now();
               this.host.lastCutLossTime = Date.now();
               this.host.iocBracketSellCycle = undefined;
 
@@ -356,9 +374,10 @@ export class RiskManager {
             }
           }
 
-          if (this.host.cutLossStage1Executed && !isFastBufferCut && !isBelowStage2Bound && !isStage2CandleClosed) {
+          if (this.host.cutLossStage1Executed && !isStage2Triggered) {
+            const remCooldownSec = Math.max(0, Math.ceil((60_000 - stage1ElapsedMs) / 1000));
             this.host.status(
-              `🛡️ STAGE 1 DE-RISKED (50% HELD): Price $${refPrice.toFixed(6)} — holding bounce exit limit sell @ Floor $${lowerBound.toFixed(6)} unless Buffer ($${cutLossBound.toFixed(6)}) breaks`,
+              `🛡️ STAGE 1 DE-RISKED (50% HELD): Price $${refPrice.toFixed(6)} — holding bounce exit limit sell @ Floor $${lowerBound.toFixed(6)} (Stage 2 Cooldown: ${remCooldownSec}s remaining unless candle closes lower)`,
             );
           } else {
             const stageLabel = this.host.cutLossStage1Executed ? "STAGE 2/2 FULL EXIT | " : "";
@@ -383,6 +402,7 @@ export class RiskManager {
             this.host.cutLossStage1Executed = false;
             this.host.cutLossStage1Price = undefined;
             this.host.cutLossStage1CandleTime = undefined;
+            this.host.cutLossStage1Time = undefined;
             this.host.postCutSingleTrancheOnly = true;
             this.host.iocBracketSellCycle = undefined;
             this.host.stuckSince = undefined;
@@ -409,6 +429,7 @@ export class RiskManager {
         this.host.cutLossStage1Executed = false;
         this.host.cutLossStage1Price = undefined;
         this.host.cutLossStage1CandleTime = undefined;
+        this.host.cutLossStage1Time = undefined;
         const bounceExitOrder = this.host.openOrders.find((o) => !o.isBid && o.levelDesc === "Cut Loss Bounce Exit (50%)");
         if (bounceExitOrder) {
           await cancelOrderInternal(bounceExitOrder, "Floor reclaimed — removing bounce exit sell");

@@ -459,6 +459,16 @@ export class DowEngine {
       )
     );
 
+    // 🛡️ Structural Low Breakdown (BOS / MSS):
+    // If price or candidate valley drops below the previous confirmed swing low,
+    // the market is breaking support structure and forming a potential Lower Low (LL).
+    const isBreakingBelowPreviousLow = Boolean(
+      lastCanonicalLow && (
+        price < lastCanonicalLow.price ||
+        (candidateValley && candidateValley.price < lastCanonicalLow.price)
+      )
+    );
+
     // 🛡️ Dow Theory Pure Wave Rule:
     // If the latest confirmed swing low is a Lower Low (LL), the market is in an active
     // unresolved bear wave until a confirmed Higher Low (HL) forms or a macro Trendline Breakout occurs.
@@ -470,21 +480,23 @@ export class DowEngine {
       price < peakCeiling
     );
 
-    const isDowntrendDropActive = isUnresolvedLlWave || isBreakingBelowChannelFloor;
+    const isDowntrendDropActive = isUnresolvedLlWave || isBreakingBelowPreviousLow || isBreakingBelowChannelFloor;
 
     const dropPrices: number[] = [];
-    if (lastCanonicalLow?.dowLabel === "LL") {
-      dropPrices.push(lastCanonicalLow.price);
-      for (const c of candles) {
-        if (c.time >= lastCanonicalLow.time) {
-          dropPrices.push(getEffectiveLow(c, useTrueWick, wickThresholdPct));
+    if (lastCanonicalLow) {
+      if (lastCanonicalLow.dowLabel === "LL" || isBreakingBelowPreviousLow) {
+        dropPrices.push(lastCanonicalLow.price);
+        for (const c of candles) {
+          if (c.time >= lastCanonicalLow.time) {
+            dropPrices.push(getEffectiveLow(c, useTrueWick, wickThresholdPct));
+          }
         }
       }
     }
     if (candidateValley && (!lastCanonicalLow || candidateValley.time >= lastCanonicalLow.time)) {
       dropPrices.push(candidateValley.price);
     }
-    if (isBreakingBelowChannelFloor || dropPrices.length === 0) {
+    if (isBreakingBelowChannelFloor || isBreakingBelowPreviousLow || dropPrices.length === 0) {
       dropPrices.push(price);
     }
     const downtrendDropLow = dropPrices.length > 0

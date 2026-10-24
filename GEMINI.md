@@ -3422,6 +3422,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.66` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 87. Dow Downtrend Buy Protection & Two-Stage Cut Loss Whipsaw Prevention (`v0.2.67`)
+
+- **สาเหตุของปัญหา (การรับของรัว 5 ไม้ตอนทุบ & คัทลอสที่ก้นไส้เทียนขาดทุนหนัก)**:
+  1. **`dowTrendFilter` ถูกตั้งเป็น `false`**:
+     - หน้าแดชบอร์ดแสดงสถานะ `DOW: DOWNTREND` แต่ในโค้ด `trendFiltered = this.cfg.dowTrendFilter && isDowntrend` เมื่อ config เป็น `false` ระบบจึงไม่ได้ตัดการซื้อเลย ปล่อยให้บอทเคาะซื้อปกติ
+  2. **ช่องโหว่ของตัวตรวจจับ Dow Drop (`detectDowntrendDrop`)**:
+     - เดิมตรวจจับเฉพาะ `lastCanonicalLow?.dowLabel === "LL"` แต่หากคลื่นก่อนหน้าราคาเพิ่งยกฐานทำ `⭐ HL` แล้ววิ่งขึ้นไปทำยอด `🚀 HH` พอกราฟทุบลงมา โลวล่าสุดยังคงเป็น `HL` ทำให้ระบบมองว่าไม่ใช่คลื่นขาลง จนกระทั่งราคาหลุด Channel Floor ซึ่งถึงเวลานั้นบอทได้รับของครบ 5 ไม้เต็มงบ ($200) ไปแล้ว
+  3. **`cutLossBufferDelaySeconds` สั้นเกินไป (10 วินาที)**:
+     - การตั้งเวลาหน่วงไว้เพียง 10 วินาที ทำให้เมื่อแท่งเทียนทุบมีไส้ (Wick) แหย่หลุด Buffer ชั่วคราว บอทจะรีบส่ง IOC Market Cut ทันทีที่ก้นเหว จากนั้นราคาเด้งกลับทันที (Whipsaw)
+  4. **บั๊ก Two-Stage Cut Loss ทำงานห่างกันเพียง 2 วินาที (บน Binance)**:
+     - ใน `evaluateCutLoss`: เมื่อราคาหลุดต่ำกว่า `stage2CutBound` บอทเช็คแบบ Real-time ทุก Tick ทำให้ Stage 1 Cut ขาย 50% แล้วใน 2 วินาทีถัดมาเห็นราคาต่ำกว่า Stage 2 ก็สั่งขายล้างพอร์ตทันที ออเดอร์ Maker Limit ขายเด้งที่ Floor ไม่ทันได้มีโอกาสทำงานเลย
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.2.67`)**:
+  1. **เพิ่มการตรวจจับสวิงหลุดฐานทันที (Structural Low Breakdown / BOS)**:
+     - ใน [`src/market-structure/dow-engine.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/market-structure/dow-engine.ts): เพิ่มเงื่อนไข `isBreakingBelowPreviousLow = price < lastCanonicalLow.price || candidateValley.price < lastCanonicalLow.price`
+     - ไม่ต้องรอให้สวิงคอนเฟิร์ม 3 แท่ง หากราคาปัจจุบันหลุดต่ำกว่าสวิงโลวล่าสุด ระบบจะเปิด `isDowntrendDropActive` และเข้าสู่ `waitingForHigherLow` ชะลอการซื้อทันทีตั้งแต่เนิ่นๆ
+  2. **ปรับปรุงความปลอดภัยของ Two-Stage Cut Loss**:
+     - ใน [`src/strategy/risk-manager.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/risk-manager.ts):
+       - ปลดล็อกให้ Stage 1 (ขาย 50% ลดความเสี่ยง) ทำงานได้เสมอแม้ราคาจะแลบหลุด Stage 2 Bound ไปแล้ว
+       - เพิ่ม `cutLossStage1Time` และกำหนดให้ Stage 2 **ต้องมีระยะเวลา Cooldown ขั้นต่ำอย่างน้อย 60 วินาที หรือต้องมีแท่งเทียนปิดยืนยันต่ำกว่าราคา Stage 1 (`isStage2CandleClosed`)** เพื่อเปิดโอกาสให้ออเดอร์ Limit Sell รอเด้งที่ Floor ได้ทำงานจริง ป้องกันการโดนหลอกขายหมดใน 2 วินาที
+  3. **เปิดใช้การตั้งค่าปลอดภัยเป็น Default**:
+     - `dowTrendFilter: true` (หยุดซื้อเมื่อโครงสร้างหลักอยู่ใน `DOWNTREND`)
+     - `enableTwoStageCutLoss: true`
+     - `cutLossBufferDelaySeconds: 60`
+     - อัปเดตการตั้งค่าไปยัง Live Server ทั้งสองตัว (`:3333` และ `:3334`) เรียบร้อยแล้วทันที
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.67` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

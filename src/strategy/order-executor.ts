@@ -640,6 +640,7 @@ export class OrderExecutor {
       this.host.cutLossStage1Executed = false;
       this.host.cutLossStage1Price = undefined;
       this.host.cutLossStage1CandleTime = undefined;
+      this.host.cutLossStage1Time = undefined;
       this.host.log(`🎉 [BOUNCE EXIT FILLED] Remaining position exited successfully on bounce! Two-stage de-risk cycle complete.`);
     }
 
@@ -1501,6 +1502,7 @@ export class OrderExecutor {
         this.host.cutLossStage1Executed = false;
         this.host.cutLossStage1Price = undefined;
         this.host.cutLossStage1CandleTime = undefined;
+        this.host.cutLossStage1Time = undefined;
         this.host.saveState();
       }
       return;
