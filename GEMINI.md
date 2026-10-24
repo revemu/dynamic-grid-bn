@@ -3543,6 +3543,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.71` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
+---
+
+### 92. Pure Structural Grid Symmetry & Full-Channel Level Distribution (`v0.2.72`)
+
+- **สาเหตุที่เส้นระดับเทลงมากองที่ครึ่งล่างของกรอบ (Level Clustering in Lower Half)**:
+  1. ในโหมด `VOLUME_PROFILE_HTF` เดิม:
+     - จุดกึ่งกลาง `centerPrice` ถูกแทนที่ด้วย `POC` ซึ่งช่วง 48 ชม. ที่ผ่านมา เหรียญเทรดที่ก้นเหว ทำให้ POC ตกไปอยู่ที่ 30% ของกรอบ
+     - ไม้ซื้อ (Buy 1–5) ถูกบีบอัดให้อยู่ใต้ POC ($0.1706 – $0.1748)
+     - ไม้ขาย (Sell 1–4) ถูกบีบอัดให้อยู่ระหว่าง POC ถึง VAH ($0.1767 – $0.1815 หรือ 30% – 52% ของกรอบ)
+     - ส่งผลให้ระดับราคาทั้งหมด 9 ระดับกระจุกตัวอยู่ในช่วงล่าง 0% – 52% ขณะที่ช่วงบนตั้งแต่ VAH ($0.1815) ถึง 4H Ceiling ($0.1919) คิดเป็น 48% ของกรอบ ว่างเปล่าไม่มีเส้น Grid ใดๆ รองรับ
+  2. เกิดความขัดแย้งของ Timeframe (Scale Mismatch): กรอบนอก Floor/Ceiling ดึงมาจาก 4H Peak ที่กว้างถึง 13% แต่เส้นระดับข้างในกลับถูกบีบด้วย Volume Profile 15M ที่กองอยู่ก้นเหว
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Pure Structural Grid Symmetry)**:
+  1. **Center Price กึ่งกลางสมบูรณ์แบบ 50%**:
+     - กำหนด `centerPrice = bottomBound + finalSpan * 0.5` ตรงกลางกรอบอย่างแท้จริง ไม่ถูก POC ดึงลงมาจมก้นกรอบ
+  2. **กระจายเส้น Grid เต็มพื้นที่ทั้งกรอบ 0% – 100% อย่างสมมาตร**:
+     - ไม้ซื้อ (Buy Levels 1–5): กระจายตัวสม่ำเสมอในโซนสะสมครึ่งล่าง (0% – 50%) ตามสัดส่วน `buyLevelPcts` ([42, 32, 22, 12, 2])
+     - ไม้ขาย (Sell Targets 1–5): กระจายตัวสม่ำเสมอในโซนทำกำไรครึ่งบน (50% – 100%) ตามสัดส่วน `sellLevelPcts` ([52, 62, 72, 82, 92])
+     - ครอบคลุมทั้งกรอบตั้งแต่ Floor ถึง Ceiling สวยงาม ไม่มีช่องว่างโบ๋ และเส้นกระจายตัวอย่างสมดุล
+  3. **Preserved Telemetry for Volume Profile**:
+     - คงค่า `poc`, `val`, `vah` จาก Volume Profile และ `htfFloor`, `htfCeil` จาก 4H HTF ไว้ใน `gridZone` ส่งต่อไปยังหน้าแดชบอร์ดเพื่อใช้เป็น Indicator อ้างอิง โดยไม่บิดเบือนตำแหน่งของเส้น Grid
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.72` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
+
 
 
 

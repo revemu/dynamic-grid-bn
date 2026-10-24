@@ -2242,17 +2242,13 @@
       let buyLevels = Array.isArray(data.buyLevels) && data.buyLevels.length > 0
         ? data.buyLevels
         : (data.bottomBound && data.upperBound
-            ? (data.channelMode === "VOLUME_PROFILE_HTF" && data.centerPrice
-                ? buyPcts.map((pct) => data.bottomBound + Math.max(0.0001, data.centerPrice - data.bottomBound) * (pct / 50))
-                : buyPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100)))
+            ? buyPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
             : (data.buyLevels || []));
 
       let sellLevels = Array.isArray(data.sellLevels) && data.sellLevels.length > 0
         ? data.sellLevels
         : (data.bottomBound && data.upperBound
-            ? (data.channelMode === "VOLUME_PROFILE_HTF" && data.centerPrice
-                ? sellPcts.map((pct) => data.centerPrice + Math.max(0.0001, data.upperBound - data.centerPrice) * ((pct - 50) / 50))
-                : sellPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100)))
+            ? sellPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
             : (data.sellLevels || []));
 
       const allLevels = [...buyLevels, ...sellLevels].filter(Number.isFinite);

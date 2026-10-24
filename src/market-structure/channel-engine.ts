@@ -335,13 +335,7 @@ export class ChannelEngine {
     const floorBuffer = hasValidChannel ? ((options?.floorBufferPct ?? 0.0) / 100) * bottomBound : 0;
     const cutLossBound = hasValidChannel ? bottomBound - floorBuffer : 0;
     const finalSpan = hasValidChannel ? upperBound - bottomBound : 0;
-    let centerPrice = hasValidChannel ? bottomBound + finalSpan * 0.5 : price;
-    if (mode === "VOLUME_PROFILE_HTF" && options?.volumeProfile?.poc) {
-      const poc = options.volumeProfile.poc;
-      if (poc > bottomBound && poc < upperBound) {
-        centerPrice = poc;
-      }
-    }
+    const centerPrice = hasValidChannel ? bottomBound + finalSpan * 0.5 : price;
 
     // Position percentage in channel: 0% at floor, 50% at center, 100% at ceiling
     const positionPct = finalSpan > 0 ? ((price - bottomBound) / finalSpan) * 100 : 50;
@@ -377,49 +371,18 @@ export class ChannelEngine {
     // Evaluate Trend / Regime Gate
     const canEstablish = gateEvaluation ? gateEvaluation.canEstablishChannel : true;
 
-    // Grid Levels in Buy Zone (Strictly calculated in discount zone below Center & VAL)
+    // Grid Levels in Buy Zone (Evenly spaced in accumulation discount zone below Center)
     const buyLevels = hasValidChannel
-      ? (mode === "VOLUME_PROFILE_HTF"
-          ? (() => {
-              // Discount Accumulation Zone: strictly below VAL (Value Area Low) and strictly below Center Price (POC)
-              const vp = options?.volumeProfile;
-              const val = vp?.val;
-              const maxBuyPrice = (val && val > bottomBound && val < upperBound)
-                ? Math.min(val, centerPrice * 0.995)
-                : Math.min(centerPrice * 0.995, bottomBound + finalSpan * 0.45);
-              const buySpan = Math.max(0.0001, maxBuyPrice - bottomBound);
-              const count = 5;
-              const levels: number[] = [];
-              for (let i = 0; i < count; i++) {
-                const frac = 0.95 - (i * (0.85 / (count - 1)));
-                levels.push(Number((bottomBound + buySpan * frac).toFixed(6)));
-              }
-              return levels;
-            })()
-          : (isNarrowChannel
-              ? [bottomBound * (1 + buyBufferFrac)]
-              : buyPcts.map((pct) => bottomBound + finalSpan * (pct / 100))))
+      ? (isNarrowChannel
+          ? [bottomBound * (1 + buyBufferFrac)]
+          : buyPcts.map((pct) => Number((bottomBound + finalSpan * (pct / 100)).toFixed(6))))
       : [];
 
-    // Grid Levels in Sell Zone
+    // Grid Levels in Sell Zone (Evenly spaced in profit taking zone above Center)
     const sellLevels = hasValidChannel
-      ? (mode === "VOLUME_PROFILE_HTF"
-          ? (() => {
-              // Profit Taking Targets: from POC up to VAH and UpperBound
-              const vp = options?.volumeProfile;
-              const vah = vp?.vah && vp.vah > centerPrice ? Math.min(vp.vah, upperBound) : upperBound;
-              const levels: number[] = [];
-              levels.push(Number(centerPrice.toFixed(6)));
-              const midSpan = vah - centerPrice;
-              levels.push(Number((centerPrice + midSpan * 0.35).toFixed(6)));
-              levels.push(Number((centerPrice + midSpan * 0.70).toFixed(6)));
-              levels.push(Number(vah.toFixed(6)));
-              levels.push(Number(upperBound.toFixed(6)));
-              return levels;
-            })()
-          : (isNarrowChannel
-              ? [upperBound * (1 - sellBufferFrac)]
-              : sellPcts.map((pct) => bottomBound + finalSpan * (pct / 100))))
+      ? (isNarrowChannel
+          ? [upperBound * (1 - sellBufferFrac)]
+          : sellPcts.map((pct) => Number((bottomBound + finalSpan * (pct / 100)).toFixed(6))))
       : [];
 
     const zoneWidthPct = bottomBound > 0 ? (finalSpan / bottomBound) * 100 : 0;
