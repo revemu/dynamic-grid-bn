@@ -3589,6 +3589,109 @@ input:checked + .slider:before { transform: translateX(20px); }
   line-height: 1.3;
 }
 
+.stp-progress-track-wrap {
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stp-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.72rem;
+}
+
+.stp-progress-title {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.stp-progress-status {
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.stp-progress-bar-bg {
+  position: relative;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: visible;
+}
+
+.stp-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ef4444 0%, #10b981 40%, #f59e0b 75%, #06b6d4 100%);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.stp-progress-pin {
+  position: absolute;
+  top: -4px;
+  left: 0%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  transition: left 0.3s ease;
+}
+
+.stp-pin-glow {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 10px #38bdf8, 0 0 4px #ffffff;
+  border: 2px solid #0284c7;
+}
+
+.stp-pin-label {
+  display: none;
+}
+
+.stp-progress-nodes {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 0 2px;
+}
+
+.stp-node-sl { color: #ef4444; }
+.stp-node-entry { color: #10b981; }
+.stp-node-tp1 { color: #f59e0b; }
+.stp-node-tp2 { color: #06b6d4; }
+
+.badge-trailing {
+  background: rgba(6, 182, 212, 0.2) !important;
+  color: #06b6d4 !important;
+  border-color: rgba(6, 182, 212, 0.5) !important;
+}
+.badge-inpos {
+  background: rgba(16, 185, 129, 0.2) !important;
+  color: #10b981 !important;
+  border-color: rgba(16, 185, 129, 0.5) !important;
+}
+.badge-ready {
+  background: rgba(245, 158, 11, 0.2) !important;
+  color: #f59e0b !important;
+  border-color: rgba(245, 158, 11, 0.5) !important;
+}
+.badge-scanning {
+  background: rgba(148, 163, 184, 0.2) !important;
+  color: #94a3b8 !important;
+  border-color: rgba(148, 163, 184, 0.4) !important;
+}
+
 .stp-levels-container {
   display: flex;
   flex-direction: column;

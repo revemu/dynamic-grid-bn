@@ -3781,6 +3781,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.83` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 104. Dashboard Initialization TDZ Fix & Real-Time Swing Target Price Progress Meter (`v0.2.84`)
+
+- **การแก้ไขข้อผิดพลาด Fatal Boot Error (Dashboard Temporal Dead Zone)**:
+  - ใน `src/index.ts`: ย้ายการประกาศ `let dashboard: DashboardServer | null = null;` ขึ้นสู่ต้นฟังก์ชัน `main()` ก่อนที่ `initFeeds()` จะถูกเรียกทำงาน
+  - ใส่ Safe Navigation `dashboard?.setInitialHtfCandles(...)` และ `dashboard?.addHtfCandle(...)` ป้องกัน `ReferenceError: Cannot access 'dashboard' before initialization` เวลาเซิร์ฟเวอร์บูตใหม่
+- **ยกระดับ Swing Trading Meter ให้เป็น "Swing Target Ladder & R:R Price Progress Meter"**:
+  - ใน `public/index.html`, `public/style.css` และ `public/app.js`:
+    - **Header Status Badge**: จากเดิมค้างคำว่า `"Buy Zone"` ➡️ ปรับเปลี่ยนตามสถานะจริงของ Swing Trade:
+      - 🔍 `SCANNING` (สีเทาฟ้า — กำลังสแกนหาจังหวะ)
+      - ⚡ `SETUP READY` (สีทอง — ฟอร์มฐาน HL / เบรกเทรนด์ไลน์สมบูรณ์)
+      - 📈 `IN POSITION` (สีเขียว — กำลังถือไม้)
+      - 🚀 `TRAILING TP1` (สีฟ้า — ผ่าน TP1 แล้ว กำลัง Trailing Trend)
+    - **Live Price Progress Track**: เพิ่มแถบเกจวัดตำแหน่งราคา Real-time พร้อม Pin เลื่อนตามราคาปัจจุบันระหว่าง `SL ➡️ ENTRY ➡️ TP1 ➡️ TP2`
+    - **Dynamic Step States**: แสดงสถานะและ PnL บนจุดเข้าซื้อจริง และป้ายกำกับ Breakeven Lock / Trailing Lock อัตโนมัติ
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.84` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

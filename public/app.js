@@ -1248,6 +1248,62 @@
       const qty = pos?.qty || (typeof data.baseHeld === "number" ? data.baseHeld : 0);
       elPosQty.textContent = `${qty.toFixed(4)} ${data.baseAsset || ""}`;
     }
+
+    // Update Live Price Progress Track
+    const elProgressFill = document.getElementById("stpProgressFill");
+    const elProgressPin = document.getElementById("stpProgressPin");
+    const elProgressStatus = document.getElementById("stpProgressStatus");
+    if (elProgressPin && elProgressFill) {
+      if (slPrice > 0 && tp2Price > slPrice && refPrice > 0) {
+        const rawPct = ((refPrice - slPrice) / (tp2Price - slPrice)) * 100;
+        const clampedPct = Math.max(0, Math.min(100, rawPct));
+        elProgressPin.style.left = `${clampedPct.toFixed(1)}%`;
+        elProgressFill.style.width = `${clampedPct.toFixed(1)}%`;
+      } else {
+        elProgressPin.style.left = "50%";
+        elProgressFill.style.width = "50%";
+      }
+    }
+    if (elProgressStatus) {
+      if (pos) {
+        if (refPrice >= tp1Price) {
+          elProgressStatus.textContent = "🎯 Run to TP2";
+          elProgressStatus.style.color = "#06b6d4";
+        } else if (refPrice >= entryPrice) {
+          elProgressStatus.textContent = "📈 In Profit Zone";
+          elProgressStatus.style.color = "#10b981";
+        } else {
+          elProgressStatus.textContent = "⚠️ In Drawdown Zone";
+          elProgressStatus.style.color = "#f59e0b";
+        }
+      } else if (signal && signal.hasSignal) {
+        elProgressStatus.textContent = "⚡ Setup Ready";
+        elProgressStatus.style.color = "#38bdf8";
+      } else {
+        elProgressStatus.textContent = "🔍 Waiting Signal";
+        elProgressStatus.style.color = "#94a3b8";
+      }
+    }
+
+    // Update Top Right Status Badge on the Card
+    const elZoneBadge = document.getElementById("ladderZoneBadge");
+    if (elZoneBadge) {
+      if (pos) {
+        if (pos.tp1Executed) {
+          elZoneBadge.textContent = "🚀 TRAILING TP1";
+          elZoneBadge.className = "active-zone-pill badge-trailing";
+        } else {
+          elZoneBadge.textContent = "📈 IN POSITION";
+          elZoneBadge.className = "active-zone-pill badge-inpos";
+        }
+      } else if (signal && signal.hasSignal) {
+        elZoneBadge.textContent = "⚡ SETUP READY";
+        elZoneBadge.className = "active-zone-pill badge-ready";
+      } else {
+        elZoneBadge.textContent = "🔍 SCANNING";
+        elZoneBadge.className = "active-zone-pill badge-scanning";
+      }
+    }
   }
 
   function updateZoneLevelBars(data) {
@@ -1258,7 +1314,7 @@
     const elSwingPlanCard = document.getElementById("swingTradePlanCard");
 
     if (data.strategyType === "swing_trade") {
-      if (elGridTitle) elGridTitle.textContent = "🏹 แผนการเข้าเทรดสวิง (Swing Trade Plan)";
+      if (elGridTitle) elGridTitle.textContent = "🏹 แผนและการวิ่งของราคา (Swing Targets)";
       if (elVerticalLadder) elVerticalLadder.style.display = "none";
       if (elSwingPlanCard) elSwingPlanCard.style.display = "flex";
       updateSwingTradePlanUI(data);

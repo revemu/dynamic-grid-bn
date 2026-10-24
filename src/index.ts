@@ -92,6 +92,7 @@ async function main(): Promise<void> {
 
   let bookTickerFeed: BinanceBookTickerFeed | undefined;
   let userDataFeed: BinanceUserDataFeed | undefined;
+  let dashboard: DashboardServer | null = null;
 
   // Map trading symbol (which may be on DreamDEX like SOMI, SOMI:USDSO, WBTC, WETH)
   // to a liquid Binance Spot Symbol for 100% reliable candlestick data & ATR calculations!
@@ -142,7 +143,7 @@ async function main(): Promise<void> {
       300,
       true,
     );
-    dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
+    dashboard?.setInitialHtfCandles(htfDowEngine.getCandles());
 
     macroFeed?.stop();
     tradingFeed?.stop();
@@ -195,7 +196,7 @@ async function main(): Promise<void> {
     htfFeed.onCandle((candle, isClosed) => {
       if (isClosed) {
         htfDowEngine.addCandle(candle);
-        dashboard.addHtfCandle(candle, isClosed);
+        dashboard?.addHtfCandle(candle, isClosed);
       }
     });
 
@@ -290,7 +291,7 @@ async function main(): Promise<void> {
   };
 
   // ── Real-Time Dashboard Server & Dynamic Config API ───────────────────────
-  const dashboard = new DashboardServer({
+  dashboard = new DashboardServer({
     port: config.dashboardPort,
     log,
     db: grid.getDatabase(),
@@ -574,7 +575,7 @@ async function main(): Promise<void> {
               300,
               true,
             );
-            dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
+            dashboard?.setInitialHtfCandles(htfDowEngine.getCandles());
             log(`🔄 Reloaded HTF candles (${htfTf}) following settings update`);
 
             htfFeed?.stop();
@@ -592,7 +593,7 @@ async function main(): Promise<void> {
             htfFeed.onCandle((candle, isClosed) => {
               if (isClosed) {
                 htfDowEngine.addCandle(candle);
-                dashboard.addHtfCandle(candle, isClosed);
+                dashboard?.addHtfCandle(candle, isClosed);
               }
             });
             htfFeed.start();
