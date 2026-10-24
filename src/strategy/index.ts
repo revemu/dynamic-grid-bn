@@ -3352,13 +3352,9 @@ export class DynamicGrid implements IStrategyHost {
     // Laggard Guard: Pause standard ladder accumulation if DreamDEX is significantly overpriced vs Binance during a drop
     const laggardGuardActive = this.cfg.enableLaggardGuard && dislocationPct > this.cfg.laggardThresholdPct * 1.5;
 
-    // Local 15m Dow Theory trend filter (pauses buys only during active 15m drop)
-    const localStructure = this.localTrendEngine?.getStructure(refPrice, undefined, {
-      useTrueWick: this.cfg.useTrueWick,
-      wickThresholdPct: this.cfg.wickThresholdPct,
-      srLookbackCandles: this.cfg.srLookbackCandles,
-    });
-    const activeRegime = localStructure?.regime ?? dow?.regime ?? "WARMUP";
+    // 🎯 Dow Theory Trend Filter: Anchored strictly to the 15m Main Structure (dow.regime),
+    // preventing micro 5m sub-wave noise from falsely locking the strategy into Downtrend Guard.
+    const activeRegime = dow?.regime ?? "WARMUP";
     const isDowntrend = activeRegime === "DOWNTREND";
     const trendFiltered = this.cfg.dowTrendFilter && isDowntrend;
 

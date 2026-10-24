@@ -3589,6 +3589,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.73` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
+---
+
+### 94. Single Source of Truth for Dow Regime & Eliminating Micro 5m Over-filtering (`v0.2.74`)
+
+- **สาเหตุของปัญหาป้าย Downtrend Guard โผล่ขึ้นมาขัดขวางหลังสร้างฐานสำเร็จ**:
+  1. ใน `src/strategy/index.ts` เดิม: `activeRegime` ถูกคำนวณจาก `localStructure?.regime ?? dow?.regime ?? "WARMUP"` โดย `localStructure` ดึงมาจาก `localTrendEngine` ซึ่งรับแท่งเทียน **5 นาที (5M / Wave ย่อยมาก)**
+  2. เมื่อราคาในแท่ง 5M ย่อตัวย่อยเพียง 0.2% (เช่น ย่อจาก $0.1800 ลงมา $0.1796) เครื่องยนต์ 5M มองว่าเป็น LH + LL ย่อย และส่งค่า `regime: "DOWNTREND"` ออกมา
+  3. ตัวแปร `trendFiltered = this.cfg.dowTrendFilter && isDowntrend` จึงกลายเป็น `true` และดีดป้าย `📉 Downtrend Guard` (พร้อมข้อความที่แสดงผลผิดว่า `15m Downtrend active`) ขึ้นมาทับ และสั่งปิดกั้นการซื้อ (`canBuy = false`) ทั้งๆ ที่กราฟ 15M ได้รับการยืนยันยกฐาน HL สำเร็จ (`VALID_CHANNEL`) และเป็น `UPTREND` แล้ว
+- **การแก้ไขและจัดระเบียบ 3 Timeframes (Tri-Timeframe Alignment)**:
+  1. **Single Source of Truth สำหรับ Trend Regime (`src/strategy/index.ts`)**:
+     - ปรับให้ `activeRegime = dow?.regime ?? "WARMUP"` อิงตามโครงสร้างหลักของ **15M** เท่านั้น
+     - ป้องกันไม่ให้การย่อตัวย่อยในกราฟ 5M มาสลับป้ายกลยุทธ์หลักหรือขัดขวางการเทรดของ Grid
+  2. **แยกหน้าที่ 3 ระดับอย่างชัดเจน**:
+     - **HTF (1H / 4H)**: กำหนด Macro Floor / Ceiling และคุมขีดจำกัดความเสี่ยง (Inventory Sizing)
+     - **MTF (15M)**: พระเอกตัวจริงในการสร้างกรอบ (Floor/Center/Ceiling), คุม Regime Gate, และยืนยันการสร้างฐาน (Base Confirmation)
+     - **LTF (5M)**: ผู้ช่วยจับจังหวะชะลอการยิงออเดอร์เมื่อเกิดการทุบรูด (Micro Waterfall Knife Guard) เท่านั้น โดยไม่มีสิทธิ์มาเปลี่ยนสถานะเทรนด์ใหญ่
+  3. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.74` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
+
+
 
 
 
