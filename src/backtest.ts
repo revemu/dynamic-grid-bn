@@ -1,5 +1,7 @@
 import { DowStructureEngine } from "./market-structure/index.js";
 import { VolumeProfileEngine } from "./market-structure/volume-profile.js";
+import { SwingSignalDetector } from "./strategy/swing/signals.js";
+import type { SwingStrategyConfig } from "./strategy/swing/config.js";
 
 export interface Candle {
   time: number;
@@ -276,6 +278,174 @@ export function runSimulation(symbol: string, candles: Candle[], cfg: BacktestCo
   };
 }
 
+export function runSwingSimulation(
+  symbol: string,
+  candles: Candle[],
+  swingCfg: SwingStrategyConfig,
+  initialBudget = 200,
+): BacktestResult {
+  const engine = new DowStructureEngine(3, true, 20.0, 600);
+  const warmupCount = 120;
+
+  for (let i = 0; i < warmupCount; i++) {
+    engine.addCandle(candles[i]!);
+  }
+
+  let cash = initialBudget;
+  let activePos: {
+    entryPrice: number;
+    qty: number;
+    notional: number;
+    stopLossPrice: number;
+    tp1Price: number;
+    tp2Price: number;
+    tp1Executed: boolean;
+    highestPrice: number;
+    trailingStopActive: boolean;
+    trailingStopPrice?: number;
+  } | null = null;
+
+  let winTrades = 0;
+  let lossTrades = 0;
+  let totalTrades = 0;
+  let grossProfit = 0;
+  let grossLoss = 0;
+  let tpProfit = 0;
+  let cutLossLoss = 0;
+  let peakEquity = initialBudget;
+  let maxDrawdown = 0;
+
+  for (let i = warmupCount; i < candles.length; i++) {
+    const c = candles[i]!;
+    const structure = engine.getStructure(c.open, c.open, {
+      mode: "DOW_SWINGS",
+      minChannelWidthPct: 2.0,
+      maxChannelWidthPct: 15.0,
+      useOnlyClosedCandles: true,
+    });
+
+    const currentEquity = cash + (activePos ? activePos.qty * c.close : 0);
+    if (currentEquity > peakEquity) peakEquity = currentEquity;
+    const dd = peakEquity > 0 ? ((peakEquity - currentEquity) / peakEquity) * 100 : 0;
+    if (dd > maxDrawdown) maxDrawdown = dd;
+
+    if (activePos) {
+      if (c.high > activePos.highestPrice) {
+        activePos.highestPrice = c.high;
+      }
+
+      // Check Trailing Stop Activation after TP1
+      const gainPct = ((c.high - activePos.entryPrice) / activePos.entryPrice) * 100;
+      if (activePos.tp1Executed && gainPct >= swingCfg.trailingActivationPct) {
+        activePos.trailingStopActive = true;
+        const trailingFloor = activePos.highestPrice * (1 - swingCfg.trailingPullbackPct / 100);
+        if (!activePos.trailingStopPrice || trailingFloor > activePos.trailingStopPrice) {
+          activePos.trailingStopPrice = trailingFloor;
+        }
+      }
+
+      const effectiveSl = activePos.trailingStopActive && activePos.trailingStopPrice
+        ? Math.max(activePos.stopLossPrice, activePos.trailingStopPrice)
+        : activePos.stopLossPrice;
+
+      // 1. Stop Loss triggered
+      if (c.low <= effectiveSl) {
+        const exitP = Math.min(c.open, effectiveSl);
+        const pnl = (exitP - activePos.entryPrice) * activePos.qty;
+        cash += activePos.qty * exitP;
+        totalTrades++;
+        if (pnl >= 0) {
+          grossProfit += pnl;
+          tpProfit += pnl;
+          winTrades++;
+        } else {
+          grossLoss += Math.abs(pnl);
+          cutLossLoss += Math.abs(pnl);
+          lossTrades++;
+        }
+        activePos = null;
+      }
+      // 2. TP1 Target reached (close 50%, move SL to Breakeven)
+      else if (!activePos.tp1Executed && c.high >= activePos.tp1Price) {
+        const exitQty = activePos.qty * swingCfg.tp1CloseRatio;
+        const pnl = (activePos.tp1Price - activePos.entryPrice) * exitQty;
+        cash += exitQty * activePos.tp1Price;
+        grossProfit += pnl;
+        tpProfit += pnl;
+        winTrades++;
+        totalTrades++;
+        activePos.qty -= exitQty;
+        activePos.tp1Executed = true;
+        activePos.stopLossPrice = activePos.entryPrice; // Breakeven!
+      }
+      // 3. TP2 Target reached
+      else if (activePos.tp1Executed && c.high >= activePos.tp2Price) {
+        const pnl = (activePos.tp2Price - activePos.entryPrice) * activePos.qty;
+        cash += activePos.qty * activePos.tp2Price;
+        grossProfit += pnl;
+        tpProfit += pnl;
+        winTrades++;
+        totalTrades++;
+        activePos = null;
+      }
+    } else {
+      // Look for Entry Setup
+      const signal = SwingSignalDetector.evaluateSetup(c.close, structure, swingCfg, engine.getCandles());
+      if (signal.hasSignal && signal.entryPrice > 0) {
+        const budgetForTrade = cash * (swingCfg.maxPositionPct / 100);
+        const entryPrice = c.close;
+        const qty = budgetForTrade / entryPrice;
+        cash -= budgetForTrade;
+        activePos = {
+          entryPrice,
+          qty,
+          notional: budgetForTrade,
+          stopLossPrice: signal.stopLossPrice,
+          tp1Price: signal.tp1Price,
+          tp2Price: signal.tp2Price,
+          tp1Executed: false,
+          highestPrice: entryPrice,
+          trailingStopActive: false,
+        };
+      }
+    }
+
+    engine.addCandle(c);
+  }
+
+  // Close remaining position if any
+  let unrealizedPnl = 0;
+  if (activePos && candles.length > 0) {
+    const lastClose = candles[candles.length - 1]!.close;
+    unrealizedPnl = (lastClose - activePos.entryPrice) * activePos.qty;
+  }
+
+  const netPnl = cash + (activePos ? activePos.qty * (candles[candles.length - 1]?.close || 0) : 0) - initialBudget;
+  const netPnlPct = (netPnl / initialBudget) * 100;
+  const winRate = totalTrades > 0 ? (winTrades / totalTrades) * 100 : 0;
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 99.99 : 1.0);
+
+  return {
+    symbol,
+    configName: "5. Major LL Retest & Reversal Swing Strategy",
+    initialBudget,
+    finalEquity: initialBudget + netPnl,
+    netPnl,
+    netPnlPct,
+    totalTrades,
+    winTrades,
+    lossTrades,
+    winRate,
+    maxDrawdownPct: maxDrawdown,
+    profitFactor,
+    holdingLotsCount: activePos ? 1 : 0,
+    unrealizedPnl,
+    gridCashflowProfit: 0,
+    tpProfit,
+    cutLossLoss,
+  };
+}
+
 async function main() {
   const symbols = (process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["ETHFDUSD", "BTCUSDT", "SOMIUSDT"]);
   const configs: BacktestConfig[] = [
@@ -347,6 +517,23 @@ async function main() {
         const res = runSimulation(sym, candles, cfg);
         results.push(res);
       }
+
+      // 5. Major LL Retest & Reversal Swing Strategy
+      const swingCfg: SwingStrategyConfig = {
+        minRiskReward: 2.0,
+        stopLossBufferPct: 0.5,
+        maxPositionPct: 60.0,
+        tp1CloseRatio: 0.5,
+        tp1TargetType: "CENTER_POC",
+        tp2TargetType: "SWING_HIGH_HH",
+        trailingActivationPct: 1.5,
+        trailingPullbackPct: 0.8,
+        enableHlBaseEntry: true,
+        enableTrendlineBreakoutEntry: true,
+        enableSupportRetestEntry: true,
+      };
+      const swingRes = runSwingSimulation(sym, candles, swingCfg, 200);
+      results.push(swingRes);
     } catch (err) {
       console.error(`❌ Error testing ${sym}:`, (err as Error).message);
     }

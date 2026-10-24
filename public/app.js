@@ -1177,15 +1177,16 @@
         elSignalDesc.textContent = pos.reason || "Holding position with dynamic SL & TP targets";
       } else if (signal && signal.hasSignal) {
         let typeBadge = "⭐ Higher Low (HL) Base Setup";
+        if (signal.signalType === "LL_RETEST_BOUNCE") typeBadge = "💎 Major LL Retest Bounce Setup";
         if (signal.signalType === "TL_BREAKOUT") typeBadge = "📐 Trendline Breakout Setup";
         if (signal.signalType === "SUPPORT_RETEST") typeBadge = "🧱 Support Retest Setup";
         elSignalType.textContent = typeBadge;
         elSignalType.style.color = "#38bdf8";
         elSignalDesc.textContent = signal.reason || "Asymmetric R:R setup qualified";
       } else {
-        elSignalType.textContent = "🔍 Scanning Setup (รอจังหวะ Dow Theory)";
-        elSignalType.style.color = "#94a3b8";
-        elSignalDesc.textContent = signal?.reason || "Waiting for confirmed HL or Trendline Breakout";
+        elSignalType.textContent = "⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)";
+        elSignalType.style.color = "#f59e0b";
+        elSignalDesc.textContent = plan.reason || signal?.reason || "Waiting for dip to test Major LL support zone";
       }
     }
 
@@ -1220,10 +1221,20 @@
         const gainSign = currentGain >= 0 ? "+" : "";
         elEntryStatus.textContent = `PnL: ${gainSign}${currentGain.toFixed(2)}%`;
         elEntryStatus.style.color = currentGain >= 0 ? "#10b981" : "#ef4444";
+      } else if (signal && signal.hasSignal) {
+        elEntryTitle.textContent = "🎯 จุดเข้าซื้อพร้อม (Ready Entry)";
+        elEntryStatus.textContent = "Setup Ready";
+        elEntryStatus.style.color = "#10b981";
       } else {
-        elEntryTitle.textContent = "🚀 จุดเข้าซื้อเป้าหมาย (Planned Entry)";
-        elEntryStatus.textContent = signal?.hasSignal ? "Setup Ready" : "Waiting Dip/HL";
-        elEntryStatus.style.color = "#94a3b8";
+        elEntryTitle.textContent = "🎯 จุดรอรับเหนือ LL (Target LL Entry)";
+        if (entryPrice > 0 && refPrice > entryPrice) {
+          const dipNeeded = ((refPrice - entryPrice) / refPrice) * 100;
+          elEntryStatus.textContent = `Wait Dip -${dipNeeded.toFixed(1)}%`;
+          elEntryStatus.style.color = "#38bdf8";
+        } else {
+          elEntryStatus.textContent = "Waiting Retest";
+          elEntryStatus.style.color = "#94a3b8";
+        }
       }
     }
 
@@ -2609,7 +2620,7 @@
             lineWidth: 2,
             lineStyle: pos ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: pos ? "ENTRY (Active)" : "ENTRY (Setup)",
+            title: pos ? "ENTRY (Active)" : (signal?.hasSignal ? "ENTRY (Ready)" : "ENTRY (Planned)"),
           });
         } else if (lineSwingEntry) {
           try { candleSeries.removePriceLine(lineSwingEntry); } catch (_) {}
@@ -2654,7 +2665,7 @@
             lineWidth: 2,
             lineStyle: pos ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: pos?.tp1Executed ? "SL (Breakeven)" : "SL (Stop Loss)",
+            title: pos?.tp1Executed ? "SL (Breakeven)" : (pos ? "SL (Active)" : "SL (Planned)"),
           });
         } else if (lineSwingSl) {
           try { candleSeries.removePriceLine(lineSwingSl); } catch (_) {}

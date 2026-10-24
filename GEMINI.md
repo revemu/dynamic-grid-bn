@@ -3836,6 +3836,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.86` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 107. Major LL Retest & Bullish Reversal Swing Trading Strategy with Standby Target Visualization (`v0.2.87`)
+
+- **สถาปัตยกรรม Swing Strategy แบบ Major LL Retest & Bullish Reversal**:
+  - แก้ไขปัญหาเดิมที่บอทเล่นกรอบย่อยแคบๆ (2%–3%) หรือไล่ซื้อ Higher Low (HL) กลางอากาศใกล้เพดานคลื่น ทำให้ผลตอบแทนน้อยและเสี่ยงสูง
+  - **Major LL Retest Zone & Entry Mechanics (`src/strategy/swing/signals.ts`)**:
+    1. ค้นหาฐานแนวรับหลัก (`majorFloor`): จุดต่ำสุดของคลื่นขาลง (`LL`) ที่ยังไม่ถูกทำลาย
+    2. ค้นหายอดต้านหลัก (`majorCeil`): ยอดสูงสุดหลังการเด้ง (`HH`) โดยกำหนดระยะคลื่น (`majorSpan`) ไม่ต่ำกว่า 3.0% เพื่อหลีกเลี่ยงการเล่นกรอบเศษสตางค์
+    3. กำหนดโซนรอรับ (`retestZoneMax = majorFloor + majorSpan * 0.30`): หากราคาอยู่กลางอากาศหรือครึ่งบนของคลื่น ระบบจะอยู่ในสถานะ `WAITING_SETUP`
+    4. เมื่อราคาย่อตัวลงมาทดสอบฐาน `majorFloor` และไม่หลุด Stop Loss (`price >= plannedSl`): ตรวจจับแท่งเทียนกลับตัวขาขึ้น (**Bullish Reversal Candle / Pinbar Hammer Lower Wick >= 38% / Bullish Engulfing / Consecutive HL**) เพื่อเข้าซื้อ (Entry)
+    5. **Stop Loss (SL)**: ตั้งไว้ใต้ฐาน `majorFloor` เพียง ~0.5% (ความเสี่ยงต่ำ ~1.2%–1.5%)
+    6. **Take Profit 1 (TP1)**: กึ่งกลางคลื่น / POC (~50%–55% retracement) ปิดทำกำไร 50% และเลื่อน Stop Loss ขึ้นมาที่ทุนทันที (Breakeven = Risk-Free Trade 100%)
+    7. **Take Profit 2 (TP2)**: ยอดเดิม (`majorCeil` / `HH`) ปิดทำกำไรส่วนที่เหลือ (+5%–8%)
+- **การแสดงผลแผนการเทรดสดในสถานะ Standby (`isPlannedOnly` & Dashed Lines)**:
+  - ใน `src/strategy/swing/index.ts`: เมื่ออยู่ในสถานะรอรอบ (`WAITING_SETUP`), บอทจะไม่ส่งค่า 0 หรือ `--.------` อีกต่อไป แต่จะคำนวณและส่งระดับราคาเป้าหมาย (`plannedEntryPrice`, `plannedSlPrice`, `plannedTp1Price`, `plannedTp2Price`, `plannedRrRatio`) ไปยังหน้าแดชบอร์ดและชาร์ตเสมอ
+  - ใน `public/app.js`: วาดเส้นประเป้าหมายบนชาร์ต TradingView (`ENTRY (Planned)`, `SL (Planned)`, `TP1 (50%)`, `TP2 (Exit)`) และแถบ Swing Plan UI แสดงป้าย `⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)` พร้อมคำนวณระยะรอย่อ `Wait Dip -X%` ให้ผู้ใช้เห็นแผนการเข้าทำล่วงหน้าอย่างชัดเจน
+  - ขยับ Asset Version ใน `public/index.html` เป็น `app.js?v=3.30`
+- **ระบบทดสอบ Backtest สำหรับ Swing Strategy (`src/backtest.ts`)**:
+  - เพิ่มฟังก์ชัน `runSwingSimulation(symbol, candles, swingCfg)` ใน `src/backtest.ts`
+  - ผล Backtest เปรียบเทียบ 1,000 แท่ง 15M (~10.4 วัน) ช่วงตลาด SOMI ร่วงหนัก -14.53%:
+    - กลยุทธ์ **Major LL Retest Swing Strategy** สร้างผลงานโดดเด่น: เสียหายน้อยที่สุดเพียง **-2.62%** (เทียบกับ Grid ทั่วไปที่ -11.03%), เทรดเพียง 26 ไม้คุณภาพ (ไม่เทรดพร่ำเพรื่อ 240 ไม้), ทำ TP Profit ได้สูงถึง **+$12.91**, และมี Max Drawdown ต่ำสุดเพียง **5.78%**
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - `node --check public/app.js` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.87` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

@@ -524,13 +524,15 @@ export class SwingTraderStrategy implements IStrategy {
       };
 
       // Only execute entries/exits if bot is NOT paused
+      const candles = this.dowEngine?.getCandles() ?? [];
+
       if (!this.isPaused) {
         // 1. Manage Active Position (SL / TP / Trailing Stop)
         if (this.activePosition) {
           await this.manageActivePosition(refPrice, swingCfg);
         } else {
           // 2. Scan for New Entry Setup
-          const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg);
+          const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
           this.lastSignal = signal;
           if (signal.hasSignal && this.swingState === "WAITING_SETUP") {
             await this.executeSwingEntry(signal, refPrice, swingCfg);
@@ -538,7 +540,7 @@ export class SwingTraderStrategy implements IStrategy {
         }
       } else {
         // In paused mode, scan for signals for UI preview
-        const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg);
+        const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
         this.lastSignal = signal;
       }
 
@@ -770,6 +772,13 @@ export class SwingTraderStrategy implements IStrategy {
       tp1Price = this.lastSignal.tp1Price;
       tp2Price = this.lastSignal.tp2Price;
       rrRatio = this.lastSignal.riskRewardRatio;
+    } else if (this.lastSignal && (this.lastSignal.plannedEntryPrice ?? 0) > 0) {
+      // Standby / Pullback mode: Display planned battle plan levels so UI & chart are never blank!
+      entryPrice = this.lastSignal.plannedEntryPrice!;
+      slPrice = this.lastSignal.plannedSlPrice || floor;
+      tp1Price = this.lastSignal.plannedTp1Price || center;
+      tp2Price = this.lastSignal.plannedTp2Price || ceil;
+      rrRatio = this.lastSignal.plannedRrRatio || 0;
     }
 
     const buyLevels = entryPrice > 0 ? [entryPrice] : [];
@@ -889,9 +898,10 @@ export class SwingTraderStrategy implements IStrategy {
         tp1Price,
         tp2Price,
         riskRewardRatio: rrRatio,
-        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || "NONE",
-        reason: this.activePosition?.reason || this.lastSignal?.reason || "Scanning for Dow Theory HL Setup",
+        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : "WAITING_LL_RETEST"),
+        reason: this.activePosition?.reason || this.lastSignal?.reason || "Waiting for dip to test Major LL",
         state: this.swingState,
+        isPlannedOnly: !this.activePosition && !this.lastSignal?.hasSignal,
       },
       botAction: this.isPaused
         ? {
@@ -907,15 +917,15 @@ export class SwingTraderStrategy implements IStrategy {
               ? this.activePosition.tp1Executed
                 ? "🚀 TP1 Done — Trailing Trend"
                 : "📈 Swing Position Active"
-              : "🔍 Scanning for Swing Setup",
+              : (this.lastSignal?.hasSignal ? "🎯 Swing Setup Ready" : "⏳ Waiting LL Retest"),
             reason: this.activePosition
               ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`
-              : this.lastSignal?.reason || "Waiting for confirmed Higher Low or Trendline Breakout",
+              : this.lastSignal?.reason || "Waiting for pullback to Major LL zone",
             nextTrigger: this.activePosition
               ? this.activePosition.tp1Executed
                 ? `TP2: >$${this.activePosition.tp2Price.toFixed(4)}`
                 : `TP1: >$${this.activePosition.tp1Price.toFixed(4)}`
-              : "Wait HL Base Confirm",
+              : (this.lastSignal?.hasSignal ? "Awaiting Execution" : (entryPrice > 0 ? `Wait Dip to $${entryPrice.toFixed(4)}` : "Wait Base Confirm")),
             severity: this.activePosition ? "info" : "warning",
           },
     };
