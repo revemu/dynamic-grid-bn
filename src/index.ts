@@ -277,12 +277,12 @@ async function main(): Promise<void> {
 
   const wireFeedsToGrid = () => {
     if (bookTickerFeed) {
-      bookTickerFeed.onBook((b) => grid.handleWsBookTicker(b));
+      bookTickerFeed.onBook((b) => grid.handleWsBookTicker?.(b));
       bookTickerFeed.start();
     }
     if (userDataFeed) {
-      userDataFeed.onExecutionReport((rep) => grid.handleWsExecutionReport(rep));
-      userDataFeed.onAccountUpdate((acc) => grid.handleWsAccountUpdate(acc));
+      userDataFeed.onExecutionReport((rep) => grid.handleWsExecutionReport?.(rep));
+      userDataFeed.onAccountUpdate((acc) => grid.handleWsAccountUpdate?.(acc));
       userDataFeed.start().catch((err) => log(`⚠️ User data stream start error: ${(err as Error).message}`));
     }
   };

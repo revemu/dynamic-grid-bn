@@ -3680,6 +3680,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.78` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 99. Swing Trader WebSocket Feeds & Optional Chaining Hardening (`v0.2.79`)
+
+- **การป้องกันข้อผิดพลาด WebSocket Feed (`src/index.ts`)**:
+  - เพิ่ม Optional Chaining ให้กับการส่งข้อมูลจาก WebSocket ไปยัง Strategy:
+    `grid.handleWsBookTicker?.(b)`, `grid.handleWsExecutionReport?.(rep)`, `grid.handleWsAccountUpdate?.(acc)`
+    เพื่อป้องกัน `TypeError: grid.handleWsBookTicker is not a function` เมื่อบอทบูตหรือรันกลยุทธ์ใหม่
+- **อิมพลีเมนต์ WebSocket Handlers ใน `SwingTraderStrategy` (`src/strategy/swing/index.ts`)**:
+  - `handleWsBookTicker(b)`: อัปเดตราคา `bid`, `ask`, `mid`, และ `lastRefPrice` แบบ Real-time ทันที
+  - `handleWsExecutionReport(rep)`: รับ Event การ Fill / Partial Fill ของออเดอร์บน CEX อย่างรวดเร็ว
+  - `handleWsAccountUpdate(acc)`: ซิงค์ยอดเงินคงเหลือในกระเป๋า Real-time
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.79` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

@@ -68,6 +68,9 @@ export class SwingTraderStrategy implements IStrategy {
   public lastSignal?: SwingSignalResult;
   public lastRefPrice = 0;
   public realizedPnl = 0;
+  public bid = 0;
+  public ask = 0;
+  public mid = 0;
 
   private eventListeners: ((event: StrategyEvent) => void)[] = [];
 
@@ -188,6 +191,36 @@ export class SwingTraderStrategy implements IStrategy {
         listener(event);
       } catch (e) {
         this.log(`[SwingTrader] Event listener error: ${e}`);
+      }
+    }
+  }
+
+  public handleWsBookTicker(b: any): void {
+    if (!b) return;
+    if (b.bid) this.bid = b.bid;
+    if (b.ask) this.ask = b.ask;
+    if (b.bid && b.ask) {
+      this.mid = (b.bid + b.ask) / 2;
+      this.lastRefPrice = this.mid;
+    }
+  }
+
+  public handleWsExecutionReport(rep: any): void {
+    if (!rep) return;
+    if (rep.orderStatus === "FILLED" || rep.orderStatus === "PARTIALLY_FILLED") {
+      this.log(`⚡ [SwingTrader WS] Execution report: order ${rep.orderId} ${rep.orderStatus} @ ${rep.lastFilledPrice}`);
+      this.syncOnChainOrders().catch(() => {});
+    }
+  }
+
+  public handleWsAccountUpdate(acc: any): void {
+    if (!acc) return;
+    if (acc.balances && Array.isArray(acc.balances)) {
+      const baseAsset = (this.symbolInfo?.baseAsset || "").toUpperCase();
+      const quoteAsset = (this.symbolInfo?.quoteAsset || "").toUpperCase();
+      for (const b of acc.balances) {
+        if (b.asset === baseAsset) this.walletBaseBalance = b.free;
+        if (b.asset === quoteAsset) this.walletQuoteBalance = b.free;
       }
     }
   }
