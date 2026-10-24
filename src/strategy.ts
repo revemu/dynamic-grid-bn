@@ -7,4 +7,7 @@
  */
 
 export * from "./strategy/index.js";
+export * from "./strategy/types.js";
+export * from "./strategy/factory.js";
+export * from "./strategy/swing/index.js";
 export { DynamicGrid } from "./strategy/index.js";

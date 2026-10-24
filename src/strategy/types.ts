@@ -173,3 +173,68 @@ export interface IStrategyHost {
   baseHeld(): number;
   getTotalPortfolioValueQuote(refP: number): number;
 }
+
+export type StrategyType = "dynamic_grid" | "swing_trade";
+
+export interface StrategyContext {
+  exchange: IExchangeClient;
+  symbolInfo: ExchangeSymbolInfo;
+  config: Config;
+  atrSource: AtrSource;
+  log: (msg: string) => void;
+  macroDowEngine: DowStructureEngine;
+  localTrendEngine?: DowStructureEngine;
+  htfDowEngine?: DowStructureEngine;
+}
+
+/**
+ * Standard pluggable Strategy Interface implemented by all bot trading strategies
+ * (DynamicGrid, SwingTrader, etc.) to ensure uniform lifecycle and dashboard controls.
+ */
+export interface IStrategy {
+  readonly name: string;
+  readonly strategyType: StrategyType;
+
+  // Lifecycle & Execution
+  tick(): Promise<void>;
+  getIntervalMs(): number;
+
+  // Real-time Feeds & Events
+  onCandleClosed(candle: Candle): void;
+  onEvent(cb: (event: StrategyEvent) => void): void;
+  emitTelemetryTick(): void;
+  handleWsBookTicker?(b: any): void;
+  handleWsExecutionReport?(rep: any): void;
+  handleWsAccountUpdate?(acc: any): void;
+
+  // Controls & Settings
+  atrSource: AtrSource;
+  getRealDreamdexPrivateKey(): string | undefined;
+  getRealBinanceApiKey(): string | undefined;
+  getRealBinanceApiSecret(): string | undefined;
+  getDatabase(): BotDatabase;
+  getRuntimeConfig(): any;
+  updateRuntimeSettings(s: any): any;
+  setPaused(paused: boolean): boolean;
+  getIsPaused(): boolean;
+  cancelAllOrdersUser(): Promise<{ cancelledCount: number; }>;
+  sellAllUser(): Promise<{ success: boolean; soldQty: number; price: number; error?: string; }>;
+  resetBotState(opts?: any): Promise<{ success: boolean; }>;
+  resetPosition(): Promise<{ success: boolean; clearedLots: number; }>;
+  reloadState(): void;
+  getRecentOrders(): any[];
+  saveState(immediate?: boolean): void;
+
+  // Portfolio & Balances
+  baseHeld(): number;
+  getLots(): Lot[];
+  refreshWalletBalances(): Promise<any>;
+  syncOnChainOrders(): Promise<void>;
+
+  // Symbol & Exchange switching
+  setSwitchingSymbol(val: boolean): void;
+  prepareForSymbolSwitch(targetSymbol: string): Promise<void>;
+  updateExchangeClient(newExchange: IExchangeClient, nextInfo: ExchangeSymbolInfo, atrSource: AtrSource): void;
+  updateSymbolInfo(nextInfo: ExchangeSymbolInfo, atrSource: AtrSource): void;
+}
+

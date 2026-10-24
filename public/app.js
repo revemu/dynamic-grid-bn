@@ -3635,6 +3635,7 @@
 
       setVal("cfg_symbol", data.symbol || "BTCUSDT");
       setVal("cfg_exchange", data.exchange || "binance");
+      setVal("cfg_strategyType", data.strategyType || "dynamic_grid");
       const currentExchange = (data.exchange || "binance").toLowerCase();
       renderTopSymbolOptions(currentExchange, data.symbol);
       updateExchangeFieldsVisibility(currentExchange);
@@ -3856,6 +3857,7 @@
     const maxInvVal = parseFloat(document.getElementById("cfg_maxInventoryUsdso").value);
     const payload = {
       exchange: document.getElementById("cfg_exchange") ? document.getElementById("cfg_exchange").value : "binance",
+      strategyType: document.getElementById("cfg_strategyType") ? document.getElementById("cfg_strategyType").value : "dynamic_grid",
       symbol: (() => {
         const customInput = document.getElementById("cfg_symbol_custom");
         if (customInput && customInput.style.display !== "none" && customInput.value.trim()) {

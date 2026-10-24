@@ -5,7 +5,7 @@
 
 import { config } from "./config.js";
 import { createExchangeClient, type IExchangeClient } from "./exchange/index.js";
-import { DynamicGrid } from "./strategy.js";
+import { DynamicGrid, createStrategy, type IStrategy } from "./strategy.js";
 import { VolatilityEngine } from "./volatility.js";
 import { BinanceAtrFeed, BinanceBookTickerFeed, BinanceUserDataFeed } from "./exchange/binance/feed.js";
 import { DowStructureEngine } from "./market-structure.js";
@@ -245,7 +245,16 @@ async function main(): Promise<void> {
       `trendFilter=${config.dowTrendFilter} (${config.trendTimeframe})`,
   );
 
-  const grid = new DynamicGrid(exchange, symbolInfo, config, atrSource!, log, macroDowEngine, localTrendEngine, htfDowEngine);
+  const grid: IStrategy = createStrategy(config.strategyType, {
+    exchange,
+    symbolInfo,
+    config,
+    atrSource: atrSource!,
+    log,
+    macroDowEngine,
+    localTrendEngine,
+    htfDowEngine,
+  });
   await grid.syncOnChainOrders();
 
   let wakeSleep: (() => void) | null = null;

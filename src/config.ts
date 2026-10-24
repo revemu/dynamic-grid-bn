@@ -20,6 +20,10 @@ const cleanBinanceSymbol = envSymbol.toLowerCase().replace(/[\/\-_:]/g, "");
  * ACID database (`grid-bot.db.json` -> `db.settings`) as the Single Source of Truth.
  */
 export const defaultStrategyConfig = {
+  // ── Strategy Selection ──────────────────────────────────────────────────
+  /** Active Trading Strategy: "dynamic_grid" (default) or "swing_trade". */
+  strategyType: "dynamic_grid" as "dynamic_grid" | "swing_trade",
+
   // ── Core Parameters ────────────────────────────────────────────────────
   symbol: envSymbol,
   /** Stop opening new longs once total base inventory exceeds this (Quote/USDT terms). */
@@ -279,6 +283,28 @@ export const defaultStrategyConfig = {
   // ── Web Dashboard ────────────────────────────────────────────────────────
   /** Port to serve the live TradingView dashboard on (0 to disable). Default 3333 or process.env.PORT. */
   dashboardPort: process.env.PORT ? parseInt(process.env.PORT, 10) : 3333,
+
+  // ── Swing Trade Strategy Specific Parameters ───────────────────────────
+  /** Minimum Risk:Reward ratio required to execute a swing entry (default 2.0). */
+  swingMinRiskReward: 2.0,
+  /** Stop Loss buffer percentage below the structural swing low / HL base (default 0.5%). */
+  swingStopLossBufferPct: 0.5,
+  /** Maximum portfolio percentage allocated to a single swing trade position (default 60%). */
+  swingMaxPositionPct: 60.0,
+  /** Take Profit 1 partial exit ratio (0.5 = sell 50% at TP1). */
+  swingTp1CloseRatio: 0.5,
+  /** Take Profit 1 target type: "CENTER_POC" or "FIXED_PCT" (default "CENTER_POC"). */
+  swingTp1TargetType: "CENTER_POC" as "CENTER_POC" | "FIXED_PCT",
+  /** Take Profit 2 target type: "SWING_HIGH_HH" or "TRAILING_STOP" (default "SWING_HIGH_HH"). */
+  swingTp2TargetType: "SWING_HIGH_HH" as "SWING_HIGH_HH" | "TRAILING_STOP",
+  /** Trailing Stop activation gain % after TP1 reached (default 1.5%). */
+  swingTrailingActivationPct: 1.5,
+  /** Trailing Stop pullback tolerance % (default 0.8%). */
+  swingTrailingPullbackPct: 0.8,
+  /** Allowed entry triggers for swing trades (default: HL base confirmation and trendline breakout). */
+  swingEnableHlBaseEntry: true,
+  swingEnableTrendlineBreakoutEntry: true,
+  swingEnableSupportRetestEntry: true,
 };
 
 /**

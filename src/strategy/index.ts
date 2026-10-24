@@ -21,7 +21,7 @@ import type { AtrSource } from "../types.js";
 import { type DowStructureEngine, type DowStructure, type GridZone, type Candle, VolumeProfileEngine, type VolumeProfileResult } from "../market-structure.js";
 import { BotDatabase, getDatabase, type StrategyStateRecord, type TradeRecord, type OrderActivityRecord, type GasLogRecord, type LockedChannel } from "../db.js";
 
-import type { Lot, OpenOrder, StrategyEvent, GridPersistedState, ConfirmedChannelState, IStrategyHost } from "./types.js";
+import type { Lot, OpenOrder, StrategyEvent, GridPersistedState, ConfirmedChannelState, IStrategyHost, IStrategy, StrategyType } from "./types.js";
 import { LotTracker } from "./lot-tracker.js";
 import { RiskManager } from "./risk-manager.js";
 import { BuyOrderSynchronizer } from "./buy-sync.js";
@@ -30,7 +30,10 @@ import { OrderExecutor } from "./order-executor.js";
 
 export type { Lot, OpenOrder, StrategyEvent, GridPersistedState };
 
-export class DynamicGrid implements IStrategyHost {
+export class DynamicGrid implements IStrategyHost, IStrategy {
+  public readonly name = "Dynamic Grid";
+  public readonly strategyType: StrategyType = "dynamic_grid";
+
   public readonly lotTracker: LotTracker;
   public readonly orderExecutor: OrderExecutor;
   public readonly riskManager: RiskManager;

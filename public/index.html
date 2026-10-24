@@ -1216,6 +1216,17 @@
               </div>
 
               <div class="form-group">
+                <label for="cfg_strategyType">
+                  กลยุทธ์การเทรด (Trading Strategy)
+                  <span class="help-tip" title="เลือกรูปแบบกลยุทธ์: Dynamic Grid (วางกริดเก็บรอบถี่) หรือ Swing Trade (ดักรอบคลื่น R:R สูง)">ℹ️</span>
+                </label>
+                <select id="cfg_strategyType" class="form-select">
+                  <option value="dynamic_grid">⚙️ Dynamic Grid (เทรดเก็บรอบกริด)</option>
+                  <option value="swing_trade">🎯 Swing Trade (สไนเปอร์รอบคลื่น R:R)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
                 <label for="cfg_symbol" id="lbl_symbol">
                   คู่เหรียญเทรด (Trading Pair)
                   <span class="help-tip" title="เลือกคู่เหรียญจากรายการ หรือกดปุ่มพิมพ์เอง">ℹ️</span>

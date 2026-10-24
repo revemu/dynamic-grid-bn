@@ -3609,6 +3609,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.74` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
+---
+
+### 95. Pluggable Multi-Strategy Engine & Swing Trade Architecture (`v0.2.75`)
+
+- **เป้าหมายและสถาปัตยกรรม (Multi-Strategy Framework)**:
+  1. **Standard `IStrategy` Interface & Context (`src/strategy/types.ts`)**:
+     - กำหนดมาตรฐานสากลสำหรับทุกกลยุทธ์การเทรด (`DynamicGrid`, `SwingTrader` ฯลฯ) เพื่อให้วงรอบการทำงาน (Tick, Orders, PnL, Telemetry, Feeds) ทำงานร่วมกับแดชบอร์ดได้อย่างไร้รอยต่อ
+  2. **Strategy Factory Pattern (`src/strategy/factory.ts`)**:
+     - เพิ่มฟังก์ชัน `createStrategy(type, context)` เพื่อสร้างอ็อบเจ็กต์กลยุทธ์ตามค่า `strategyType` ที่กำหนดใน Settings
+  3. **Hierarchical / Decoupled Strategy Configs (`src/config.ts` & `src/strategy/swing/config.ts`)**:
+     - แยก Config กลาง (Exchange, Symbol, Timeframes, Gas, API) ให้อิงร่วมกันทุกโหมด
+     - เพิ่มชุดการตั้งค่าเฉพาะทางของ **Swing Trade**: `swingMinRiskReward` (2.0), `swingStopLossBufferPct` (0.5%), `swingMaxPositionPct` (60%), `swingTp1CloseRatio` (50%), `swingTp1TargetType` ("CENTER_POC"), `swingTp2TargetType` ("SWING_HIGH_HH"), `swingTrailingActivationPct` (1.5%)
+  4. **Swing Trader Strategy Module (`src/strategy/swing/`)**:
+     - `signals.ts`: สแกนหาจุดเข้าที่ได้เปรียบ 3 รูปแบบ: (1) ยืนยันฐาน Higher Low (HL), (2) ทะลุเส้นกดเฉียง (Trendline Breakout), (3) ทดสอบแนวรับใหญ่ (Support Retest)
+     - `index.ts`: จัดการสถานะรอบสวิง (WAITING_SETUP -> IN_POSITION -> TP1_REACHED -> EXITED) พร้อมระบบย้าย Stop Loss มากันหน้าทุน (Breakeven) ทันทีที่แตะ TP1 ทำให้เทรดไร้ความเสี่ยง 100%
+  5. **UI Strategy Selector (`public/index.html` & `public/app.js`)**:
+     - เพิ่ม Dropdown ใน Settings Modal: `กลยุทธ์การเทรด: [ ⚙️ Dynamic Grid | 🎯 Swing Trade ]` สามารถสลับโหมดได้จากหน้าแดชบอร์ด
+  6. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.75` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
+
+
 
 
 
