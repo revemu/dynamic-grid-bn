@@ -3568,6 +3568,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.72` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
 
+---
+
+### 93. Unified 4-State Status Architecture & Telemetry Synchronization (`v0.2.73`)
+
+- **สาเหตุของปัญหาข้อความสถานะยุ่งเหยิงและขัดแย้งกัน (Status Clutter & Inconsistency)**:
+  1. **ข้อความขัดแย้งกันคนละทิศทาง**: แถบกราฟแจ้งเตือนว่าหลุดฐานกำลังรอสร้างฐาน HL (`Price breaking below previous swing low (BOS) — waiting for Higher Low (HL) base formation`) แต่แถบสถานะด้านบนกลับแสดง `Buy next dip: <$0.17720 (Buy L2)` เนื่องจากใน `strategy/index.ts` ตรรกะการสร้าง `botActionState` ไม่ได้นำค่า `gateStatus` จาก Regime Gate มาประเมิน
+  2. **Phantom Sell Trigger เมื่อไม่มีเหรียญในพอร์ต**: แม้พอร์ตจะถือเงินสด 100% ($214.3) มีเหรียญ 0 SOMI แต่ระบบกลับแสดง `Sell Trigger: >$0.18056 (TL Resistance)` และบันไดขวามือขึ้นป้ายแดง `🚫 TL CAP` ทุกไม้ สร้างความสับสนว่าบอทจะขายอะไร
+  3. **ข้อความยาวล้นจอจนโดนตัดตก**: อัดข้อความยาว 5 อย่างในแถวเดียวจนโดนตัดเหลือ `Cash: $214.3 (0% Load) • Waiting for pri...`
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Unified 4-State System)**:
+  1. **ผูก `gateStatus` เข้ากับ `botActionState` โดยตรง (`src/strategy/index.ts`)**:
+     - เมื่อติด Gate (`WAITING_FOR_BASE_CONFIRMATION`, `DOWNTREND_NO_CHANNEL`, `UNSAFE_FLOOR_PROXIMITY`): แสดงป้าย `🛡️ รอสร้างฐาน HL (พักการซื้อ)` หรือ `🛑 ตลาดขาลง (งดรับมีด)` อย่างชัดเจน และ**ตัดป้าย `Buy next dip` และ `Sell Trigger` ออกทันที 100%**
+  2. **Zero-Inventory Protection (ตัดป้ายขายผีหลอกเมื่อถือเงินสด 100%)**:
+     - หาก `baseHeld <= 0` และ `inventoryQuote <= 1.0`: ตัวแปร `sellStatusPart` จะว่างเปล่า `""` โดยไม่มีการขึ้นป้าย Sell Trigger หรือ `🚫 TL CAP` บนบันไดราคาอีกต่อไป
+  3. **Ladder UI Synchronization (`public/app.js`)**:
+     - เมื่อติด Gate: ไม้ซื้อบนบันไดขวาจะขึ้นป้าย `🛡️ รอสร้างฐาน` แทนป้าย `+IOC BUY`
+     - ปรับ `public/style.css` ให้ `.banner-reason-text` และ `.banner-trigger-text` แบ่งพื้นที่กันอย่างยืดหยุ่น ป้องกันการตัดตกตัวอักษร
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.73` ใน `package.json`, `src/version.ts`, และ `GEMINI.md`
+
 
 
 

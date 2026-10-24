@@ -3495,6 +3495,38 @@ export class DynamicGrid implements IStrategyHost {
     }
 
     // ── Compute Bot Action State & Why Bot is Waiting ────────────────────────
+    const openBuys = this.openOrders.filter((o) => o.isBid);
+    const openSells = this.openOrders.filter((o) => !o.isBid);
+    const tlSellOrder = openSells.find(
+      (o) => o.levelDesc?.includes("TL Exit") || o.levelDesc?.includes("Real Ceil") || o.levelDesc?.includes("Trendline"),
+    );
+    const refResistancePrice = downtrendLine?.currentLinePrice ?? tlSellPrice ?? sellTrigger;
+    const tlFrontRunPct = (tlSellOrder && refResistancePrice > 0)
+      ? ((refResistancePrice - tlSellOrder.price) / refResistancePrice) * 100
+      : 0;
+
+    const hasPosition = inventoryQuote > 1.0 || this.baseHeld() > (this.minQty ? this.minQty * 0.5 : 1e-6);
+
+    let sellStatusPart = "";
+    if (hasPosition) {
+      if (tlSellOrder) {
+        const diffStr = tlFrontRunPct > 0 ? ` -${tlFrontRunPct.toFixed(2)}%` : "";
+        sellStatusPart = `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)}${diffStr}`;
+      } else if (openSells.length > 0) {
+        sellStatusPart = openSells.length === 1
+          ? `Sell: $${openSells[0].price.toFixed(this.pricePrecision)}`
+          : `${openSells.length} Sells ($${openSells.map((s) => s.price.toFixed(this.pricePrecision)).join(", ")})`;
+      } else if (isTlSellTrigger) {
+        sellStatusPart = `Sell TL: >$${sellTrigger.toFixed(this.pricePrecision)}`;
+      } else {
+        sellStatusPart = `Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`;
+      }
+    }
+
+    const gateStatus = gridZone?.gateStatus ?? dow?.gridZone?.gateStatus;
+    const gateReason = gridZone?.gateReason ?? dow?.gridZone?.gateReason;
+    const isGated = Boolean(gateStatus && gateStatus !== "VALID_CHANNEL");
+
     let botActionState: {
       code: string;
       title: string;
@@ -3560,6 +3592,48 @@ export class DynamicGrid implements IStrategyHost {
             : `Floor broke ($${dumpFloor.toFixed(4)})`,
           nextTrigger: `Wait HL > $${dumpLow.toFixed(4)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(4)})`,
           severity: "warning",
+        };
+      }
+    } else if (isGated) {
+      if (gateStatus === "WAITING_FOR_BASE_CONFIRMATION") {
+        botActionState = {
+          code: "WAITING_FOR_BASE_CONFIRMATION",
+          title: hasPosition ? `🛡️ รอสร้างฐาน HL (ถือ $${inventoryQuote.toFixed(1)} • พักซื้อ)` : "🛡️ รอสร้างฐาน HL (พักการซื้อ)",
+          reason: hasPosition
+            ? `หลุดฐานเดิม (BOS) • พักซื้อเพิ่มเพื่อความปลอดภัย`
+            : "ราคาหลุดฐานเดิม (BOS) • ถือเงินสด 100% ปลอดภัย ไม่เข้าช้อนมีด",
+          nextTrigger: hasPosition
+            ? `รอตั้งฐาน HL${sellStatusPart ? ` | ${sellStatusPart}` : ""}`
+            : "รอราคาสร้างฐาน Higher Low (HL) ยกตัว ยืนยันกลับตัว",
+          severity: "warning",
+        };
+      } else if (gateStatus === "DOWNTREND_NO_CHANNEL") {
+        botActionState = {
+          code: "DOWNTREND_NO_CHANNEL",
+          title: hasPosition ? `🛑 ตลาดขาลง (ถือ $${inventoryQuote.toFixed(1)} • พักซื้อ)` : "🛑 ตลาดขาลง (งดรับมีด)",
+          reason: hasPosition
+            ? "โครงสร้างตลาดเป็นขาลง (LH + LL กดตัว) • พักซื้อเพิ่ม"
+            : "โครงสร้างตลาดเป็นขาลง (LH + LL กดตัว) • ปิดกรอบงดช้อนมีด",
+          nextTrigger: hasPosition
+            ? `รอคลื่นกลับตัว${sellStatusPart ? ` | ${sellStatusPart}` : ""}`
+            : "รอคลื่นกลับตัวทำ Higher High หรือเบรกเส้นกด",
+          severity: "warning",
+        };
+      } else if (gateStatus === "UNSAFE_FLOOR_PROXIMITY") {
+        botActionState = {
+          code: "UNSAFE_FLOOR_PROXIMITY",
+          title: "⚠️ Floor ชิดราคาเกินไป (พักการซื้อ)",
+          reason: `แนวรับ Floor ($${lowerBound.toFixed(this.pricePrecision)}) ใกล้ราคาปัจจุบันเกินไป เสี่ยงโดน Cut Loss ทันที`,
+          nextTrigger: "รอราคาดีดสร้างระยะห่างปลอดภัย หรือรอยืนยันฐานใหม่",
+          severity: "warning",
+        };
+      } else {
+        botActionState = {
+          code: "WARMUP_GATE",
+          title: "⏳ กำลังวิเคราะห์โครงสร้างตลาด",
+          reason: gateReason || "กำลังประเมินสภาวะตลาดและคำนวณสวิง",
+          nextTrigger: "รอแท่งเทียนยืนยันโครงสร้าง",
+          severity: "info",
         };
       }
     } else if (downtrendDropPaused) {
@@ -3682,30 +3756,6 @@ export class DynamicGrid implements IStrategyHost {
         severity: "success",
       };
     } else if (inBuyZone) {
-      const openBuys = this.openOrders.filter((o) => o.isBid);
-      const openSells = this.openOrders.filter((o) => !o.isBid);
-      const tlSellOrder = openSells.find(
-        (o) => o.levelDesc?.includes("TL Exit") || o.levelDesc?.includes("Real Ceil") || o.levelDesc?.includes("Trendline"),
-      );
-      const refResistancePrice = downtrendLine?.currentLinePrice ?? tlSellPrice ?? sellTrigger;
-      const tlFrontRunPct = (tlSellOrder && refResistancePrice > 0)
-        ? ((refResistancePrice - tlSellOrder.price) / refResistancePrice) * 100
-        : 0;
-
-      let sellStatusPart = "";
-      if (tlSellOrder) {
-        const diffStr = tlFrontRunPct > 0 ? ` -${tlFrontRunPct.toFixed(2)}%` : "";
-        sellStatusPart = `Sell TL Resting @ $${tlSellOrder.price.toFixed(this.pricePrecision)} (TL $${refResistancePrice.toFixed(this.pricePrecision)}${diffStr})`;
-      } else if (openSells.length > 0) {
-        sellStatusPart = openSells.length === 1
-          ? `Sell Resting @ $${openSells[0].price.toFixed(this.pricePrecision)}`
-          : `${openSells.length} Sells Resting ($${openSells.map((s) => s.price.toFixed(this.pricePrecision)).join(", ")})`;
-      } else if (isTlSellTrigger) {
-        sellStatusPart = `Sell Trigger: >$${sellTrigger.toFixed(this.pricePrecision)} (TL Resistance)`;
-      } else {
-        sellStatusPart = `Sell: >$${sellTrigger.toFixed(this.pricePrecision)}`;
-      }
-
       const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
 
       if (isCapacityFull) {
@@ -3734,7 +3784,7 @@ export class DynamicGrid implements IStrategyHost {
           code: "MAKER_BUY_SELL_RESTING",
           title: `📋 ${openBuys.length} Buys & 💎 ${openSells.length} Sell${openSells.length > 1 ? "s" : ""} Resting`,
           reason: `Buys: ${openBuys.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", ")} • ${tlSellOrder ? `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)}` : `Sell: $${openSells[0].price.toFixed(this.pricePrecision)}`}`,
-          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • ${sellStatusPart}`,
+          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag}${sellStatusPart ? ` | ${sellStatusPart}` : ""}`,
           severity: "success",
         };
       } else if (openBuys.length > 0) {
@@ -3744,37 +3794,32 @@ export class DynamicGrid implements IStrategyHost {
           code: "MAKER_BUY_RESTING",
           title: `📋 ${openBuys.length} Buys Resting`,
           reason: openBuys.map((o) => `$${o.price.toFixed(this.pricePrecision)}`).join(", "),
-          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • ${sellStatusPart}`,
+          nextTrigger: `Fills on flash dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag}${sellStatusPart ? ` | ${sellStatusPart}` : ""}`,
           severity: "success",
         };
       } else {
         const buyLvlIdx = buyLevels.findIndex((lvl) => Math.abs(lvl - buyTrigger) <= ((this.tickSize || 0.0001) * 0.5));
         const buyLvlTag = buyLvlIdx >= 0 ? ` (Buy L${buyLvlIdx + 1})` : "";
-        const hasPosition = inventoryQuote > 1.0;
-        botActionState = {
-          code: hasPosition ? "BUY_ZONE_TARGET_MET" : "WAITING_BUY_TRIGGER",
-          title: hasPosition
-            ? (openSells.length > 0 ? `🎯 Level Target Met • 💎 ${openSells.length} Sell Resting` : "🎯 Level Target Met")
-            : (openSells.length > 0 ? `⏳ Waiting Buy Dip • 💎 ${openSells.length} Sell Resting` : "⏳ Waiting Buy Dip"),
-          reason: hasPosition
-            ? `Holding $${inventoryQuote.toFixed(1)} (${activeLevelName})${openSells.length > 0 ? ` • ${tlSellOrder ? `Sell TL: $${tlSellOrder.price.toFixed(this.pricePrecision)}` : `Sell: $${openSells[0].price.toFixed(this.pricePrecision)}`}` : ""}`
-            : `Cash: $${(this.walletQuoteBalance || inventoryQuote).toFixed(1)} (0% Load) • Waiting for price dip <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag}`,
-          nextTrigger: `Buy next dip: <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} • ${sellStatusPart}`,
-          severity: "info",
-        };
+        if (hasPosition) {
+          botActionState = {
+            code: "BUY_ZONE_TARGET_MET",
+            title: openSells.length > 0 ? `🎯 ถือรอเป้าขาย • 💎 ${openSells.length} Sell Resting` : `📦 ถือครอง $${inventoryQuote.toFixed(1)} (${currentHoldPct.toFixed(0)}% Load)`,
+            reason: `ทุนเฉลี่ย ${this.getAvgEntryPrice() > 0 ? `$${this.getAvgEntryPrice().toFixed(this.pricePrecision)}` : "--"} • ${activeLevelName}`,
+            nextTrigger: sellStatusPart ? `ซื้อไม้ถัดไป: <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag} | ${sellStatusPart}` : `ซื้อไม้ถัดไป: <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag}`,
+            severity: "info",
+          };
+        } else {
+          botActionState = {
+            code: "WAITING_BUY_TRIGGER",
+            title: "🟢 พร้อมรับของ (เงินสด 100%)",
+            reason: `พอร์ตถือเงินสด $${(this.walletQuoteBalance || inventoryQuote).toFixed(1)} (0% Load) • รอจังหวะย่อซื้อไม้แรก`,
+            nextTrigger: `ซื้อไม้ 1 เมื่อราคา <$${buyTrigger.toFixed(this.pricePrecision)}${buyLvlTag}`,
+            severity: "info",
+          };
+        }
       }
     } else {
       // In Sell Zone (50% - 100%)
-      const openSells = this.openOrders.filter((o) => !o.isBid);
-      const openBuys = this.openOrders.filter((o) => o.isBid);
-      const tlSellOrder = openSells.find(
-        (o) => o.levelDesc?.includes("TL Exit") || o.levelDesc?.includes("Real Ceil") || o.levelDesc?.includes("Trendline"),
-      );
-      const refResistancePrice = downtrendLine?.currentLinePrice ?? tlSellPrice ?? sellTrigger;
-      const tlFrontRunPct = (tlSellOrder && refResistancePrice > 0)
-        ? ((refResistancePrice - tlSellOrder.price) / refResistancePrice) * 100
-        : 0;
-
       const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
 
       if (openSells.length > 0) {
@@ -3806,13 +3851,23 @@ export class DynamicGrid implements IStrategyHost {
           severity: "info",
         };
       } else {
-        botActionState = {
-          code: isCapacityFull ? "CAPACITY_FULL" : "WAITING_FOR_DIP",
-          title: isCapacityFull ? `📦 Capacity Full (${currentHoldPct.toFixed(0)}%)` : "⏸️ Waiting for Dip",
-          reason: `Holding $${inventoryQuote.toFixed(1)} (Zone ${positionPct.toFixed(0)}%)`,
-          nextTrigger: `Buy: <$${centerPrice.toFixed(4)} • Sell: >$${sellTrigger.toFixed(4)}`,
-          severity: "info",
-        };
+        if (hasPosition) {
+          botActionState = {
+            code: isCapacityFull ? "CAPACITY_FULL" : "IN_POSITION_SELL_ZONE",
+            title: isCapacityFull ? `📦 Capacity Full (${currentHoldPct.toFixed(0)}%)` : `📦 ถือครอง $${inventoryQuote.toFixed(1)} (${currentHoldPct.toFixed(0)}% Load)`,
+            reason: `ทุนเฉลี่ย ${this.getAvgEntryPrice() > 0 ? `$${this.getAvgEntryPrice().toFixed(this.pricePrecision)}` : "--"} • ใน Sell Zone (${positionPct.toFixed(0)}%)`,
+            nextTrigger: `ขายเป้าทำกำไร: >$${sellTrigger.toFixed(this.pricePrecision)}`,
+            severity: "info",
+          };
+        } else {
+          botActionState = {
+            code: "WAITING_FOR_DIP",
+            title: "🟢 เงินสด 100% (รอราคาย่อเข้าโซนซื้อ)",
+            reason: `ราคาอยู่ใน Sell Zone (${positionPct.toFixed(0)}%) • ไม่ไล่ราคาซื้อที่ยอด`,
+            nextTrigger: `รอราคาย่อตัวลงมาต่ำกว่ากึ่งกลาง $${centerPrice.toFixed(this.pricePrecision)}`,
+            severity: "info",
+          };
+        }
       }
     }
 

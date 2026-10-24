@@ -3198,6 +3198,8 @@ input:checked + .slider:before { transform: translateX(20px); }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .bot-status-banner .banner-trigger-text {
@@ -3205,6 +3207,9 @@ input:checked + .slider:before { transform: translateX(20px); }
   padding: 3px 8px;
   border-radius: 5px;
   white-space: nowrap;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   flex-shrink: 0;
 }
 

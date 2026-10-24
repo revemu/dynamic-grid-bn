@@ -1297,6 +1297,7 @@
 
     // In MAKER_LIMIT mode: Mark targets above resistance as suppressed (🚫 TL CAP)
     if (!isIocExecution) {
+      const hasPosition = (data.baseHeld > 0) || (data.lots && data.lots.length > 0) || ((data.positionQuote || data.positionUsdso) > 0.05);
       const tl = data.downtrendLine && !data.downtrendLine.isBroken ? data.downtrendLine : null;
       const tlPrice = tl?.currentLinePrice;
       const isTlActive = Boolean(tlPrice && (data.enableSellBelowTrendResistance !== false));
@@ -1304,7 +1305,7 @@
       const isRcActive = Boolean(rcPrice && (data.enableSellAtRealCeiling !== false) && rcPrice < ceil);
       const effectiveRes = Math.min(isTlActive && tlPrice ? tlPrice : Infinity, isRcActive && rcPrice ? rcPrice : Infinity);
 
-      if (Number.isFinite(effectiveRes)) {
+      if (hasPosition && Number.isFinite(effectiveRes)) {
         [0, 1, 2, 3, 4].forEach((idx) => {
           const step = ladderSteps.find((s) => s.isSell && s.levelIndex === idx) || ladderSteps.find((s) => s.pct === effSellPcts[idx]);
           if (!step || !step.el || !step.enabled || usedSteps.has(step)) return;
@@ -1347,7 +1348,7 @@
         if (!actionEl) return;
 
         const lvlPrice = (sLevels && sLevels[idx] !== undefined) ? sLevels[idx] : step.price;
-        const isCappedByTl = isTlActive && tlPrice !== undefined && lvlPrice >= tlPrice;
+        const isCappedByTl = hasPosition && isTlActive && tlPrice !== undefined && lvlPrice >= tlPrice;
         const isSold = soldSet.has(idx);
         const isCurrentSellTrigger = Boolean(data.sellTrigger && Math.abs(lvlPrice - data.sellTrigger) < (span * 0.02));
         const isFinalTargetBelowTl = (unsoldValidIndices.length > 0 && idx === unsoldValidIndices[unsoldValidIndices.length - 1]);
@@ -1429,19 +1430,22 @@
           const spendStr = `+$${Math.round(toSpendQuote)}`;
           const title = `IOC Buy Level ${idx + 1} @ $${fmtPrice(lvlPrice)}: Tranche ${spendStr} (Target Cumulative: $${targetCumulativeQuote.toFixed(0)})`;
 
-          const isBuyingBlocked = Boolean(data.isPaused || data.isBelowFloor || data.waitingForHigherLow || data.downtrendDropPaused || data.buyOrdersActive === false);
+          const isGateBlocked = Boolean(data.gateStatus && data.gateStatus !== "VALID_CHANNEL");
+          const isBuyingBlocked = Boolean(data.isPaused || data.isBelowFloor || data.waitingForHigherLow || data.downtrendDropPaused || data.buyOrdersActive === false || isGateBlocked);
 
           if (isBuyingBlocked) {
             const blockReason = data.isPaused
               ? "Paused"
               : data.isBelowFloor
               ? "Below Floor"
-              : data.waitingForHigherLow
-              ? "Waiting HL"
-              : data.downtrendDropPaused
-              ? "Downtrend"
+              : (data.gateStatus === "WAITING_FOR_BASE_CONFIRMATION" || data.waitingForHigherLow)
+              ? "🛡️ รอสร้างฐาน"
+              : (data.gateStatus === "DOWNTREND_NO_CHANNEL" || data.downtrendDropPaused)
+              ? "🛑 ตลาดขาลง"
+              : (data.gateStatus === "UNSAFE_FLOOR_PROXIMITY")
+              ? "⚠️ Floor ชิดราคา"
               : "Buy Paused";
-            actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.6; background:rgba(100,116,139,0.18); border-color:rgba(100,116,139,0.35); color:#94a3b8;" title="${blockReason} — Buying paused">${blockReason} (${spendStr})</span>`;
+            actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" style="opacity:0.85; background:rgba(245,158,11,0.12); border:1px dashed rgba(245,158,11,0.4); color:#fbbf24; font-size:9.5px;" title="${blockReason} — พักการซื้อชั่วคราว">${blockReason}</span>`;
             step.el.classList.remove("has-resting-buy");
           } else if (isCurrentBuyTrigger) {
             actionEl.innerHTML = `<span class="step-order-tag buy-order-tag" title="${title}"><span class="order-pulse-dot"></span> IOC BUY ${spendStr}</span>`;
