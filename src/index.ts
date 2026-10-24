@@ -254,6 +254,7 @@ async function main(): Promise<void> {
       const prevInitial = prevConfig.initialCandleCount;
       const prevMax = prevConfig.maxCandleCount;
       const prevTf = prevConfig.dowTimeframe;
+      const prevTradingTf = prevConfig.tradingTimeframe;
       const prevSymbol = prevConfig.symbol;
 
       const targetExchangeName = (s.exchange || prevConfig.exchange || "binance").toLowerCase();
@@ -393,29 +394,29 @@ async function main(): Promise<void> {
       // If initialCandleCount changed or timeframe changed, re-fetch candles & restart WebSocket kline feeds
       if (
         (s.initialCandleCount && s.initialCandleCount !== prevInitial) ||
-        (s.dowTimeframe && s.dowTimeframe !== prevTf)
+        (s.dowTimeframe && s.dowTimeframe !== prevTf) ||
+        (s.tradingTimeframe && s.tradingTimeframe !== prevTradingTf)
       ) {
         const fetchLimit = s.initialCandleCount ?? res.initialCandleCount ?? 300;
         const tf = s.dowTimeframe ?? res.dowTimeframe ?? config.dowTimeframe;
+        const microTf = s.tradingTimeframe ?? res.tradingTimeframe ?? config.tradingTimeframe ?? "5m";
         try {
           const candleSym = resolveBinanceCandleSymbol(symbolInfo.symbol);
-          await macroDowEngine.loadHigherTimeframeCandles(
-            candleSym,
-            tf,
-            config.binanceBaseUrl,
-            log,
-            fetchLimit,
-            true,
-          );
-          dashboard.setInitialCandles(macroDowEngine.getCandles());
-          log(`🔄 Reloaded ${fetchLimit} candles (${tf}) following settings update`);
+          const symLower = candleSym.toLowerCase();
 
-          // If timeframe changed, restart WebSocket Kline streams on the new interval
-          if (s.dowTimeframe && s.dowTimeframe !== prevTf) {
-            const symLower = candleSym.toLowerCase();
+          if ((s.dowTimeframe && s.dowTimeframe !== prevTf) || (s.initialCandleCount && s.initialCandleCount !== prevInitial)) {
+            await macroDowEngine.loadHigherTimeframeCandles(
+              candleSym,
+              tf,
+              config.binanceBaseUrl,
+              log,
+              fetchLimit,
+              true,
+            );
+            dashboard.setInitialCandles(macroDowEngine.getCandles());
+            log(`🔄 Reloaded ${fetchLimit} candles (${tf}) following settings update`);
+
             macroFeed?.stop();
-            tradingFeed?.stop();
-
             macroFeed = new BinanceAtrFeed(
               {
                 symbol: symLower,
@@ -427,25 +428,6 @@ async function main(): Promise<void> {
               config.atrLookback,
               (msg) => log(`[macro ${tf}] ${msg}`),
             );
-
-            tradingFeed = new BinanceAtrFeed(
-              {
-                symbol: symLower,
-                interval: tf,
-                wsBase: config.binanceWsBase,
-                staleMs: config.binanceStaleMs,
-                initialCandleCount: fetchLimit,
-              },
-              config.atrLookback,
-              (msg) => log(`[trading ${tf}] ${msg}`),
-            );
-
-            tradingFeed.onCandle((candle, isClosed) => {
-              if (isClosed) {
-                localTrendEngine.addCandle(candle);
-              }
-            });
-
             macroFeed.onCandle((candle, isClosed) => {
               macroDowEngine.addCandle(candle);
               dashboard.addCandle(candle, isClosed);
@@ -454,11 +436,40 @@ async function main(): Promise<void> {
                 wakeSleep?.();
               }
             });
-
             macroFeed.start();
+          }
+
+          if ((s.tradingTimeframe && s.tradingTimeframe !== prevTradingTf) || (s.initialCandleCount && s.initialCandleCount !== prevInitial)) {
+            await localTrendEngine.loadHigherTimeframeCandles(
+              candleSym,
+              microTf,
+              config.binanceBaseUrl,
+              log,
+              fetchLimit,
+              true,
+            );
+            log(`🔄 Reloaded ${fetchLimit} micro candles (${microTf}) following settings update`);
+
+            tradingFeed?.stop();
+            tradingFeed = new BinanceAtrFeed(
+              {
+                symbol: symLower,
+                interval: microTf,
+                wsBase: config.binanceWsBase,
+                staleMs: config.binanceStaleMs,
+                initialCandleCount: fetchLimit,
+              },
+              config.atrLookback,
+              (msg) => log(`[trading ${microTf}] ${msg}`),
+            );
+            tradingFeed.onCandle((candle, isClosed) => {
+              if (isClosed) {
+                localTrendEngine.addCandle(candle);
+              }
+            });
             tradingFeed.start();
             grid.atrSource = tradingFeed;
-            log(`🔄 Re-subscribed WebSocket Kline streams to new timeframe: ${tf}`);
+            log(`🔄 Re-subscribed WebSocket Kline streams to micro timeframe: ${microTf}`);
           }
         } catch (err) {
           log(`⚠️ Failed to reload candles on settings update: ${(err as Error).message}`);

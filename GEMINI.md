@@ -3452,6 +3452,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - `npm run typecheck` ผ่าน 100% (0 errors)
      - ปรับเวอร์ชันเป็น `v0.2.67` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 88. Dual-Timeframe Waterfall Knife Guard & Dynamic ATR-Scaled Floor Buffer (`v0.2.68`)
+
+- **สถาปัตยกรรมและวัตถุประสงค์**:
+  1. **Dynamic ATR-Scaled Floor Buffer**:
+     - แก้ปัญหา Fixed % Buffer (เดิม 0.20% - 0.30%) แคบเกินไปในช่วงที่ตลาดเหวี่ยงแรง ทำให้ไส้เทียน 15M สะบัดหลุดคัทลอสที่ก้นเหว
+     - คำนวณ `dynamicFloorBufferPct = Math.max(floorBufferPct, Math.min(1.5, atrPct * atrBufferMultiplier))` (ค่าเริ่มต้น: 0.75x ATR)
+     - ในสภาวะตลาดนิ่ง Buffer จะรักษาระดับแคบ (0.30%) เพื่อคัทลอสไวเมื่อหลุดจริง แต่ในสภาวะตลาดผันผวนสูง Buffer จะขยายตัวออกอัตโนมัติ (เช่น 0.60% - 1.20%) ป้องกันการโดน Stop Hunt จากไส้เทียนหลอก
+  2. **Dual-Timeframe Architecture (15M Macro + 5M Micro)**:
+     - `dowTimeframe = "15m"`: ใช้คำนวณโครงสร้างหลัก Channel Floor, Ceiling, และ Dow Swings เพื่อความเสถียร ไม่ส่ายตาม Noise
+     - `tradingTimeframe = "5m"`: ฟีดแท่งเทียนย่อยเข้า `localTrendEngine` เพื่อวิเคราะห์ความเร็วของแรงขายและโมเมนตัมแบบ Real-time
+  3. **Waterfall Knife Guard (`evaluateWaterfallDrop`)**:
+     - ตรวจจับแท่งเทียนทุบแรงติดต่อกัน (Consecutive Bearish Dump Bars) ใน Micro Timeframe 5M:
+       - หากแท่ง 5M แดงติดต่อกัน $\ge 2$ แท่ง และทุบลงมาแรง $\ge 0.70\times$ ATR โดยมีไส้ล่างสั้นมาก (`lowerWick < 25%`) หรือแดงต่อเนื่อง 3 แท่งติด
+       - ระบบจะสั่ง **ระงับการเข้าซื้อ (`canBuy = false`)** ทันที พร้อมแสดงป้าย `🛡️ [Paused: Waterfall Knife (X red 5m bars)]`
+       - ปลดล็อกให้กลับมาซื้อได้ทันทีเมื่อ: มีแท่งเขียวปิดใน 5M, เกิดไส้เทียนล่างปฏิเสธราคา (Hammer / Pinbar $\ge 35\%$), หรือราคากลับขึ้นไปยืนเหนือราคาเปิดของแท่งล่าสุด
+  4. **Typecheck & Version Bump**:
+     - `npm run typecheck` ผ่าน 100% (0 errors)
+     - ปรับเวอร์ชันเป็น `v0.2.68` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

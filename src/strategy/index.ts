@@ -2475,7 +2475,13 @@ export class DynamicGrid implements IStrategyHost {
 
     let dow: DowStructure | undefined;
     let gridZone: GridZone | undefined;
-    const currentFloorBufferPct = this.cfg.floorBufferPct ?? 0.0;
+    const currentFloorBufferPct = this.cfg.floorBufferPct ?? 0.30;
+    const currentAtrPct = this.atrSource.atrPct?.() ?? 0;
+    const enableDynamicAtr = this.cfg.enableDynamicAtrBuffer !== false;
+    const atrMultiplier = Number(this.cfg.atrBufferMultiplier ?? 0.75);
+    const dynamicFloorBufferPct = (enableDynamicAtr && currentAtrPct > 0)
+      ? Math.max(currentFloorBufferPct, Math.min(1.5, currentAtrPct * atrMultiplier))
+      : currentFloorBufferPct;
     let lowerBound: number;
     let upperBound: number;
     let centerPrice: number;
@@ -2494,7 +2500,7 @@ export class DynamicGrid implements IStrategyHost {
         atrMinMultiplier: this.cfg.atrMinMultiplier,
         atrMaxMultiplier: this.cfg.atrMaxMultiplier,
         donchianLookback: this.cfg.donchianLookback,
-        floorBufferPct: this.cfg.floorBufferPct,
+        floorBufferPct: dynamicFloorBufferPct,
         atrPct: this.atrSource.atrPct?.(),
         useTrueWick: this.cfg.useTrueWick,
         wickThresholdPct: this.cfg.wickThresholdPct,
@@ -2514,7 +2520,7 @@ export class DynamicGrid implements IStrategyHost {
       centerPrice = dow?.centerPrice ?? (lowerBound + upperBound) / 2;
       const rawSpan = Math.max(0.000001, upperBound - lowerBound);
 
-      cutLossBound = dow?.cutLossBound ?? (lowerBound - (currentFloorBufferPct / 100) * lowerBound);
+      cutLossBound = dow?.cutLossBound ?? (lowerBound - (dynamicFloorBufferPct / 100) * lowerBound);
       rawFloorPrice = dow?.activeValley?.price ?? lowerBound;
 
       const buyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
@@ -2581,7 +2587,7 @@ export class DynamicGrid implements IStrategyHost {
         atrMinMultiplier: this.cfg.atrMinMultiplier,
         atrMaxMultiplier: this.cfg.atrMaxMultiplier,
         donchianLookback: this.cfg.donchianLookback,
-        floorBufferPct: this.cfg.floorBufferPct,
+        floorBufferPct: dynamicFloorBufferPct,
         atrPct: this.atrSource.atrPct?.(),
         useTrueWick: this.cfg.useTrueWick,
         wickThresholdPct: this.cfg.wickThresholdPct,
@@ -2817,8 +2823,8 @@ export class DynamicGrid implements IStrategyHost {
       }
     }
 
-    // Dynamic Floor Buffer for cut loss trigger
-    const bufferAmount = (currentFloorBufferPct / 100) * lowerBound;
+    // Dynamic Floor Buffer for cut loss trigger (ATR-scaled)
+    const bufferAmount = (dynamicFloorBufferPct / 100) * lowerBound;
     cutLossBound = lowerBound - bufferAmount;
 
     const span = Math.max(0.000001, upperBound - lowerBound);
@@ -3319,6 +3325,13 @@ export class DynamicGrid implements IStrategyHost {
     const isDowntrend = activeRegime === "DOWNTREND";
     const trendFiltered = this.cfg.dowTrendFilter && isDowntrend;
 
+    // 🛡️ Micro-Timeframe Waterfall Knife Guard:
+    // Detects rapid consecutive downward dump bars in the micro timeframe (e.g. 5m / 3m).
+    // Pauses buy execution while rapid downward momentum is ongoing until a green candle or rejection wick forms.
+    const waterfallEvaluation = this.evaluateWaterfallDrop(refPrice);
+    const isWaterfallDropping = waterfallEvaluation.isDropping;
+    const waterfallReason = waterfallEvaluation.reason;
+
     // 🛡️ Downtrend Drop Guard is now fully unified into the single waitingForHigherLow state machine above
     const downtrendDropPaused = false;
     const downtrendDropReason = "";
@@ -3795,6 +3808,8 @@ export class DynamicGrid implements IStrategyHost {
         enableLaggardSnipe: this.cfg.enableLaggardSnipe,
         enableLaggardGuard: this.cfg.enableLaggardGuard,
         laggardGuardActive,
+        isWaterfallDropping,
+        waterfallReason,
         downtrendDropPaused,
         waitingForHigherLow: this.waitingForHigherLow,
         isFlatChannelShiftWaiting: this.isFlatChannelShiftWaiting,
@@ -3815,7 +3830,9 @@ export class DynamicGrid implements IStrategyHost {
         bottomBound: lowerBound,
         cutLossBound,
         rawFloorPrice,
-        floorBufferPct: currentFloorBufferPct,
+        floorBufferPct: dynamicFloorBufferPct,
+        effectiveBufferPct: dynamicFloorBufferPct,
+        baseFloorBufferPct: currentFloorBufferPct,
         activeValleyPrice: dow?.activeValley?.price,
         activePeakPrice: dow?.activePeak?.price,
         positionPct,
@@ -4036,7 +4053,7 @@ export class DynamicGrid implements IStrategyHost {
           `| Zone: ${zoneName} | Position: ${positionSummary}${openOrdersSummary}` +
           ` | Wallet: ${this.walletBaseBalance.toFixed(2)} ${this.baseAsset} / $${this.walletQuoteBalance.toFixed(2)} ${this.quoteAsset}` +
           ` | Speed: ${((this.cfg.intervalMs ?? 2000) / 1000).toFixed(1)}s` +
-          ` | Next Buy: $${buyTrigger.toFixed(6)}${dow?.isSwingConfirmed === false ? " [Paused: No Valid Channel]" : ""}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${downtrendDropPaused ? ` ${downtrendDropReason}` : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
+          ` | Next Buy: $${buyTrigger.toFixed(6)}${dow?.isSwingConfirmed === false ? " [Paused: No Valid Channel]" : ""}${this.waitingForHigherLow ? ` [Paused: Wait Higher Low > $${(this.breakdownLowPrice ?? effectiveMid).toFixed(6)}]` : !inBuyZone ? " [Wait <50%]" : ""}${trendFiltered ? " [Paused: Downtrend]" : ""}${isWaterfallDropping ? ` [Paused: ${waterfallReason}]` : ""}${downtrendDropPaused ? ` ${downtrendDropReason}` : ""}${trendlineFiltered && downtrendLine ? ` [Paused: Under TL $${downtrendLine.currentLinePrice.toFixed(6)}]` : ""}${uptrendBroken && uptrendLine ? ` [Below TL Support $${uptrendLine.currentLinePrice.toFixed(6)} → Grid Buy]` : ""}${this.isSqueezePaused ? " [Paused: Triangle Squeeze Standby]" : ""}${laggardGuardActive ? " [Paused: Lag Guard]" : ""}` +
           ` | Next Sell: $${sellTrigger.toFixed(6)}` +
           trendlineSummary +
           uptrendSummary +
@@ -4178,7 +4195,7 @@ export class DynamicGrid implements IStrategyHost {
     }
 
     const isNearSqueeze = enableSqueezeExit && tlSpreadPct <= (squeezeSpreadThreshold + 0.25);
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && this.buyOrdersActive && (dow?.isSwingConfirmed !== false);
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && !isWaterfallDropping && this.buyOrdersActive && (dow?.isSwingConfirmed !== false);
 
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
@@ -4312,6 +4329,75 @@ export class DynamicGrid implements IStrategyHost {
     levelDesc: string,
   ): Promise<void> {
     return this.orderExecutor.placeRestingOrder(isBid, price, qty, targetFraction, notionalQuote, levelDesc);
+  }
+
+  /**
+   * Evaluates micro-timeframe momentum (e.g. 5m / 3m) to detect rapid consecutive dump bars (waterfall / falling knife).
+   * Pauses buy execution while rapid downward momentum is ongoing until a green candle or rejection wick forms.
+   */
+  public evaluateWaterfallDrop(refPrice: number): { isDropping: boolean; reason: string } {
+    if (this.cfg.enableWaterfallKnifeGuard === false) {
+      return { isDropping: false, reason: "" };
+    }
+    const microCandles = this.localTrendEngine?.getClosedCandles() ?? [];
+    if (microCandles.length < 2) {
+      return { isDropping: false, reason: "" };
+    }
+
+    // Check the last 4 closed micro candles
+    const lookback = Math.min(4, microCandles.length);
+    const recent = microCandles.slice(-lookback);
+    const latest = recent[recent.length - 1]!;
+
+    // Count consecutive red candles from the end
+    let consecutiveReds = 0;
+    for (let i = recent.length - 1; i >= 0; i--) {
+      if (recent[i]!.close < recent[i]!.open) {
+        consecutiveReds++;
+      } else {
+        break;
+      }
+    }
+
+    if (consecutiveReds < 2) {
+      return { isDropping: false, reason: "" };
+    }
+
+    // Measure lower wick ratio of the latest closed micro candle
+    const latestRange = latest.high - latest.low;
+    const latestLowerWick = latestRange > 0 ? (Math.min(latest.open, latest.close) - latest.low) : 0;
+    const lowerWickRatio = latestRange > 0 ? latestLowerWick / latestRange : 0;
+
+    // Check cumulative drop from the start of the consecutive reds
+    const firstRed = recent[recent.length - consecutiveReds] || latest;
+    const dropPct = firstRed.open > 0 ? ((firstRed.open - Math.min(refPrice, latest.close)) / firstRed.open) * 100 : 0;
+
+    const atrPct = this.atrSource.atrPct?.() ?? 0.35;
+    const dropThresholdPct = Math.max(0.35, atrPct * 0.70);
+
+    // Reversal checks: Did a strong rejection hammer form, or is live price bouncing above latest high/open?
+    const isHammerRejection = lowerWickRatio >= 0.35 && latest.close >= latest.open * 0.9995;
+    const isPriceBouncing = refPrice >= latest.high * 0.9995 || refPrice >= latest.open;
+
+    if (isHammerRejection || isPriceBouncing) {
+      return { isDropping: false, reason: "" };
+    }
+
+    // Trigger waterfall drop pause if:
+    // 1. At least 2 consecutive red bars in micro TF with drop >= threshold and weak lower wick (<25%), OR
+    // 2. 3+ consecutive red bars making lower lows and price still pressing near the lows
+    const isHeavyRed = consecutiveReds >= 2 && dropPct >= dropThresholdPct && lowerWickRatio < 0.25;
+    const isPersistentRedDump = consecutiveReds >= 3 && dropPct >= 0.30 && refPrice <= latest.close * 1.0005;
+
+    if (isHeavyRed || isPersistentRedDump) {
+      const tf = this.cfg.tradingTimeframe || "5m";
+      return {
+        isDropping: true,
+        reason: `Waterfall Knife (${consecutiveReds} red ${tf} bars | -${dropPct.toFixed(2)}%)`,
+      };
+    }
+
+    return { isDropping: false, reason: "" };
   }
 
   public async cancelOrderInternal(order: OpenOrder, reason: string): Promise<void> {

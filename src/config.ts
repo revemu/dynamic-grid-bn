@@ -83,10 +83,10 @@ export const defaultStrategyConfig = {
 
   // ── DGRID_ATR_SOURCE=binance only ────────────────────────────────────────
   // ── Timeframes ────────────────────────────────────────────────────────────
-  /** Unified timeframe used for Dow Theory macro bounds, candlestick chart, and grid execution (default "15m"). */
+  /** Unified timeframe used for Dow Theory macro bounds, candlestick chart, and channel levels (default "15m"). */
   dowTimeframe: "15m",
-  get tradingTimeframe(): string { return this.dowTimeframe; },
-  set tradingTimeframe(v: string) { this.dowTimeframe = v; },
+  /** Faster micro timeframe used for localized execution timing, drop momentum & knife guard (default "5m"). */
+  tradingTimeframe: "5m",
   get trendTimeframe(): string { return this.dowTimeframe; },
   set trendTimeframe(v: string) { this.dowTimeframe = v; },
   /** Lowercase Binance symbol to stream klines for. */
@@ -221,6 +221,12 @@ export const defaultStrategyConfig = {
   srLookbackCandles: 300,
   /** Safety buffer below floor (in % of price, default 0.30%). */
   floorBufferPct: 0.30,
+  /** When true, dynamically scales Floor Cut-Loss buffer according to rolling ATR volatility to avoid wick stop-outs. Default true. */
+  enableDynamicAtrBuffer: true,
+  /** Multiplier of rolling ATR percentage to apply to dynamic Floor Buffer (default 0.75x ATR). */
+  atrBufferMultiplier: 0.75,
+  /** When true, activates micro-timeframe momentum analysis to pause buying during consecutive heavy red dump bars (waterfall knife). Default true. */
+  enableWaterfallKnifeGuard: true,
   /** Use true wick (candle high/low) for swing pivots instead of body clipping (default false). */
   useTrueWick: false,
   /** Rejection wick threshold (% of candle range) to clip to candle body when useTrueWick is false (default 50.0%). */
