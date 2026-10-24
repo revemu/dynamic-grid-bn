@@ -198,6 +198,20 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public emit(event: StrategyEvent): void {
+    if (event.type === "order") {
+      event.data = {
+        ...event.data,
+        symbol: event.data.symbol || this.symbolInfo.symbol,
+        baseAsset: event.data.baseAsset || this.symbolInfo.baseAsset,
+        quoteAsset: event.data.quoteAsset || this.symbolInfo.quoteAsset,
+      };
+      try {
+        this.db.recordEvent(event.data);
+        this.saveState();
+      } catch (e) {
+        this.log(`[SwingTrader] Failed to persist order event: ${e}`);
+      }
+    }
     for (const listener of this.eventListeners) {
       try {
         listener(event);
@@ -328,8 +342,8 @@ export class SwingTraderStrategy implements IStrategy {
     return { cancelledCount: count };
   }
 
-  public async sellAllUser(): Promise<{ success: boolean; soldQty: number; price: number; error?: string; }> {
-    this.log(`[SwingTrader] Emergency market sell requested by user`);
+  public async sellAllUser(reason?: string): Promise<{ success: boolean; soldQty: number; price: number; error?: string; }> {
+    this.log(`[SwingTrader] Market sell requested: ${reason || "Emergency market sell by user"}`);
     const held = this.baseHeld();
     const qty = this.roundQty(held);
     if (qty >= (this.symbolInfo.minQty || 0.0001)) {
@@ -340,14 +354,39 @@ export class SwingTraderStrategy implements IStrategy {
           type: "MARKET",
           qty,
         });
+        const execPrice = res.price || this.lastRefPrice;
+        let pnl = 0;
+        if (this.activePosition) {
+          pnl = (execPrice - this.activePosition.entryPrice) * qty;
+          this.realizedPnl += pnl;
+        }
+
+        this.emit({
+          type: "order",
+          data: {
+            id: `ord_${Date.now()}_exit`,
+            orderId: String(res.orderId || Date.now()),
+            symbol: this.symbolInfo.symbol,
+            side: "SELL",
+            price: execPrice,
+            qty,
+            notionalQuote: execPrice * qty,
+            levelDesc: reason || (this.activePosition?.tp1Executed ? "Swing TP2 Target" : "Swing Exit / Stop Loss"),
+            status: "FILLED",
+            realizedPnl: pnl,
+            placedTime: Date.now(),
+            fillTime: Date.now(),
+          },
+        });
+
         this.lots = [];
         this.activePosition = undefined;
         this.swingState = "WAITING_SETUP";
         this.saveState(true);
         await this.refreshWalletBalances();
-        return { success: true, soldQty: qty, price: res.price || this.lastRefPrice };
+        return { success: true, soldQty: qty, price: execPrice };
       } catch (e: any) {
-        this.log(`[SwingTrader] Emergency sell failed: ${e}`);
+        this.log(`[SwingTrader] Sell execution failed: ${e}`);
         return { success: false, soldQty: 0, price: 0, error: e?.message };
       }
     }
@@ -427,9 +466,15 @@ export class SwingTraderStrategy implements IStrategy {
 
       // Extract market structure
       const structure = this.dowEngine?.getStructure(refPrice, undefined, {
+        mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
+        minChannelWidthPct: this.cfg.minChannelWidthPct,
+        maxChannelWidthPct: this.cfg.maxChannelWidthPct,
+        atrMinMultiplier: this.cfg.atrMinMultiplier,
+        atrMaxMultiplier: this.cfg.atrMaxMultiplier,
         useTrueWick: this.cfg.useTrueWick,
         wickThresholdPct: this.cfg.wickThresholdPct,
         srLookbackCandles: this.cfg.srLookbackCandles,
+        useOnlyClosedCandles: this.cfg.adjustChannelOnClosedOnly,
       });
 
       const swingCfg: SwingStrategyConfig = {
@@ -498,7 +543,7 @@ export class SwingTraderStrategy implements IStrategy {
 
     if (refPrice <= effectiveSl) {
       this.log(`[SwingTrader] 🛑 Stop Loss / Trailing Stop triggered at $${refPrice.toFixed(4)} <= $${effectiveSl.toFixed(4)}`);
-      await this.sellAllUser();
+      await this.sellAllUser("Swing Stop Loss Triggered");
       return;
     }
 
@@ -510,12 +555,34 @@ export class SwingTraderStrategy implements IStrategy {
           `[SwingTrader] 🎯 TP1 Target reached ($${refPrice.toFixed(4)} >= $${pos.tp1Price.toFixed(4)}) — Closing ${(cfg.tp1CloseRatio * 100).toFixed(0)}% (${exitQty.toFixed(4)})`,
         );
         try {
-          await this.binance.placeOrder({
+          const res = await this.binance.placeOrder({
             symbol: this.symbolInfo.symbol,
             side: "SELL",
             type: "MARKET",
             qty: exitQty,
           });
+          const execPrice = res.price || refPrice;
+          const pnl = (execPrice - pos.entryPrice) * exitQty;
+          this.realizedPnl += pnl;
+
+          this.emit({
+            type: "order",
+            data: {
+              id: `ord_${Date.now()}_tp1`,
+              orderId: String(res.orderId || Date.now()),
+              symbol: this.symbolInfo.symbol,
+              side: "SELL",
+              price: execPrice,
+              qty: exitQty,
+              notionalQuote: execPrice * exitQty,
+              levelDesc: `Swing TP1 Target (${(cfg.tp1CloseRatio * 100).toFixed(0)}%)`,
+              status: "FILLED",
+              realizedPnl: pnl,
+              placedTime: Date.now(),
+              fillTime: Date.now(),
+            },
+          });
+
           pos.tp1Executed = true;
           pos.qty = this.roundQty(pos.qty - exitQty);
           // 🛡️ Raise Stop Loss to Breakeven to guarantee risk-free trade!
@@ -534,7 +601,7 @@ export class SwingTraderStrategy implements IStrategy {
     // ── Check Take Profit 2 ──────────────────────────────────────────────────
     if (pos.tp1Executed && refPrice >= pos.tp2Price) {
       this.log(`[SwingTrader] 🚀 TP2 Final Target reached ($${refPrice.toFixed(4)} >= $${pos.tp2Price.toFixed(4)}) — Closing remaining position`);
-      await this.sellAllUser();
+      await this.sellAllUser("Swing TP2 Target Reached");
     }
   }
 
@@ -592,6 +659,24 @@ export class SwingTraderStrategy implements IStrategy {
 
       this.swingState = "IN_POSITION";
       this.saveState(true);
+
+      this.emit({
+        type: "order",
+        data: {
+          id: `ord_${Date.now()}_buy`,
+          orderId: String(Date.now()),
+          symbol: this.symbolInfo.symbol,
+          side: "BUY",
+          price,
+          qty,
+          notionalQuote: maxBudget,
+          levelDesc: `Swing Entry (${signal.signalType || "SWING"})`,
+          status: "FILLED",
+          placedTime: Date.now(),
+          fillTime: Date.now(),
+        },
+      });
+
       await this.refreshWalletBalances();
     } catch (e) {
       this.log(`[SwingTrader] Swing Entry failed: ${e}`);
@@ -599,13 +684,66 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public emitTelemetryTick(): void {
-    const structure = this.dowEngine?.getStructure(this.lastRefPrice, undefined);
+    const structure = this.dowEngine?.getStructure(this.lastRefPrice, undefined, {
+      mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
+      minChannelWidthPct: this.cfg.minChannelWidthPct,
+      maxChannelWidthPct: this.cfg.maxChannelWidthPct,
+      atrMinMultiplier: this.cfg.atrMinMultiplier,
+      atrMaxMultiplier: this.cfg.atrMaxMultiplier,
+      useTrueWick: this.cfg.useTrueWick,
+      wickThresholdPct: this.cfg.wickThresholdPct,
+      srLookbackCandles: this.cfg.srLookbackCandles,
+      useOnlyClosedCandles: this.cfg.adjustChannelOnClosedOnly,
+    });
     const currentMid = this.mid || this.lastRefPrice;
     const baseHeldVal = this.baseHeld();
     const invUsd = this.activePosition ? this.activePosition.qty * currentMid : (baseHeldVal * currentMid);
     const somiVal = this.walletBaseBalance * currentMid;
     const totalVal = somiVal + this.walletQuoteBalance;
     const maxInv = this.cfg.maxInventoryQuote ?? 50;
+
+    const floor = structure?.bottomBound ?? 0;
+    const ceil = structure?.upperBound ?? 0;
+    const center = structure?.centerPrice ?? (floor > 0 && ceil > 0 ? (floor + ceil) / 2 : 0);
+    const zoneWidthPct = floor > 0 && ceil > floor ? ((ceil - floor) / floor) * 100 : 0;
+    const positionPct = (floor > 0 && ceil > floor)
+      ? Math.min(100, Math.max(0, ((currentMid - floor) / (ceil - floor)) * 100))
+      : 50;
+
+    // Targets and lines
+    let entryPrice = 0;
+    let slPrice = 0;
+    let tp1Price = 0;
+    let tp2Price = 0;
+    let rrRatio = 0;
+
+    if (this.activePosition) {
+      entryPrice = this.activePosition.entryPrice;
+      slPrice = this.activePosition.trailingStopActive && this.activePosition.trailingStopPrice
+        ? Math.max(this.activePosition.stopLossPrice, this.activePosition.trailingStopPrice)
+        : this.activePosition.stopLossPrice;
+      tp1Price = this.activePosition.tp1Price;
+      tp2Price = this.activePosition.tp2Price;
+      const risk = entryPrice - slPrice;
+      const reward = tp2Price - entryPrice;
+      rrRatio = risk > 0 ? reward / risk : 0;
+    } else if (this.lastSignal && this.lastSignal.hasSignal && this.lastSignal.entryPrice > 0) {
+      entryPrice = this.lastSignal.entryPrice;
+      slPrice = this.lastSignal.stopLossPrice;
+      tp1Price = this.lastSignal.tp1Price;
+      tp2Price = this.lastSignal.tp2Price;
+      rrRatio = this.lastSignal.riskRewardRatio;
+    }
+
+    const buyLevels = entryPrice > 0 ? [entryPrice] : [];
+    const sellLevels = (tp1Price > 0 && tp2Price > 0) ? [tp1Price, tp2Price] : [];
+    const cutLossBound = slPrice > 0 ? slPrice : floor;
+
+    const currentHoldPct = maxInv > 0 ? (invUsd / maxInv) * 100 : 0;
+    const targetInventoryQuote = this.activePosition
+      ? this.activePosition.notionalQuote
+      : (this.lastSignal?.hasSignal ? (this.walletQuoteBalance * ((this.cfg.swingMaxPositionPct ?? 60) / 100)) : 0);
+    const targetHoldingPct = maxInv > 0 ? (targetInventoryQuote / maxInv) * 100 : 0;
 
     const telemetry = {
       time: Math.floor(Date.now() / 1000),
@@ -627,6 +765,12 @@ export class SwingTraderStrategy implements IStrategy {
       positionQuote: invUsd,
       maxInventoryQuote: maxInv,
       maxInventoryUsdso: maxInv,
+      currentHoldPct,
+      targetHoldingPct,
+      targetInventoryQuote,
+      targetInventoryUsdso: targetInventoryQuote,
+      realizedPnl: this.realizedPnl,
+      tradeRealizedPnl: this.realizedPnl,
       dryRun: Boolean(this.cfg.dryRun),
       isPaused: this.isPaused,
       strategyType: this.strategyType,
@@ -636,17 +780,77 @@ export class SwingTraderStrategy implements IStrategy {
       lastSignal: this.lastSignal,
       openOrders: this.openOrders,
       regime: structure?.regime ?? "RANGE",
-      channel: structure
-        ? {
-            floor: structure.bottomBound,
-            center: structure.centerPrice,
-            ceiling: structure.upperBound,
-          }
-        : undefined,
-      // 🛡️ Bug 5: Supply SL, TP1, and TP2 lines for TradingView Lightweight Charts rendering
-      buyLevels: this.activePosition ? [this.activePosition.entryPrice] : [],
-      sellLevels: this.activePosition ? [this.activePosition.tp1Price, this.activePosition.tp2Price] : [],
-      cutLossBound: this.activePosition ? this.activePosition.stopLossPrice : (structure?.cutLossBound ?? 0),
+      channel: {
+        floor,
+        center,
+        ceiling: ceil,
+      },
+      // Root Channel & Dow Structure fields expected by Dashboard & Lightweight Charts
+      bottomBound: floor,
+      upperBound: ceil,
+      centerPrice: center,
+      cutLossBound,
+      zoneWidthPct,
+      positionPct,
+      channelMode: this.cfg.channelMode || "DOW_SWINGS",
+      clampStatus: structure?.gridZone?.clampStatus ?? "NATURAL_SWING",
+      isSwingConfirmed: structure?.isSwingConfirmed ?? false,
+      canEstablishChannel: true,
+      isChannelLocked: false,
+      activePeak: structure?.activePeak ? { time: structure.activePeak.time, price: structure.activePeak.price } : undefined,
+      activeValley: structure?.activeValley ? { time: structure.activeValley.time, price: structure.activeValley.price } : undefined,
+      candidatePeak: structure?.candidatePeak ? {
+        time: structure.candidatePeak.time,
+        price: structure.candidatePeak.price,
+        confirmationCandles: structure.candidatePeak.confirmationCandles,
+        requiredCandles: structure.candidatePeak.requiredCandles,
+      } : undefined,
+      candidateValley: structure?.candidateValley ? {
+        time: structure.candidateValley.time,
+        price: structure.candidateValley.price,
+        confirmationCandles: structure.candidateValley.confirmationCandles,
+        requiredCandles: structure.candidateValley.requiredCandles,
+      } : undefined,
+      swingHighs: (structure?.swingHighs ?? []).map((s) => ({ time: s.time, price: s.price, type: s.type })),
+      swingLows: (structure?.swingLows ?? []).map((s) => ({ time: s.time, price: s.price, type: s.type })),
+      waveCycle: structure?.waveCycle,
+      downtrendLine: structure?.downtrendLine ? {
+        type: structure.downtrendLine.type,
+        slope: structure.downtrendLine.slope,
+        currentLinePrice: structure.downtrendLine.currentLinePrice,
+        isBroken: structure.downtrendLine.isBroken,
+        breakoutPct: structure.downtrendLine.breakoutPct,
+        brokenCandleCount: structure.downtrendLine.brokenCandleCount,
+        breakoutConfirmed: structure.downtrendLine.breakoutConfirmed,
+        points: structure.downtrendLine.points,
+        p1: { time: structure.downtrendLine.p1.time, price: structure.downtrendLine.p1.price },
+        p2: { time: structure.downtrendLine.p2.time, price: structure.downtrendLine.p2.price },
+      } : undefined,
+      uptrendLine: structure?.uptrendLine ? {
+        type: structure.uptrendLine.type,
+        slope: structure.uptrendLine.slope,
+        currentLinePrice: structure.uptrendLine.currentLinePrice,
+        isBroken: structure.uptrendLine.isBroken,
+        breakoutPct: structure.uptrendLine.breakoutPct,
+        brokenCandleCount: structure.uptrendLine.brokenCandleCount,
+        breakoutConfirmed: structure.uptrendLine.breakoutConfirmed,
+        points: structure.uptrendLine.points,
+        p1: { time: structure.uptrendLine.p1.time, price: structure.uptrendLine.p1.price },
+        p2: { time: structure.uptrendLine.p2.time, price: structure.uptrendLine.p2.price },
+      } : undefined,
+      // Target price lines for Swing Setup
+      buyLevels,
+      sellLevels,
+      swingPlan: {
+        entryPrice,
+        stopLossPrice: slPrice,
+        tp1Price,
+        tp2Price,
+        riskRewardRatio: rrRatio,
+        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || "NONE",
+        reason: this.activePosition?.reason || this.lastSignal?.reason || "Scanning for Dow Theory HL Setup",
+        state: this.swingState,
+      },
       botAction: this.isPaused
         ? {
             code: "PAUSED",

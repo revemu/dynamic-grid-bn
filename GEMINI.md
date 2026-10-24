@@ -3727,6 +3727,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `npm run typecheck` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.81` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 102. Full Dow Theory Market Structure Restoration, Dedicated Swing Chart Lines & Real-Time Plan Card (`v0.2.82`)
+
+- **สาเหตุที่ชาร์ต TradingView ว่างเปล่าและ Channel แสดง 0.00%**:
+  - ใน `SwingTraderStrategy.emitTelemetryTick()` มีการส่งเฉพาะออบเจ็กต์ย่อย `channel: { floor, center, ceiling }` แต่ขาด Root Telemetry Properties ที่จำเป็นต่อ TradingView Lightweight Charts และ HUD ได้แก่ `bottomBound`, `upperBound`, `centerPrice`, `zoneWidthPct`, `swingHighs`, `swingLows`, `waveCycle`, `activePeak`, `activeValley`, `downtrendLine`, `uptrendLine`
+  - ทำให้ฝั่งหน้าเว็บไม่สามารถวาดเส้น Floor, Ceiling, Center, เส้นคลื่น Wave Cycle และป้ายสวิง Dow Theory (🚀 HH, ⭐ HL, ⚠️ LH, 🔻 LL) และคำนวณ `zoneWidthPct` ไม่ได้จนแสดง `Channel: 0.00%`
+- **การกู้คืนข้อมูล Dow Theory Market Structure และ Telemetry ครบวงจร**:
+  - อัปเดต `SwingTraderStrategy.tick()` และ `emitTelemetryTick()`: ส่งพารามิเตอร์เต็มรูปแบบเข้า `dowEngine.getStructure(...)` รวมถึง `useOnlyClosedCandles: this.cfg.adjustChannelOnClosedOnly` เพื่อให้กรอบราคานิ่งสนิท ไม่ส่ายตามราคาระหว่างแท่ง
+  - ส่ง Root Properties ครบถ้วน: `bottomBound`, `upperBound`, `centerPrice`, `cutLossBound`, `zoneWidthPct`, `positionPct`, `swingHighs`, `swingLows`, `waveCycle`, `activePeak`, `activeValley`, `candidatePeak`, `candidateValley`, `downtrendLine`, `uptrendLine`
+- **ระบบเส้นชาร์ตเฉพาะสำหรับ Swing Trader (Dedicated Swing Price Lines on Chart)**:
+  - ใน `public/app.js`: เมื่อ `strategyType === "swing_trade"` จะเคลียร์เส้นกริด 10 ชั้นแบบ Grid Bot ออกทั้งหมด และวาดเส้นเป้าหมายการเทรดสวิงที่ชัดเจน:
+    - เส้น `ENTRY` (สีเขียว `#10b981` — เส้นทึบเมื่อ In Position, เส้นประเมื่อ Setup Ready)
+    - เส้น `TP1 (50%)` (สีส้ม `#f59e0b` — เส้นประ)
+    - เส้น `TP2 (Exit)` (สีฟ้า `#06b6d4` — เส้นประ)
+    - เส้น `SL (Stop Loss / Breakeven)` (สีแดง `#ef4444`)
+  - คงเส้นขอบกรอบ Dow Theory (Ceiling บานเย็น, Floor ม่วง, Midline เหลืองอำพัน) และป้ายสวิง Dow Theory ไว้อย่างชัดเจน
+- **แผงควบคุมฝั่งขวา: Swing Trade Plan Card (`#swingTradePlanCard`)**:
+  - ใน `public/index.html` และ `public/app.js`: เมื่อสลับเป็นโหมด `swing_trade` จะซ่อน vertical ladder meter 10 ชั้น และแสดงการ์ดสรุปแผนการเทรดสวิงแบบ Real-time:
+    - ป้ายสัญญาณกลยุทธ์ (เช่น `⭐ Higher Low (HL) Base Setup` หรือ `📐 Trendline Breakout Setup`)
+    - ระดับราคาเป้าหมาย: TP2, TP1, Entry Price, Stop Loss พร้อมคำนวณ % Target Gain และ % Max Risk อัตโนมัติ
+    - แสดงอัตราส่วน `Risk : Reward` (เช่น `2.03x R:R`), สถานะบอท (`WAITING_SETUP` / `IN_POSITION` / `TP1_REACHED`) และขนาด Position
+- **ระบบบันทึกประวัติการเทรดและการคำนวณกำไรขาดทุน (Trade Recording & Realized PnL)**:
+  - ใน `SwingTraderStrategy`: ผูกระบบ `emit({ type: "order", data })` เข้ากับ `this.db.recordEvent` ทุกครั้งที่มีการ Entry, TP1, TP2 หรือ Stop Loss พร้อมบันทึกกำไรขาดทุนสะสม `realizedPnl` ลงฐานข้อมูล ทำให้ตาราง Trades Tab และกราฟ PnL แสดงผลถูกต้องทันที
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.82` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

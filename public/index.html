@@ -244,7 +244,7 @@
         <div class="hud-card glow-ladder-card" id="gridLadderCard">
           <div class="card-header">
             <div class="ladder-title-wrap">
-              <span class="card-label">🎯 ระดับกริด &amp; เป้าหมาย (Grid Ladder)</span>
+              <span class="card-label" id="gridLadderTitle">🎯 ระดับกริด &amp; เป้าหมาย (Grid Ladder)</span>
             </div>
             <span class="active-zone-pill badge-inzone" id="ladderZoneBadge">Buy Zone</span>
           </div>
@@ -394,6 +394,72 @@
                 <span class="step-action">Cut Loss</span>
               </div>
               <div class="step-price" id="stepPriceFloor">--.------</div>
+            </div>
+          </div>
+
+          <!-- ── Swing Trade Setup & Execution Plan Card (Displayed when strategyType === 'swing_trade') ── -->
+          <div class="swing-trade-plan-card" id="swingTradePlanCard" style="display:none;">
+            <div class="stp-signal-banner" id="stpSignalBanner">
+              <div class="stp-signal-type" id="stpSignalType">🔍 กำลังสแกนหาจังหวะ (Scanning Setup)</div>
+              <div class="stp-signal-desc" id="stpSignalDesc">รอการยืนยันฐาน Higher Low (HL) หรือ Trendline Breakout</div>
+            </div>
+
+            <div class="stp-levels-container">
+              <!-- TP2 Target -->
+              <div class="stp-level-row stp-tp2">
+                <div class="stp-level-badge">TP2</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name">🎯 Take Profit 2 (All Exit / HH)</span>
+                  <span class="stp-level-action" id="stpTp2Gain">Target +0.0%</span>
+                </div>
+                <div class="stp-level-price" id="stpTp2Price">--.------</div>
+              </div>
+
+              <!-- TP1 Target -->
+              <div class="stp-level-row stp-tp1">
+                <div class="stp-level-badge">TP1</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name">🎯 Take Profit 1 (Partial 50% / Mid)</span>
+                  <span class="stp-level-action" id="stpTp1Gain">Target +0.0%</span>
+                </div>
+                <div class="stp-level-price" id="stpTp1Price">--.------</div>
+              </div>
+
+              <!-- Entry Price -->
+              <div class="stp-level-row stp-entry">
+                <div class="stp-level-badge">ENTRY</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name" id="stpEntryTitle">🚀 จุดเข้าซื้อ (Entry Price)</span>
+                  <span class="stp-level-action" id="stpEntryStatus">Planned Setup</span>
+                </div>
+                <div class="stp-level-price" id="stpEntryPrice">--.------</div>
+              </div>
+
+              <!-- Stop Loss -->
+              <div class="stp-level-row stp-sl">
+                <div class="stp-level-badge">SL</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name">🛑 ตัดขาดทุน (Stop Loss)</span>
+                  <span class="stp-level-action" id="stpSlRisk">Max Risk -0.0%</span>
+                </div>
+                <div class="stp-level-price" id="stpSlPrice">--.------</div>
+              </div>
+            </div>
+
+            <!-- Trade Stats Footer -->
+            <div class="stp-footer-stats">
+              <div class="stp-stat-item">
+                <span class="stp-stat-label">RISK : REWARD</span>
+                <span class="stp-stat-val text-green" id="stpRrRatio">-- R:R</span>
+              </div>
+              <div class="stp-stat-item">
+                <span class="stp-stat-label">STATUS</span>
+                <span class="stp-stat-val" id="stpStatusText">WAITING_SETUP</span>
+              </div>
+              <div class="stp-stat-item">
+                <span class="stp-stat-label">POSITION</span>
+                <span class="stp-stat-val" id="stpPosQty">0.0000</span>
+              </div>
             </div>
           </div>
         </div>

@@ -657,6 +657,10 @@
   let lineSellTrigger = null;
   let gridZoneLevelLines = [];
   let openOrderPriceLines = [];
+  let lineSwingEntry = null;
+  let lineSwingTp1 = null;
+  let lineSwingTp2 = null;
+  let lineSwingSl = null;
 
   function initChart() {
     if (chart && candleSeries) return;
@@ -1026,8 +1030,144 @@
     }
   }
 
+  function updateSwingTradePlanUI(data) {
+    const elSignalType = document.getElementById("stpSignalType");
+    const elSignalDesc = document.getElementById("stpSignalDesc");
+    const elTp2Price = document.getElementById("stpTp2Price");
+    const elTp2Gain = document.getElementById("stpTp2Gain");
+    const elTp1Price = document.getElementById("stpTp1Price");
+    const elTp1Gain = document.getElementById("stpTp1Gain");
+    const elEntryTitle = document.getElementById("stpEntryTitle");
+    const elEntryStatus = document.getElementById("stpEntryStatus");
+    const elEntryPrice = document.getElementById("stpEntryPrice");
+    const elSlPrice = document.getElementById("stpSlPrice");
+    const elSlRisk = document.getElementById("stpSlRisk");
+    const elRrRatio = document.getElementById("stpRrRatio");
+    const elStatusText = document.getElementById("stpStatusText");
+    const elPosQty = document.getElementById("stpPosQty");
+
+    const plan = data.swingPlan || {};
+    const pos = data.activePosition;
+    const signal = data.lastSignal;
+    const refPrice = data.mid || data.refPrice || 0;
+
+    const entryPrice = plan.entryPrice || pos?.entryPrice || (signal?.hasSignal ? signal.entryPrice : 0);
+    const slPrice = plan.stopLossPrice || pos?.stopLossPrice || (signal?.hasSignal ? signal.stopLossPrice : 0);
+    const tp1Price = plan.tp1Price || pos?.tp1Price || (signal?.hasSignal ? signal.tp1Price : 0);
+    const tp2Price = plan.tp2Price || pos?.tp2Price || (signal?.hasSignal ? signal.tp2Price : 0);
+    const rrRatio = plan.riskRewardRatio || (signal?.hasSignal ? signal.riskRewardRatio : 0);
+
+    // Update Signal Banner
+    if (elSignalType && elSignalDesc) {
+      if (pos) {
+        elSignalType.textContent = pos.tp1Executed
+          ? "🚀 TP1 Done — Trailing Trend"
+          : `📈 In Swing Position (${pos.signalType})`;
+        elSignalType.style.color = "#10b981";
+        elSignalDesc.textContent = pos.reason || "Holding position with dynamic SL & TP targets";
+      } else if (signal && signal.hasSignal) {
+        let typeBadge = "⭐ Higher Low (HL) Base Setup";
+        if (signal.signalType === "TL_BREAKOUT") typeBadge = "📐 Trendline Breakout Setup";
+        if (signal.signalType === "SUPPORT_RETEST") typeBadge = "🧱 Support Retest Setup";
+        elSignalType.textContent = typeBadge;
+        elSignalType.style.color = "#38bdf8";
+        elSignalDesc.textContent = signal.reason || "Asymmetric R:R setup qualified";
+      } else {
+        elSignalType.textContent = "🔍 Scanning Setup (รอจังหวะ Dow Theory)";
+        elSignalType.style.color = "#94a3b8";
+        elSignalDesc.textContent = signal?.reason || "Waiting for confirmed HL or Trendline Breakout";
+      }
+    }
+
+    // Update TP2
+    if (elTp2Price) {
+      elTp2Price.textContent = tp2Price > 0 ? fmtPrice(tp2Price) : "--.------";
+    }
+    if (elTp2Gain) {
+      const baseP = entryPrice > 0 ? entryPrice : refPrice;
+      const gainPct = baseP > 0 && tp2Price > 0 ? ((tp2Price - baseP) / baseP) * 100 : 0;
+      elTp2Gain.textContent = tp2Price > 0 ? `Target +${gainPct.toFixed(2)}%` : "Target --%";
+    }
+
+    // Update TP1
+    if (elTp1Price) {
+      elTp1Price.textContent = tp1Price > 0 ? fmtPrice(tp1Price) : "--.------";
+    }
+    if (elTp1Gain) {
+      const baseP = entryPrice > 0 ? entryPrice : refPrice;
+      const gainPct = baseP > 0 && tp1Price > 0 ? ((tp1Price - baseP) / baseP) * 100 : 0;
+      elTp1Gain.textContent = tp1Price > 0 ? `Target +${gainPct.toFixed(2)}%` : "Target --%";
+    }
+
+    // Update Entry
+    if (elEntryPrice) {
+      elEntryPrice.textContent = entryPrice > 0 ? fmtPrice(entryPrice) : (refPrice > 0 ? fmtPrice(refPrice) : "--.------");
+    }
+    if (elEntryTitle && elEntryStatus) {
+      if (pos) {
+        elEntryTitle.textContent = "🚀 จุดเข้าซื้อจริง (Active Entry)";
+        const currentGain = entryPrice > 0 ? ((refPrice - entryPrice) / entryPrice) * 100 : 0;
+        const gainSign = currentGain >= 0 ? "+" : "";
+        elEntryStatus.textContent = `PnL: ${gainSign}${currentGain.toFixed(2)}%`;
+        elEntryStatus.style.color = currentGain >= 0 ? "#10b981" : "#ef4444";
+      } else {
+        elEntryTitle.textContent = "🚀 จุดเข้าซื้อเป้าหมาย (Planned Entry)";
+        elEntryStatus.textContent = signal?.hasSignal ? "Setup Ready" : "Waiting Dip/HL";
+        elEntryStatus.style.color = "#94a3b8";
+      }
+    }
+
+    // Update SL
+    if (elSlPrice) {
+      elSlPrice.textContent = slPrice > 0 ? fmtPrice(slPrice) : "--.------";
+    }
+    if (elSlRisk) {
+      const baseP = entryPrice > 0 ? entryPrice : refPrice;
+      const riskPct = baseP > 0 && slPrice > 0 ? ((baseP - slPrice) / baseP) * 100 : 0;
+      if (pos && pos.trailingStopActive) {
+        elSlRisk.textContent = `Trailing Stop Lock`;
+        elSlRisk.style.color = "#10b981";
+      } else if (pos && pos.tp1Executed) {
+        elSlRisk.textContent = `Breakeven Lock (Risk-Free)`;
+        elSlRisk.style.color = "#10b981";
+      } else {
+        elSlRisk.textContent = slPrice > 0 ? `Max Risk -${riskPct.toFixed(2)}%` : "Max Risk --%";
+        elSlRisk.style.color = "#ef4444";
+      }
+    }
+
+    // Update Footer Stats
+    if (elRrRatio) {
+      elRrRatio.textContent = rrRatio > 0 ? `${rrRatio.toFixed(2)}x R:R` : "-- R:R";
+    }
+    if (elStatusText) {
+      elStatusText.textContent = data.swingState || "WAITING_SETUP";
+      elStatusText.style.color = pos ? "#10b981" : "#f59e0b";
+    }
+    if (elPosQty) {
+      const qty = pos?.qty || (typeof data.baseHeld === "number" ? data.baseHeld : 0);
+      elPosQty.textContent = `${qty.toFixed(4)} ${data.baseAsset || ""}`;
+    }
+  }
+
   function updateZoneLevelBars(data) {
     latestGridData = data;
+
+    const elGridTitle = document.getElementById("gridLadderTitle");
+    const elVerticalLadder = document.getElementById("verticalLadderMeter");
+    const elSwingPlanCard = document.getElementById("swingTradePlanCard");
+
+    if (data.strategyType === "swing_trade") {
+      if (elGridTitle) elGridTitle.textContent = "🏹 แผนการเข้าเทรดสวิง (Swing Trade Plan)";
+      if (elVerticalLadder) elVerticalLadder.style.display = "none";
+      if (elSwingPlanCard) elSwingPlanCard.style.display = "flex";
+      updateSwingTradePlanUI(data);
+      return;
+    } else {
+      if (elGridTitle) elGridTitle.textContent = "🎯 ระดับกริด & เป้าหมาย (Grid Ladder)";
+      if (elVerticalLadder) elVerticalLadder.style.display = "";
+      if (elSwingPlanCard) elSwingPlanCard.style.display = "none";
+    }
     const pos = data.positionPct !== undefined ? data.positionPct : 50;
     const floor = data.bottomBound ?? 0;
     const ceil = data.upperBound ?? 0;
@@ -2236,79 +2376,173 @@
         lineCutLossBound = null;
       }
 
-      // 4. Intermediate Grid Levels in Buy and Sell Zones (Clean line only, no overlapping canvas labels)
-      const buyPcts = Array.isArray(data.buyLevelPcts) && data.buyLevelPcts.length >= 5
-        ? data.buyLevelPcts
-        : [42, 32, 22, 12, 2];
-      const sellPcts = Array.isArray(data.sellLevelPcts) && data.sellLevelPcts.length >= 5
-        ? data.sellLevelPcts
-        : [52, 62, 72, 82, 92];
+      // 4. Intermediate Grid Levels in Buy and Sell Zones OR Dedicated Swing Trade Lines
+      if (data.strategyType === "swing_trade") {
+        // Clear grid levels
+        while (gridZoneLevelLines.length > 0) {
+          const l = gridZoneLevelLines.pop();
+          if (l) try { candleSeries.removePriceLine(l); } catch (_) {}
+        }
 
-      let buyLevels = Array.isArray(data.buyLevels) && data.buyLevels.length > 0
-        ? data.buyLevels
-        : (data.bottomBound && data.upperBound
-            ? buyPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
-            : (data.buyLevels || []));
+        const plan = data.swingPlan || {};
+        const pos = data.activePosition;
+        const signal = data.lastSignal;
+        const entryPrice = plan.entryPrice || pos?.entryPrice || (signal?.hasSignal ? signal.entryPrice : 0);
+        const slPrice = plan.stopLossPrice || pos?.stopLossPrice || (signal?.hasSignal ? signal.stopLossPrice : 0);
+        const tp1Price = plan.tp1Price || pos?.tp1Price || (signal?.hasSignal ? signal.tp1Price : 0);
+        const tp2Price = plan.tp2Price || pos?.tp2Price || (signal?.hasSignal ? signal.tp2Price : 0);
 
-      let sellLevels = Array.isArray(data.sellLevels) && data.sellLevels.length > 0
-        ? data.sellLevels
-        : (data.bottomBound && data.upperBound
-            ? sellPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
-            : (data.sellLevels || []));
-
-      const allLevels = [...buyLevels, ...sellLevels].filter(Number.isFinite);
-
-      if (allLevels.length > 0) {
-        while (gridZoneLevelLines.length < allLevels.length) {
-          const l = candleSeries.createPriceLine({
-            price: allLevels[gridZoneLevelLines.length] || 0,
-            color: "rgba(255, 255, 255, 0.15)",
-            lineWidth: 1,
-            lineStyle: LightweightCharts.LineStyle.Dotted,
+        // Swing Entry Line (Green)
+        if (entryPrice > 0) {
+          lineSwingEntry = setPriceLine(lineSwingEntry, {
+            price: entryPrice,
+            color: "#10b981",
+            lineWidth: 2,
+            lineStyle: pos ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: "",
+            title: pos ? "ENTRY (Active)" : "ENTRY (Setup)",
           });
-          if (l) gridZoneLevelLines.push(l);
-          else break;
-        }
-        while (gridZoneLevelLines.length > allLevels.length) {
-          const excess = gridZoneLevelLines.pop();
-          if (excess) {
-            try { candleSeries.removePriceLine(excess); } catch (_) {}
-          }
+        } else if (lineSwingEntry) {
+          try { candleSeries.removePriceLine(lineSwingEntry); } catch (_) {}
+          lineSwingEntry = null;
         }
 
-        const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true, true];
-        const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true, true];
+        // Swing TP1 Line (Amber/Orange)
+        if (tp1Price > 0) {
+          lineSwingTp1 = setPriceLine(lineSwingTp1, {
+            price: tp1Price,
+            color: "#f59e0b",
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: "TP1 (50%)",
+          });
+        } else if (lineSwingTp1) {
+          try { candleSeries.removePriceLine(lineSwingTp1); } catch (_) {}
+          lineSwingTp1 = null;
+        }
 
-        let lineIdx = 0;
-        // Buy Levels (40%, 30%, 20%, 10%) - Soft Subtle Cyan dotted lines (does not clash with candles)
-        buyLevels.forEach((lvl, bIdx) => {
-          if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
-            const isEnabled = enabledBuys[bIdx] !== false;
-            gridZoneLevelLines[lineIdx].applyOptions({
-              price: lvl,
-              color: isEnabled ? "rgba(56, 189, 248, 0.22)" : "rgba(148, 163, 184, 0.12)",
-              axisLabelVisible: isEnabled,
+        // Swing TP2 Line (Cyan)
+        if (tp2Price > 0) {
+          lineSwingTp2 = setPriceLine(lineSwingTp2, {
+            price: tp2Price,
+            color: "#06b6d4",
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: "TP2 (Exit)",
+          });
+        } else if (lineSwingTp2) {
+          try { candleSeries.removePriceLine(lineSwingTp2); } catch (_) {}
+          lineSwingTp2 = null;
+        }
+
+        // Swing Stop Loss Line (Red)
+        if (slPrice > 0) {
+          lineSwingSl = setPriceLine(lineSwingSl, {
+            price: slPrice,
+            color: "#ef4444",
+            lineWidth: 2,
+            lineStyle: pos ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: pos?.tp1Executed ? "SL (Breakeven)" : "SL (Stop Loss)",
+          });
+        } else if (lineSwingSl) {
+          try { candleSeries.removePriceLine(lineSwingSl); } catch (_) {}
+          lineSwingSl = null;
+        }
+      } else {
+        // Clear Swing Lines when in Grid mode
+        if (lineSwingEntry) {
+          try { candleSeries.removePriceLine(lineSwingEntry); } catch (_) {}
+          lineSwingEntry = null;
+        }
+        if (lineSwingTp1) {
+          try { candleSeries.removePriceLine(lineSwingTp1); } catch (_) {}
+          lineSwingTp1 = null;
+        }
+        if (lineSwingTp2) {
+          try { candleSeries.removePriceLine(lineSwingTp2); } catch (_) {}
+          lineSwingTp2 = null;
+        }
+        if (lineSwingSl) {
+          try { candleSeries.removePriceLine(lineSwingSl); } catch (_) {}
+          lineSwingSl = null;
+        }
+
+        const buyPcts = Array.isArray(data.buyLevelPcts) && data.buyLevelPcts.length >= 5
+          ? data.buyLevelPcts
+          : [42, 32, 22, 12, 2];
+        const sellPcts = Array.isArray(data.sellLevelPcts) && data.sellLevelPcts.length >= 5
+          ? data.sellLevelPcts
+          : [52, 62, 72, 82, 92];
+
+        let buyLevels = Array.isArray(data.buyLevels) && data.buyLevels.length > 0
+          ? data.buyLevels
+          : (data.bottomBound && data.upperBound
+              ? buyPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
+              : (data.buyLevels || []));
+
+        let sellLevels = Array.isArray(data.sellLevels) && data.sellLevels.length > 0
+          ? data.sellLevels
+          : (data.bottomBound && data.upperBound
+              ? sellPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
+              : (data.sellLevels || []));
+
+        const allLevels = [...buyLevels, ...sellLevels].filter(Number.isFinite);
+
+        if (allLevels.length > 0) {
+          while (gridZoneLevelLines.length < allLevels.length) {
+            const l = candleSeries.createPriceLine({
+              price: allLevels[gridZoneLevelLines.length] || 0,
+              color: "rgba(255, 255, 255, 0.15)",
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
               title: "",
             });
-            lineIdx++;
+            if (l) gridZoneLevelLines.push(l);
+            else break;
           }
-        });
+          while (gridZoneLevelLines.length > allLevels.length) {
+            const excess = gridZoneLevelLines.pop();
+            if (excess) {
+              try { candleSeries.removePriceLine(excess); } catch (_) {}
+            }
+          }
 
-        // Sell Levels (60%, 70%, 80%, 90%) - Soft Subtle Coral Orange dotted lines (does not clash with candles)
-        sellLevels.forEach((lvl, sIdx) => {
-          if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
-            const isEnabled = enabledSells[sIdx] !== false;
-            gridZoneLevelLines[lineIdx].applyOptions({
-              price: lvl,
-              color: isEnabled ? "rgba(249, 115, 22, 0.22)" : "rgba(148, 163, 184, 0.12)",
-              axisLabelVisible: isEnabled,
-              title: "",
-            });
-            lineIdx++;
-          }
-        });
+          const enabledBuys = Array.isArray(data.enabledBuyLevels) ? data.enabledBuyLevels : [true, true, true, true, true];
+          const enabledSells = Array.isArray(data.enabledSellTargets) ? data.enabledSellTargets : [true, true, true, true, true];
+
+          let lineIdx = 0;
+          // Buy Levels (40%, 30%, 20%, 10%) - Soft Subtle Cyan dotted lines (does not clash with candles)
+          buyLevels.forEach((lvl, bIdx) => {
+            if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
+              const isEnabled = enabledBuys[bIdx] !== false;
+              gridZoneLevelLines[lineIdx].applyOptions({
+                price: lvl,
+                color: isEnabled ? "rgba(56, 189, 248, 0.22)" : "rgba(148, 163, 184, 0.12)",
+                axisLabelVisible: isEnabled,
+                title: "",
+              });
+              lineIdx++;
+            }
+          });
+
+          // Sell Levels (60%, 70%, 80%, 90%) - Soft Subtle Coral Orange dotted lines (does not clash with candles)
+          sellLevels.forEach((lvl, sIdx) => {
+            if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
+              const isEnabled = enabledSells[sIdx] !== false;
+              gridZoneLevelLines[lineIdx].applyOptions({
+                price: lvl,
+                color: isEnabled ? "rgba(249, 115, 22, 0.22)" : "rgba(148, 163, 184, 0.12)",
+                axisLabelVisible: isEnabled,
+                title: "",
+              });
+              lineIdx++;
+            }
+          });
+        }
       }
 
       // Clean up legacy trigger lines if any to prevent duplicate price tags on axis
