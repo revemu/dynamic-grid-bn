@@ -48,8 +48,22 @@ export class TrendlineEngine {
 
     // ── 1. Downtrend Resistance Line: Strict Outer Envelope & Active Wave Priority ──
     if (confirmedHighs.length >= 2) {
-      // P1 must not be broken upward by any subsequent confirmed swing high
-      const downWaveStartIdx = (macroLow && macroPeak && macroPeak.index > macroLow.index) ? macroLow.index : minIndex;
+      // Find the starting anchor for the downwave:
+      // If activeValley is defined, scope the downwave to the peak that initiated the drop to activeValley (up to 48 bars prior).
+      let downWaveStartIdx = minIndex;
+      if (activeValley) {
+        const avIdx = activeValley.index ?? candles.findIndex((c) => c.time === activeValley.time);
+        if (avIdx >= 0) {
+          const preValleyHighs = confirmedHighs.filter((h) => h.index <= avIdx && h.index >= Math.max(minIndex, avIdx - 48));
+          if (preValleyHighs.length > 0) {
+            const wavePeak = preValleyHighs.reduce((max, h) => (h.price > max.price ? h : max), preValleyHighs[0]!);
+            downWaveStartIdx = wavePeak.index;
+          }
+        }
+      } else if (macroLow && macroPeak && macroPeak.index > macroLow.index) {
+        downWaveStartIdx = macroLow.index;
+      }
+
       const p1Candidates = confirmedHighs.filter(
         (h) =>
           h.index >= downWaveStartIdx &&
@@ -83,9 +97,9 @@ export class TrendlineEngine {
           const slope = priceDiff / timeDiff;
           if (slope >= 0) continue; // Strictly descending
 
-          // Sanity check slope: between 0.015%/hr and 2.5%/hr
+          // Sanity check slope: between 0.05%/hr and 3.0%/hr (filters out horizontal double-tops < 0.05%/hr)
           const pctPerHour = Math.abs((slope * 3600) / p1.price) * 100;
-          if (pctPerHour < 0.015 || pctPerHour > 2.5) continue;
+          if (pctPerHour < 0.05 || pctPerHour > 3.0) continue;
 
           const currentLinePrice = p1.price + slope * (latestTime - p1.time);
           if (currentLinePrice <= 0) continue;
@@ -144,14 +158,14 @@ export class TrendlineEngine {
             (activePeak && p1.index >= activePeak.index) ||
             (activeValley && p1.time >= activeValley.time && p2.time > p1.time)
           );
-          // Prioritize unbroken active lines, active channel wave alignment, recency of P2/P1, and touches
+          // Prioritize active wave recency, touches, and meaningful slope over ancient unbroken lines
+          const recency = (p2.index / Math.max(1, n)) * 600 + (p1.index / Math.max(1, n)) * 300;
           const score =
-            (isUnbroken ? 1000 : 0) +
-            (isActiveWaveAnchor ? 250 : 0) +
+            (isUnbroken ? 250 : 0) +
+            (isActiveWaveAnchor ? 200 : 0) +
+            recency +
             swingTouches * 120 +
-            Math.min(candleTouches, 8) * 25 +
-            (p2.index / Math.max(1, n)) * 200 +
-            (p1.index / Math.max(1, n)) * 100;
+            Math.min(candleTouches, 8) * 25;
 
           if (score > bestScore) {
             bestScore = score;
@@ -219,13 +233,24 @@ export class TrendlineEngine {
 
     // ── 2. Uptrend Support Line: Active Wave Base Scoping & Strict Outer Envelope ──
     if (confirmedLows.length >= 2) {
-      const postPeakLows = macroPeak ? confirmedLows.filter((l) => l.index > macroPeak.index) : [];
-      const postPeakLowest = postPeakLows.length > 0
-        ? postPeakLows.reduce((min, l) => (l.price <= min.price ? l : min), postPeakLows[0]!)
-        : undefined;
-      const upWaveStartIdx = activeValley
-        ? activeValley.index
-        : (postPeakLowest ? postPeakLowest.index : minIndex);
+      let upWaveStartIdx = minIndex;
+      if (activeValley) {
+        const avIdx = activeValley.index ?? candles.findIndex((c) => c.time === activeValley.time);
+        if (avIdx >= 0) {
+          upWaveStartIdx = avIdx;
+        }
+      } else if (activePeak) {
+        const apIdx = activePeak.index ?? candles.findIndex((c) => c.time === activePeak.time);
+        if (apIdx >= 0) {
+          const prePeakLows = confirmedLows.filter((l) => l.index <= apIdx && l.index >= Math.max(minIndex, apIdx - 48));
+          if (prePeakLows.length > 0) {
+            const waveTrough = prePeakLows.reduce((min, l) => (l.price < min.price ? l : min), prePeakLows[0]!);
+            upWaveStartIdx = waveTrough.index;
+          }
+        }
+      } else if (macroPeak && macroLow && macroLow.index > macroPeak.index) {
+        upWaveStartIdx = macroPeak.index;
+      }
 
       // V1 must be within the active wave and must not be broken downward by any subsequent confirmed swing low
       const v1Candidates = confirmedLows.filter(
@@ -261,9 +286,9 @@ export class TrendlineEngine {
           const slope = priceDiff / timeDiff;
           if (slope <= 0) continue; // Strictly ascending
 
-          // Sanity check slope: between 0.015%/hr and 2.5%/hr
+          // Sanity check slope: between 0.05%/hr and 3.0%/hr (filters out horizontal double-bottoms < 0.05%/hr)
           const pctPerHour = ((slope * 3600) / v1.price) * 100;
-          if (pctPerHour < 0.015 || pctPerHour > 2.5) continue;
+          if (pctPerHour < 0.05 || pctPerHour > 3.0) continue;
 
           const currentLinePrice = v1.price + slope * (latestTime - v1.time);
           if (currentLinePrice <= 0) continue;
@@ -319,14 +344,14 @@ export class TrendlineEngine {
 
           const isUnbroken = maxConsecutiveBroken < 2 && postV2BrokenCandles < 2;
           const isActiveFloorAnchor = Boolean(activeValley && (v1.time === activeValley.time || v1.index === activeValley.index));
-          // Prioritize unbroken active lines, activeValley anchor, recent v2, swing touches, and candle touches
+          // Prioritize active wave recency, activeValley anchor, swing touches, and candle touches
+          const recency = (v2.index / Math.max(1, n)) * 600 + (v1.index / Math.max(1, n)) * 300;
           const score =
-            (isUnbroken ? 1000 : 0) +
+            (isUnbroken ? 250 : 0) +
             (isActiveFloorAnchor ? 250 : 0) +
+            recency +
             swingTouches * 120 +
-            Math.min(candleTouches, 8) * 30 +
-            (v2.index / Math.max(1, n)) * 200 +
-            (v1.index / Math.max(1, n)) * 120;
+            Math.min(candleTouches, 8) * 30;
 
           if (score > bestScore) {
             bestScore = score;
