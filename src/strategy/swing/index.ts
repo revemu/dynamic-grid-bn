@@ -905,6 +905,9 @@ export class SwingTraderStrategy implements IStrategy {
         enableHlBaseEntry: this.cfg.swingEnableHlBaseEntry ?? true,
         enableTrendlineBreakoutEntry: this.cfg.swingEnableTrendlineBreakoutEntry ?? true,
         enableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry ?? true,
+        enableBearishReversalExit: this.cfg.swingEnableBearishReversalExit ?? true,
+        bearishReversalMinProfitPct: this.cfg.swingBearishReversalMinProfitPct ?? 0.35,
+        bearishReversalResistanceTolerancePct: this.cfg.swingBearishReversalResistanceTolerancePct ?? 0.8,
       };
 
       // Evaluate setup strictly on confirmed closed candles to eliminate false intraday wick triggers
@@ -1436,6 +1439,65 @@ export class SwingTraderStrategy implements IStrategy {
         }
         await this.sellAllUser("Swing Trendline Exit (Re-enter near LL)");
         return;
+      }
+    }
+
+    // ── STEP 3.5: Bearish Candlestick Reversal Exit at Resistance (Early Take Profit) ──
+    const enableBearishExit = cfg.enableBearishReversalExit !== false;
+    const minBearishProfitPct = Math.max(0.20, cfg.bearishReversalMinProfitPct ?? 0.35);
+    const resTolerance = (cfg.bearishReversalResistanceTolerancePct ?? 0.8) / 100;
+    const minProfitableExitPrice = pos.entryPrice * (1 + minBearishProfitPct / 100);
+
+    if (enableBearishExit && refPrice >= minProfitableExitPrice) {
+      // 1. Determine if current price or position peak reached near a Resistance Zone
+      const tlResPrice = hasActiveDowntrendTl && downtrendLine ? downtrendLine.currentLinePrice : 0;
+      const tp1NearPrice = pos.tp1Price > 0 ? pos.tp1Price : 0;
+      const tp2NearPrice = pos.tp2Price > 0 ? pos.tp2Price : 0;
+      const ceilPrice = structure?.upperBound && structure.upperBound > pos.entryPrice ? structure.upperBound : 0;
+      const recentLhPrice = structure?.waveCycle?.lastLh?.price && structure.waveCycle.lastLh.time * 1000 > pos.entryTime
+        ? structure.waveCycle.lastLh.price
+        : 0;
+
+      const isNearDowntrendTl = tlResPrice > 0 && (refPrice >= tlResPrice * (1 - resTolerance) || pos.highestPriceSinceEntry >= tlResPrice * (1 - resTolerance));
+      const isNearTp1 = !pos.tp1Executed && tp1NearPrice > 0 && (refPrice >= tp1NearPrice * (1 - resTolerance) || pos.highestPriceSinceEntry >= tp1NearPrice * (1 - resTolerance));
+      const isNearTp2 = tp2NearPrice > 0 && (refPrice >= tp2NearPrice * (1 - resTolerance) || pos.highestPriceSinceEntry >= tp2NearPrice * (1 - resTolerance));
+      const isNearCeil = ceilPrice > 0 && (refPrice >= ceilPrice * (1 - resTolerance) || pos.highestPriceSinceEntry >= ceilPrice * (1 - resTolerance));
+      const isNearLh = recentLhPrice > 0 && (refPrice >= recentLhPrice * (1 - resTolerance) || pos.highestPriceSinceEntry >= recentLhPrice * (1 - resTolerance));
+
+      const isAtResistance = isNearDowntrendTl || isNearTp1 || isNearTp2 || isNearCeil || isNearLh;
+
+      if (isAtResistance) {
+        const closedCandles = this.dowEngine?.getClosedCandles() ?? _candles.filter((c) => c.isClosed !== false);
+        const lastClosedCandle = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : undefined;
+
+        // Ensure the bearish reversal candle formed after or during entry
+        if (lastClosedCandle && lastClosedCandle.time * 1000 >= pos.entryTime) {
+          const bearishCheck = SwingSignalDetector.checkBearishReversal(closedCandles);
+          if (bearishCheck.isReversal) {
+            const resReason = isNearDowntrendTl
+              ? `Downtrend Line ($${tlResPrice.toFixed(4)})`
+              : (isNearTp1
+                  ? `TP1 Target ($${tp1NearPrice.toFixed(4)})`
+                  : (isNearTp2 ? `TP2 Target ($${tp2NearPrice.toFixed(4)})` : `Ceiling/LH Resistance ($${(ceilPrice || recentLhPrice).toFixed(4)})`));
+
+            this.log(
+              `[SwingTrader] 🎯 Early Take Profit: ${bearishCheck.pattern} confirmed at ${resReason}! Current Gain: +${currentGainPct.toFixed(2)}% (>= +${minBearishProfitPct}%) — Exiting early to protect gains!`,
+            );
+
+            // Cancel any resting TP orders
+            if (pos.tp1OrderId) {
+              try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+              pos.tp1OrderId = undefined;
+            }
+            if (pos.tp2OrderId) {
+              try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+              pos.tp2OrderId = undefined;
+            }
+
+            await this.sellAllUser(`Early Take Profit (${bearishCheck.pattern} at ${resReason})`);
+            return;
+          }
+        }
       }
     }
 

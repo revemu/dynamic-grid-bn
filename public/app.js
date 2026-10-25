@@ -4328,6 +4328,8 @@
       setCheck("cfg_swingEnableHlBaseEntry", data.swingEnableHlBaseEntry !== false);
       setCheck("cfg_swingEnableTrendlineBreakoutEntry", data.swingEnableTrendlineBreakoutEntry !== false);
       setCheck("cfg_swingEnableSupportRetestEntry", data.swingEnableSupportRetestEntry !== false);
+      setCheck("cfg_swingEnableBearishReversalExit", data.swingEnableBearishReversalExit !== false);
+      setVal("cfg_swingBearishReversalMinProfitPct", data.swingBearishReversalMinProfitPct ?? 0.35);
 
       updateGridSimulatorPreview();
       updateSettingsConditionalVisibility();
@@ -4568,6 +4570,8 @@
       swingEnableHlBaseEntry: document.getElementById("cfg_swingEnableHlBaseEntry") ? document.getElementById("cfg_swingEnableHlBaseEntry").checked : true,
       swingEnableTrendlineBreakoutEntry: document.getElementById("cfg_swingEnableTrendlineBreakoutEntry") ? document.getElementById("cfg_swingEnableTrendlineBreakoutEntry").checked : true,
       swingEnableSupportRetestEntry: document.getElementById("cfg_swingEnableSupportRetestEntry") ? document.getElementById("cfg_swingEnableSupportRetestEntry").checked : true,
+      swingEnableBearishReversalExit: document.getElementById("cfg_swingEnableBearishReversalExit") ? document.getElementById("cfg_swingEnableBearishReversalExit").checked : true,
+      swingBearishReversalMinProfitPct: parseFloat(document.getElementById("cfg_swingBearishReversalMinProfitPct")?.value) || 0.35,
     };
 
     try {

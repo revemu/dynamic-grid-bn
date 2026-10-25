@@ -1612,6 +1612,25 @@
                   <span class="unit">%</span>
                 </div>
               </div>
+
+              <div class="form-check form-switch mt-3">
+                <input class="form-check-input" type="checkbox" id="cfg_swingEnableBearishReversalExit" checked />
+                <label class="form-check-label" for="cfg_swingEnableBearishReversalExit">
+                  ชิงขายทำกำไรเมื่อเกิดแท่งเทียนกลับตัวขาลงที่แนวต้าน (Bearish Reversal Exit)
+                  <span class="help-tip" title="เมื่อถือออเดอร์มีกำไรและราคาชนแนวต้าน หากเกิดแท่งเทียนกลับตัวขาลง (เช่น Shooting Star, Bearish Engulfing) จะสั่งปิดทำกำไรล่วงหน้าทันทีเพื่อล็อกกำไร">ℹ️</span>
+                </label>
+              </div>
+
+              <div class="form-group mt-2">
+                <label for="cfg_swingBearishReversalMinProfitPct">
+                  กำไรขั้นต่ำก่อนอนุญาตให้ชิงขาย (Min Profit %)
+                  <span class="help-tip" title="ป้องกันการขายหมู: บอทจะยอมรับสัญญาณแท่งกลับตัวขาลงเพื่อขายเฉพาะเมื่อมีกำไรสุทธิเกินค่านี้แล้วเท่านั้น (เช่น 0.35%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_swingBearishReversalMinProfitPct" step="0.05" min="0.1" max="5.0" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -2088,7 +2107,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=3.39"></script>
+  <script src="app.js?v=3.40"></script>
 </body>
 
 </html>

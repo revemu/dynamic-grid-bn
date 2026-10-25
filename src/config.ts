@@ -305,6 +305,12 @@ export const defaultStrategyConfig = {
   swingEnableHlBaseEntry: true,
   swingEnableTrendlineBreakoutEntry: true,
   swingEnableSupportRetestEntry: true,
+  /** Enable Bearish Candlestick Reversal Exit at resistance (Shooting Star / Engulfing) to lock profit early (default true). */
+  swingEnableBearishReversalExit: true,
+  /** Minimum profit % required before allowing early bearish reversal exit (default 0.35%). */
+  swingBearishReversalMinProfitPct: 0.35,
+  /** Tolerance % from resistance structure (Trendline/TP/Ceiling) to evaluate bearish reversal (default 0.8%). */
+  swingBearishReversalResistanceTolerancePct: 0.8,
 };
 
 /**

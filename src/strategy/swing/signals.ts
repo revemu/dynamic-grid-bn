@@ -102,6 +102,82 @@ export class SwingSignalDetector {
   }
 
   /**
+   * Helper to inspect recent candles for a confirmed bearish reversal pattern at resistance.
+   * Strictly evaluates only fully closed candles and requires genuine seller dominance (red close).
+   */
+  public static checkBearishReversal(candles: Candle[]): { isReversal: boolean; pattern: string } {
+    const closedCandles = candles.filter((c) => c.isClosed !== false);
+    if (!closedCandles || closedCandles.length < 2) {
+      return { isReversal: false, pattern: "Insufficient closed candle history" };
+    }
+
+    const curr = closedCandles[closedCandles.length - 1];
+    const prev = closedCandles[closedCandles.length - 2];
+    if (!curr || !prev) return { isReversal: false, pattern: "No candle data" };
+
+    const currRange = curr.high - curr.low;
+    const currBody = curr.close - curr.open;
+    const prevRange = prev.high - prev.low;
+    const prevBody = prev.close - prev.open;
+
+    // Minimum meaningful candle range (>= 0.18% of price) to eliminate micro tick / illiquidity noise
+    if (currRange <= 0 || curr.close <= 0 || (currRange / curr.close) < 0.0018) {
+      return { isReversal: false, pattern: "Candle range too narrow (noise/doji)" };
+    }
+
+    // 🛑 Absolute Requirement: A bearish reversal MUST close as a bearish candle (close < open)!
+    // Green candles (close >= open) can NEVER be a bearish reversal.
+    if (curr.close >= curr.open) {
+      return { isReversal: false, pattern: "Current closed candle is green/bullish" };
+    }
+
+    // 1. Shooting Star / Bearish Pinbar Rejection: Long upper wick >= 50%, closes in lower 30% of range, small lower wick <= 25%
+    const upperWick = curr.high - curr.open;
+    const lowerWick = curr.close - curr.low;
+    const upperWickRatio = upperWick / currRange;
+    const lowerWickRatio = lowerWick / currRange;
+    if (
+      upperWickRatio >= 0.50 &&
+      curr.close <= curr.low + currRange * 0.30 &&
+      lowerWickRatio <= 0.25
+    ) {
+      return {
+        isReversal: true,
+        pattern: `Shooting Star / Bearish Pinbar (Upper wick ${(upperWickRatio * 100).toFixed(0)}%, Lower wick ${(lowerWickRatio * 100).toFixed(0)}%)`,
+      };
+    }
+
+    // 2. Bearish Engulfing or Dark Cloud Cover:
+    // Previous candle was green, current candle is solid red and pierces >= 50% into previous body or engulfs
+    if (prev.close > prev.open) {
+      const prevGreenBody = prev.close - prev.open;
+      const cloudThreshold = prev.close - (prevGreenBody * 0.50);
+      const isCloudOrEngulfing = curr.close <= cloudThreshold;
+      const hasSolidRedBody = (Math.abs(currBody) / currRange) >= 0.40;
+
+      if (isCloudOrEngulfing && hasSolidRedBody) {
+        const isEngulfing = curr.open >= prev.close && curr.close <= prev.open;
+        return {
+          isReversal: true,
+          pattern: isEngulfing ? "Bearish Engulfing Candle" : "Dark Cloud Cover Reversal",
+        };
+      }
+    }
+
+    // 3. Strong Bearish Momentum Breakdown: Red candle closing below previous low with solid body
+    if (curr.close < prev.low && (Math.abs(currBody) / currRange) >= 0.45) {
+      return { isReversal: true, pattern: "Bearish Breakdown Below Previous Bar Low" };
+    }
+
+    // 4. Consecutive Lower High & Lower Close on solid red bar
+    if (curr.high < prev.high && curr.close < prev.close && (Math.abs(currBody) / currRange) >= 0.40 && curr.close <= curr.low + currRange * 0.35) {
+      return { isReversal: true, pattern: "Bearish Micro Rejection (LH Bar)" };
+    }
+
+    return { isReversal: false, pattern: "No reversal pattern" };
+  }
+
+  /**
    * Scans Dow Structure and Market Conditions for an asymmetric Risk:Reward Major LL Retest Swing Setup.
    */
   public static evaluateSetup(

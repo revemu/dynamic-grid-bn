@@ -4268,6 +4268,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เส้นเป้าหมาย TP1 และ TP2 จะอยู่เหนือราคาเข้าจริงเสมอ ไม่ตกไปอยู่ใต้ราคาตลาดอีกต่อไป
 5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.101` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.39` ใน `public/index.html`
 
+---
+
+## 102. v0.2.102 — Bearish Candlestick Reversal Exit & Early Take Profit Architecture (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `src/strategy/swing/config.ts`, `src/config.ts`, `public/index.html`, `public/app.js`)
+
+### สาเหตุและความต้องการ (Problem & Requirement):
+- ในการเทรดแบบ Swing Trade เดิม การขายทำกำไรจะพึ่งพา Maker Limit Orders (TP1/TP2) ล่วงหน้า หรือรอ Trailing Stop เมื่อราคาย่อตัว
+- เมื่อราคาพุ่งขึ้นไปใกล้แนวต้านสำคัญ (เช่น เส้นกด Downtrend Line หรือยอดสวิงเดิม) แต่ยังไม่แตะโดนออเดอร์ Limit แล้วเกิดแรงขายมหาศาลทุบกลับลงมา บอทจะพลาดโอกาสล็อกกำไรที่จุดสูงสุด ทำให้กำไรหดหายหรือหลุดกลับมาโดน Stop Loss / Breakeven
+
+### สถาปัตยกรรมและการแก้ไข (Solutions & Architecture):
+1. **โมดูลตรวจจับแท่งเทียนกลับตัวขาลง (`SwingSignalDetector.checkBearishReversal`)**:
+   - ตรวจจับเฉพาะ **Confirmed Closed Candles (`isClosed === true`)** เพื่อตัดสัญญาณหลอกระหว่างแท่งเทียน 15m
+   - ตรวจจับ 4 รูปแบบหลัก:
+     1. **Shooting Star / Bearish Pinbar (แท่งดาวตก / ปฏิเสธราคาสูง)**: ไส้บน $\ge 50\%$, ราคาปิดอยู่ในโซนล่าง 30% ของแท่ง, ไส้ล่าง $\le 25\%$
+     2. **Bearish Engulfing (แท่งแดงกลืนกิน)** / **Dark Cloud Cover (เมฆดำ)**: แท่งแดงเนื้อตัน ($\ge 40\%$) ดันราคาปิดแทงทะลุต่ำกว่า 50% ของเนื้อแท่งเขียวเดิม หรือกลืนกินแท่งเขียวทั้งแท่ง
+     3. **Bearish Momentum Breakdown**: แท่งแดงเนื้อตันปิดหลุดต่ำกว่า Low ของแท่งก่อนหน้า
+     4. **Bearish Micro Rejection**: แท่งแดงเนื้อตันที่ทำ Lower High และ Lower Close ต่อเนื่อง
+2. **เกราะป้องกันการขายหมู (Anti-Panic Sell Safeguards)**:
+   - **In-Profit Only**: บังคับว่าต้องมีกำไรสุทธิครอบคลุมค่าธรรมเนียมแล้วเท่านั้น (`refPrice >= entryPrice * (1 + minProfitPct)`) ค่าเริ่มต้น $\ge +0.35\%$ เพื่อไม่ให้เกิดการขายขาดทุน
+   - **At Resistance Only**: ตรวจสอบเฉพาะเมื่อราคาปัจจุบันหรือยอดราคาสูงสุดตั้งแต่เข้าซื้อ อยู่ในบริเวณแนวต้านสำคัญ (ใกล้เส้นกด Downtrend Line, ใกล้เป้า TP1, ใกล้เป้า TP2, หรือใกล้เพดาน Ceiling/LH)
+   - **Post-Entry Candle**: แท่งเทียนกลับตัวต้องเกิดขึ้นหลังจากหรือระหว่างการถือครอง Position เท่านั้น
+3. **ขั้นตอนการปฏิบัติการขาย Early Take Profit (`src/strategy/swing/index.ts`)**:
+   - เมื่อเงื่อนไขผ่าน: ยกเลิกคำสั่ง Resting TP1 / TP2 ที่ค้างอยู่บนกระดานทันที
+   - ส่งคำสั่งขายทำกำไรแบบ Market/IOC ทันที พร้อมบันทึก Realized PnL และอัปเดตสถานะกลับสู่ `WAITING_SETUP`
+   - ส่งสัญญาณและข้อความแจ้งเตือนผ่าน Activity Feed: `🎯 Early Take Profit: ... confirmed at ...! Current Gain: +...% — Exiting early to protect gains!`
+4. **Dashboard Configuration UI (`public/index.html` & `public/app.js`)**:
+   - เพิ่มสวิตช์เปิด/ปิด: `ชิงขายทำกำไรเมื่อเกิดแท่งเทียนกลับตัวขาลงที่แนวต้าน (Bearish Reversal Exit)` (`swingEnableBearishReversalExit`)
+   - เพิ่มช่องกรอก: `กำไรขั้นต่ำก่อนอนุญาตให้ชิงขาย (Min Profit %)` (`swingBearishReversalMinProfitPct`, default `0.35%`)
+5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.102` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.40` ใน `public/index.html`
+
+
 
 
 

@@ -18,4 +18,7 @@ export interface SwingStrategyConfig {
   enableHlBaseEntry: boolean;
   enableTrendlineBreakoutEntry: boolean;
   enableSupportRetestEntry: boolean;
+  enableBearishReversalExit?: boolean;
+  bearishReversalMinProfitPct?: number;
+  bearishReversalResistanceTolerancePct?: number;
 }
