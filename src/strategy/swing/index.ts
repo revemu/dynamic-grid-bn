@@ -160,6 +160,8 @@ export class SwingTraderStrategy implements IStrategy {
   public getRuntimeConfig(): any {
     return {
       ...this.cfg,
+      symbol: this.symbolInfo?.symbol || this.cfg.symbol || "SOMI:USDSO",
+      exchange: this.binance.exchangeName || this.cfg.exchange || "binance",
       strategyType: "swing_trade",
       binanceApiKey: this.cfg.binanceApiKey ? "******" : "",
       binanceApiSecret: this.cfg.binanceApiSecret ? "******" : "",
@@ -183,6 +185,9 @@ export class SwingTraderStrategy implements IStrategy {
     if (cleanSettings.binanceApiKey === "******") delete cleanSettings.binanceApiKey;
     if (cleanSettings.binanceApiSecret === "******") delete cleanSettings.binanceApiSecret;
     if (cleanSettings.dreamdexPrivateKey === "******") delete cleanSettings.dreamdexPrivateKey;
+    if (!cleanSettings.symbol && this.symbolInfo?.symbol) {
+      cleanSettings.symbol = this.symbolInfo.symbol;
+    }
     this.cfg = { ...this.cfg, ...cleanSettings, strategyType: "swing_trade" };
     try {
       const toPersist: Record<string, any> = { ...this.db.getAllSettings(), ...this.cfg };
@@ -453,11 +458,14 @@ export class SwingTraderStrategy implements IStrategy {
     this.binance = newExchange;
     this.symbolInfo = nextInfo;
     this.atrSource = atrSource;
+    this.cfg.symbol = nextInfo.symbol;
+    this.cfg.exchange = newExchange.exchangeName;
   }
 
   public updateSymbolInfo(nextInfo: ExchangeSymbolInfo, atrSource: AtrSource): void {
     this.symbolInfo = nextInfo;
     this.atrSource = atrSource;
+    this.cfg.symbol = nextInfo.symbol;
   }
 
   public async cancelAllOrdersUser(): Promise<{ cancelledCount: number; }> {

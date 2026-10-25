@@ -3945,6 +3945,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `node --check public/app.js` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.91` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 112. Permanent Lock for DreamDEX Trading Pair & CEX Symbol Override Prevention (`v0.2.92`)
+
+- **การแก้ไขปัญหาบอท DreamDEX สลับคู่เหรียญเองไปเป็นคู่อื่น (`WBTC:USDSO`) โดยไม่ได้ตั้งใจ**:
+  - **1. แก้ไข `getRuntimeConfig()` ใน `SwingTraderStrategy` (`src/strategy/swing/index.ts`)**:
+    - บังคับคืนค่า `symbol: this.symbolInfo?.symbol || this.cfg.symbol || "SOMI:USDSO"` และ `exchange: this.binance.exchangeName` เสมอ เพื่อป้องกันไม่ให้ `/api/config` และ `/api/db/settings` คืนค่า `symbol` เป็นค่าว่าง (`""`)
+    - ซิงค์ `this.cfg.symbol` ใน `updateSymbolInfo()` และ `updateExchangeClient()` ให้ตรงกับ `nextInfo.symbol` เสมอ
+  - **2. ปรับปรุงการโหลดค่าในแดชบอร์ด (`public/app.js`)**:
+    - ใน `loadSettings()`: หากเป็นกระดาน `dreamdex` ให้ Fallback เป็น `"SOMI:USDSO"` เสมอ (ไม่ใช่ `"BTCUSDT"`) ป้องกันไม่ให้หน้าต่าง Settings Modal บันทึกค่า `"BTCUSDT"` ส่งกลับไปให้บอท DreamDEX
+    - ใน `elTopSymbolSelect`: ปรับ Fallback ให้ตรงตามกระดานที่เปิดใช้งาน
+  - **3. เพิ่มระบบ DreamDEX Accidental CEX Symbol Guard (`src/index.ts`)**:
+    - ใน `onUpdateSettings`: ตรวจสอบว่าถ้ากระดานเป็น DreamDEX และมีการส่งสัญลักษณ์ของ CEX (เช่น `BTCUSDT`, `BTCFDUSD`, `ETHUSDT`) เข้ามาในขณะที่เทรดคู่ `SOMI:USDSO` ระบบจะเพิกเฉยต่อการสลับเหรียญและคงคู่เหรียญเดิม (`SOMI:USDSO`) ไว้โดยอัตโนมัติ ไม่แปลงเป็น `WBTC:USDSO` หรือ `WETH:USDSO` มั่ว
+  - **4. ปรับปรุง `loadPersistentConfig` (`src/config.ts`)**:
+    - หากรันบนกระดาน `dreamdex` และไม่มี `symbol` ใน Database ให้ Default เป็น `"SOMI:USDSO"` แทน `"BTCUSDT"`
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - `node --check public/app.js` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.92` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

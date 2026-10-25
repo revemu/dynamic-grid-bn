@@ -4149,11 +4149,12 @@
         if (el && val !== undefined) el.checked = Boolean(val);
       };
 
-      setVal("cfg_symbol", data.symbol || "BTCUSDT");
+      const currentExchange = (data.exchange || "binance").toLowerCase();
+      const defaultSym = currentExchange === "dreamdex" ? "SOMI:USDSO" : "BTCFDUSD";
+      setVal("cfg_symbol", data.symbol || defaultSym);
       setVal("cfg_exchange", data.exchange || "binance");
       setVal("cfg_strategyType", data.strategyType || "dynamic_grid");
-      const currentExchange = (data.exchange || "binance").toLowerCase();
-      renderTopSymbolOptions(currentExchange, data.symbol);
+      renderTopSymbolOptions(currentExchange, data.symbol || defaultSym);
       updateExchangeFieldsVisibility(currentExchange);
       setVal("cfg_binanceApiKey", data.binanceApiKey || "");
       setVal("cfg_binanceApiSecret", data.binanceApiSecret || "");
@@ -4738,7 +4739,9 @@
         const entered = prompt("กรอกชื่อคู่เหรียญที่ต้องการเทรด (เช่น BTCFDUSD, SOLFDUSD, DOGEFDUSD):");
         if (!entered || !entered.trim()) {
           const navPill = document.getElementById("navSymbolBadge");
-          elTopSymbolSelect.value = navPill ? navPill.textContent.replace(/[\/\s]/g, "") : "BTCUSDT";
+          const isDEX = document.getElementById("logoBadge")?.textContent?.includes("DREAMDEX");
+          const fallbackSym = isDEX ? "SOMI:USDSO" : "BTCFDUSD";
+          elTopSymbolSelect.value = navPill ? navPill.textContent.replace(/[\/\s]/g, "") : fallbackSym;
           return;
         }
         newSym = entered.trim().toUpperCase().replace(/[\/\-_:]/g, "");

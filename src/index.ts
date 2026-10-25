@@ -311,7 +311,19 @@ async function main(): Promise<void> {
       const privateKeyChanged = s.dreamdexPrivateKey && s.dreamdexPrivateKey !== "******";
 
       const normPrevSymbol = (prevSymbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
-      const normNextSymbol = (s.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+      let normNextSymbol = (s.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+
+      // 🛡️ DreamDEX Accidental CEX Symbol Guard:
+      // If running on DreamDEX and incoming symbol is an accidental CEX symbol (e.g. BTCUSDT, BTCFDUSD, ETHUSDT)
+      // while user was trading SOMI/USDSO, ignore the accidental switch and preserve active SOMI pair!
+      if (!exchangeChanged && targetExchangeName === "dreamdex" && (normNextSymbol === "BTCUSDT" || normNextSymbol === "BTCFDUSD" || normNextSymbol === "ETHUSDT" || normNextSymbol === "ETHFDUSD")) {
+        if (normPrevSymbol.startsWith("SOMI") || !normPrevSymbol) {
+          log(`🛡️ [SYMBOL GUARD] Ignored accidental CEX symbol '${normNextSymbol}' on DreamDEX; keeping active pair '${prevSymbol || "SOMI:USDSO"}'`);
+          normNextSymbol = normPrevSymbol || "SOMIUSDSO";
+          s.symbol = prevSymbol || "SOMI:USDSO";
+        }
+      }
+
       const symbolChanged = Boolean(normNextSymbol && normNextSymbol !== normPrevSymbol);
 
       // Lock Trading Pair & Exchange switch when bot holds an active position

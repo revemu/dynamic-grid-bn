@@ -323,6 +323,9 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.symbol) {
         merged.symbol = String(saved.symbol).toUpperCase().replace(/[\/\-_:]/g, "");
         merged.binanceSymbol = String(saved.symbol).toLowerCase().replace(/[\/\-_:]/g, "");
+      } else if (saved.exchange === "dreamdex" || process.env.EXCHANGE === "dreamdex") {
+        merged.symbol = "SOMI:USDSO";
+        merged.binanceSymbol = "somiusdt";
       }
       if (saved.maxInventoryQuote !== undefined) {
         merged.maxInventoryQuote = Number(saved.maxInventoryQuote);
