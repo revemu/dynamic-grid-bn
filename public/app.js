@@ -661,6 +661,7 @@
   let lineSwingTp1 = null;
   let lineSwingTp2 = null;
   let lineSwingSl = null;
+  let lineSwingNextEntry = null;
   let lineHtfCeil = null;
   let lineHtfFloor = null;
   let linePoc = null;
@@ -1170,11 +1171,17 @@
     // Update Signal Banner
     if (elSignalType && elSignalDesc) {
       if (pos) {
-        elSignalType.textContent = pos.tp1Executed
-          ? "🚀 TP1 Done — Trailing Trend"
-          : `📈 In Swing Position (${pos.signalType})`;
-        elSignalType.style.color = "#10b981";
-        elSignalDesc.textContent = pos.reason || "Holding position with dynamic SL & TP targets";
+        if (plan.isTrappedPosition) {
+          elSignalType.textContent = "⚠️ Trapped Position (TP Aligned to TL)";
+          elSignalType.style.color = "#f59e0b";
+          elSignalDesc.textContent = `Entry $${fmtPrice(pos.entryPrice)} is near/above trendline. Target adjusted to Trendline for clean breakeven exit.`;
+        } else {
+          elSignalType.textContent = pos.tp1Executed
+            ? "🚀 TP1 Done — Trailing Trend"
+            : `📈 In Swing Position (${pos.signalType})`;
+          elSignalType.style.color = "#10b981";
+          elSignalDesc.textContent = pos.reason || "Holding position with dynamic SL & TP targets";
+        }
       } else if (signal && signal.hasSignal) {
         let typeBadge = "⭐ Higher Low (HL) Base Setup";
         if (signal.signalType === "LL_RETEST_BOUNCE") typeBadge = "💎 Major LL Retest Bounce Setup";
@@ -1216,10 +1223,13 @@
     }
     if (elEntryTitle && elEntryStatus) {
       if (pos) {
-        elEntryTitle.textContent = "🚀 จุดเข้าซื้อจริง (Active Entry)";
+        elEntryTitle.textContent = plan.isTrappedPosition ? "⚠️ เข้าค้างเหนือ LL (Active Entry)" : "🚀 จุดเข้าซื้อจริง (Active Entry)";
         const currentGain = entryPrice > 0 ? ((refPrice - entryPrice) / entryPrice) * 100 : 0;
         const gainSign = currentGain >= 0 ? "+" : "";
-        elEntryStatus.textContent = `PnL: ${gainSign}${currentGain.toFixed(2)}%`;
+        const nextLlNote = plan.nextPlannedEntryPrice && Math.abs(plan.nextPlannedEntryPrice - entryPrice) / entryPrice >= 0.004
+          ? `Next LL: $${fmtPrice(plan.nextPlannedEntryPrice)} | `
+          : "";
+        elEntryStatus.textContent = `${nextLlNote}PnL: ${gainSign}${currentGain.toFixed(2)}%`;
         elEntryStatus.style.color = currentGain >= 0 ? "#10b981" : "#ef4444";
       } else if (signal && signal.hasSignal) {
         elEntryTitle.textContent = "🎯 จุดเข้าซื้อพร้อม (Ready Entry)";
@@ -2694,6 +2704,22 @@
           try { candleSeries.removePriceLine(lineSwingSl); } catch (_) {}
           lineSwingSl = null;
         }
+
+        // Swing Next Entry Line (Dotted Light Blue) when holding a position above new LL
+        const nextPlannedEntry = plan.nextPlannedEntryPrice;
+        if (pos && nextPlannedEntry > 0 && Math.abs(nextPlannedEntry - entryPrice) / entryPrice >= 0.004) {
+          lineSwingNextEntry = setPriceLine(lineSwingNextEntry, {
+            price: nextPlannedEntry,
+            color: "#38bdf8",
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: "NEXT ENTRY (Near LL)",
+          });
+        } else if (lineSwingNextEntry) {
+          try { candleSeries.removePriceLine(lineSwingNextEntry); } catch (_) {}
+          lineSwingNextEntry = null;
+        }
       } else {
         // Clear Swing Lines when in Grid mode
         if (lineSwingEntry) {
@@ -2711,6 +2737,10 @@
         if (lineSwingSl) {
           try { candleSeries.removePriceLine(lineSwingSl); } catch (_) {}
           lineSwingSl = null;
+        }
+        if (lineSwingNextEntry) {
+          try { candleSeries.removePriceLine(lineSwingNextEntry); } catch (_) {}
+          lineSwingNextEntry = null;
         }
 
         const buyPcts = Array.isArray(data.buyLevelPcts) && data.buyLevelPcts.length >= 5

@@ -4048,3 +4048,42 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ซ่อมแซมรายการ Swing ที่เคยถูกตีเป็น `CANCELLED` ให้กลับมาเป็น `FILLED` พร้อม `action` และ `pnl` ที่ถูกต้อง
      - สร้างรายการ `BUY_FILL` ย้อนหลังอัตโนมัติสำหรับ `activeSwingPosition` ที่กำลังถือครองอยู่แต่ยังไม่มีบันทึกใน `db.orders` (กู้คืนไม้ซื้อ `0.00185 BTC @ $80,985.025` บน `:3334`)
      - กู้คืนข้อมูลธุรกรรม On-Chain จริงจาก Somnia Indexer สำหรับรอบเทรด Swing บน `:3333` (`SOMI:USDSO` ซื้อ `308.26 SOMI @ $0.1742` Tx `0x0b737c63...` และขาย Stop Loss `308.26 SOMI @ $0.1710` Tx `0x93a52cd1...` ขาดทุน `-$0.9864`) กลับเข้าสู่ฐานข้อมูลและหน้าแดชบอร์ดอย่างครบถ้วน
+
+
+---
+
+## 95. v0.2.95 — Channel Stability, Trendline Ceiling Target Sync, Trapped Position Escape & Self-Healing TP Coverage (`src/strategy/swing/`, `src/market-structure/`, `public/`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **กรอบราคาเลื่อนหนีและสั่นไหวระหว่างแท่งเทียน (Intra-candle Channel Jitter & Retest Invalidation)**:
+   - ใน `src/strategy/swing/index.ts` เมธอด `tick()` คำนวณ `dowEngine.getStructure(refPrice)` ทุกวินาทีโดยไม่ได้แคชระดับกรอบราคาระหว่างแท่งเทียน ทำให้กรอบและเส้นระดับ Entry/TP ขยับตามราคา Live Ticks ตลอดเวลา
+   - ใน `src/market-structure/channel-engine.ts` และ `swing-detector.ts`: `candidateLows = confirmedLows.filter(l => l.price <= price)` ขาดบัฟเฟอร์การย่อทดสอบ (Retest buffer) ทำให้เมื่อราคาลงมาแตะหรือไส้เทียนแหย่ทะลุเหว `LL` เพียงเล็กน้อย (`$0.1700` vs `$0.1701`) เหวยืนยันจะถูกตัดทิ้งทันทีจนกรอบล้มกลายเป็น `WARMUP`
+2. **บั๊ก `tlAnchorHigh` และการคำนวณเพดานคลื่นชนยอดในอดีต (`signals.ts`)**:
+   - ใน `SwingSignalDetector.evaluateSetup`: บรรทัด `tlAnchorHigh = Math.max(tlResistancePrice, downtrendLine.p2?.price ?? 0, postBottomHighs.length > 0 ? Math.max(...postBottomHighs) : 0)` รวมยอดคลื่นก่อนการทุบ (`p1` เช่น `$84,524.87`) เข้าไปใน `Math.max` ทำให้ `tlAnchorHigh` เท่ากับหรือมากกว่า `majorCeil` เสมอ และบล็อกไม่ให้เพดานถูกจำกัดด้วยเส้นกด `downtrendLine`
+   - ผลลัพธ์: `plannedTp2` ค้างอยู่ที่ยอดเก่า `$84,524.87` (3,500 USD เหนือเส้นกด) แม้ตลาดจะมีเส้นกดและทำ `LH` ต่ำลงมาเรื่อยๆ
+3. **การเข้าซื้อจากไส้เทียนสดที่ยังไม่ปิดแท่ง (Intrabar Live Wick False Triggers)**:
+   - `SwingSignalDetector.checkBullishReversal` ตรวจสอบแท่งเทียนที่ยังไม่ปิด (`isClosed === false`) ทำให้เมื่อราคาย่อตัวและดีดกลับในแท่ง 15m ปัจจุบัน ระบบจะตรวจพบเป็น `Pinbar Rejection (Lower wick 100%)` และยิงออเดอร์ก่อนที่แท่งเทียนจะปิดยืนยันจริง
+4. **บั๊กออเดอร์ Maker TP หดตัวลงครึ่งหนึ่ง (Halving TP Coverage Bug) และโพซิชันติดดอยค้าง (Trapped Position Lockup)**:
+   - ใน `placeMakerTakeProfitOrders`: `totalPositionQty` ถูกจำกัดด้วย `this.walletBaseBalance` (ซึ่งดึงมาเฉพาะ `baseFree`) เมื่อมีออเดอร์ TP วางอยู่บนกระดาน เหรียญครึ่งหนึ่งจะถูกล็อกใน `baseLocked` ทำให้รอบถัดไปยอดที่จะวาง TP ถูกหารสองซ้ำลงไปอีก (เช่น `0.00046 + 0.00046 = 0.00092 BTC` แทนที่จะเป็น `0.00185 BTC` บน `:3334`)
+   - ใน `manageActivePosition`: เงื่อนไข `minProfitablePrice` (`pos.entryPrice * (1 + minNetProfitPct)`) บล็อกไม่ให้ `pos.tp1Price` ลดต่ำลงกว่าราคาทุนบวกกำไร เมื่อเส้นกดลดต่ำลงมาทับจุดเข้าซื้อ ทำให้โพซิชันที่ติดดอยค้างไม่สามารถตั้ง TP ออกที่เส้นกดได้ และเงื่อนไข `plannedTp2Price > pos.tp1Price * 1.005` บล็อกไม่ให้ TP2 ปรับลดลงตามยอด `LH` ใหม่
+5. **`isPaused` บล็อกการดูแลโพซิชันที่เปิดอยู่ (`manageActivePosition`)**:
+   - เมื่อกด Pause บอทจะหยุดทำงานทั้ง `executeSwingEntry` และ `manageActivePosition` ทำให้ไม่มีการเฝ้าระวัง Stop Loss หรือ Take Profit เลย
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Channel Stability & Confirmed Structure Caching (`src/market-structure/`, `src/strategy/swing/`)**:
+   - ใน `SwingTraderStrategy`: เพิ่ม `confirmedStructure` แคชระดับกรอบราคาไว้ระหว่างแท่งเทียน และรีคำนวณเฉพาะเมื่อแท่งเทียนปิดสมบูรณ์ (`lastClosedTime !== this.confirmedStructure.candleTime`) หรือมีการเปลี่ยนการตั้งค่า
+   - ใน `ChannelEngine` & `SwingDetector`: เพิ่ม Retest Tolerance Buffer (`l.price <= price * 1.004`) และกำหนดให้การทำลายเหว `LL` ต้องเกิดจากแท่งเทียนที่ปิดต่ำกว่า (`c.isClosed !== false && c.close < v.price * 0.997`) หรือทุบหลุดลึกจริง (`< v.price * 0.995`) ป้องกันไม่ให้ไส้เทียนทดสอบทำลายฐานกรอบ
+   - ใน `DowStructureEngine.getStructure`: เมื่อเปิด `useOnlyClosedCandles` จะใช้ `lastCandle.close` เป็นจุดอ้างอิงโครงสร้าง
+2. **Trendline Ceiling Target Sync & Closed-Candle Reversal (`src/strategy/swing/signals.ts`)**:
+   - แก้ไข `tlAnchorHigh`: เมื่อมีเส้นกด `downtrendLine` ที่ยังไม่ถูกทำลาย จะจำกัดเพดานคลื่น `majorCeil` ตาม `Math.max(tlResistancePrice, downtrendLine.p2.price, latestLhPrice)` โดยไม่นำยอดคลื่นก่อนการทุบมารวม
+   - ปรับ `plannedTp1` ให้ดักขายใต้เส้นกด (`tlResistancePrice * 0.9985`) และปรับ `plannedTp2` ไปที่จุดทดสอบ `LH` ล่าสุด (`downtrendLine.p2.price * 0.996`)
+   - ใน `checkBullishReversal`: กรองเฉพาะแท่งเทียนที่ปิดสมบูรณ์แล้ว (`c.isClosed !== false`) เท่านั้น
+3. **Trapped Position Escape Mode & Self-Healing TP Coverage (`src/strategy/swing/index.ts`)**:
+   - จัดการโพซิชันติดดอย (`isTrapped`): หากจุดเข้าซื้อเดิมอยู่ใกล้หรือสูงกว่าเส้นกดปัจจุบัน หรือราคาทำ `LL` ใหม่ต่ำกว่าจุดเข้าซื้อ ระบบจะปลดล็อกข้อจำกัด `minNetProfitPct` เพื่อปรับ `TP1` ไปที่จุดคุ้มทุนบวกค่าธรรมเนียมใต้เส้นกด (`Math.min(pos.entryPrice * 1.0005, tlSellTarget)`) และปรับ `TP2` ลงมาที่ยอด `LH` ใหม่ เพื่อให้โพซิชันสามารถออกได้อย่างปลอดภัยที่แนวต้านเส้นกด
+   - ระบบ Self-Healing TP Coverage: เพิ่ม `walletBaseLocked` และ `walletBaseTotal = baseFree + baseLocked`; ตรวจสอบขนาดของออเดอร์ TP บนกระดานทุก 15 วินาที หากครอบคลุมน้อยกว่า 90% ของขนาดโพซิชันจริง ระบบจะยกเลิกออเดอร์เดิม ปลดล็อกยอดเหรียญในกระเป๋า และวางออเดอร์ TP1 + TP2 ใหม่เต็มจำนวน 100% ทันที
+   - กวาดเหรียญตกค้าง (Orphan Sweeping): เมื่อ TP2 ทำงานสำเร็จ หากมียอดเหรียญตกค้างในกระเป๋าเกิน `minQty` ระบบจะส่งคำสั่งขาย Market เพื่อปิดรอบเทรดอย่างสมบูรณ์ 100%
+   - ปรับ `tick()` ให้ `manageActivePosition` (Stop Loss, Take Profit, Dynamic Frame Sync, Trendline Exit) ทำงานเสมอแม้ว่าบอทจะถูกสั่ง `isPaused` เพื่อปกป้องความปลอดภัยของเงินทุนตลอดเวลา
+4. **NEXT ENTRY (Near LL) Line & Dashboard Telemetry (`src/strategy/swing/index.ts`, `public/app.js`, `public/index.html`)**:
+   - ส่ง `nextPlannedEntryPrice`, `nextPlannedSlPrice`, และ `isTrappedPosition` ผ่าน `swingPlan` ใน Telemetry
+   - บนหน้าชาร์ต: แสดงเส้นประสีฟ้า `NEXT ENTRY (Near LL)` ที่ระดับราคาฐานใหม่ แม้ว่าบอทจะถือโพซิชันค้างอยู่ข้างบน พร้อมแสดงป้ายสถานะ `⚠️ Trapped Position (TP Aligned to TL)` บนการ์ดกลยุทธ์
+   - อัปเกรดเวอร์ชันเป็น `0.2.95` ใน `package.json`, `src/version.ts` และ `app.js?v=3.33` ใน `public/index.html`

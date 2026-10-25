@@ -203,7 +203,7 @@ export class DowStructureEngine {
     const candles = options?.useOnlyClosedCandles ? this.candleManager.getClosedCandles() : this.candleManager.getCandles();
     const n = candles.length;
     const lastCandle = n > 0 ? candles[n - 1] : undefined;
-    const price = (options?.useOnlyClosedCandles && lastCandle) ? (currentPrice ?? lastCandle.close) : (currentPrice ?? fallbackPrice);
+    const price = (options?.useOnlyClosedCandles && lastCandle) ? lastCandle.close : (currentPrice ?? fallbackPrice);
     const k = Math.max(2, this.pivotWindow || 3);
     const mode = options?.mode ?? "DOW_SWINGS";
     const useTrueWick = options?.useTrueWick ?? this.useTrueWick ?? true;

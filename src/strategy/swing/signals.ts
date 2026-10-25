@@ -29,24 +29,26 @@ export interface SwingSignalResult {
 export class SwingSignalDetector {
   /**
    * Helper to inspect recent candles for a bullish reversal pattern at support.
+   * Strictly evaluates only fully closed candles to avoid fake triggers on live unclosed wicks.
    */
   private static checkBullishReversal(candles: Candle[]): { isReversal: boolean; pattern: string } {
-    if (!candles || candles.length < 2) {
-      return { isReversal: false, pattern: "Insufficient candle history" };
+    const closedCandles = candles.filter((c) => c.isClosed !== false);
+    if (!closedCandles || closedCandles.length < 2) {
+      return { isReversal: false, pattern: "Insufficient closed candle history" };
     }
 
-    const curr = candles[candles.length - 1];
-    const prev = candles[candles.length - 2];
+    const curr = closedCandles[closedCandles.length - 1];
+    const prev = closedCandles[closedCandles.length - 2];
     if (!curr || !prev) return { isReversal: false, pattern: "No candle data" };
 
     const currRange = curr.high - curr.low;
-    const currBody = curr.close - curr.open;
+    const currBody = Math.abs(curr.close - curr.open);
     const prevRange = prev.high - prev.low;
     const prevBody = prev.close - prev.open;
 
     if (currRange <= 0) return { isReversal: false, pattern: "Zero range" };
 
-    // 1. Bullish Hammer / Pinbar Rejection: Long lower wick >= 38% and close near high
+    // 1. Bullish Hammer / Pinbar Rejection: Long lower wick >= 38% and close near high on a closed bar
     const lowerWick = Math.min(curr.open, curr.close) - curr.low;
     const lowerWickRatio = lowerWick / currRange;
     if (lowerWickRatio >= 0.38 && curr.close >= curr.low + currRange * 0.45) {
@@ -177,15 +179,15 @@ export class SwingSignalDetector {
     );
     const tlResistancePrice = hasActiveDowntrendTl ? downtrendLine!.currentLinePrice : 0;
 
-    // If an unbroken descending trendline is active, anchor the wave ceiling to the trendline structure
+    // If an unbroken descending trendline is active, anchor the wave ceiling to the trendline structure (P2 / latest LH)
     if (hasActiveDowntrendTl && downtrendLine) {
-      const tlAnchorHigh = Math.max(
-        tlResistancePrice,
-        downtrendLine.p2?.price ?? 0,
-        postBottomHighs.length > 0 ? Math.max(...postBottomHighs) : 0,
-      );
-      if (tlAnchorHigh > majorFloor && tlAnchorHigh < majorCeil) {
-        majorCeil = tlAnchorHigh;
+      const p2Price = downtrendLine.p2?.price ?? 0;
+      const latestLhPrice = (waveCycle?.lastLh?.price && waveCycle.lastLh.price > majorFloor && waveCycle.lastLh.time >= majorFloorTime)
+        ? waveCycle.lastLh.price
+        : 0;
+      const trendlineCeilAnchor = Math.max(tlResistancePrice, p2Price, latestLhPrice);
+      if (trendlineCeilAnchor > majorFloor && trendlineCeilAnchor < majorCeil) {
+        majorCeil = trendlineCeilAnchor;
       }
     }
 
@@ -224,8 +226,8 @@ export class SwingSignalDetector {
     // TP2 is Retest of Post-Bottom Major High / Trendline P2-P1 Anchor
     let plannedTp2 = majorCeil * 0.996;
     if (hasActiveDowntrendTl && downtrendLine?.p2?.price && downtrendLine.p2.price > plannedTp1 * 1.008) {
-      // When capped by a descending trendline, anchor TP2 to the recent LH / post-bottom peak
-      const postPeakTarget = Math.max(downtrendLine.p2.price, postBottomHighs.length > 0 ? Math.max(...postBottomHighs) : 0) * 0.996;
+      // When capped by a descending trendline, anchor TP2 to the recent LH / trendline anchor
+      const postPeakTarget = downtrendLine.p2.price * 0.996;
       if (postPeakTarget > plannedTp1 && postPeakTarget < plannedTp2) {
         plannedTp2 = postPeakTarget;
       }

@@ -77,7 +77,16 @@ export class SwingTraderStrategy implements IStrategy {
   public isSwitchingSymbol = false;
 
   public walletBaseBalance = 0;
+  public walletBaseLocked = 0;
+  public walletBaseTotal = 0;
   public walletQuoteBalance = 0;
+  public walletQuoteLocked = 0;
+  public walletQuoteTotal = 0;
+
+  public confirmedStructure?: {
+    structure: DowStructure;
+    candleTime: number;
+  };
 
   // Swing Strategy Specific State
   public swingState: SwingTradeState = "WAITING_SETUP";
@@ -466,11 +475,19 @@ export class SwingTraderStrategy implements IStrategy {
     try {
       const b = await this.binance.getAccountBalances(this.symbolInfo.symbol);
       this.walletBaseBalance = b.baseFree ?? 0;
+      this.walletBaseLocked = b.baseLocked ?? 0;
+      this.walletBaseTotal = (b.baseFree ?? 0) + (b.baseLocked ?? 0);
       this.walletQuoteBalance = b.quoteFree ?? 0;
+      this.walletQuoteLocked = b.quoteLocked ?? 0;
+      this.walletQuoteTotal = (b.quoteFree ?? 0) + (b.quoteLocked ?? 0);
       const addr = (this.binance as any).getWalletAddress?.() || `${this.symbolInfo.baseAsset}/${this.symbolInfo.quoteAsset}`;
       return {
         base: this.walletBaseBalance,
         quote: this.walletQuoteBalance,
+        baseLocked: this.walletBaseLocked,
+        baseTotal: this.walletBaseTotal,
+        quoteLocked: this.walletQuoteLocked,
+        quoteTotal: this.walletQuoteTotal,
         somi: this.walletBaseBalance,
         usdso: this.walletQuoteBalance,
         address: addr,
@@ -525,6 +542,7 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public onCandleClosed(candle: Candle): void {
+    this.confirmedStructure = undefined;
     this.log(`[SwingTrader] Confirmed candle closed at $${candle.close.toFixed(4)} (Time: ${new Date(candle.time * 1000).toLocaleTimeString()})`);
     this.emitTelemetryTick();
   }
@@ -818,23 +836,42 @@ export class SwingTraderStrategy implements IStrategy {
         await this.syncOnChainOrders().catch(() => {});
       }
 
-      const volumeProfile = this.getVolumeProfile();
-      const htfStructure = this.getHtfStructure(refPrice);
+      const adjustOnClosedOnly = this.cfg.adjustChannelOnClosedOnly !== false;
+      const lastClosedCandle = this.dowEngine?.getLastClosedCandle();
+      const lastClosedTime = lastClosedCandle?.time ?? 0;
 
-      // Extract market structure
-      const structure = this.dowEngine?.getStructure(refPrice, undefined, {
-        mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
-        minChannelWidthPct: this.cfg.minChannelWidthPct,
-        maxChannelWidthPct: this.cfg.maxChannelWidthPct,
-        atrMinMultiplier: this.cfg.atrMinMultiplier,
-        atrMaxMultiplier: this.cfg.atrMaxMultiplier,
-        useTrueWick: this.cfg.useTrueWick,
-        wickThresholdPct: this.cfg.wickThresholdPct,
-        srLookbackCandles: this.cfg.srLookbackCandles,
-        useOnlyClosedCandles: this.cfg.adjustChannelOnClosedOnly,
-        volumeProfile,
-        htfStructure,
-      });
+      // Extract market structure (cached between closed candles to eliminate 1s live tick jitter)
+      let structure: DowStructure | undefined;
+      if (
+        adjustOnClosedOnly &&
+        this.confirmedStructure &&
+        lastClosedTime > 0 &&
+        this.confirmedStructure.candleTime === lastClosedTime
+      ) {
+        structure = this.confirmedStructure.structure;
+      } else {
+        const volumeProfile = this.getVolumeProfile();
+        const htfStructure = this.getHtfStructure(refPrice);
+        structure = this.dowEngine?.getStructure(refPrice, undefined, {
+          mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
+          minChannelWidthPct: this.cfg.minChannelWidthPct,
+          maxChannelWidthPct: this.cfg.maxChannelWidthPct,
+          atrMinMultiplier: this.cfg.atrMinMultiplier,
+          atrMaxMultiplier: this.cfg.atrMaxMultiplier,
+          useTrueWick: this.cfg.useTrueWick,
+          wickThresholdPct: this.cfg.wickThresholdPct,
+          srLookbackCandles: this.cfg.srLookbackCandles,
+          useOnlyClosedCandles: adjustOnClosedOnly,
+          volumeProfile,
+          htfStructure,
+        });
+        if (structure && lastClosedTime > 0) {
+          this.confirmedStructure = {
+            structure,
+            candleTime: lastClosedTime,
+          };
+        }
+      }
 
       const swingCfg: SwingStrategyConfig = {
         minRiskReward: this.cfg.swingMinRiskReward ?? 2.0,
@@ -850,16 +887,18 @@ export class SwingTraderStrategy implements IStrategy {
         enableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry ?? true,
       };
 
-      // Only execute entries/exits if bot is NOT paused
-      const candles = this.dowEngine?.getCandles() ?? [];
+      // Evaluate setup strictly on confirmed closed candles to eliminate false intraday wick triggers
+      const closedCandles = this.dowEngine?.getClosedCandles() ?? [];
+      const candles = closedCandles.length > 0 ? closedCandles : (this.dowEngine?.getCandles() ?? []);
       const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
       this.lastSignal = signal;
 
-      if (!this.isPaused) {
-        if (this.activePosition) {
-          // 1. Manage Active Position (SL / TP / Trailing Stop / Dynamic Trendline Exit & Frame Sync)
-          await this.manageActivePosition(refPrice, swingCfg, structure, candles);
-        } else if (this.pendingEntryOrder) {
+      // 🛡️ Position protection must NEVER be paused! Active positions (SL/TP/Trendline exit) are managed continuously.
+      if (this.activePosition) {
+        // 1. Manage Active Position (SL / TP / Trailing Stop / Dynamic Trendline Exit & Frame Sync)
+        await this.manageActivePosition(refPrice, swingCfg, structure, candles);
+      } else if (!this.isPaused) {
+        if (this.pendingEntryOrder) {
           // 2. Manage Pending Maker Entry Order
           await this.managePendingEntryOrder(refPrice, swingCfg, structure, candles);
         } else {
@@ -975,10 +1014,11 @@ export class SwingTraderStrategy implements IStrategy {
 
   private async placeMakerTakeProfitOrders(pos: ActiveSwingPosition, cfg: SwingStrategyConfig): Promise<void> {
     const gasReserve = this.getEffectiveGasReserveBase();
-    const availableBase = Math.max(0, this.walletBaseBalance - gasReserve);
+    // Use total base balance (free + locked) so existing resting orders do not cause progressive halving
+    const totalSafeWallet = Math.max(0, (this.walletBaseTotal || this.walletBaseBalance) - gasReserve);
     let totalPositionQty = pos.qty;
-    if (availableBase > 0 && availableBase < totalPositionQty) {
-      totalPositionQty = availableBase;
+    if (totalSafeWallet > 0 && totalSafeWallet < totalPositionQty) {
+      totalPositionQty = totalSafeWallet;
     }
     totalPositionQty = this.roundQty(totalPositionQty);
 
@@ -1152,6 +1192,12 @@ export class SwingTraderStrategy implements IStrategy {
 
     const now = Date.now();
     if (now - this.lastTpOrderAdjustTime >= 15_000) {
+      // Check if position is trapped (entry was placed higher near/above current descending trendline or above new LL)
+      const isTrapped = Boolean(
+        (hasActiveDowntrendTl && downtrendLine && downtrendLine.currentLinePrice <= pos.entryPrice * 1.008) ||
+        (structure?.bottomBound && structure.bottomBound > 0 && structure.bottomBound < pos.entryPrice * 0.985)
+      );
+
       const minProfitablePrice = this.roundPrice(
         pos.entryPrice * (1 + Math.max(0.001, (this.cfg.minNetProfitPct ?? 0.20) / 100)),
       );
@@ -1163,15 +1209,21 @@ export class SwingTraderStrategy implements IStrategy {
         if (hasActiveDowntrendTl && downtrendLine) {
           const tlSellTarget = this.roundPrice(downtrendLine.currentLinePrice * 0.9985);
           if (tlSellTarget > 0 && tlSellTarget < desiredTp1) {
-            desiredTp1 = Math.max(minProfitablePrice, tlSellTarget);
+            // If position is trapped, allow exiting at breakeven-plus-fees below trendline rather than demanding full minNetProfitPct
+            if (isTrapped) {
+              const breakevenEscapePrice = this.roundPrice(pos.entryPrice * 1.0005);
+              desiredTp1 = Math.min(breakevenEscapePrice, tlSellTarget);
+            } else {
+              desiredTp1 = Math.max(minProfitablePrice, tlSellTarget);
+            }
           }
         }
         if (
           this.lastSignal?.plannedTp1Price &&
-          this.lastSignal.plannedTp1Price > minProfitablePrice &&
-          this.lastSignal.plannedTp1Price < desiredTp1
+          this.lastSignal.plannedTp1Price < desiredTp1 &&
+          (isTrapped || this.lastSignal.plannedTp1Price > minProfitablePrice)
         ) {
-          desiredTp1 = this.roundPrice(Math.max(minProfitablePrice, this.lastSignal.plannedTp1Price));
+          desiredTp1 = this.roundPrice(this.lastSignal.plannedTp1Price);
         }
 
         if (desiredTp1 < pos.tp1Price && Math.abs(desiredTp1 - pos.tp1Price) / pos.tp1Price >= 0.0015) {
@@ -1180,43 +1232,67 @@ export class SwingTraderStrategy implements IStrategy {
           targetsChanged = true;
           this.log(
             `[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP1 $${oldTp1.toFixed(4)} -> $${pos.tp1Price.toFixed(4)}${
+              isTrapped ? " (Trapped Position Escape Mode)" : ""
+            }${
               hasActiveDowntrendTl ? ` (Aligned with Descending Trendline $${downtrendLine!.currentLinePrice.toFixed(4)})` : ""
             }`,
           );
-          if (isMakerMode && pos.tp1OrderId) {
-            try {
-              await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId);
-            } catch {}
-            pos.tp1OrderId = undefined;
-          }
         }
       }
 
-      // 2. Dynamically adjust TP2 to updated post-bottom structural peak if frame shifted lower
+      // 2. Dynamically adjust TP2 to updated post-bottom structural peak / LH if frame shifted lower
+      const targetTp2Candidate = (hasActiveDowntrendTl && downtrendLine?.p2?.price && isTrapped)
+        ? Math.max(pos.tp1Price * 1.001, this.roundPrice(downtrendLine.p2.price * 0.998))
+        : (this.lastSignal?.plannedTp2Price ? this.roundPrice(this.lastSignal.plannedTp2Price) : 0);
+
       if (
-        this.lastSignal?.plannedTp2Price &&
-        this.lastSignal.plannedTp2Price > pos.tp1Price * 1.005 &&
-        this.lastSignal.plannedTp2Price < pos.tp2Price * 0.995
+        targetTp2Candidate > pos.tp1Price &&
+        targetTp2Candidate < pos.tp2Price * 0.995 &&
+        Math.abs(targetTp2Candidate - pos.tp2Price) / pos.tp2Price >= 0.002
       ) {
-        const nextTp2 = this.roundPrice(this.lastSignal.plannedTp2Price);
-        if (nextTp2 > pos.tp1Price && Math.abs(nextTp2 - pos.tp2Price) / pos.tp2Price >= 0.002) {
-          const oldTp2 = pos.tp2Price;
-          pos.tp2Price = nextTp2;
-          targetsChanged = true;
-          this.log(`[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP2 $${oldTp2.toFixed(4)} -> $${pos.tp2Price.toFixed(4)}`);
-          if (isMakerMode && pos.tp2OrderId) {
-            try {
-              await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId);
-            } catch {}
-            pos.tp2OrderId = undefined;
-          }
-        }
+        const oldTp2 = pos.tp2Price;
+        pos.tp2Price = targetTp2Candidate;
+        targetsChanged = true;
+        this.log(`[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP2 $${oldTp2.toFixed(4)} -> $${pos.tp2Price.toFixed(4)}${isTrapped ? " (Lowered to LH Anchor)" : ""}`);
       }
 
       if (targetsChanged) {
         this.lastTpOrderAdjustTime = now;
         this.saveState(true);
         if (isMakerMode) {
+          // Cancel existing TP orders before placing new ones to ensure clean wallet balance unlocking
+          if (pos.tp1OrderId) {
+            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+            pos.tp1OrderId = undefined;
+          }
+          if (pos.tp2OrderId) {
+            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+            pos.tp2OrderId = undefined;
+          }
+          await this.refreshWalletBalances();
+          await this.placeMakerTakeProfitOrders(pos, cfg);
+        }
+      }
+
+      // 3. Self-Healing TP Coverage Check (ensure Maker TP orders cover 100% of pos.qty, not halved)
+      if (isMakerMode && !pos.tp1Executed) {
+        const openTp1 = pos.tp1OrderId ? this.openOrders.find((o) => o.id === pos.tp1OrderId) : undefined;
+        const openTp2 = pos.tp2OrderId ? this.openOrders.find((o) => o.id === pos.tp2OrderId) : undefined;
+        const totalRestingTpQty = (openTp1?.qty ?? 0) + (openTp2?.qty ?? 0);
+        const minQty = this.symbolInfo.minQty || 0.0001;
+        if (pos.qty >= minQty && totalRestingTpQty < pos.qty * 0.90) {
+          this.log(
+            `[SwingTrader] 🩹 Self-Healing TP Coverage: Resting TP orders (${totalRestingTpQty}) cover only ${((totalRestingTpQty / pos.qty) * 100).toFixed(0)}% of position (${pos.qty}). Canceling and re-placing full coverage TP orders...`,
+          );
+          if (pos.tp1OrderId) {
+            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+            pos.tp1OrderId = undefined;
+          }
+          if (pos.tp2OrderId) {
+            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+            pos.tp2OrderId = undefined;
+          }
+          await this.refreshWalletBalances();
           await this.placeMakerTakeProfitOrders(pos, cfg);
         }
       }
@@ -1398,6 +1474,21 @@ export class SwingTraderStrategy implements IStrategy {
             this.saveState(true);
             this.log(`[SwingTrader] 🚀 Resting Maker TP2 FILLED @ $${execPrice.toFixed(4)}! Trade cycle complete.`);
             await this.refreshWalletBalances();
+            // Check if orphan base tokens remain in inventory and sweep/sell them
+            const gasReserve = this.getEffectiveGasReserveBase();
+            const orphanBase = Math.max(0, this.walletBaseBalance - gasReserve);
+            const minQty = this.symbolInfo.minQty || 0.0001;
+            const minNotional = this.symbolInfo.minNotional || 5;
+            if (orphanBase >= minQty && orphanBase * execPrice >= minNotional) {
+              this.log(`[SwingTrader] 🧹 Sweeping remaining orphan base tokens (${orphanBase} ${this.symbolInfo.baseAsset}) after TP2 completion...`);
+              await this.binance.placeOrder({
+                symbol: this.symbolInfo.symbol,
+                side: "SELL",
+                type: "MARKET",
+                qty: this.roundQty(orphanBase),
+              }).catch((e) => this.log(`[SwingTrader] Orphan sweep error: ${e}`));
+              await this.refreshWalletBalances();
+            }
             await this.syncOnChainOrders();
             return;
           }
@@ -1608,22 +1699,36 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public emitTelemetryTick(): void {
-    const volumeProfile = this.getVolumeProfile();
+    const adjustOnClosedOnly = this.cfg.adjustChannelOnClosedOnly !== false;
+    const lastClosedCandle = this.dowEngine?.getLastClosedCandle();
+    const lastClosedTime = lastClosedCandle?.time ?? 0;
     const htfStructure = this.getHtfStructure(this.lastRefPrice);
 
-    const structure = this.dowEngine?.getStructure(this.lastRefPrice, undefined, {
-      mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
-      minChannelWidthPct: this.cfg.minChannelWidthPct,
-      maxChannelWidthPct: this.cfg.maxChannelWidthPct,
-      atrMinMultiplier: this.cfg.atrMinMultiplier,
-      atrMaxMultiplier: this.cfg.atrMaxMultiplier,
-      useTrueWick: this.cfg.useTrueWick,
-      wickThresholdPct: this.cfg.wickThresholdPct,
-      srLookbackCandles: this.cfg.srLookbackCandles,
-      useOnlyClosedCandles: this.cfg.adjustChannelOnClosedOnly,
-      volumeProfile,
-      htfStructure,
-    });
+    let structure: DowStructure | undefined;
+    if (
+      adjustOnClosedOnly &&
+      this.confirmedStructure &&
+      lastClosedTime > 0 &&
+      this.confirmedStructure.candleTime === lastClosedTime
+    ) {
+      structure = this.confirmedStructure.structure;
+    } else {
+      const volumeProfile = this.getVolumeProfile();
+
+      structure = this.dowEngine?.getStructure(this.lastRefPrice, undefined, {
+        mode: (this.cfg.channelMode as any) || "DOW_SWINGS",
+        minChannelWidthPct: this.cfg.minChannelWidthPct,
+        maxChannelWidthPct: this.cfg.maxChannelWidthPct,
+        atrMinMultiplier: this.cfg.atrMinMultiplier,
+        atrMaxMultiplier: this.cfg.atrMaxMultiplier,
+        useTrueWick: this.cfg.useTrueWick,
+        wickThresholdPct: this.cfg.wickThresholdPct,
+        srLookbackCandles: this.cfg.srLookbackCandles,
+        useOnlyClosedCandles: adjustOnClosedOnly,
+        volumeProfile,
+        htfStructure,
+      });
+    }
     const currentMid = this.mid || this.lastRefPrice;
     const baseHeldVal = this.baseHeld();
     const invUsd = this.activePosition ? this.activePosition.qty * currentMid : (this.lots.length > 0 ? baseHeldVal * currentMid : 0);
@@ -1697,6 +1802,14 @@ export class SwingTraderStrategy implements IStrategy {
       ? this.activePosition.notionalQuote
       : (this.lastSignal?.hasSignal ? (this.walletQuoteBalance * ((this.cfg.swingMaxPositionPct ?? 60) / 100)) : 0);
     const targetHoldingPct = maxInv > 0 ? (targetInventoryQuote / maxInv) * 100 : 0;
+
+    const nextPlannedEntryPrice = this.lastSignal?.plannedEntryPrice || (floor > 0 ? floor * 1.002 : 0);
+    const nextPlannedSlPrice = this.lastSignal?.plannedSlPrice || (floor > 0 ? floor * 0.995 : 0);
+    const isTrappedPosition = Boolean(
+      this.activePosition &&
+      ((floor > 0 && this.activePosition.entryPrice > floor * 1.015) ||
+       (structure?.downtrendLine && !structure.downtrendLine.isBroken && structure.downtrendLine.currentLinePrice <= this.activePosition.entryPrice * 1.008))
+    );
 
     const telemetry = {
       time: Math.floor(Date.now() / 1000),
@@ -1815,6 +1928,9 @@ export class SwingTraderStrategy implements IStrategy {
         tp1Price,
         tp2Price,
         riskRewardRatio: rrRatio,
+        nextPlannedEntryPrice,
+        nextPlannedSlPrice,
+        isTrappedPosition,
         signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : "WAITING_LL_RETEST"),
         reason: this.activePosition?.reason || this.lastSignal?.reason || "Waiting for dip to test Major LL",
         state: this.swingState,

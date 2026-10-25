@@ -81,11 +81,14 @@ export class ChannelEngine {
       const vp = options?.volumeProfile;
       const htf = options?.htfStructure;
 
-      const candidateLows = confirmedLows.filter((l) => l.price <= price);
+      const candidateLows = confirmedLows.filter((l) => l.price <= price * 1.004);
       const isUnbrokenValley = (v: SwingPoint): boolean =>
         !confirmedLows.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
-        !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price) &&
-        !candles.some((c) => c.time > v.time && getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price);
+        !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price * 0.996) &&
+        !candles.some((c) => c.time > v.time && (
+          (c.isClosed !== false && c.close < v.price * 0.997) ||
+          getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price * 0.995
+        ));
 
       const unbrokenValleys = candidateLows
         .filter(isUnbrokenValley)
@@ -199,12 +202,15 @@ export class ChannelEngine {
       // 5. หากไม่พบคู่ที่อยู่ในเกณฑ์ความกว้างเลย ให้เข้าโหมด WARMUP (หยุดวางกริดชั่วคราวโดยไม่สร้างกรอบเทียม)
 
       const candidateHighs = confirmedHighs.filter((h) => h.price >= price);
-      const candidateLows = confirmedLows.filter((l) => l.price <= price);
+      const candidateLows = confirmedLows.filter((l) => l.price <= price * 1.004);
 
       const isUnbrokenValley = (v: SwingPoint): boolean =>
         !confirmedLows.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
-        !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price) &&
-        !candles.some((c) => c.time > v.time && getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price);
+        !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price * 0.996) &&
+        !candles.some((c) => c.time > v.time && (
+          (c.isClosed !== false && c.close < v.price * 0.997) ||
+          getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price * 0.995
+        ));
 
       const isUnbrokenPeak = (p: SwingPoint): boolean =>
         !confirmedHighs.some((later) => (later.index > p.index || later.time > p.time) && later.price > p.price) &&
@@ -216,8 +222,11 @@ export class ChannelEngine {
         const startIdx = Math.min(v.index, p.index);
         const floorIntact =
           !confirmedLows.some((l) => (l.index >= startIdx || l.time >= startTime) && l.price < v.price) &&
-          !(candidateValley && candidateValley.time >= startTime && candidateValley.price < v.price) &&
-          !candles.some((c) => c.time >= startTime && getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price);
+          !(candidateValley && candidateValley.time >= startTime && candidateValley.price < v.price * 0.996) &&
+          !candles.some((c) => c.time >= startTime && (
+            (c.isClosed !== false && c.close < v.price * 0.997) ||
+            getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price * 0.995
+          ));
         if (!floorIntact) return false;
 
         const ceilingIntact =

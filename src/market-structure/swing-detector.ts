@@ -213,8 +213,11 @@ export class SwingDetector {
   ): boolean {
     return (
       !confirmedLows.some((later) => (later.index > v.index || later.time > v.time) && later.price < v.price) &&
-      !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price) &&
-      !candles.some((c) => c.time > v.time && getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price)
+      !(candidateValley && candidateValley.time > v.time && candidateValley.price < v.price * 0.996) &&
+      !candles.some((c) => c.time > v.time && (
+        (c.isClosed !== false && c.close < v.price * 0.997) ||
+        getEffectiveLow(c, useTrueWick, wickThresholdPct) < v.price * 0.995
+      ))
     );
   }
 
@@ -247,7 +250,10 @@ export class SwingDetector {
     wickThresholdPct = 0.20,
   ): boolean {
     return !candles.some(
-      (c) => c.time > s.time && getEffectiveLow(c, useTrueWick, wickThresholdPct) < s.price,
+      (c) => c.time > s.time && (
+        (c.isClosed !== false && c.close < s.price * 0.997) ||
+        getEffectiveLow(c, useTrueWick, wickThresholdPct) < s.price * 0.995
+      ),
     );
   }
 }
