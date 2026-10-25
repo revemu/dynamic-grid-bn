@@ -264,7 +264,12 @@ export class DowEngine {
     const currentLeg: WaveLeg | undefined = legs.length > 0 ? legs[legs.length - 1] : undefined;
 
     let activeCycleSummary = "รอบคลื่น: ก่อตัว (Warmup)";
-    if (annotatedSwings.length >= 2) {
+    const latestCandle = candles[candles.length - 1];
+    const isCurrentPriceBelowLastLow = Boolean(latestCandle && lastLow && (latestCandle.close < lastLow.price * 0.999 || latestCandle.low < lastLow.price * 0.998));
+
+    if (isCurrentPriceBelowLastLow) {
+      activeCycleSummary = "รอบคลื่น: หลุดฐาน (ทุบทำ New Low)";
+    } else if (annotatedSwings.length >= 2) {
       const isBull = lastHighLabel === "HH" && lastLowLabel === "HL";
       const isBear = lastHighLabel === "LH" && lastLowLabel === "LL";
       if (isBull) {

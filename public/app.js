@@ -1194,9 +1194,20 @@
         elSignalType.style.color = "#38bdf8";
         elSignalDesc.textContent = signal.reason || "Asymmetric R:R setup qualified";
       } else {
-        elSignalType.textContent = "⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)";
-        elSignalType.style.color = "#f59e0b";
-        elSignalDesc.textContent = plan.reason || signal?.reason || "Waiting for dip to test Major LL support zone";
+        const isBroken = Boolean(
+          plan.reason?.includes("Support broken") ||
+          plan.reason?.includes("New Low") ||
+          plan.signalType === "WAITING_NEW_BASE" ||
+          data.regime === "WARMUP"
+        );
+        if (isBroken) {
+          elSignalType.textContent = "🛑 Support Broken (หลุดแนวรับ — รอสร้างฐานใหม่)";
+          elSignalType.style.color = "#ef4444";
+        } else {
+          elSignalType.textContent = "⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)";
+          elSignalType.style.color = "#f59e0b";
+        }
+        elSignalDesc.textContent = plan.reason || signal?.reason || "Waiting for structure base confirmation";
       }
     }
 
@@ -1222,7 +1233,7 @@
 
     // Update Entry
     if (elEntryPrice) {
-      elEntryPrice.textContent = entryPrice > 0 ? fmtPrice(entryPrice) : (refPrice > 0 ? fmtPrice(refPrice) : "--.------");
+      elEntryPrice.textContent = entryPrice > 0 ? fmtPrice(entryPrice) : "--.------";
     }
     if (elEntryTitle && elEntryStatus) {
       if (pos) {
@@ -1239,14 +1250,20 @@
         elEntryStatus.textContent = "Setup Ready";
         elEntryStatus.style.color = "#10b981";
       } else {
-        elEntryTitle.textContent = "🎯 จุดรอรับเหนือ LL (Target LL Entry)";
-        if (entryPrice > 0 && refPrice > entryPrice) {
-          const dipNeeded = ((refPrice - entryPrice) / refPrice) * 100;
-          elEntryStatus.textContent = `Wait Dip -${dipNeeded.toFixed(1)}%`;
-          elEntryStatus.style.color = "#38bdf8";
+        if (entryPrice > 0) {
+          elEntryTitle.textContent = "🎯 จุดรอรับเหนือ LL (Target LL Entry)";
+          if (refPrice > entryPrice) {
+            const dipNeeded = ((refPrice - entryPrice) / refPrice) * 100;
+            elEntryStatus.textContent = `Wait Dip -${dipNeeded.toFixed(1)}%`;
+            elEntryStatus.style.color = "#38bdf8";
+          } else {
+            elEntryStatus.textContent = "Waiting Retest";
+            elEntryStatus.style.color = "#94a3b8";
+          }
         } else {
-          elEntryStatus.textContent = "Waiting Retest";
-          elEntryStatus.style.color = "#94a3b8";
+          elEntryTitle.textContent = "🛑 โครงสร้างหลุดฐาน (Waiting Base)";
+          elEntryStatus.textContent = "Searching New Base";
+          elEntryStatus.style.color = "#ef4444";
         }
       }
     }
@@ -2590,7 +2607,18 @@
       }
 
       // 3.2 4H HTF Major Support / Resistance & POC Lines
-      if (showHtfLines && data.htfCeil && data.htfCeil > 0) {
+      const midPrice = data.mid || data.refPrice || 0;
+      const maxHtfDeviation = 0.075; // 7.5% max deviation from mid to protect Y-axis scaling from ancient extremes
+      const isHtfCeilValid = Boolean(
+        data.htfCeil && data.htfCeil > 0 &&
+        (midPrice <= 0 || (data.htfCeil - midPrice) / midPrice <= maxHtfDeviation)
+      );
+      const isHtfFloorValid = Boolean(
+        data.htfFloor && data.htfFloor > 0 &&
+        (midPrice <= 0 || (midPrice - data.htfFloor) / midPrice <= maxHtfDeviation)
+      );
+
+      if (showHtfLines && isHtfCeilValid) {
         lineHtfCeil = setPriceLine(lineHtfCeil, {
           price: data.htfCeil,
           color: "#a855f7",
@@ -2604,7 +2632,7 @@
         lineHtfCeil = null;
       }
 
-      if (showHtfLines && data.htfFloor && data.htfFloor > 0) {
+      if (showHtfLines && isHtfFloorValid) {
         lineHtfFloor = setPriceLine(lineHtfFloor, {
           price: data.htfFloor,
           color: "#7c3aed",

@@ -4179,4 +4179,39 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - เชื่อมปุ่ม `🌊 รอบคลื่น` ให้เปิด/ปิดการแสดงผลเลเยอร์ `elChartSwingBadgesLayer` ทันทีเมื่อคลิก
 4. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.98` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.36` ใน `public/index.html`
 
+---
+
+## 99. v0.2.99 — Broken Support Invalidation, HTF S/R Outlier Guard & Real-Time Wave Status Sync (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `src/market-structure/dow-engine.ts`, `public/app.js`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **กรอบสเกลชาร์ทบวมและบีบแท่งเทียนจนแบนแต๊ดแต๋ ("กรอบดูไกลเกินความเป็นจริงมาก")**:
+   - ระบบดึงค่า `htfFloor: 0.14300` จากแท่งเทียน 4H โบราณในอดีต (ซึ่งต่ำกว่าราคาตลาดปัจจุบัน `$0.16900` ถึง -15.4%) มาวาดลงบนชาร์ท
+   - Lightweight Charts จำเป็นต้องขยายแกน Y เพื่อให้ครอบคลุม `$0.143` ไปจนถึง `$0.210` ส่งผลให้แท่งเทียน 15M ในรอบ 2 วันถูกบีบแบนเป็นเส้นตรงอยู่ตรงกลางจอ
+   - ใน `src/strategy/swing/index.ts`: ฟังก์ชัน `getHtfStructure` กำหนด `maxChannelWidthPct: 25.0%` กว้างเกินไป ทำให้ยอมรับจุดต่ำสุดที่ห่างไกลราคาปัจจุบันมากเกินไป
+2. **ราคาหลุดแนวรับไปแล้วแต่บอทยังวางแผนจะเข้าซื้อ ("แล้วยังคิดจะเล่นอีกเหรอ")**:
+   - ใน `src/strategy/swing/signals.ts`: `candidateLows` มีเงื่อนไข `s.price <= price * 1.03` ทำให้ยอมรับแนวรับเดิมที่อยู่สูงกว่าราคาปัจจุบันได้ถึง +3%
+   - เมื่อราคาหลุด `$0.1701` ลงไปที่ `$0.1689` บอทยังคงยึด `$0.1701` เป็น `majorFloor` แล้วนำไปบวกระยะกลายเป็น `plannedEntry = $0.17044` (ลอยอยู่เหนือราคาปัจจุบัน) และ `plannedSl = $0.16874` (จ่อก้นราคาตลาด)
+   - แม้โครงสร้างจะอยู่ในสถานะ `WARMUP` บอทไม่ส่งคำสั่งซื้อจริง แต่ระบบยังส่งตัวเลขแผนที่พังนี้ไปวาดเส้นประ Entry/SL/TP ในชาร์ท และขึ้นป้าย `"Wait Dip to $0.1704"` ทำให้ผู้ใช้เข้าใจว่าบอทกำลังจะเข้าซื้อในจุดที่หลุดแนวรับไปแล้ว
+3. **ป้ายรอบคลื่นแสดงข้อมูลขัดแย้งกับราคาจริง**:
+   - ใน `src/market-structure/dow-engine.ts`: `activeCycleSummary` เช็คเฉพาะป้ายสวิงในอดีต (`lastLowLabel === "HL"`) ทำให้แม้ราคาปัจจุบันจะทุบหลุดแนวรับทำ New Low ไปแล้ว แต่ป้ายยังคงแสดงว่า `"รอบคลื่น: ฟื้นตัว (ยก HL ฐานสูงขึ้น)"`
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Broken Support Invalidation & Zero-Out Plan on Breakdown (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`)**:
+   - ใน `signals.ts`: คัดกรอง `candidateLows` เฉพาะจุดต่ำสุดที่อยู่ต่ำกว่าราคาปัจจุบันจริง (`s.price <= price * 1.002`)
+   - หากราคาปัจจุบันหลุดต่ำกว่าแนวรับเดิม (`price < majorFloor * 0.998`) หรือโครงสร้างอยู่ในสถานะ `WARMUP` / `bottomBound <= 0`:
+     - ให้ถือว่าโครงสร้างหลุดฐาน (`isSupportBroken = true`, `isStructureUnstable = true`)
+     - ล้างค่าแผนทั้งหมดเป็นศูนย์: `plannedEntryPrice: 0`, `plannedSlPrice: 0`, `plannedTp1Price: 0`, `plannedTp2Price: 0`, `plannedRrRatio: 0`
+     - ส่งเหตุผลชัดเจน: `Support broken below $... (New Low forming) — Waiting for new base`
+   - ใน `strategy/swing/index.ts`: เมื่อ `plannedEntryPrice === 0` จะไม่สร้างเส้น Entry/SL/TP ใดๆ บนชาร์ท และแสดง Action Bar เป็น `"🛑 Searching New Base"` / `"Wait Base Confirm"`
+2. **HTF S/R Outlier Guard & Proximity Bounds (`src/strategy/swing/index.ts`, `public/app.js`)**:
+   - ใน `src/strategy/swing/index.ts`: ปรับ `getHtfStructure` ให้ใช้ `maxChannelWidthPct: 8.0%` (จากเดิม 25.0%) และเพิ่ม Guard บังคับว่าระดับ HTF ต้องอยู่ใกล้ราคาปัจจุบันในช่วง `[refPrice * 0.92, refPrice * 1.12]` เท่านั้น
+   - ใน `public/app.js`: เพิ่มตัวกรอง `maxHtfDeviation: 7.5%` หากเส้น `4H FLOOR` หรือ `4H CEIL` ห่างจากราคาตลาดปัจจุบันเกิน 7.5% จะไม่นำมาวาดบนชาร์ทโดยเด็ดขาด ป้องกันไม่ให้ Lightweight Charts บีบสเกลแท่งเทียนจนแบน
+3. **Real-Time Wave Status Sync (`src/market-structure/dow-engine.ts`)**:
+   - หากแท่งเทียนปัจจุบันกำลังทุบหลุดต่ำกว่าแนวรับล่าสุด (`latestCandle.close < lastLow.price * 0.999`):
+     - ปรับข้อความรอบคลื่นเป็น `"รอบคลื่น: หลุดฐาน (ทุบทำ New Low)"` ทันที ไม่ปล่อยให้ค้างเป็นป้ายฟื้นตัว
+4. **Front-End Plan & Status Update (`public/app.js`)**:
+   - เมื่อแผนเป็น 0 (`entryPrice === 0`): กล่อง Swing Targets ด้านขวาจะแสดง `"--.------"` และขึ้นสถานะ `"🛑 โครงสร้างหลุดฐาน (Waiting Base)"` และ `"Searching New Base"`
+5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.99` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.37` ใน `public/index.html`
+
+
 

@@ -806,15 +806,18 @@ export class SwingTraderStrategy implements IStrategy {
     if (this.htfDowEngine) {
       const htfDow = this.htfDowEngine.getStructure(refPrice, undefined, {
         mode: "DOW_SWINGS",
-        minChannelWidthPct: 3.0,
-        maxChannelWidthPct: 25.0,
+        minChannelWidthPct: 2.5,
+        maxChannelWidthPct: 8.0,
       });
       if (htfDow && htfDow.bottomBound > 0 && htfDow.upperBound > 0) {
-        return {
-          floor: htfDow.bottomBound,
-          ceiling: htfDow.upperBound,
-          swings: htfDow.swingLows,
-        };
+        // Safety guard: reject extreme HTF bounds that deviate more than 8% from current price
+        if (refPrice > 0 && htfDow.bottomBound >= refPrice * 0.92 && htfDow.upperBound <= refPrice * 1.12) {
+          return {
+            floor: htfDow.bottomBound,
+            ceiling: htfDow.upperBound,
+            swings: htfDow.swingLows,
+          };
+        }
       }
     }
     return undefined;
@@ -1840,8 +1843,8 @@ export class SwingTraderStrategy implements IStrategy {
       : (this.lastSignal?.hasSignal ? (this.walletQuoteBalance * ((this.cfg.swingMaxPositionPct ?? 60) / 100)) : 0);
     const targetHoldingPct = maxInv > 0 ? (targetInventoryQuote / maxInv) * 100 : 0;
 
-    const nextPlannedEntryPrice = this.lastSignal?.plannedEntryPrice || (floor > 0 ? floor * 1.002 : 0);
-    const nextPlannedSlPrice = this.lastSignal?.plannedSlPrice || (floor > 0 ? floor * 0.995 : 0);
+    const nextPlannedEntryPrice = this.lastSignal?.plannedEntryPrice || 0;
+    const nextPlannedSlPrice = this.lastSignal?.plannedSlPrice || 0;
     const isTrappedPosition = Boolean(
       this.activePosition &&
       ((floor > 0 && this.activePosition.entryPrice > floor * 1.015) ||
@@ -1995,15 +1998,15 @@ export class SwingTraderStrategy implements IStrategy {
               ? this.activePosition.tp1Executed
                 ? "🚀 TP1 Done — Trailing Trend"
                 : "📈 Swing Position Active"
-              : (this.lastSignal?.hasSignal ? "🎯 Swing Setup Ready" : "⏳ Waiting LL Retest"),
+              : (this.lastSignal?.hasSignal ? "🎯 Swing Setup Ready" : (entryPrice > 0 ? "⏳ Waiting LL Retest" : "🛑 Searching New Base")),
             reason: this.activePosition
               ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`
-              : this.lastSignal?.reason || "Waiting for pullback to Major LL zone",
+              : this.lastSignal?.reason || "Waiting for structure base confirmation",
             nextTrigger: this.activePosition
               ? this.activePosition.tp1Executed
                 ? `TP2: >$${this.activePosition.tp2Price.toFixed(4)}`
                 : `TP1: >$${this.activePosition.tp1Price.toFixed(4)}`
-              : (this.lastSignal?.hasSignal ? "Awaiting Execution" : (entryPrice > 0 ? `Wait Dip to $${entryPrice.toFixed(4)}` : "Wait Base Confirm")),
+              : (this.lastSignal?.hasSignal ? "Awaiting Execution" : (entryPrice > 0 ? `Wait Dip to $${entryPrice.toFixed(4)}` : "Searching New Base")),
             severity: this.activePosition ? "info" : "warning",
           },
     };

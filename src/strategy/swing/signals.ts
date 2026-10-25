@@ -138,25 +138,25 @@ export class SwingSignalDetector {
     } = structure;
 
     // ── 1. Identify Major Support Floor (Previous Major LL of Current Wave) ───
-    let majorFloor = bottomBound > 0 ? bottomBound : price * 0.95;
+    let majorFloor = (bottomBound > 0 && bottomBound <= price * 1.002) ? bottomBound : 0;
     let majorFloorTime = activeValley?.time ?? 0;
 
     const recentLows = Array.isArray(swingLows) ? swingLows.slice(-20) : [];
     const candidateLows: { price: number; time: number }[] = [];
-    if (waveCycle?.lastLl?.price && waveCycle.lastLl.price > 0 && waveCycle.lastLl.price <= price * 1.03) {
+    if (waveCycle?.lastLl?.price && waveCycle.lastLl.price > 0 && waveCycle.lastLl.price <= price * 1.002) {
       candidateLows.push({ price: waveCycle.lastLl.price, time: waveCycle.lastLl.time });
     }
-    if (activeValley?.price && activeValley.price > 0 && activeValley.price <= price * 1.03) {
+    if (activeValley?.price && activeValley.price > 0 && activeValley.price <= price * 1.002) {
       candidateLows.push({ price: activeValley.price, time: activeValley.time });
     }
     for (const s of recentLows) {
-      if (s.price > 0 && s.price <= price * 1.03) {
+      if (s.price > 0 && s.price <= price * 1.002) {
         candidateLows.push({ price: s.price, time: s.time });
       }
     }
     if (waveCycle?.annotatedSwings) {
       for (const s of waveCycle.annotatedSwings.slice(-24)) {
-        if (s.type === "LOW" && s.price > 0 && s.price <= price * 1.03) {
+        if (s.type === "LOW" && s.price > 0 && s.price <= price * 1.002) {
           candidateLows.push({ price: s.price, time: s.time });
         }
       }
@@ -168,6 +168,8 @@ export class SwingSignalDetector {
       }
       majorFloor = lowest.price;
       majorFloorTime = lowest.time;
+    } else if (majorFloor <= 0) {
+      majorFloor = price * 0.95;
     }
 
     // ── 2. Identify Major Resistance Ceiling (Post-Bottom HH / LH + Trendline) ─
@@ -274,28 +276,37 @@ export class SwingSignalDetector {
     const retestZoneMax = majorFloor + maxNearLlSpan;
 
     // Reject entry if market is in active falling knife, breaking below floor, or structure in WARMUP
+    const isSupportBroken = majorFloor <= 0 || price < majorFloor * 0.998;
     const isStructureUnstable =
       gridZone?.gateStatus === "WAITING_FOR_BASE_CONFIRMATION" ||
       gridZone?.gateStatus === "DOWNTREND_NO_CHANNEL" ||
       structure.regime === "WARMUP" ||
       !structure.isSwingConfirmed ||
-      bottomBound <= 0;
+      bottomBound <= 0 ||
+      isSupportBroken;
 
     if (isStructureUnstable) {
-      const gateMsg = gridZone?.gateStatus || (structure.regime === "WARMUP" ? "WARMUP_UNCONFIRMED_BASE" : "UNCONFIRMED_SWING_BASE");
+      const gateMsg = isSupportBroken
+        ? "SUPPORT_BROKEN_NEW_LOW"
+        : (gridZone?.gateStatus || (structure.regime === "WARMUP" ? "WARMUP_UNCONFIRMED_BASE" : "UNCONFIRMED_SWING_BASE"));
+
       return {
         hasSignal: false,
         entryPrice: 0,
-        stopLossPrice: plannedSl,
-        tp1Price: plannedTp1,
-        tp2Price: plannedTp2,
-        riskRewardRatio: plannedRr,
-        reason: `Market gated (${gateMsg}) — Waiting for confirmed base near LL $${majorFloor.toFixed(4)}`,
-        plannedEntryPrice: plannedEntry,
-        plannedSlPrice: plannedSl,
-        plannedTp1Price: plannedTp1,
-        plannedTp2Price: plannedTp2,
-        plannedRrRatio: plannedRr,
+        stopLossPrice: 0,
+        tp1Price: 0,
+        tp2Price: 0,
+        riskRewardRatio: 0,
+        reason: isSupportBroken
+          ? (majorFloor > 0
+              ? `Support broken below $${majorFloor.toFixed(4)} (New Low forming) — Waiting for new base`
+              : "Support broken to New Low — Waiting for new base formation")
+          : `Market gated (${gateMsg}) — Waiting for confirmed base near LL $${majorFloor.toFixed(4)}`,
+        plannedEntryPrice: 0,
+        plannedSlPrice: 0,
+        plannedTp1Price: 0,
+        plannedTp2Price: 0,
+        plannedRrRatio: 0,
       };
     }
 
