@@ -1251,7 +1251,14 @@
         elEntryStatus.style.color = "#10b981";
       } else {
         if (entryPrice > 0) {
-          elEntryTitle.textContent = "🎯 จุดรอรับเหนือ LL (Target LL Entry)";
+          const sigType = plan.signalType || "";
+          if (sigType === "SUPPORT_RETEST" || sigType === "WAITING_TL_RETEST" || sigType.includes("TL")) {
+            elEntryTitle.textContent = "🎯 จุดรอรับแนวรับ Trendline";
+          } else if (sigType === "HL_BASE" || sigType === "WAITING_HL_RETEST") {
+            elEntryTitle.textContent = "🎯 จุดรอรับฐาน HL (Target HL Entry)";
+          } else {
+            elEntryTitle.textContent = "🎯 จุดรอรับเหนือ LL (Target LL Entry)";
+          }
           if (refPrice > entryPrice) {
             const dipNeeded = ((refPrice - entryPrice) / refPrice) * 100;
             elEntryStatus.textContent = `Wait Dip -${dipNeeded.toFixed(1)}%`;

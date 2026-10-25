@@ -4233,6 +4233,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ผู้ใช้ต้องเป็นคนกดปุ่ม `Resume` บนหน้าจอแดชบอร์ดด้วยตัวเองเท่านั้น บอทจึงจะเริ่มทำงานจริง
 2. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.100` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.38` ใน `public/index.html`
 
+---
+
+## 101. v0.2.101 — Uptrend Line & Higher Low Support Retest Entry Architecture (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `public/app.js`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การเกิดความไม่สอดคล้องของระดับคลื่น (Wave Level Mismatch) ระหว่างจุดกลับตัวกับจุดรับ**:
+   - เมื่อราคาดั๊มพ์ลงไปทำ Major LL ในอดีต (เช่น SOMI `$0.1683`, BTC `$79,425`) แล้วเริ่มฟื้นตัวสร้างโครงสร้างคลื่นใหม่ ทำฐาน Higher Low (⭐ HL ที่ `$0.1695` บน SOMI, `$80,397` บน BTC)
+   - แต่ใน `src/strategy/swing/signals.ts`: ตรรกะ `majorFloor` ถูกเขียนให้ค้นหาย้อนหลัง 24 สวิงแล้วทำ `Math.min(...)` เสมอ ทำให้ฐานแนวรับของแผนถูกล็อกติดไว้ที่ก้นเหวลึก Major LL เดิม
+   - เงื่อนไข Setup 3 (`enableHlBaseEntry`) เดิม บังคับว่าราคาต้องอยู่สูงจากก้นเหว Major LL ไม่เกิน +1.0% (`price <= retestZoneMax`) ส่งผลให้เมื่อราคายกฐาน ⭐ HL สูงกว่าก้นเหวเดิม สัญญาณ HL จะถูกปฏิเสธทั้งหมด
+   - บอทจึงถอยกลับไปแสดงสถานะ Standby ว่า `Waiting LL Retest: รอราคาย่อกลับลงไปก้นเหว Major LL เดิม` (`Wait Dip -1.4%` ถึง `-1.5%`)
+   - ทำให้เกิดความขัดแย้งรุนแรง: **จุดกลับตัว (⭐ HL) เกิดขึ้นที่คลื่นปัจจุบัน แต่จุดรอรับ (ENTRY) ยังรออยู่ที่ก้นเหวคลื่นเก่า** และเส้นเป้าหมาย TP1 ตกไปอยู่ "ใต้ราคาตลาดปัจจุบัน"
+2. **ระบบมีเส้นแนวรับ Trendline ขาขึ้น (`uptrendLine`) อยู่แล้ว แต่ยังไม่ได้นำมาใช้เป็นจุดรับ**:
+   - `DowStructure` มีการคำนวณเส้นแนวรับขาขึ้น `uptrendLine` ที่ลากเชื่อมจาก `p1` (LL) ➔ `p2` (HL) ไว้สมบูรณ์แล้ว แต่ก่อนหน้านี้ถูกนำมาใช้เพียงตรวจสอบว่าเส้นหลุดหรือไม่เท่านั้น ยังไม่มี Setup สำหรับดักจังหวะ **"ราคาลงมาทดสอบเส้นแนวรับ Trendline แล้วเด้ง (Trendline Support Retest & Bounce)"**
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Dynamic Wave Support Hierarchy (`src/strategy/swing/signals.ts`)**:
+   - จัดลำดับแนวรับของคลื่นปัจจุบันแบบไดนามิก:
+     1. **เส้นแนวรับ Trendline ขาขึ้น (`tlSupportPrice = uptrendLine.currentLinePrice`)**: หากมีเส้น Trendline ขาขึ้นที่ยังไม่หลุด ให้ยึดเป็นแนวรับอันดับ 1
+     2. **ฐาน Higher Low (`hlSupportPrice = waveCycle.lastHl.price`)**: หากมีการยกฐาน HL หลังก้นเหว ให้ยึดเป็นแนวรับอันดับ 2
+     3. **Major LL (`majorFloor`)**: หากยังไม่มี HL หรือเส้น Trendline ให้ยึดก้นเหว LL เป็นแนวรับฐาน
+2. **Uptrend Line Support Retest Entry Setup (`SUPPORT_RETEST`)**:
+   - เมื่อ `config.enableSupportRetestEntry && hasActiveUptrendTl && tlSupportPrice > majorFloor`:
+   - ตรวจจับเมื่อราคาย่อตัวลงมาทดสอบเส้นแนวรับ Trendline (`price >= plannedSl && price <= tlSupportPrice * 1.010`)
+   - ยืนยันด้วยแท่งเทียนกลับตัวขาขึ้น (**Bullish Reversal Candle** เช่น Pin Bar, Hammer, Engulfing), ตรวจสอบว่าแท่งสดไม่ดั๊มพ์หลุดแนวรับ (`!isLiveDumping`), และมีระยะวิ่งถึงแนวต้านด้านบน (`hasTrendlineHeadroom`)
+   - เมื่อเงื่อนไขผ่าน: ส่งสัญญาณ `signalType: "SUPPORT_RETEST"` พร้อมเหตุผล `Uptrend Line Support Retest at $... confirmed with ...`
+3. **Higher Low Support Retest Entry Setup (`HL_BASE`)**:
+   - ปลดล็อกเงื่อนไขไม่ให้ผูกติดกับก้นเหวเก่า: เมื่อราคาย่อทดสอบฐาน ⭐ HL (`price >= plannedSl && price <= hlSupportPrice * 1.010`) และยืนยันด้วยแท่งกลับตัว จะส่งสัญญาณ `signalType: "HL_BASE"` ทันที
+4. **Planned Levels & Standby Display Sync (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `public/app.js`)**:
+   - ในสถานะ Standby: `plannedEntryPrice`, `plannedSlPrice`, `plannedTp1Price`, `plannedTp2Price` จะคำนวณและเกาะอยู่กับแนวรับจริงของคลื่นปัจจุบัน (Trendline Support หรือ HL Base)
+   - ป้ายสถานะ Action Bar และ Swing Targets จะแสดงตรงตามความเป็นจริง:
+     - แดชบอร์ดแสดง: `⏳ Waiting Trendline Retest (รอราคาลงมาทดสอบเส้นแนวรับ Trendline $...)`
+     - แถบ Swing Targets แสดง: `🎯 จุดรอรับแนวรับ Trendline` หรือ `🎯 จุดรอรับฐาน HL (Target HL Entry)`
+     - เส้นเป้าหมาย TP1 และ TP2 จะอยู่เหนือราคาเข้าจริงเสมอ ไม่ตกไปอยู่ใต้ราคาตลาดอีกต่อไป
+5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.101` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.39` ใน `public/index.html`
+
 
 
 

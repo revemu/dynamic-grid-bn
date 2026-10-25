@@ -1976,8 +1976,8 @@ export class SwingTraderStrategy implements IStrategy {
         nextPlannedEntryPrice,
         nextPlannedSlPrice,
         isTrappedPosition,
-        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : "WAITING_LL_RETEST"),
-        reason: this.activePosition?.reason || this.lastSignal?.reason || "Waiting for dip to test Major LL",
+        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : (entryPrice > 0 ? (structure?.uptrendLine && !structure.uptrendLine.isBroken && structure.uptrendLine.currentLinePrice > (structure.bottomBound || 0) ? "WAITING_TL_RETEST" : (structure?.waveCycle?.lastHl ? "WAITING_HL_RETEST" : "WAITING_LL_RETEST")) : "WAITING_BASE")),
+        reason: this.activePosition?.reason || this.lastSignal?.reason || "Waiting for structure support confirmation",
         state: this.swingState,
         isPlannedOnly: !this.activePosition && !this.lastSignal?.hasSignal,
       },
@@ -2003,7 +2003,13 @@ export class SwingTraderStrategy implements IStrategy {
               ? this.activePosition.tp1Executed
                 ? "🚀 TP1 Done — Trailing Trend"
                 : "📈 Swing Position Active"
-              : (this.lastSignal?.hasSignal ? "🎯 Swing Setup Ready" : (entryPrice > 0 ? "⏳ Waiting LL Retest" : "🛑 Searching New Base")),
+              : (this.lastSignal?.hasSignal
+                  ? "🎯 Swing Setup Ready"
+                  : (entryPrice > 0
+                      ? (structure?.uptrendLine && !structure.uptrendLine.isBroken && structure.uptrendLine.currentLinePrice > (structure.bottomBound || 0)
+                          ? "⏳ Waiting Trendline Retest"
+                          : (structure?.waveCycle?.lastHl ? "⏳ Waiting HL Retest" : "⏳ Waiting LL Retest"))
+                      : "🛑 Searching New Base")),
             reason: this.activePosition
               ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`
               : this.lastSignal?.reason || "Waiting for structure base confirmation",
