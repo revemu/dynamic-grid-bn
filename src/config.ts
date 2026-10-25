@@ -301,9 +301,9 @@ export const defaultStrategyConfig = {
   swingTrailingActivationPct: 1.5,
   /** Trailing Stop pullback tolerance % (default 0.8%). */
   swingTrailingPullbackPct: 0.8,
-  /** Allowed entry triggers for swing trades (default: HL base confirmation and trendline breakout). */
+  /** Allowed entry triggers for swing trades (default: HL base confirmation and support retest; trendline breakout false by default to prevent FOMO buy). */
   swingEnableHlBaseEntry: true,
-  swingEnableTrendlineBreakoutEntry: true,
+  swingEnableTrendlineBreakoutEntry: false,
   swingEnableSupportRetestEntry: true,
   /** Enable Bearish Candlestick Reversal Exit at resistance (Shooting Star / Engulfing) to lock profit early (default true). */
   swingEnableBearishReversalExit: true,

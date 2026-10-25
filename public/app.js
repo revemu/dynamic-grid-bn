@@ -4332,7 +4332,7 @@
       setVal("cfg_swingTrailingActivationPct", data.swingTrailingActivationPct ?? 1.5);
       setVal("cfg_swingTrailingPullbackPct", data.swingTrailingPullbackPct ?? 0.8);
       setCheck("cfg_swingEnableHlBaseEntry", data.swingEnableHlBaseEntry !== false);
-      setCheck("cfg_swingEnableTrendlineBreakoutEntry", data.swingEnableTrendlineBreakoutEntry !== false);
+      setCheck("cfg_swingEnableTrendlineBreakoutEntry", Boolean(data.swingEnableTrendlineBreakoutEntry));
       setCheck("cfg_swingEnableSupportRetestEntry", data.swingEnableSupportRetestEntry !== false);
       setCheck("cfg_swingEnableBearishReversalExit", data.swingEnableBearishReversalExit !== false);
       setVal("cfg_swingBearishReversalMinProfitPct", data.swingBearishReversalMinProfitPct ?? 0.35);
@@ -4574,7 +4574,7 @@
       swingTrailingActivationPct: parseFloat(document.getElementById("cfg_swingTrailingActivationPct")?.value) || 1.5,
       swingTrailingPullbackPct: parseFloat(document.getElementById("cfg_swingTrailingPullbackPct")?.value) || 0.8,
       swingEnableHlBaseEntry: document.getElementById("cfg_swingEnableHlBaseEntry") ? document.getElementById("cfg_swingEnableHlBaseEntry").checked : true,
-      swingEnableTrendlineBreakoutEntry: document.getElementById("cfg_swingEnableTrendlineBreakoutEntry") ? document.getElementById("cfg_swingEnableTrendlineBreakoutEntry").checked : true,
+      swingEnableTrendlineBreakoutEntry: document.getElementById("cfg_swingEnableTrendlineBreakoutEntry") ? document.getElementById("cfg_swingEnableTrendlineBreakoutEntry").checked : false,
       swingEnableSupportRetestEntry: document.getElementById("cfg_swingEnableSupportRetestEntry") ? document.getElementById("cfg_swingEnableSupportRetestEntry").checked : true,
       swingEnableBearishReversalExit: document.getElementById("cfg_swingEnableBearishReversalExit") ? document.getElementById("cfg_swingEnableBearishReversalExit").checked : true,
       swingBearishReversalMinProfitPct: parseFloat(document.getElementById("cfg_swingBearishReversalMinProfitPct")?.value) || 0.35,

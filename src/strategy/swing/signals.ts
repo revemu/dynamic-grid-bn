@@ -185,6 +185,7 @@ export class SwingSignalDetector {
     structure: DowStructure | undefined,
     config: SwingStrategyConfig,
     candles: Candle[] = [],
+    consumedBreakoutTlKey?: string,
   ): SwingSignalResult {
     if (!structure || price <= 0) {
       return {
@@ -592,12 +593,24 @@ export class SwingSignalDetector {
       }
     }
 
-    // ── Setup 4: Confirmed Descending Trendline Breakout (Near Base Only) ────
+    // ── Setup 4: Fresh Confirmed Descending Trendline Breakout (Near Line Only) ────
     if (config.enableTrendlineBreakoutEntry && downtrendLine) {
-      // Strictly require confirmed multi-candle breakout (not unconfirmed intrabar tick) and near lower base
-      const isConfirmedBreakout = Boolean(downtrendLine.breakoutConfirmed || downtrendBreakoutConfirmed);
-      const maxBreakoutZone = activeSupportPrice + (majorSpan * 0.28);
-      if (isConfirmedBreakout && price > downtrendLine.currentLinePrice && price <= maxBreakoutZone) {
+      const currentTlKey = downtrendLine.p1 && downtrendLine.p2 ? `${downtrendLine.p1.time}_${downtrendLine.p2.time}` : undefined;
+      const isConsumed = Boolean(currentTlKey && consumedBreakoutTlKey === currentTlKey);
+
+      // 1. Strictly require fresh breakout (must be confirmed on 2nd or 3rd bar only, never stale 4+ bars)
+      const brokenCandles = downtrendLine.brokenCandleCount ?? (downtrendLine.breakoutConfirmed ? 2 : 0);
+      const isFreshBreakout = Boolean((downtrendLine.breakoutConfirmed || downtrendBreakoutConfirmed) && brokenCandles >= 2 && brokenCandles <= 3);
+
+      // 2. Strictly require price to be hugging the trendline (max 0.20% above the broken line), NOT chasing a multi-candle rally
+      const maxBreakoutPrice = downtrendLine.currentLinePrice * 1.0020;
+      const isNearLine = price > downtrendLine.currentLinePrice && price <= maxBreakoutPrice;
+
+      // 3. Reject entry if price is extended near a candidate peak or in the upper portion of the wave
+      const isNearPeak = Boolean(structure?.candidatePeak?.price && price >= structure.candidatePeak.price * 0.995);
+      const isOverExtended = majorSpan > 0 && ((price - majorFloor) / majorSpan) > 0.40;
+
+      if (!isConsumed && isFreshBreakout && isNearLine && !isNearPeak && !isOverExtended) {
         const stopLoss = activeSupportPrice * (1 - slBuffer);
         const risk = price - stopLoss;
         const tp1 = plannedTp1 > price * 1.01 ? plannedTp1 : midWavePrice;
@@ -614,7 +627,7 @@ export class SwingSignalDetector {
             tp1Price: tp1,
             tp2Price: tp2,
             riskRewardRatio: rr,
-            reason: `Confirmed Descending Trendline Breakout above $${downtrendLine.currentLinePrice.toFixed(4)} with ${rr.toFixed(2)} R:R`,
+            reason: `Confirmed Fresh Trendline Breakout above $${downtrendLine.currentLinePrice.toFixed(4)} with ${rr.toFixed(2)} R:R`,
             plannedEntryPrice: price,
             plannedSlPrice: stopLoss,
             plannedTp1Price: tp1,
@@ -635,6 +648,8 @@ export class SwingSignalDetector {
       standbyReason = `Price ($${price.toFixed(4)}) is above Trendline Support. Waiting for pullback near Trendline Support ($${tlSupportPrice.toFixed(4)})${tlStatusSuffix}`;
     } else if (activeSupportType === "HL_BASE") {
       standbyReason = `Price ($${price.toFixed(4)}) is above HL Support. Waiting for pullback near HL Support ($${hlSupportPrice.toFixed(4)})${tlStatusSuffix}`;
+    } else if (downtrendLine?.breakoutConfirmed && price > downtrendLine.currentLinePrice) {
+      standbyReason = `Trendline Breakout confirmed. Waiting for pullback/retest near support ($${activeSupportPrice.toFixed(4)})${tlStatusSuffix}`;
     }
 
     return {

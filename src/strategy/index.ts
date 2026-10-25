@@ -687,7 +687,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       swingTrailingActivationPct: (this.cfg as any).swingTrailingActivationPct ?? 1.5,
       swingTrailingPullbackPct: (this.cfg as any).swingTrailingPullbackPct ?? 0.8,
       swingEnableHlBaseEntry: (this.cfg as any).swingEnableHlBaseEntry !== false,
-      swingEnableTrendlineBreakoutEntry: (this.cfg as any).swingEnableTrendlineBreakoutEntry !== false,
+      swingEnableTrendlineBreakoutEntry: Boolean((this.cfg as any).swingEnableTrendlineBreakoutEntry),
       swingEnableSupportRetestEntry: (this.cfg as any).swingEnableSupportRetestEntry !== false,
     };
   }

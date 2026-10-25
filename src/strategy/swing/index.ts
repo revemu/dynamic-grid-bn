@@ -93,6 +93,7 @@ export class SwingTraderStrategy implements IStrategy {
   public activePosition?: ActiveSwingPosition;
   public pendingEntryOrder?: PendingSwingEntry;
   public lastSignal?: SwingSignalResult;
+  public consumedBreakoutTlKey?: string;
   public lastRefPrice = 0;
   public realizedPnl = 0;
   public bid = 0;
@@ -238,7 +239,7 @@ export class SwingTraderStrategy implements IStrategy {
       swingTrailingActivationPct: this.cfg.swingTrailingActivationPct ?? 1.5,
       swingTrailingPullbackPct: this.cfg.swingTrailingPullbackPct ?? 0.8,
       swingEnableHlBaseEntry: this.cfg.swingEnableHlBaseEntry !== false,
-      swingEnableTrendlineBreakoutEntry: this.cfg.swingEnableTrendlineBreakoutEntry !== false,
+      swingEnableTrendlineBreakoutEntry: Boolean(this.cfg.swingEnableTrendlineBreakoutEntry),
       swingEnableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry !== false,
     };
   }
@@ -367,7 +368,7 @@ export class SwingTraderStrategy implements IStrategy {
             trailingActivationPct: this.cfg.swingTrailingActivationPct ?? 1.5,
             trailingPullbackPct: this.cfg.swingTrailingPullbackPct ?? 0.8,
             enableHlBaseEntry: this.cfg.swingEnableHlBaseEntry ?? true,
-            enableTrendlineBreakoutEntry: this.cfg.swingEnableTrendlineBreakoutEntry ?? true,
+            enableTrendlineBreakoutEntry: Boolean(this.cfg.swingEnableTrendlineBreakoutEntry),
             enableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry ?? true,
           };
           this.onSwingEntryFilled(orderId, execPrice, p.qty, execPrice * p.qty, p, swingCfg).catch(() => {});
@@ -698,6 +699,10 @@ export class SwingTraderStrategy implements IStrategy {
           },
         });
 
+        const currentDt = this.dowEngine?.getStructure()?.downtrendLine;
+        if (currentDt?.p1 && currentDt?.p2) {
+          this.consumedBreakoutTlKey = `${currentDt.p1.time}_${currentDt.p2.time}`;
+        }
         this.lots = [];
         this.activePosition = undefined;
         this.swingState = "WAITING_SETUP";
@@ -711,6 +716,10 @@ export class SwingTraderStrategy implements IStrategy {
       }
     } else {
       // Cleanly reset position state if remaining quantity is dust or zero
+      const currentDt = this.dowEngine?.getStructure()?.downtrendLine;
+      if (currentDt?.p1 && currentDt?.p2) {
+        this.consumedBreakoutTlKey = `${currentDt.p1.time}_${currentDt.p2.time}`;
+      }
       this.lots = [];
       this.activePosition = undefined;
       this.swingState = "WAITING_SETUP";
@@ -736,6 +745,7 @@ export class SwingTraderStrategy implements IStrategy {
     this.lots = [];
     this.activePosition = undefined;
     this.swingState = "WAITING_SETUP";
+    this.consumedBreakoutTlKey = undefined;
     this.openOrders = [];
     if (opts?.resetPnl) {
       this.realizedPnl = 0;
@@ -762,6 +772,7 @@ export class SwingTraderStrategy implements IStrategy {
     this.lots = [];
     this.activePosition = undefined;
     this.swingState = "WAITING_SETUP";
+    this.consumedBreakoutTlKey = undefined;
     this.saveState(true);
     this.log(`[SwingTrader] Position state reset`);
     return { success: true, clearedLots: count };
@@ -777,6 +788,7 @@ export class SwingTraderStrategy implements IStrategy {
       this.activePosition = (saved as any).activeSwingPosition;
       this.pendingEntryOrder = (saved as any).pendingEntryOrder;
       this.swingState = (saved as any).swingState || "WAITING_SETUP";
+      this.consumedBreakoutTlKey = (saved as any).consumedBreakoutTlKey;
     }
     this.log(`[SwingTrader] State reloaded from database`);
   }
@@ -793,6 +805,7 @@ export class SwingTraderStrategy implements IStrategy {
         activeSwingPosition: this.activePosition,
         pendingEntryOrder: this.pendingEntryOrder,
         swingState: this.swingState,
+        consumedBreakoutTlKey: this.consumedBreakoutTlKey,
       } as any);
     } catch (e) {
       this.log(`[SwingTrader] Failed to persist state: ${e}`);
@@ -903,7 +916,7 @@ export class SwingTraderStrategy implements IStrategy {
         trailingActivationPct: this.cfg.swingTrailingActivationPct ?? 1.5,
         trailingPullbackPct: this.cfg.swingTrailingPullbackPct ?? 0.8,
         enableHlBaseEntry: this.cfg.swingEnableHlBaseEntry ?? true,
-        enableTrendlineBreakoutEntry: this.cfg.swingEnableTrendlineBreakoutEntry ?? true,
+        enableTrendlineBreakoutEntry: Boolean(this.cfg.swingEnableTrendlineBreakoutEntry),
         enableSupportRetestEntry: this.cfg.swingEnableSupportRetestEntry ?? true,
         enableBearishReversalExit: this.cfg.swingEnableBearishReversalExit ?? true,
         bearishReversalMinProfitPct: this.cfg.swingBearishReversalMinProfitPct ?? 0.35,
@@ -913,7 +926,7 @@ export class SwingTraderStrategy implements IStrategy {
       // Evaluate setup strictly on confirmed closed candles to eliminate false intraday wick triggers
       const closedCandles = this.dowEngine?.getClosedCandles() ?? [];
       const candles = closedCandles.length > 0 ? closedCandles : (this.dowEngine?.getCandles() ?? []);
-      const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
+      const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles, this.consumedBreakoutTlKey);
       this.lastSignal = signal;
 
       if (this.isPaused) {
@@ -962,6 +975,9 @@ export class SwingTraderStrategy implements IStrategy {
       } catch (e) {
         this.log(`[SwingTrader] Cancel pending order failed: ${e}`);
       }
+      if (p.signalType === "TL_BREAKOUT" && structure?.downtrendLine?.p1 && structure?.downtrendLine?.p2) {
+        this.consumedBreakoutTlKey = `${structure.downtrendLine.p1.time}_${structure.downtrendLine.p2.time}`;
+      }
       this.pendingEntryOrder = undefined;
       this.swingState = "WAITING_SETUP";
       this.saveState(true);
@@ -993,6 +1009,9 @@ export class SwingTraderStrategy implements IStrategy {
       } catch (e) {
         this.log(`[SwingTrader] Cancel pending order failed: ${e}`);
       }
+      if (p.signalType === "TL_BREAKOUT" && structure?.downtrendLine?.p1 && structure?.downtrendLine?.p2) {
+        this.consumedBreakoutTlKey = `${structure.downtrendLine.p1.time}_${structure.downtrendLine.p2.time}`;
+      }
       this.pendingEntryOrder = undefined;
       this.swingState = "WAITING_SETUP";
       this.saveState(true);
@@ -1009,6 +1028,9 @@ export class SwingTraderStrategy implements IStrategy {
         await this.binance.cancelOrder(this.symbolInfo.symbol, p.orderId);
       } catch (e) {
         this.log(`[SwingTrader] Cancel pending order failed: ${e}`);
+      }
+      if (p.signalType === "TL_BREAKOUT" && structure?.downtrendLine?.p1 && structure?.downtrendLine?.p2) {
+        this.consumedBreakoutTlKey = `${structure.downtrendLine.p1.time}_${structure.downtrendLine.p2.time}`;
       }
       this.pendingEntryOrder = undefined;
       this.swingState = "WAITING_SETUP";
@@ -1711,6 +1733,13 @@ export class SwingTraderStrategy implements IStrategy {
     if (qty < (this.symbolInfo.minQty || 0.0001)) {
       this.log(`[SwingTrader] Computed qty ${qty} is less than exchange minQty ${this.symbolInfo.minQty}`);
       return;
+    }
+
+    if (signal.signalType === "TL_BREAKOUT") {
+      const currentDt = this.dowEngine?.getStructure()?.downtrendLine;
+      if (currentDt?.p1 && currentDt?.p2) {
+        this.consumedBreakoutTlKey = `${currentDt.p1.time}_${currentDt.p2.time}`;
+      }
     }
 
     if (isMakerMode) {

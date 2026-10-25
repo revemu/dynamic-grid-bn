@@ -4348,6 +4348,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ทำให้ระบบยอมรับสถานะ **`Downtrend Breakout (เบรกเอาต์ขาลง)`** ของคลื่นจริง และหันมาโฟกัสที่ **`Uptrend Support Line` (\$0.1719)** ที่เป็นเทรนด์หลักของรอบนี้
 4. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.104` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.42` ใน `public/index.html`
 
+---
+
+## 105. v0.2.105 — Anti-FOMO Breakout Architecture & Infinite Re-Entry Guard (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `src/config.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การเข้าซื้อที่ยอดคลื่น (FOMO Peak Buying)**:
+   - บอทในโหมด Swing Trade เข้าซื้อ BTC ที่จุดยอด `$80,871.09` ผ่านสัญญาณ `TL_BREAKOUT` (Setup 4)
+   - ตรวจพบว่าตัวแปร `downtrendLine.breakoutConfirmed` ค้างสถานะเป็น `true` ถาวรหลังจากเส้นกดถูกเบรก โดยไม่มีการจำกัดจำนวนแท่งเทียนที่ผ่านไป (`brokenCandleCount`)
+   - สูตรกรอบราคาเดิมใช้ `maxBreakoutZone = activeSupportPrice + (majorSpan * 0.28)` ซึ่งกว้างถึง `$80,985` ส่งผลให้แม้ราคาจะพุ่งแท่งเขียวติดต่อกัน 5 แท่งขึ้นไปจนถึงยอดคลื่น ($80,871.09) บอทก็ยังประเมินว่าเป็นสัญญาณเบรกเอาต์ที่เข้าซื้อได้
+   - ขาดการตรวจจับยอดดอยชั่วคราว (`candidatePeak [⌛ 0/3]`) ทำให้เข้าซื้อชนแนวต้านยอดคลื่นพอดี
+2. **บั๊กวนลูปเข้าซื้อซ้ำทันทีหลัง Stop Loss (Infinite Re-Entry Bug)**:
+   - หลังเข้าซื้อที่ `$80,871.09` แล้วราคาเทหลุด Stop Loss จนถูก Cut Sell ที่ `$80,746.42`
+   - ใน 1 วินาทีถัดมา สถานะบอทกลับมาเป็น `WAITING_SETUP` และสัญญาณ `TL_BREAKOUT` ยังคง Active อยู่ บอทจึงส่ง Maker Limit Buy Order `26021882019` เข้าไปตั้งรอที่ `$80,746.42` ทันที
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Strict Freshness & Proximity Guard (`src/strategy/swing/signals.ts`)**:
+   - **จำกัดความสด**: สัญญาณ Breakout จะเกิดขึ้นได้เฉพาะในแท่งที่ 2–3 หลังเบรกเท่านั้น (`brokenCandles >= 2 && brokenCandles <= 3`) หากผ่านไปเกิน 3 แท่งถือว่าตกรอบ ห้ามไล่ราคา
+   - **บีบระยะชิดเส้นกด**: ราคาต้องอยู่ชิดเส้นกดไม่เกิน 0.20% (`price <= downtrendLine.currentLinePrice * 1.0020`) ตัดสูตร 28% ของ Major Span ออกอย่างถาวร
+   - **Anti-Peak Guard**: ห้ามเข้าซื้อเด็ดขาดหากราคาอยู่ใกล้ `candidatePeak` ภายใน 0.5% (`price >= candidatePeak.price * 0.995`) หรือราคาวิ่งขึ้นมาเกิน 40% ของความกว้างคลื่นหลัก (`(price - majorFloor) / majorSpan > 0.40`)
+2. **Consumed Trendline Breakout Guard (`consumedBreakoutTlKey`) (`src/strategy/swing/index.ts`)**:
+   - เพิ่ม State `consumedBreakoutTlKey` เพื่อจดจำคีย์เฉพาะของเส้นกด (`${p1.time}_${p2.time}`)
+   - เมื่อมีการส่งออเดอร์เข้าซื้อ หรือเมื่อออเดอร์ถูก Cut Loss / Cancelled ระบบจะล็อกเส้นกดนั้นเป็น Consumed ทันที
+   - ป้องกันการวนลูปเข้าซื้อซ้ำบนเส้นกดเดิม 100% จนกว่าจะเกิดเส้นกดหรือโครงสร้างคลื่นรอบใหม่
+3. **Safe Retest-First Default (`src/config.ts`, `public/index.html`, `public/app.js`)**:
+   - ปรับ `swingEnableTrendlineBreakoutEntry` ให้เป็น `false` โดยปริยาย เพื่อเน้นการเทรดแบบ **Setup 2 (HL Base)** และ **Setup 3 (Retest Support)** ซึ่งปลอดภัยจากการติดดอยมากกว่า
+   - หากผู้ใช้เปิดใช้งานผ่านหน้าแดชบอร์ด สัญญาณจะถูกคุ้มกันด้วย Freshness, Proximity, และ Anti-Peak Guard อย่างเข้มงวด
+4. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.105` ใน `package.json`, `src/version.ts`
+
+
 
 
 
