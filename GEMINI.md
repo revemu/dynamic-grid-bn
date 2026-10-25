@@ -4297,6 +4297,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - เพิ่มช่องกรอก: `กำไรขั้นต่ำก่อนอนุญาตให้ชิงขาย (Min Profit %)` (`swingBearishReversalMinProfitPct`, default `0.35%`)
 5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.102` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.40` ใน `public/index.html`
 
+---
+
+## 103. v0.2.103 — Dow Theory Structural Wave Trendline Integrity Architecture (`src/market-structure/trendline-engine.ts`, `public/app.js`, `public/index.html`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การลากเส้น Downtrend Line ข้ามก้นเหวลึก (Spanning Across Trough / V-Bottom Violation)**:
+   - อัลกอริทึมเดิมอนุญาตให้จับคู่จุดสัมผัส $P_1$ (ยอดก่อนทุบ เช่น `$0.1780`) กับ $P_2$ (ยอดหลังการเด้ง เช่น `$0.1741`) ข้ามผ่านก้นเหว Major LL (`$0.16814`)
+   - ตามหลัก Dow Theory และ Classical Technical Analysis: เส้น Trendline ต้องสะท้อนแนวโน้มของคลื่นเดียวกัน (Same Wave Phase)
+   - เมื่อราคาดั๊มพ์ลงไปทำ Major LL แล้วเด้งกลับขึ้นมาทำ Higher Low และ Higher High เส้นกดของคลื่นขาลงเดิม (เช่น `$0.1780 ➔ $0.1758`) ย่อมถือว่าถูก **Breakout (ทะลุขาลง)** ไปเรียบร้อยแล้ว
+   - การลากเส้นเชื่อมข้ามก้นเหว ($P_1$ ก่อนเหว ➔ $P_2$ หลังเหว) จะสร้างเส้นหลอก (Phantom Trendline) ที่กดทับเพดานราคาและบังคับให้ TP1 ถูกกดลงมาต่ำอย่างผิดธรรมชาติ (`TL Res: $... (TP1 capped at TL)`)
+2. **ป้ายหัวข้อการ์ดไม่สอดคล้องกับสัญญาณจริง (`public/app.js`)**:
+   - เมื่อบอทอยู่ในสถานะ `WAITING_TL_RETEST` หรือ `WAITING_HL_RETEST` หัวข้อการ์ดสีส้มฝั่งขวาถูกฮาร์ดโค้ดเป็น `Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)` ทำให้ผู้ใช้สับสนว่าทำไมระบบถึงบอกว่ารอ LL ทั้งที่กำลังรอเส้น Trendline หรือฐาน HL
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Structural Wave Integrity Guard (`src/market-structure/trendline-engine.ts`)**:
+   - **ห้าม Downtrend Line ลากข้ามก้นเหว (`activeValley`)**:
+     - บังคับว่าจุดสัมผัส $P_1$ และ $P_2$ ต้องอยู่ฝั่งเดียวกันของก้นเหว (`isP1BeforeValley === isP2BeforeValley`)
+     - $P_1$ และ $P_2$ ต้องเป็นยอดของคลื่นขาลงที่นำไปสู่ก้นเหว ($P_1, P_2 \le \text{activeValley}$) หรือเป็นยอดของคลื่นย่อตัวใหม่ที่เกิดหลังก้นเหว ($P_1, P_2 > \text{activeValley}$)
+     - ตัดปัญหาการลากเส้นกดลอยข้ามเหวออกอย่างถาวร 100%
+   - **ห้าม Uptrend Line ลากข้ามยอดดอย (`activePeak`)**:
+     - บังคับว่าจุดสัมผัส $V_1$ และ $V_2$ ต้องอยู่ฝั่งเดียวกันของยอดดอย (`isV1BeforePeak === isV2BeforePeak`)
+2. **Dynamic Dashboard Card Status Titles (`public/app.js`)**:
+   - ปรับหัวข้อการ์ดสีส้มให้แสดงตรงตามสัญญาณจริง:
+     - `plan.signalType === "WAITING_TL_RETEST"` ➔ `⏳ Waiting Trendline Retest (รอราคาย่อทดสอบแนวรับ Trendline)`
+     - `plan.signalType === "WAITING_HL_RETEST"` ➔ `⏳ Waiting HL Retest (รอราคาย่อทดสอบฐาน HL เดิม)`
+     - อื่นๆ ➔ `⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)`
+3. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.103` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.41` ใน `public/index.html`
+
+
 
 
 

@@ -1203,6 +1203,12 @@
         if (isBroken) {
           elSignalType.textContent = "🛑 Support Broken (หลุดแนวรับ — รอสร้างฐานใหม่)";
           elSignalType.style.color = "#ef4444";
+        } else if (plan.signalType === "WAITING_TL_RETEST" || plan.reason?.includes("Trendline Support")) {
+          elSignalType.textContent = "⏳ Waiting Trendline Retest (รอราคาย่อทดสอบแนวรับ Trendline)";
+          elSignalType.style.color = "#f59e0b";
+        } else if (plan.signalType === "WAITING_HL_RETEST" || plan.reason?.includes("HL Support")) {
+          elSignalType.textContent = "⏳ Waiting HL Retest (รอราคาย่อทดสอบฐาน HL เดิม)";
+          elSignalType.style.color = "#f59e0b";
         } else {
           elSignalType.textContent = "⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)";
           elSignalType.style.color = "#f59e0b";

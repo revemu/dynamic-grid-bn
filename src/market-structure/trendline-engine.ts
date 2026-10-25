@@ -66,6 +66,17 @@ export class TrendlineEngine {
         const candidateSubHighs = allLaterHighs.filter((h) => h.price < p1.price);
 
         for (const p2 of candidateSubHighs) {
+          // 🛡️ Structural Wave Integrity (Dow Theory):
+          // A downtrend line tracks a specific descending wave and CANNOT span across the bottom trough (activeValley).
+          // Both P1 and P2 must either be pre-trough (forming the drop to the valley), OR post-trough (forming a new pullback).
+          if (activeValley) {
+            const isP1BeforeValley = p1.time < activeValley.time;
+            const isP2BeforeValley = p2.time <= activeValley.time;
+            if (isP1BeforeValley !== isP2BeforeValley) {
+              continue; // Reject lines spanning across the bottom trough
+            }
+          }
+
           const timeDiff = p2.time - p1.time;
           if (timeDiff <= 0) continue;
           const priceDiff = p2.price - p1.price;
@@ -131,7 +142,7 @@ export class TrendlineEngine {
           const isUnbroken = maxConsecutiveBroken < 2 && postP2BrokenCandles < 2;
           const isActiveWaveAnchor = Boolean(
             (activePeak && p1.index >= activePeak.index) ||
-            (activeValley && p2.index > activeValley.index)
+            (activeValley && p1.time >= activeValley.time && p2.time > p1.time)
           );
           // Prioritize unbroken active lines, active channel wave alignment, recency of P2/P1, and touches
           const score =
@@ -233,6 +244,17 @@ export class TrendlineEngine {
         const candidateSubLows = allLaterLows.filter((l) => l.price > v1.price);
 
         for (const v2 of candidateSubLows) {
+          // 🛡️ Structural Wave Integrity (Dow Theory):
+          // An uptrend line tracks a specific ascending wave and CANNOT span across the top peak (activePeak).
+          // Both V1 and V2 must either be pre-peak (forming the rally to the peak), OR post-peak (forming a new recovery).
+          if (activePeak) {
+            const isV1BeforePeak = v1.time < activePeak.time;
+            const isV2BeforePeak = v2.time <= activePeak.time;
+            if (isV1BeforePeak !== isV2BeforePeak) {
+              continue; // Reject lines spanning across the top peak
+            }
+          }
+
           const timeDiff = v2.time - v1.time;
           if (timeDiff <= 0) continue;
           const priceDiff = v2.price - v1.price;
@@ -296,7 +318,7 @@ export class TrendlineEngine {
           if (violates) continue;
 
           const isUnbroken = maxConsecutiveBroken < 2 && postV2BrokenCandles < 2;
-          const isActiveFloorAnchor = Boolean(activeValley && v1.index === activeValley.index);
+          const isActiveFloorAnchor = Boolean(activeValley && (v1.time === activeValley.time || v1.index === activeValley.index));
           // Prioritize unbroken active lines, activeValley anchor, recent v2, swing touches, and candle touches
           const score =
             (isUnbroken ? 1000 : 0) +
