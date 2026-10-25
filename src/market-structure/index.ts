@@ -258,18 +258,7 @@ export class DowStructureEngine {
     const lastCanonicalLow = canonicalLows.length > 0 ? canonicalLows[canonicalLows.length - 1] : undefined;
 
     // 3. Channel Bounds
-    const {
-      upperBound,
-      bottomBound,
-      activePeak,
-      activeValley,
-      isSwingConfirmed,
-      clampStatus,
-      anchorSide,
-      rawWidthPct,
-      minWidthPct,
-      maxWidthPct,
-    } = ChannelEngine.calculateBounds(
+    const boundsResult = ChannelEngine.calculateBounds(
       candles,
       price,
       confirmedHighs,
@@ -281,6 +270,18 @@ export class DowStructureEngine {
       useTrueWick,
       wickThreshFraction,
     );
+    let {
+      upperBound,
+      bottomBound,
+      activePeak,
+      activeValley,
+      isSwingConfirmed,
+      clampStatus,
+      anchorSide,
+      rawWidthPct,
+      minWidthPct,
+      maxWidthPct,
+    } = boundsResult;
 
     // 4. Dow Theory Market Regime
     const regime = DowEngine.determineMarketRegime(this.swingHighs, this.swingLows, isSwingConfirmed);
@@ -302,6 +303,35 @@ export class DowStructureEngine {
       waveCycle.annotatedSwings,
       candles,
     );
+
+    // 5.1 Trendline-Aware Ceiling Adjustment:
+    // If an unbroken descending trendline is pressing down below upperBound, cap the channel ceiling to respect the trendline
+    if (
+      isSwingConfirmed &&
+      bottomBound > 0 &&
+      upperBound > bottomBound &&
+      downtrendLine &&
+      !downtrendLine.isBroken &&
+      !downtrendBreakoutConfirmed
+    ) {
+      const minW = options?.minChannelWidthPct ?? 1.8;
+      const tlCurr = downtrendLine.currentLinePrice;
+      const tlP2 = downtrendLine.p2?.price ?? 0;
+      const tlP1 = downtrendLine.p1?.price ?? 0;
+
+      const spanPct = (ceilCandidate: number) => ((ceilCandidate - bottomBound) / bottomBound) * 100;
+
+      if (tlCurr > bottomBound && tlCurr < upperBound && spanPct(tlCurr) >= minW * 0.60) {
+        upperBound = tlCurr;
+        rawWidthPct = spanPct(upperBound);
+      } else if (tlP2 > bottomBound && tlP2 < upperBound && spanPct(tlP2) >= minW * 0.80) {
+        upperBound = tlP2;
+        rawWidthPct = spanPct(upperBound);
+      } else if (tlP1 > bottomBound && tlP1 < upperBound && spanPct(tlP1) >= minW) {
+        upperBound = tlP1;
+        rawWidthPct = spanPct(upperBound);
+      }
+    }
 
     // 6. Downtrend Drop Detection
     const hasValidChannel = isSwingConfirmed && bottomBound > 0 && upperBound > 0;

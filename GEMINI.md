@@ -3995,3 +3995,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 
 
+
+
+---
+
+## 93. v0.2.93 — Strict Near-LL Entry Zone, Trendline-Aware Channel & Target Framing, and Dynamic Trendline Exit (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `src/market-structure/channel-engine.ts`, `src/market-structure/index.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การเข้าซื้อไม่ได้เลือกเฉพาะจุดใกล้ `LL` จริง (Mid-Air Entry Bug)**:
+   - ใน `SwingSignalDetector.evaluateSetup` (`src/strategy/swing/signals.ts`) เดิมกำหนด `retestZoneMax = majorFloor + (majorSpan * 0.30)` และมีบั๊กคูณราคาเหรียญเต็มในเงื่อนไข `price <= retestZoneMax * 1.01` (`LL_RETEST_BOUNCE`) และ `price <= retestZoneMax * 1.25` (`HL_BASE`) ทำให้เงื่อนไขเป็นจริงเกือบทุกช่วงราคา บอทจึงไปเข้าซื้อที่ `HL` กลางทาง (เช่น `SOMI` ที่ `$0.1742` หรือ `BTC` ที่ `$80,985`) แทนที่จะรอเข้าใกล้ `LL` จริง (`$0.1701` และ `$79,425.54`)
+2. **การทำกรอบและตั้งเป้าหมาย (`TP1` / `TP2` / `Channel`) ไม่ได้ดูเส้น Trendline**:
+   - ทั้ง `ChannelEngine.calculateBounds` (`VOLUME_PROFILE_HTF`), `DowStructureEngine.getStructure` และ `SwingSignalDetector` ไม่ได้นำเส้นกด `downtrendLine` ที่ยังไม่ถูกเบรกมาจำกัดเพดานกรอบ และใน `signals.ts` ดันนำ `upperBound` / `activePeak` เก่าก่อนการทุบมาหา `Math.max` ทำให้เป้า `TP1` / `TP2` ลอยสูงเกินเส้นเทรนด์ไลน์กดหัว (เช่น `BTC` ตั้ง `TP1 = $81,981` ทั้งที่มีเส้นกด `downtrendLine` ขวางอยู่ที่ `$81,104.60`)
+3. **ไม่มีการปรับกรอบตามโครงสร้างที่เปลี่ยน และไม่มีการขายที่เส้น Trendline เพื่อหาโอกาสเข้าใหม่**:
+   - เมื่อเปิดสถานะ (`IN_POSITION`) บอทล็อกค่า `tp1Price` และ `tp2Price` ตายตัวตั้งแต่วินาทีที่ซื้อ ไม่ปรับลดลงมาตามเส้นกด `downtrendLine` หรือกรอบคลื่นใหม่ และเมื่อราคาวิ่งชนเส้นกด `downtrendLine` แล้วถูกปฏิเสธจนหลุดเส้นรับ `uptrendLine` บอทไม่ยอมขายออกเพื่อถือเงินสดรอรับใหม่ใกล้ `LL`
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Strict Near-LL Entry Selection (`src/strategy/swing/signals.ts`)**:
+   - ปรับ `plannedEntry` ให้ชิดฐาน `LL` จริง (`majorFloor + Math.min(majorSpan * 0.06, majorFloor * 0.004)`) และบีบโซนรับ `retestZoneMax` ให้อยู่ไม่เกิน `15%` ล่างสุดของกรอบคลื่น หรือไม่เกิน `+1.0%` จาก `majorFloor` (ตัดบั๊ก `* 1.01` และ `* 1.25` ออกทั้งหมด)
+   - บังคับให้ `HL_BASE` เข้าได้เฉพาะเมื่อ `HL` เกิดในโซนใกล้ `LL` ด้านล่างเท่านั้น และต้องไม่เพิ่งหลุดเส้นรับ `uptrendLine`
+2. **Trendline-Aware Channel & Target Framing (`src/market-structure/channel-engine.ts`, `src/market-structure/index.ts`, `src/strategy/swing/signals.ts`)**:
+   - ยึดฐาน `bottomBound` ในโหมด `VOLUME_PROFILE_HTF` กับเหว `LL` ที่ยังไม่ถูกทำลายของคลื่นปัจจุบันก่อน `VAL` ที่ลอยกลางกรอบ และจำกัด `upperBound` ตามเส้นกด `downtrendLine` ที่ยังไม่ถูกเบรก
+   - ใน `SwingSignalDetector`: ยึดเพดานกับสวิงที่เกิดหลัง `majorFloor` (`postBottomHighs`) และหากมีเส้นกด `downtrendLine` ที่ยังไม่ถูกเบรกขวางอยู่ จะปรับ `plannedTp1` ลงมาดักขายใต้เส้นกด (`downtrendLine.currentLinePrice * 0.9985`) พร้อมตรวจสอบ `hasTrendlineHeadroom` (ต้องมีระยะถึงเส้นกด `>= 0.8%` และ `R:R >= 1.15x`) เพื่อบล็อกการซื้อใต้เส้นเทรนด์ไลน์
+3. **Dynamic Frame Sync & Trendline Exit (`src/strategy/swing/index.ts`)**:
+   - ใน `managePendingEntryOrder`: ยกเลิกใบสั่งรอซื้ออัตโนมัติหากกรอบ `Near-LL` ขยับลงต่ำกว่าเดิม หรือมีเส้นกด `downtrendLine` กดลงมาทับจุดรอซื้อ
+   - ใน `manageActivePosition`:
+     - อัปเดต `pos.tp1Price` และ `pos.tp2Price` (พร้อมยกเลิกและวางใบสั่ง `Maker Limit TP` ใหม่บนกระดานอัตโนมัติ) เมื่อเส้นกด `downtrendLine` หรือเพดานกรอบคลื่นปัจจุบันปรับตัวลดลง (โดยยังคงรักษาระดับสูงกว่าราคาทุนขั้นต่ำ `minProfitablePrice`)
+     - เมื่อราคาวิ่งขึ้นไปแตะเส้นกด `downtrendLine` และมีกำไร จะล็อก `stopLossPrice` ขึ้นมาที่จุดคุ้มทุน (`Breakeven+`) ทันที
+     - เมื่อราคาขึ้นไปทดสอบเส้นกด `downtrendLine` (หรือทำ `LH` ใต้เส้นกด) แล้วไม่ผ่าน จนเกิดการย่อตัวแรงหรือหลุดเส้นรับ `uptrendLine` (`uptrendLine.breakoutConfirmed`) ระบบจะสั่งขายออก (`Swing Trendline Exit (Re-enter near LL)`) เพื่อล็อกกำไร/รักษาทุนและรอเข้าใหม่ที่จุดใกล้ `LL`

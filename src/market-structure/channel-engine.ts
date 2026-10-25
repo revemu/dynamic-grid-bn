@@ -101,17 +101,24 @@ export class ChannelEngine {
         .filter(isUnbrokenPeak)
         .sort((a, b) => a.price - b.price);
 
-      // 1. Tactical Floor Selection (Support must be within tactical maxChannelWidthPct):
+      // 1. Tactical Floor Selection (Anchor to deepest unbroken LL/valley within tactical maxChannelWidthPct first):
       const maxSpanFloor = price * (maxChannelWidthPct / 100);
+      const validSpanValleys = unbrokenValleys.filter((v) => (price - v.price) <= maxSpanFloor);
+      // Prefer the deepest unbroken valley (Major LL of the current wave) within maxSpanFloor so floor anchors near LL
+      const majorUnbrokenValley = validSpanValleys.length > 0
+        ? validSpanValleys[validSpanValleys.length - 1]
+        : unbrokenValleys[0];
       const valFloor = (vp?.val && vp.val > 0 && vp.val <= price && (price - vp.val) <= maxSpanFloor) ? vp.val : 0;
       const htfFloorCandidate = (htf?.floor && htf.floor > 0 && htf.floor <= price && (price - htf.floor) <= maxSpanFloor) ? htf.floor : 0;
 
-      if (valFloor > 0) {
+      if (majorUnbrokenValley && (price - majorUnbrokenValley.price) <= maxSpanFloor) {
+        bottomBound = majorUnbrokenValley.price;
+      } else if (htfFloorCandidate > 0) {
+        bottomBound = htfFloorCandidate;
+      } else if (valFloor > 0) {
         bottomBound = valFloor;
       } else if (unbrokenValleys.length > 0) {
         bottomBound = unbrokenValleys[0]!.price;
-      } else if (htfFloorCandidate > 0) {
-        bottomBound = htfFloorCandidate;
       } else {
         bottomBound = 0;
       }
@@ -120,6 +127,11 @@ export class ChannelEngine {
       const minSpan = price * (minChannelWidthPct / 100);
       const maxSpan = price * (maxChannelWidthPct / 100);
 
+      // Prefer post-valley unbroken peaks over distant pre-dump VAH when available
+      const floorTime = majorUnbrokenValley?.time ?? 0;
+      const postValleyPeaks = unbrokenPeaks.filter(
+        (p) => (floorTime === 0 || p.time >= floorTime) && bottomBound > 0 && (p.price - bottomBound) >= minSpan && (p.price - bottomBound) <= maxSpan,
+      );
       const vahCeil = (vp?.vah && vp.vah > price && bottomBound > 0 && (vp.vah - bottomBound) >= minSpan && (vp.vah - bottomBound) <= maxSpan)
         ? vp.vah
         : 0;
@@ -127,7 +139,11 @@ export class ChannelEngine {
         ? htf.ceiling
         : 0;
 
-      if (vahCeil > 0) {
+      if (postValleyPeaks.length > 0) {
+        // Use the post-bottom structural peak (or lower of VAH and post-bottom peak if both valid)
+        const postPeakPrice = postValleyPeaks[postValleyPeaks.length - 1]!.price;
+        upperBound = (vahCeil > 0 && vahCeil < postPeakPrice) ? vahCeil : postPeakPrice;
+      } else if (vahCeil > 0) {
         upperBound = vahCeil;
       } else if (unbrokenPeaks.length > 0) {
         const validPeak = unbrokenPeaks.find((p) => bottomBound > 0 && (p.price - bottomBound) >= minSpan && (p.price - bottomBound) <= maxSpan);
@@ -141,7 +157,7 @@ export class ChannelEngine {
       // If Tactical Floor/Ceiling couldn't find a valid span, fall back to unbroken 15m swings
       if (upperBound <= 0 || bottomBound <= 0 || (upperBound - bottomBound) < minSpan || (upperBound - bottomBound) > maxSpan) {
         if (unbrokenValleys.length > 0) {
-          for (const v of unbrokenValleys) {
+          for (const v of [...unbrokenValleys].reverse()) {
             const p = unbrokenPeaks.find((pk) => (pk.price - v.price) >= minSpan && (pk.price - v.price) <= maxSpan);
             if (p) {
               bottomBound = v.price;
@@ -157,8 +173,8 @@ export class ChannelEngine {
         isSwingConfirmed = true;
         clampStatus = "NATURAL_SWING";
         anchorSide = "LOWER_FLOOR";
-        activeValley = unbrokenValleys.find((v) => Math.abs(v.price - bottomBound) / v.price < 0.005) ?? unbrokenValleys[0];
-        activePeak = unbrokenPeaks.find((p) => Math.abs(p.price - upperBound) / p.price < 0.005) ?? unbrokenPeaks[0];
+        activeValley = unbrokenValleys.find((v) => Math.abs(v.price - bottomBound) / v.price < 0.005) ?? majorUnbrokenValley ?? unbrokenValleys[0];
+        activePeak = unbrokenPeaks.find((p) => Math.abs(p.price - upperBound) / p.price < 0.005) ?? postValleyPeaks[postValleyPeaks.length - 1] ?? unbrokenPeaks[0];
         rawWidthPct = ((upperBound - bottomBound) / bottomBound) * 100;
         minWidthPct = minChannelWidthPct;
         maxWidthPct = maxChannelWidthPct;

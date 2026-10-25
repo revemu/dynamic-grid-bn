@@ -9,7 +9,7 @@
 import type { IExchangeClient, ExchangeSymbolInfo } from "../../exchange/types.js";
 import type { Config } from "../../config.js";
 import type { AtrSource } from "../../types.js";
-import { type DowStructureEngine, type Candle } from "../../market-structure.js";
+import { type DowStructureEngine, type DowStructure, type Candle } from "../../market-structure.js";
 import { VolumeProfileEngine, type VolumeProfileResult } from "../../market-structure/volume-profile.js";
 import { BotDatabase, getDatabase } from "../../db.js";
 import type {
@@ -91,6 +91,7 @@ export class SwingTraderStrategy implements IStrategy {
   public mid = 0;
   private lastBalanceRefreshTime = 0;
   private lastOrderSyncTime = 0;
+  private lastTpOrderAdjustTime = 0;
 
   private eventListeners: ((event: StrategyEvent) => void)[] = [];
 
@@ -744,26 +745,22 @@ export class SwingTraderStrategy implements IStrategy {
 
       // Only execute entries/exits if bot is NOT paused
       const candles = this.dowEngine?.getCandles() ?? [];
+      const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
+      this.lastSignal = signal;
 
       if (!this.isPaused) {
         if (this.activePosition) {
-          // 1. Manage Active Position (SL / TP / Trailing Stop)
-          await this.manageActivePosition(refPrice, swingCfg);
+          // 1. Manage Active Position (SL / TP / Trailing Stop / Dynamic Trendline Exit & Frame Sync)
+          await this.manageActivePosition(refPrice, swingCfg, structure, candles);
         } else if (this.pendingEntryOrder) {
           // 2. Manage Pending Maker Entry Order
-          await this.managePendingEntryOrder(refPrice, swingCfg);
+          await this.managePendingEntryOrder(refPrice, swingCfg, structure, candles);
         } else {
           // 3. Scan for New Entry Setup
-          const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
-          this.lastSignal = signal;
           if (signal.hasSignal && this.swingState === "WAITING_SETUP") {
             await this.executeSwingEntry(signal, refPrice, swingCfg);
           }
         }
-      } else {
-        // In paused mode, scan for signals for UI preview
-        const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
-        this.lastSignal = signal;
       }
 
       this.emitTelemetryTick();
@@ -772,7 +769,12 @@ export class SwingTraderStrategy implements IStrategy {
     }
   }
 
-  private async managePendingEntryOrder(refPrice: number, cfg: SwingStrategyConfig): Promise<void> {
+  private async managePendingEntryOrder(
+    refPrice: number,
+    cfg: SwingStrategyConfig,
+    structure?: DowStructure,
+    _candles: Candle[] = [],
+  ): Promise<void> {
     if (!this.pendingEntryOrder) return;
     const p = this.pendingEntryOrder;
 
@@ -780,6 +782,37 @@ export class SwingTraderStrategy implements IStrategy {
     if (refPrice <= p.stopLossPrice) {
       this.log(
         `[SwingTrader] 🛑 Cancelling pending entry order ${p.orderId}: Price broke below Stop Loss ($${refPrice.toFixed(4)} <= $${p.stopLossPrice.toFixed(4)})`,
+      );
+      try {
+        await this.binance.cancelOrder(this.symbolInfo.symbol, p.orderId);
+      } catch (e) {
+        this.log(`[SwingTrader] Cancel pending order failed: ${e}`);
+      }
+      this.pendingEntryOrder = undefined;
+      this.swingState = "WAITING_SETUP";
+      this.saveState(true);
+      await this.syncOnChainOrders();
+      return;
+    }
+
+    // 1.1 Check if entry frame shifted lower (e.g., new lower LL formed or descending trendline pressed down onto pending entry)
+    const plannedEntry = this.lastSignal?.plannedEntryPrice ?? 0;
+    const downtrendLine = structure?.downtrendLine;
+    const isCappedByTl = Boolean(
+      downtrendLine &&
+      !downtrendLine.isBroken &&
+      !structure?.downtrendBreakoutConfirmed &&
+      downtrendLine.currentLinePrice <= p.price * 1.008,
+    );
+    const isFrameShiftedLower = plannedEntry > 0 && p.price > plannedEntry * 1.012;
+
+    if (isCappedByTl || isFrameShiftedLower) {
+      this.log(
+        `[SwingTrader] 📐 Cancelling pending entry order ${p.orderId} (@ $${p.price.toFixed(4)}): ${
+          isCappedByTl
+            ? `Descending Trendline pressed down to $${downtrendLine!.currentLinePrice.toFixed(4)}`
+            : `Entry frame shifted lower to Near-LL $${plannedEntry.toFixed(4)}`
+        }`,
       );
       try {
         await this.binance.cancelOrder(this.symbolInfo.symbol, p.orderId);
@@ -973,7 +1006,12 @@ export class SwingTraderStrategy implements IStrategy {
     }
   }
 
-  private async manageActivePosition(refPrice: number, cfg: SwingStrategyConfig): Promise<void> {
+  private async manageActivePosition(
+    refPrice: number,
+    cfg: SwingStrategyConfig,
+    structure?: DowStructure,
+    _candles: Candle[] = [],
+  ): Promise<void> {
     if (!this.activePosition) return;
     const pos = this.activePosition;
     const isMakerMode = this.cfg.orderExecutionMode === "MAKER_LIMIT";
@@ -984,6 +1022,131 @@ export class SwingTraderStrategy implements IStrategy {
     }
 
     const currentGainPct = ((refPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+    // ── Dynamic Frame & Trendline Target Sync ────────────────────────────────
+    const downtrendLine = structure?.downtrendLine;
+    const uptrendLine = structure?.uptrendLine;
+    const hasActiveDowntrendTl = Boolean(
+      downtrendLine &&
+      !downtrendLine.isBroken &&
+      !structure?.downtrendBreakoutConfirmed &&
+      downtrendLine.currentLinePrice > 0,
+    );
+
+    const now = Date.now();
+    if (now - this.lastTpOrderAdjustTime >= 15_000) {
+      const minProfitablePrice = this.roundPrice(
+        pos.entryPrice * (1 + Math.max(0.001, (this.cfg.minNetProfitPct ?? 0.20) / 100)),
+      );
+      let targetsChanged = false;
+
+      // 1. Dynamically lower TP1 to Descending Trendline or updated frame ceiling if lower than current TP1
+      if (!pos.tp1Executed) {
+        let desiredTp1 = pos.tp1Price;
+        if (hasActiveDowntrendTl && downtrendLine) {
+          const tlSellTarget = this.roundPrice(downtrendLine.currentLinePrice * 0.9985);
+          if (tlSellTarget > 0 && tlSellTarget < desiredTp1) {
+            desiredTp1 = Math.max(minProfitablePrice, tlSellTarget);
+          }
+        }
+        if (
+          this.lastSignal?.plannedTp1Price &&
+          this.lastSignal.plannedTp1Price > minProfitablePrice &&
+          this.lastSignal.plannedTp1Price < desiredTp1
+        ) {
+          desiredTp1 = this.roundPrice(Math.max(minProfitablePrice, this.lastSignal.plannedTp1Price));
+        }
+
+        if (desiredTp1 < pos.tp1Price && Math.abs(desiredTp1 - pos.tp1Price) / pos.tp1Price >= 0.0015) {
+          const oldTp1 = pos.tp1Price;
+          pos.tp1Price = desiredTp1;
+          targetsChanged = true;
+          this.log(
+            `[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP1 $${oldTp1.toFixed(4)} -> $${pos.tp1Price.toFixed(4)}${
+              hasActiveDowntrendTl ? ` (Aligned with Descending Trendline $${downtrendLine!.currentLinePrice.toFixed(4)})` : ""
+            }`,
+          );
+          if (isMakerMode && pos.tp1OrderId) {
+            try {
+              await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId);
+            } catch {}
+            pos.tp1OrderId = undefined;
+          }
+        }
+      }
+
+      // 2. Dynamically adjust TP2 to updated post-bottom structural peak if frame shifted lower
+      if (
+        this.lastSignal?.plannedTp2Price &&
+        this.lastSignal.plannedTp2Price > pos.tp1Price * 1.005 &&
+        this.lastSignal.plannedTp2Price < pos.tp2Price * 0.995
+      ) {
+        const nextTp2 = this.roundPrice(this.lastSignal.plannedTp2Price);
+        if (nextTp2 > pos.tp1Price && Math.abs(nextTp2 - pos.tp2Price) / pos.tp2Price >= 0.002) {
+          const oldTp2 = pos.tp2Price;
+          pos.tp2Price = nextTp2;
+          targetsChanged = true;
+          this.log(`[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP2 $${oldTp2.toFixed(4)} -> $${pos.tp2Price.toFixed(4)}`);
+          if (isMakerMode && pos.tp2OrderId) {
+            try {
+              await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId);
+            } catch {}
+            pos.tp2OrderId = undefined;
+          }
+        }
+      }
+
+      if (targetsChanged) {
+        this.lastTpOrderAdjustTime = now;
+        this.saveState(true);
+        if (isMakerMode) {
+          await this.placeMakerTakeProfitOrders(pos, cfg);
+        }
+      }
+    }
+
+    // ── Trendline Resistance Touch & Rejection / Breakdown Exit ──────────────
+    if (hasActiveDowntrendTl && downtrendLine) {
+      const tlPrice = downtrendLine.currentLinePrice;
+
+      // A) When price reaches/touches the Descending Trendline in profit, lock Stop Loss to Breakeven+ immediately
+      if (refPrice >= tlPrice * 0.9985 && refPrice >= pos.entryPrice * 1.001) {
+        const breakevenLock = this.roundPrice(pos.entryPrice * 1.0005);
+        if (pos.stopLossPrice < breakevenLock) {
+          pos.stopLossPrice = breakevenLock;
+          this.saveState(true);
+          this.log(
+            `[SwingTrader] 🛡️ Price touched Descending Trendline ($${tlPrice.toFixed(4)}) — Stop Loss locked to Breakeven ($${breakevenLock.toFixed(4)})!`,
+          );
+        }
+      }
+
+      // B) Check if rally tested the Descending Trendline (or formed LH under TL) and then got rejected / broke Uptrend Support
+      const testedTrendline =
+        pos.highestPriceSinceEntry >= tlPrice * 0.995 ||
+        Boolean(structure?.waveCycle?.lastLh && structure.waveCycle.lastLh.time * 1000 >= pos.entryTime - 900_000);
+      const isUptrendBroken = Boolean(uptrendLine?.isBroken && uptrendLine?.breakoutConfirmed);
+      const pullbackFromPeakPct =
+        pos.highestPriceSinceEntry > 0
+          ? ((pos.highestPriceSinceEntry - refPrice) / pos.highestPriceSinceEntry) * 100
+          : 0;
+
+      const shouldExitOnTlRejection =
+        testedTrendline &&
+        ((pos.tp1Executed && isUptrendBroken) ||
+          (refPrice >= pos.entryPrice * 0.9995 && isUptrendBroken) ||
+          (pos.highestPriceSinceEntry >= tlPrice * 0.998 &&
+            refPrice >= pos.entryPrice * 1.001 &&
+            pullbackFromPeakPct >= 0.35));
+
+      if (shouldExitOnTlRejection) {
+        this.log(
+          `[SwingTrader] 📐 Trendline Rejection / Support Breakdown Exit @ $${refPrice.toFixed(4)} (TL: $${tlPrice.toFixed(4)}, Peak: $${pos.highestPriceSinceEntry.toFixed(4)}) — Exiting to re-enter near Major LL!`,
+        );
+        await this.sellAllUser("Swing Trendline Exit (Re-enter near LL)");
+        return;
+      }
+    }
 
     // Trailing Stop Activation after TP1
     if (pos.tp1Executed && currentGainPct >= cfg.trailingActivationPct) {
