@@ -117,12 +117,17 @@ export class SwingTraderStrategy implements IStrategy {
     this.htfDowEngine = ctx.htfDowEngine;
 
     this.db = getDatabase({ dbPath: this.cfg.dbPath });
-    this.isPaused = this.cfg.startPaused ?? false;
+    // 🛡️ Safe Boot: If startPaused is true (or not explicitly false), always boot in PAUSED mode for safety!
+    if (this.cfg.startPaused !== false) {
+      this.isPaused = true;
+    } else {
+      this.isPaused = false;
+    }
 
     // 🛡️ Recover persisted state from database across reboots
     const savedState = this.db.getState(this.symbolInfo.symbol);
     if (savedState) {
-      if (typeof (savedState as any).isPaused === "boolean") {
+      if (this.cfg.startPaused === false && typeof (savedState as any).isPaused === "boolean") {
         this.isPaused = (savedState as any).isPaused;
       }
       if (Array.isArray(savedState.lots) && savedState.lots.length > 0) {
@@ -765,7 +770,7 @@ export class SwingTraderStrategy implements IStrategy {
   public reloadState(): void {
     const saved = this.db.getState(this.symbolInfo.symbol);
     if (saved) {
-      if (typeof (saved as any).isPaused === "boolean") {
+      if (this.cfg.startPaused === false && typeof (saved as any).isPaused === "boolean") {
         this.isPaused = (saved as any).isPaused;
       }
       this.lots = saved.lots || [];

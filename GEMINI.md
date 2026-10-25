@@ -4213,5 +4213,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - เมื่อแผนเป็น 0 (`entryPrice === 0`): กล่อง Swing Targets ด้านขวาจะแสดง `"--.------"` และขึ้นสถานะ `"🛑 โครงสร้างหลุดฐาน (Waiting Base)"` และ `"Searching New Base"`
 5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.99` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.37` ใน `public/index.html`
 
+---
+
+## 100. v0.2.100 — Strict Safe Boot Enforcement (`startPaused`) & DB State Precedence Fix (`src/strategy/swing/index.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การกู้คืน State เก่าจาก DB ข้ามการตั้งค่าความปลอดภัย (`startPaused: true`)**:
+   - ใน `src/strategy/swing/index.ts` เมธอด `constructor` และ `reloadState`:
+     แม้ว่าในการตั้งค่า (`Config`) หรือไฟล์ `data/settings.db.json` จะกำหนด `startPaused: true` ไว้ แต่โค้ดมีคำสั่ง:
+     `if (typeof (savedState as any).isPaused === "boolean") { this.isPaused = (savedState as any).isPaused; }`
+   - เมื่อบอทเคยรันอยู่ในสถานะ Active ก่อนรีสตาร์ท ค่า `isPaused = false` ใน DB จะถูกดึงมาทับการตั้งค่า `startPaused: true` ใน Config ทันที
+   - ส่งผลให้ทุกครั้งที่มีการรีสตาร์ทเซิร์ฟเวอร์หรืออัปเดตเวอร์ชัน บอทจะตื่นขึ้นมาในสถานะ Unpaused (Active) เสมอ ทำให้ผู้ใช้ขาดการควบคุมและเกิดความกังวลว่าบอทจะส่งคำสั่งโดยไม่ได้ตั้งใจ
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Strict Safe Boot Precedence (`startPaused`)**:
+   - ใน `SwingTraderStrategy`: กำหนดให้ `this.cfg.startPaused !== false` มีลำดับความสำคัญสูงสุดในการ Boot
+   - **กฎเหล็ก**: ตราบใดที่ `this.cfg.startPaused` ไม่ได้ถูกเซ็ตเป็น `false` อย่างชัดเจน ทุกครั้งที่บอทเปิดระบบขึ้นมาใหม่หรือรีสตาร์ท จะต้องเริ่มต้นด้วยสถานะ **`this.isPaused = true (⏸️ Strategy Paused - Monitoring Mode)` เสมอ 100%**
+   - การดึงสถานะ `isPaused` จาก Database จะทำได้ก็ต่อเมื่อผู้ใช้จงใจตั้งค่า `startPaused: false` ไว้ใน Config เท่านั้น
+   - ผู้ใช้ต้องเป็นคนกดปุ่ม `Resume` บนหน้าจอแดชบอร์ดด้วยตัวเองเท่านั้น บอทจึงจะเริ่มทำงานจริง
+2. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.100` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.38` ใน `public/index.html`
+
+
 
 
