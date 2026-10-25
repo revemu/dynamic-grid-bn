@@ -4116,3 +4116,45 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **กำจัดช่องโหว่การลัดคิว**:
    - ตัด `|| hasNearLlMicroHl` ออกจาก `Setup 1` บังคับให้ต้องผ่าน `reversalCheck.isReversal === true` 100%
    - ใน `Setup 3 (HL_BASE)` บังคับว่าจุด `HL` ต้องเกิดหลัง `majorFloorTime` และต้องผ่านการตรวจแท่งกลับตัว `reversalCheck.isReversal === true` เช่นเดียวกัน
+
+---
+
+## 97. v0.2.97 — Pause State Persistence, Strict Safe Take Profit Floor & Order Execution Reordering (`src/strategy/swing/index.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **สถานะ `isPaused` หลุดเมื่อรีสตาร์ทเซิร์ฟเวอร์ (Pause Reset Bug)**:
+   - ใน `src/strategy/swing/index.ts`: `setPaused` ไม่ได้เรียก `saveState(true)`, `saveState` ไม่ได้บันทึก `isPaused` ลงใน DB, และ `constructor`/`reloadState` โหลดค่าเริ่มต้น `isPaused = false` เสมอ ทำให้เมื่อผู้ใช้กด Pause แล้วรีสตาร์ทเซิร์ฟเวอร์ บอทจะกลับมาทำงาน (Unpaused) ทันที
+2. **`tick()` แอบรัน `manageActivePosition` แม้จะ Pause อยู่**:
+   - `tick()` เช็ค `!this.isPaused` เฉพาะตอนหาจังหวะเข้าซื้อ (`lookForSetupAndEntry`) แต่ปล่อยให้ `manageActivePosition` รันต่อไป ทำให้บอทสามารถแอบยกเลิกคำสั่ง ปรับราคา หรือสั่งขาย Stop Loss ขณะบอทอยู่ในสถานะ Pause ได้
+3. **การดึง `lastSignal.plannedTp1Price` ของไม้ถัดไป (Near LL) มาทับ `TP1` ของไม้ปัจจุบันจนต่ำกว่าราคาตลาด**:
+   - `lastSignal` คำนวณเป้าสำหรับรอบถัดไปที่ Major LL (`$79,527`) โดยมีเป้า TP1 ที่ `$80,273`
+   - แต่ไม้ที่ถืออยู่จริงเข้าที่ `$80,985` และราคาตลาดอยู่ที่ `$80,872`
+   - ใน `manageActivePosition`: เมื่อเข้าเงื่อนไข `isTrapped` บอทนำ `$80,273` มาตั้งเป็น Limit Sell TP1 ของไม้ปัจจุบัน ทำให้คำสั่งขายตั้งต่ำกว่าราคาตลาด ($80,872) และถูก Binance จับคู่ขายทันที (Market Taker Sell) ขาดทุนก้อนแรก 50%
+4. **การย้าย Stop Loss ขึ้นมาที่ทุนทันทีที่ TP1 แมตช์ ทั้งที่ราคาตลาดยังอยู่ต่ำกว่าทุน**:
+   - ทันทีที่ TP1 ขายออกที่ `$80,872` ระบบสั่งย้าย `pos.stopLossPrice = pos.entryPrice` (`$80,985`) ทันที
+   - ใน Tick ถัดมา (664ms ต่อมา) ราคาตลาด `$80,872` ต่ำกว่า `$80,985` อยู่แล้ว จึงทริกเกอร์ `Swing Stop Loss Triggered` เทขายอีก 50% ที่เหลือทิ้งทันที
+5. **ลำดับการทำงานใน `manageActivePosition` ผิดพลาด**:
+   - โค้ดเดิมรัน Dynamic Target Sync และ Self-Healing TP Coverage ก่อนที่จะเช็คสถานะการจับคู่ (`FILLED`) ของออเดอร์ในกระดาน
+   - เมื่อออเดอร์ TP1 ถูกจับคู่บนกระดาน ทำให้เหลือเฉพาะ TP2 ระบบ Self-Healing เข้าใจผิดว่าออเดอร์ครอบคลุมน้อยกว่า 90% จึงสั่งยกเลิกและเคลียร์ `pos.tp1OrderId = undefined` ตัดหน้าก่อนที่โค้ดเช็ค Fill จะได้ทำงาน
+6. **เงื่อนไข `shouldExitOnTlRejection` ใช้ราคาสูงสุดก่อนเข้าซื้อมาตัดสิน**:
+   - ตรวจจับการแตะ Trendline จากแท่งเทียนก่อนหน้าการเข้าซื้อ และไม่ได้จำกัดว่าต้องมีกำไร ทำให้มีโอกาสสั่งขายขาดทุนหนี Trendline โดยไม่จำเป็น
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Persistent Pause State & Complete Execution Freeze (`src/strategy/swing/index.ts`)**:
+   - บันทึก `isPaused: this.isPaused` ลง Database ใน `saveState` เสมอ
+   - กู้คืนค่า `isPaused` จาก DB ใน `constructor` และ `reloadState`
+   - ใน `setPaused(paused)` สั่ง `this.saveState(true)` ทันที
+   - ใน `tick()`: หาก `this.isPaused === true` บอทจะอัปเดตเฉพาะ Telemetry แล้ว `return` ทันที 100% ไม่แตะต้องออเดอร์ ไม่ปรับกรอบ และไม่สั่งขายใดๆ ทั้งสิ้น
+2. **Reordering Execution in `manageActivePosition`**:
+   - **Step 1**: ตรวจสอบสถานะ `FILLED` ของ `pos.tp1OrderId` และ `pos.tp2OrderId` จากกระดานเป็นลำดับแรกสุด หาก TP2 ปิดรอบแล้ว ให้กวาดเหรียญตกค้างและจบการทำงานทันที
+   - **Step 2**: ตรวจสอบ Trailing Stop และ Stop Loss
+   - **Step 3**: ตรวจสอบ Trendline Rejection Exit (เฉพาะเมื่อทดสอบ Trendline หลังเข้าซื้อ และต้องมีกำไร `>= 0.05%` เท่านั้น)
+   - **Step 4**: ปรับ Dynamic Target Sync และ Self-Healing TP Coverage (ซึ่งตอนนี้จะรู้สถานะ `pos.tp1Executed` ที่แท้จริงแล้ว)
+3. **Strict Safe Take Profit Floor & Safeguards**:
+   - กำจัดตรรกะที่นำ `lastSignal.plannedTp1Price` มาลดราคา TP1 ของไม้ปัจจุบัน
+   - บังคับกำแพงราคาขั้นต่ำของ TP1 เสมอ: `minSafeTp1 = Math.max(pos.entryPrice * 1.0015, refPrice * 1.002)`
+   - ใน `placeMakerTakeProfitOrders`: เพิ่ม Guard ขั้นเด็ดขาด หาก `pos.tp1Price <= currentRefPrice * 1.0005` บอทจะปฏิเสธการส่งคำสั่ง Limit Sell ที่จะไป Cross Spread กลายเป็น Market Taker ทันที
+4. **Safe Breakeven Stop Loss Elevation**:
+   - ในทั้ง 3 จุด (`handleWsExecutionReport`, Maker TP1 fill, IOC TP1 fill): จะย้าย `pos.stopLossPrice = pos.entryPrice` ก็ต่อเมื่อราคาขายได้กำไร (`execPrice >= pos.entryPrice`) และราคาตลาดปัจจุบันอยู่สูงกว่าราคาทุนอย่างปลอดภัย (`refPrice > pos.entryPrice * 1.0005`) เท่านั้น หากราคาตลาดยังต่ำกว่าทุน จะคงค่า SL เดิมไว้ ป้องกันการเกิด Stopout Loop ซ้ำซ้อน
+5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.97` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.35` ใน `public/index.html`
+

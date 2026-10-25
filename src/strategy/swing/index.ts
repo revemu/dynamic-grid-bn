@@ -122,6 +122,9 @@ export class SwingTraderStrategy implements IStrategy {
     // 🛡️ Recover persisted state from database across reboots
     const savedState = this.db.getState(this.symbolInfo.symbol);
     if (savedState) {
+      if (typeof (savedState as any).isPaused === "boolean") {
+        this.isPaused = (savedState as any).isPaused;
+      }
       if (Array.isArray(savedState.lots) && savedState.lots.length > 0) {
         this.lots = [...savedState.lots];
       }
@@ -258,6 +261,7 @@ export class SwingTraderStrategy implements IStrategy {
 
   public setPaused(paused: boolean): boolean {
     this.isPaused = paused;
+    this.saveState(true);
     this.log(`[SwingTrader] Bot paused state set to: ${paused}`);
     this.emitTelemetryTick();
     return this.isPaused;
@@ -373,11 +377,15 @@ export class SwingTraderStrategy implements IStrategy {
           this.realizedPnl += pnl;
           pos.tp1Executed = true;
           pos.qty = this.roundQty(pos.qty - exitQty);
-          pos.stopLossPrice = pos.entryPrice;
+          if (execPrice >= pos.entryPrice && (this.lastRefPrice || 0) > pos.entryPrice * 1.0005) {
+            pos.stopLossPrice = pos.entryPrice;
+            this.log(`[SwingTrader] 🎯 WS: TP1 Filled at $${execPrice.toFixed(4)}! SL moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — 100% Risk-Free!`);
+          } else {
+            this.log(`[SwingTrader] 🎯 WS: TP1 Filled at $${execPrice.toFixed(4)}! Preserving SL ($${pos.stopLossPrice.toFixed(4)}) because market is at/below entry.`);
+          }
           pos.tp1OrderId = undefined;
           this.swingState = "TP1_REACHED";
           this.saveState(true);
-          this.log(`[SwingTrader] 🎯 WS: TP1 Filled at $${execPrice.toFixed(4)}! SL moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — 100% Risk-Free!`);
           this.emit({
             type: "order",
             data: {
@@ -757,6 +765,9 @@ export class SwingTraderStrategy implements IStrategy {
   public reloadState(): void {
     const saved = this.db.getState(this.symbolInfo.symbol);
     if (saved) {
+      if (typeof (saved as any).isPaused === "boolean") {
+        this.isPaused = (saved as any).isPaused;
+      }
       this.lots = saved.lots || [];
       this.activePosition = (saved as any).activeSwingPosition;
       this.pendingEntryOrder = (saved as any).pendingEntryOrder;
@@ -769,6 +780,7 @@ export class SwingTraderStrategy implements IStrategy {
     try {
       this.db.saveState({
         symbol: this.symbolInfo.symbol,
+        isPaused: this.isPaused,
         lots: this.lots,
         openOrders: this.openOrders,
         realizedPnl: this.realizedPnl,
@@ -893,11 +905,16 @@ export class SwingTraderStrategy implements IStrategy {
       const signal = SwingSignalDetector.evaluateSetup(refPrice, structure, swingCfg, candles);
       this.lastSignal = signal;
 
-      // 🛡️ Position protection must NEVER be paused! Active positions (SL/TP/Trendline exit) are managed continuously.
+      if (this.isPaused) {
+        // Paused: monitoring only, do not manage active positions, do not cancel or place orders, do not enter new trades
+        this.emitTelemetryTick();
+        return;
+      }
+
       if (this.activePosition) {
         // 1. Manage Active Position (SL / TP / Trailing Stop / Dynamic Trendline Exit & Frame Sync)
         await this.manageActivePosition(refPrice, swingCfg, structure, candles);
-      } else if (!this.isPaused) {
+      } else {
         if (this.pendingEntryOrder) {
           // 2. Manage Pending Maker Entry Order
           await this.managePendingEntryOrder(refPrice, swingCfg, structure, candles);
@@ -1024,6 +1041,22 @@ export class SwingTraderStrategy implements IStrategy {
 
     const minQty = this.symbolInfo.minQty || 0.0001;
     const minNotional = this.symbolInfo.minNotional || 5;
+
+    // 🛡️ Hard Safeguard: TP1 must be strictly above entry price (plus fee buffer) and strictly above market price!
+    const currentRefPrice = this.lastRefPrice || pos.entryPrice;
+    const minSafeTp1 = this.roundPrice(Math.max(pos.entryPrice * 1.0015, currentRefPrice * 1.002));
+    if (pos.tp1Price < minSafeTp1) {
+      this.log(`[SwingTrader] ⚠️ Safeguard: pos.tp1Price ($${pos.tp1Price.toFixed(4)}) below safe floor ($${minSafeTp1.toFixed(4)}). Elevating to safe floor.`);
+      pos.tp1Price = minSafeTp1;
+    }
+    if (pos.tp2Price <= pos.tp1Price) {
+      pos.tp2Price = this.roundPrice(pos.tp1Price * 1.005);
+    }
+
+    if (pos.tp1Price <= currentRefPrice * 1.0005) {
+      this.log(`[SwingTrader] 🛑 Blocked placing Maker Limit Sell TP1 at $${pos.tp1Price.toFixed(4)}: Too close to market price ($${currentRefPrice.toFixed(4)})`);
+      return;
+    }
 
     // Calculate TP1 and TP2 quantities
     const tp1Ratio = cfg.tp1CloseRatio > 0 && cfg.tp1CloseRatio < 1 ? cfg.tp1CloseRatio : 0.5;
@@ -1178,204 +1211,8 @@ export class SwingTraderStrategy implements IStrategy {
       pos.highestPriceSinceEntry = refPrice;
     }
 
-    const currentGainPct = ((refPrice - pos.entryPrice) / pos.entryPrice) * 100;
-
-    // ── Dynamic Frame & Trendline Target Sync ────────────────────────────────
-    const downtrendLine = structure?.downtrendLine;
-    const uptrendLine = structure?.uptrendLine;
-    const hasActiveDowntrendTl = Boolean(
-      downtrendLine &&
-      !downtrendLine.isBroken &&
-      !structure?.downtrendBreakoutConfirmed &&
-      downtrendLine.currentLinePrice > 0,
-    );
-
-    const now = Date.now();
-    if (now - this.lastTpOrderAdjustTime >= 15_000) {
-      // Check if position is trapped (entry was placed higher near/above current descending trendline or above new LL)
-      const isTrapped = Boolean(
-        (hasActiveDowntrendTl && downtrendLine && downtrendLine.currentLinePrice <= pos.entryPrice * 1.008) ||
-        (structure?.bottomBound && structure.bottomBound > 0 && structure.bottomBound < pos.entryPrice * 0.985)
-      );
-
-      const minProfitablePrice = this.roundPrice(
-        pos.entryPrice * (1 + Math.max(0.001, (this.cfg.minNetProfitPct ?? 0.20) / 100)),
-      );
-      let targetsChanged = false;
-
-      // 1. Dynamically lower TP1 to Descending Trendline or updated frame ceiling if lower than current TP1
-      if (!pos.tp1Executed) {
-        let desiredTp1 = pos.tp1Price;
-        if (hasActiveDowntrendTl && downtrendLine) {
-          const tlSellTarget = this.roundPrice(downtrendLine.currentLinePrice * 0.9985);
-          if (tlSellTarget > 0 && tlSellTarget < desiredTp1) {
-            // If position is trapped, allow exiting at breakeven-plus-fees below trendline rather than demanding full minNetProfitPct
-            if (isTrapped) {
-              const breakevenEscapePrice = this.roundPrice(pos.entryPrice * 1.0005);
-              desiredTp1 = Math.min(breakevenEscapePrice, tlSellTarget);
-            } else {
-              desiredTp1 = Math.max(minProfitablePrice, tlSellTarget);
-            }
-          }
-        }
-        if (
-          this.lastSignal?.plannedTp1Price &&
-          this.lastSignal.plannedTp1Price < desiredTp1 &&
-          (isTrapped || this.lastSignal.plannedTp1Price > minProfitablePrice)
-        ) {
-          desiredTp1 = this.roundPrice(this.lastSignal.plannedTp1Price);
-        }
-
-        if (desiredTp1 < pos.tp1Price && Math.abs(desiredTp1 - pos.tp1Price) / pos.tp1Price >= 0.0015) {
-          const oldTp1 = pos.tp1Price;
-          pos.tp1Price = desiredTp1;
-          targetsChanged = true;
-          this.log(
-            `[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP1 $${oldTp1.toFixed(4)} -> $${pos.tp1Price.toFixed(4)}${
-              isTrapped ? " (Trapped Position Escape Mode)" : ""
-            }${
-              hasActiveDowntrendTl ? ` (Aligned with Descending Trendline $${downtrendLine!.currentLinePrice.toFixed(4)})` : ""
-            }`,
-          );
-        }
-      }
-
-      // 2. Dynamically adjust TP2 to updated post-bottom structural peak / LH if frame shifted lower
-      const targetTp2Candidate = (hasActiveDowntrendTl && downtrendLine?.p2?.price && isTrapped)
-        ? Math.max(pos.tp1Price * 1.001, this.roundPrice(downtrendLine.p2.price * 0.998))
-        : (this.lastSignal?.plannedTp2Price ? this.roundPrice(this.lastSignal.plannedTp2Price) : 0);
-
-      if (
-        targetTp2Candidate > pos.tp1Price &&
-        targetTp2Candidate < pos.tp2Price * 0.995 &&
-        Math.abs(targetTp2Candidate - pos.tp2Price) / pos.tp2Price >= 0.002
-      ) {
-        const oldTp2 = pos.tp2Price;
-        pos.tp2Price = targetTp2Candidate;
-        targetsChanged = true;
-        this.log(`[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP2 $${oldTp2.toFixed(4)} -> $${pos.tp2Price.toFixed(4)}${isTrapped ? " (Lowered to LH Anchor)" : ""}`);
-      }
-
-      if (targetsChanged) {
-        this.lastTpOrderAdjustTime = now;
-        this.saveState(true);
-        if (isMakerMode) {
-          // Cancel existing TP orders before placing new ones to ensure clean wallet balance unlocking
-          if (pos.tp1OrderId) {
-            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
-            pos.tp1OrderId = undefined;
-          }
-          if (pos.tp2OrderId) {
-            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
-            pos.tp2OrderId = undefined;
-          }
-          await this.refreshWalletBalances();
-          await this.placeMakerTakeProfitOrders(pos, cfg);
-        }
-      }
-
-      // 3. Self-Healing TP Coverage Check (ensure Maker TP orders cover 100% of pos.qty, not halved)
-      if (isMakerMode && !pos.tp1Executed) {
-        const openTp1 = pos.tp1OrderId ? this.openOrders.find((o) => o.id === pos.tp1OrderId) : undefined;
-        const openTp2 = pos.tp2OrderId ? this.openOrders.find((o) => o.id === pos.tp2OrderId) : undefined;
-        const totalRestingTpQty = (openTp1?.qty ?? 0) + (openTp2?.qty ?? 0);
-        const minQty = this.symbolInfo.minQty || 0.0001;
-        if (pos.qty >= minQty && totalRestingTpQty < pos.qty * 0.90) {
-          this.log(
-            `[SwingTrader] 🩹 Self-Healing TP Coverage: Resting TP orders (${totalRestingTpQty}) cover only ${((totalRestingTpQty / pos.qty) * 100).toFixed(0)}% of position (${pos.qty}). Canceling and re-placing full coverage TP orders...`,
-          );
-          if (pos.tp1OrderId) {
-            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
-            pos.tp1OrderId = undefined;
-          }
-          if (pos.tp2OrderId) {
-            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
-            pos.tp2OrderId = undefined;
-          }
-          await this.refreshWalletBalances();
-          await this.placeMakerTakeProfitOrders(pos, cfg);
-        }
-      }
-    }
-
-    // ── Trendline Resistance Touch & Rejection / Breakdown Exit ──────────────
-    if (hasActiveDowntrendTl && downtrendLine) {
-      const tlPrice = downtrendLine.currentLinePrice;
-
-      // A) When price reaches/touches the Descending Trendline in profit, lock Stop Loss to Breakeven+ immediately
-      if (refPrice >= tlPrice * 0.9985 && refPrice >= pos.entryPrice * 1.001) {
-        const breakevenLock = this.roundPrice(pos.entryPrice * 1.0005);
-        if (pos.stopLossPrice < breakevenLock) {
-          pos.stopLossPrice = breakevenLock;
-          this.saveState(true);
-          this.log(
-            `[SwingTrader] 🛡️ Price touched Descending Trendline ($${tlPrice.toFixed(4)}) — Stop Loss locked to Breakeven ($${breakevenLock.toFixed(4)})!`,
-          );
-        }
-      }
-
-      // B) Check if rally tested the Descending Trendline (or formed LH under TL) and then got rejected / broke Uptrend Support
-      const testedTrendline =
-        pos.highestPriceSinceEntry >= tlPrice * 0.995 ||
-        Boolean(structure?.waveCycle?.lastLh && structure.waveCycle.lastLh.time * 1000 >= pos.entryTime - 900_000);
-      const isUptrendBroken = Boolean(uptrendLine?.isBroken && uptrendLine?.breakoutConfirmed);
-      const pullbackFromPeakPct =
-        pos.highestPriceSinceEntry > 0
-          ? ((pos.highestPriceSinceEntry - refPrice) / pos.highestPriceSinceEntry) * 100
-          : 0;
-
-      const shouldExitOnTlRejection =
-        testedTrendline &&
-        ((pos.tp1Executed && isUptrendBroken) ||
-          (refPrice >= pos.entryPrice * 0.9995 && isUptrendBroken) ||
-          (pos.highestPriceSinceEntry >= tlPrice * 0.998 &&
-            refPrice >= pos.entryPrice * 1.001 &&
-            pullbackFromPeakPct >= 0.35));
-
-      if (shouldExitOnTlRejection) {
-        this.log(
-          `[SwingTrader] 📐 Trendline Rejection / Support Breakdown Exit @ $${refPrice.toFixed(4)} (TL: $${tlPrice.toFixed(4)}, Peak: $${pos.highestPriceSinceEntry.toFixed(4)}) — Exiting to re-enter near Major LL!`,
-        );
-        await this.sellAllUser("Swing Trendline Exit (Re-enter near LL)");
-        return;
-      }
-    }
-
-    // Trailing Stop Activation after TP1
-    if (pos.tp1Executed && currentGainPct >= cfg.trailingActivationPct) {
-      pos.trailingStopActive = true;
-      const trailingFloor = pos.highestPriceSinceEntry * (1 - cfg.trailingPullbackPct / 100);
-      if (!pos.trailingStopPrice || trailingFloor > pos.trailingStopPrice) {
-        pos.trailingStopPrice = this.roundPrice(trailingFloor);
-      }
-    }
-
-    // ── Check Stop Loss Invalidation ─────────────────────────────────────────
-    const effectiveSl = pos.trailingStopActive && pos.trailingStopPrice
-      ? Math.max(pos.stopLossPrice, pos.trailingStopPrice)
-      : pos.stopLossPrice;
-
-    if (refPrice <= effectiveSl) {
-      this.log(`[SwingTrader] 🛑 Stop Loss / Trailing Stop triggered at $${refPrice.toFixed(4)} <= $${effectiveSl.toFixed(4)}`);
-      // First cancel any resting TP orders
-      if (pos.tp1OrderId) {
-        try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
-        pos.tp1OrderId = undefined;
-      }
-      if (pos.tp2OrderId) {
-        try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
-        pos.tp2OrderId = undefined;
-      }
-      await this.sellAllUser("Swing Stop Loss Triggered");
-      return;
-    }
-
-    // ── If MAKER_LIMIT Mode: Place or verify resting Limit TP orders ─────────
+    // ── STEP 1: Verify Resting Order Fills FIRST (Maker Mode) ───────────────
     if (isMakerMode) {
-      if (!pos.tp1Executed && !pos.tp1OrderId && !pos.tp2OrderId) {
-        await this.placeMakerTakeProfitOrders(pos, cfg);
-      }
-
       // Check TP1 resting order fill
       if (!pos.tp1Executed && pos.tp1OrderId) {
         try {
@@ -1389,12 +1226,16 @@ export class SwingTraderStrategy implements IStrategy {
 
             pos.tp1Executed = true;
             pos.qty = this.roundQty(pos.qty - exitQty);
-            // 🛡️ Move Stop Loss to Breakeven
-            pos.stopLossPrice = pos.entryPrice;
+            // 🛡️ Move Stop Loss to Breakeven ONLY IF closed in profit and market is safely above entry
+            if (execPrice >= pos.entryPrice && refPrice > pos.entryPrice * 1.0005) {
+              pos.stopLossPrice = pos.entryPrice;
+              this.log(`[SwingTrader] 🎯 Resting Maker TP1 FILLED @ $${execPrice.toFixed(4)}! SL moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — 100% Risk-Free!`);
+            } else {
+              this.log(`[SwingTrader] 🎯 Resting Maker TP1 FILLED @ $${execPrice.toFixed(4)}! Preserving SL ($${pos.stopLossPrice.toFixed(4)}) because market is at/below entry.`);
+            }
             pos.tp1OrderId = undefined;
             this.swingState = "TP1_REACHED";
             this.saveState(true);
-            this.log(`[SwingTrader] 🎯 Resting Maker TP1 FILLED @ $${execPrice.toFixed(4)}! SL moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — 100% Risk-Free!`);
 
             this.emit({
               type: "order",
@@ -1411,7 +1252,7 @@ export class SwingTraderStrategy implements IStrategy {
                 notionalQuote: execPrice * exitQty,
                 notionalUsdso: execPrice * exitQty,
                 levelDesc: `Swing TP1 Target ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
-                reason: `Swing TP1 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
+                reason: `Swing TP1 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(4)}`,
                 status: "FILLED",
                 pnl,
                 pnlQuote: pnl,
@@ -1425,7 +1266,6 @@ export class SwingTraderStrategy implements IStrategy {
 
             await this.refreshWalletBalances();
             await this.syncOnChainOrders();
-            return;
           }
         } catch {}
       }
@@ -1456,7 +1296,7 @@ export class SwingTraderStrategy implements IStrategy {
                 notionalQuote: execPrice * exitQty,
                 notionalUsdso: execPrice * exitQty,
                 levelDesc: `Swing TP2 Target ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
-                reason: `Swing TP2 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
+                reason: `Swing TP2 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(4)}`,
                 status: "FILLED",
                 pnl,
                 pnlQuote: pnl,
@@ -1494,12 +1334,205 @@ export class SwingTraderStrategy implements IStrategy {
           }
         } catch {}
       }
+    }
+
+    if (!this.activePosition) return;
+
+    const currentGainPct = ((refPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+    // ── STEP 2: Trailing Stop & Stop Loss Check ─────────────────────────────
+    if (pos.tp1Executed && currentGainPct >= cfg.trailingActivationPct) {
+      pos.trailingStopActive = true;
+      const trailingFloor = pos.highestPriceSinceEntry * (1 - cfg.trailingPullbackPct / 100);
+      if (!pos.trailingStopPrice || trailingFloor > pos.trailingStopPrice) {
+        pos.trailingStopPrice = this.roundPrice(trailingFloor);
+      }
+    }
+
+    const effectiveSl = pos.trailingStopActive && pos.trailingStopPrice
+      ? Math.max(pos.stopLossPrice, pos.trailingStopPrice)
+      : pos.stopLossPrice;
+
+    if (refPrice <= effectiveSl) {
+      this.log(`[SwingTrader] 🛑 Stop Loss / Trailing Stop triggered at $${refPrice.toFixed(4)} <= $${effectiveSl.toFixed(4)}`);
+      // Cancel any resting TP orders
+      if (pos.tp1OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+        pos.tp1OrderId = undefined;
+      }
+      if (pos.tp2OrderId) {
+        try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+        pos.tp2OrderId = undefined;
+      }
+      await this.sellAllUser("Swing Stop Loss Triggered");
+      return;
+    }
+
+    // ── STEP 3: Trendline Resistance & Rejection Exit ────────────────────────
+    const downtrendLine = structure?.downtrendLine;
+    const uptrendLine = structure?.uptrendLine;
+    const hasActiveDowntrendTl = Boolean(
+      downtrendLine &&
+      !downtrendLine.isBroken &&
+      !structure?.downtrendBreakoutConfirmed &&
+      downtrendLine.currentLinePrice > 0,
+    );
+
+    if (hasActiveDowntrendTl && downtrendLine) {
+      const tlPrice = downtrendLine.currentLinePrice;
+
+      // Lock SL to breakeven if price reaches TL in profit
+      if (refPrice >= tlPrice * 0.9985 && refPrice >= pos.entryPrice * 1.001) {
+        const breakevenLock = this.roundPrice(pos.entryPrice * 1.0005);
+        if (pos.stopLossPrice < breakevenLock) {
+          pos.stopLossPrice = breakevenLock;
+          this.saveState(true);
+          this.log(
+            `[SwingTrader] 🛡️ Price touched Descending Trendline ($${tlPrice.toFixed(4)}) — Stop Loss locked to Breakeven ($${breakevenLock.toFixed(4)})!`,
+          );
+        }
+      }
+
+      // Check for trendline rejection ONLY IF we tested TL after entry and are currently in profit
+      const testedTrendline =
+        (pos.highestPriceSinceEntry > pos.entryPrice * 1.002 && pos.highestPriceSinceEntry >= tlPrice * 0.998) ||
+        Boolean(
+          structure?.waveCycle?.lastLh &&
+          structure.waveCycle.lastLh.time * 1000 > pos.entryTime &&
+          structure.waveCycle.lastLh.price >= tlPrice * 0.998
+        );
+      const isUptrendBroken = Boolean(uptrendLine?.isBroken && uptrendLine?.breakoutConfirmed);
+      const pullbackFromPeakPct =
+        pos.highestPriceSinceEntry > 0
+          ? ((pos.highestPriceSinceEntry - refPrice) / pos.highestPriceSinceEntry) * 100
+          : 0;
+
+      const shouldExitOnTlRejection =
+        testedTrendline &&
+        refPrice >= pos.entryPrice * 1.0005 &&
+        ((pos.tp1Executed && isUptrendBroken) ||
+          (isUptrendBroken && pullbackFromPeakPct >= 0.25) ||
+          (pos.highestPriceSinceEntry >= tlPrice * 0.998 && pullbackFromPeakPct >= 0.40));
+
+      if (shouldExitOnTlRejection) {
+        this.log(
+          `[SwingTrader] 📐 Trendline Rejection / Support Breakdown Exit @ $${refPrice.toFixed(4)} (TL: $${tlPrice.toFixed(4)}, Peak: $${pos.highestPriceSinceEntry.toFixed(4)}) — Exiting to re-enter near Major LL!`,
+        );
+        if (pos.tp1OrderId) {
+          try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+          pos.tp1OrderId = undefined;
+        }
+        if (pos.tp2OrderId) {
+          try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+          pos.tp2OrderId = undefined;
+        }
+        await this.sellAllUser("Swing Trendline Exit (Re-enter near LL)");
+        return;
+      }
+    }
+
+    // ── STEP 4: Dynamic Frame & Trendline Target Sync (Maker Limit Mode) ──────
+    if (isMakerMode) {
+      if (!pos.tp1Executed && !pos.tp1OrderId && !pos.tp2OrderId) {
+        await this.placeMakerTakeProfitOrders(pos, cfg);
+      }
+
+      const now = Date.now();
+      if (now - this.lastTpOrderAdjustTime >= 15_000) {
+        const minProfitablePrice = this.roundPrice(
+          pos.entryPrice * (1 + Math.max(0.0015, (this.cfg.minNetProfitPct ?? 0.20) / 100)),
+        );
+        const minSafeTp1 = this.roundPrice(Math.max(minProfitablePrice, refPrice * 1.002));
+        let targetsChanged = false;
+
+        // 1. Dynamically sync TP1 to Descending Trendline ONLY if it offers profit and is above market
+        if (!pos.tp1Executed) {
+          let desiredTp1 = pos.tp1Price;
+          if (hasActiveDowntrendTl && downtrendLine) {
+            const tlSellTarget = this.roundPrice(downtrendLine.currentLinePrice * 0.9985);
+            if (tlSellTarget >= minSafeTp1 && tlSellTarget < desiredTp1) {
+              desiredTp1 = tlSellTarget;
+            }
+          }
+
+          // Hard floor: desiredTp1 must NEVER be below minSafeTp1
+          if (desiredTp1 < minSafeTp1) {
+            desiredTp1 = minSafeTp1;
+          }
+
+          if (desiredTp1 !== pos.tp1Price && Math.abs(desiredTp1 - pos.tp1Price) / pos.tp1Price >= 0.0015) {
+            const oldTp1 = pos.tp1Price;
+            pos.tp1Price = desiredTp1;
+            targetsChanged = true;
+            this.log(
+              `[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP1 $${oldTp1.toFixed(4)} -> $${pos.tp1Price.toFixed(4)}${
+                hasActiveDowntrendTl ? ` (Aligned with Descending Trendline $${downtrendLine!.currentLinePrice.toFixed(4)})` : ""
+              }`,
+            );
+          }
+        }
+
+        // 2. Dynamically adjust TP2 to updated post-bottom structural peak / LH
+        const targetTp2Candidate = (hasActiveDowntrendTl && downtrendLine?.p2?.price && downtrendLine.p2.price > pos.tp1Price * 1.003)
+          ? this.roundPrice(downtrendLine.p2.price * 0.998)
+          : 0;
+
+        if (
+          targetTp2Candidate > pos.tp1Price * 1.002 &&
+          targetTp2Candidate < pos.tp2Price * 0.995 &&
+          Math.abs(targetTp2Candidate - pos.tp2Price) / pos.tp2Price >= 0.002
+        ) {
+          const oldTp2 = pos.tp2Price;
+          pos.tp2Price = targetTp2Candidate;
+          targetsChanged = true;
+          this.log(`[SwingTrader] 📐 Dynamic Frame Update: Adjusted TP2 $${oldTp2.toFixed(4)} -> $${pos.tp2Price.toFixed(4)} (Lowered to LH Anchor)`);
+        }
+
+        if (targetsChanged) {
+          this.lastTpOrderAdjustTime = now;
+          this.saveState(true);
+          // Cancel existing TP orders before placing new ones
+          if (pos.tp1OrderId) {
+            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+            pos.tp1OrderId = undefined;
+          }
+          if (pos.tp2OrderId) {
+            try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+            pos.tp2OrderId = undefined;
+          }
+          await this.refreshWalletBalances();
+          await this.placeMakerTakeProfitOrders(pos, cfg);
+        }
+
+        // 3. Self-Healing TP Coverage Check
+        if (!pos.tp1Executed) {
+          const openTp1 = pos.tp1OrderId ? this.openOrders.find((o) => o.id === pos.tp1OrderId) : undefined;
+          const openTp2 = pos.tp2OrderId ? this.openOrders.find((o) => o.id === pos.tp2OrderId) : undefined;
+          const totalRestingTpQty = (openTp1?.qty ?? 0) + (openTp2?.qty ?? 0);
+          const minQty = this.symbolInfo.minQty || 0.0001;
+          if (pos.qty >= minQty && totalRestingTpQty < pos.qty * 0.90) {
+            this.log(
+              `[SwingTrader] 🩹 Self-Healing TP Coverage: Resting TP orders (${totalRestingTpQty}) cover only ${((totalRestingTpQty / pos.qty) * 100).toFixed(0)}% of position (${pos.qty}). Canceling and re-placing full coverage TP orders...`,
+            );
+            if (pos.tp1OrderId) {
+              try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp1OrderId); } catch {}
+              pos.tp1OrderId = undefined;
+            }
+            if (pos.tp2OrderId) {
+              try { await this.binance.cancelOrder(this.symbolInfo.symbol, pos.tp2OrderId); } catch {}
+              pos.tp2OrderId = undefined;
+            }
+            await this.refreshWalletBalances();
+            await this.placeMakerTakeProfitOrders(pos, cfg);
+          }
+        }
+      }
 
       return;
     }
 
-    // ── If IOC_BRACKET Mode: Execute reactive Market/IOC orders ──────────────
-    // ── Check Take Profit 1 ──────────────────────────────────────────────────
+    // ── STEP 5: If IOC_BRACKET Mode: Execute reactive Market/IOC orders ───────
+    // Check Take Profit 1
     if (!pos.tp1Executed && refPrice >= pos.tp1Price) {
       const exitQty = this.roundQty(pos.qty * cfg.tp1CloseRatio);
       if (exitQty >= (this.symbolInfo.minQty || 0.0001)) {
@@ -1542,7 +1575,7 @@ export class SwingTraderStrategy implements IStrategy {
               notionalQuote: execPrice * exitQty,
               notionalUsdso: execPrice * exitQty,
               levelDesc: `Swing TP1 Target (${(cfg.tp1CloseRatio * 100).toFixed(0)}%) ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
-              reason: `Swing TP1 Target (${(cfg.tp1CloseRatio * 100).toFixed(0)}%) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
+              reason: `Swing TP1 Target (${(cfg.tp1CloseRatio * 100).toFixed(0)}%) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(4)}`,
               status: "FILLED",
               pnl,
               pnlQuote: pnl,
@@ -1557,11 +1590,15 @@ export class SwingTraderStrategy implements IStrategy {
 
           pos.tp1Executed = true;
           pos.qty = this.roundQty(pos.qty - exitQty);
-          // 🛡️ Raise Stop Loss to Breakeven to guarantee risk-free trade!
-          pos.stopLossPrice = pos.entryPrice;
+          // 🛡️ Raise Stop Loss to Breakeven only if sold at profit and current market is above entry
+          if (execPrice >= pos.entryPrice && refPrice > pos.entryPrice * 1.0005) {
+            pos.stopLossPrice = pos.entryPrice;
+            this.log(`[SwingTrader] 🛡️ Stop Loss moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — Trade is now 100% Risk-Free!`);
+          } else {
+            this.log(`[SwingTrader] ⚠️ TP1 filled below/near entry ($${execPrice.toFixed(4)} vs $${pos.entryPrice.toFixed(4)}). Preserving SL ($${pos.stopLossPrice.toFixed(4)}) to avoid premature stopout.`);
+          }
           this.swingState = "TP1_REACHED";
           this.saveState(true);
-          this.log(`[SwingTrader] 🛡️ Stop Loss moved to Breakeven ($${pos.entryPrice.toFixed(4)}) — Trade is now 100% Risk-Free!`);
           await this.refreshWalletBalances();
         } catch (e) {
           this.log(`[SwingTrader] TP1 execution failed: ${e}`);
@@ -1570,7 +1607,7 @@ export class SwingTraderStrategy implements IStrategy {
       }
     }
 
-    // ── Check Take Profit 2 ──────────────────────────────────────────────────
+    // Check Take Profit 2
     if (pos.tp1Executed && refPrice >= pos.tp2Price) {
       this.log(`[SwingTrader] 🚀 TP2 Final Target reached ($${refPrice.toFixed(4)} >= $${pos.tp2Price.toFixed(4)}) — Closing remaining position`);
       await this.sellAllUser("Swing TP2 Target Reached");
