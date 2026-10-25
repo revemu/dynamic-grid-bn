@@ -28,8 +28,8 @@ export interface SwingSignalResult {
 
 export class SwingSignalDetector {
   /**
-   * Helper to inspect recent candles for a bullish reversal pattern at support.
-   * Strictly evaluates only fully closed candles to avoid fake triggers on live unclosed wicks.
+   * Helper to inspect recent candles for a confirmed bullish reversal pattern at support.
+   * Strictly evaluates only fully closed candles and requires genuine buyer dominance (green close).
    */
   private static checkBullishReversal(candles: Candle[]): { isReversal: boolean; pattern: string } {
     const closedCandles = candles.filter((c) => c.isClosed !== false);
@@ -42,31 +42,59 @@ export class SwingSignalDetector {
     if (!curr || !prev) return { isReversal: false, pattern: "No candle data" };
 
     const currRange = curr.high - curr.low;
-    const currBody = Math.abs(curr.close - curr.open);
+    const currBody = curr.close - curr.open;
     const prevRange = prev.high - prev.low;
     const prevBody = prev.close - prev.open;
 
-    if (currRange <= 0) return { isReversal: false, pattern: "Zero range" };
+    // Minimum meaningful candle range (>= 0.18% of price) to eliminate micro tick / illiquidity noise
+    if (currRange <= 0 || curr.close <= 0 || (currRange / curr.close) < 0.0018) {
+      return { isReversal: false, pattern: "Candle range too narrow (noise/doji)" };
+    }
 
-    // 1. Bullish Hammer / Pinbar Rejection: Long lower wick >= 38% and close near high on a closed bar
-    const lowerWick = Math.min(curr.open, curr.close) - curr.low;
+    // 🛑 Absolute Requirement: A reversal MUST close as a bullish candle (close > open)!
+    // Red candles (close <= open) can NEVER be a bullish reversal.
+    if (curr.close <= curr.open) {
+      return { isReversal: false, pattern: "Current closed candle is red/bearish" };
+    }
+
+    // 1. Bullish Hammer / Pinbar Rejection: Long lower wick >= 50%, closes in upper 30% of range, small upper wick <= 25%
+    const lowerWick = curr.open - curr.low;
+    const upperWick = curr.high - curr.close;
     const lowerWickRatio = lowerWick / currRange;
-    if (lowerWickRatio >= 0.38 && curr.close >= curr.low + currRange * 0.45) {
-      return { isReversal: true, pattern: `Pinbar Rejection (Lower wick ${(lowerWickRatio * 100).toFixed(0)}%)` };
+    const upperWickRatio = upperWick / currRange;
+    if (
+      lowerWickRatio >= 0.50 &&
+      curr.close >= curr.low + currRange * 0.70 &&
+      upperWickRatio <= 0.25
+    ) {
+      return { isReversal: true, pattern: `Bullish Hammer (Lower wick ${(lowerWickRatio * 100).toFixed(0)}%, Upper wick ${(upperWickRatio * 100).toFixed(0)}%)` };
     }
 
-    // 2. Bullish Engulfing: Current green candle engulfs previous red candle
-    if (curr.close > curr.open && prev.close <= prev.open && curr.close >= prev.open && curr.open <= prev.close) {
-      return { isReversal: true, pattern: "Bullish Engulfing Candle" };
+    // 2. Bullish Engulfing or Piercing Line Reversal:
+    // Previous candle was red, current candle is solid green and pierces >= 50% into previous body or engulfs
+    if (prev.close < prev.open) {
+      const prevRedBody = prev.open - prev.close;
+      // Piercing line: closes above 50% of previous red body
+      const piercingThreshold = prev.close + (prevRedBody * 0.50);
+      const isPiercingOrEngulfing = curr.close >= piercingThreshold;
+      const hasSolidBody = (currBody / currRange) >= 0.40;
+
+      if (isPiercingOrEngulfing && hasSolidBody) {
+        const isEngulfing = curr.close >= prev.open && curr.open <= prev.close;
+        return {
+          isReversal: true,
+          pattern: isEngulfing ? "Bullish Engulfing Candle" : "Bullish Piercing Line Reversal",
+        };
+      }
     }
 
-    // 3. Strong Momentum Close: Green candle closing above previous high with good body
-    if (curr.close > curr.open && curr.close > prev.high && (curr.close - curr.low) / currRange >= 0.60) {
-      return { isReversal: true, pattern: "Bullish Breakout Above Previous Bar" };
+    // 3. Strong Momentum Close: Green candle closing above previous high with solid body
+    if (curr.close > prev.high && (currBody / currRange) >= 0.45) {
+      return { isReversal: true, pattern: "Bullish Breakout Above Previous Bar High" };
     }
 
-    // 4. Consecutive Higher Lows on green candle
-    if (curr.close > curr.open && curr.low > prev.low && curr.close > prev.close) {
+    // 4. Consecutive Higher Low & Higher Close on solid green bar
+    if (curr.low > prev.low && curr.close > prev.close && (currBody / currRange) >= 0.40 && curr.close >= curr.low + currRange * 0.65) {
       return { isReversal: true, pattern: "Bullish Micro Bounce (HL Bar)" };
     }
 
@@ -245,8 +273,16 @@ export class SwingSignalDetector {
     const maxNearLlSpan = Math.min(majorSpan * 0.15, majorFloor * 0.010);
     const retestZoneMax = majorFloor + maxNearLlSpan;
 
-    // Reject entry if market is in active falling knife or breaking below floor
-    if (gridZone?.gateStatus === "WAITING_FOR_BASE_CONFIRMATION" || gridZone?.gateStatus === "DOWNTREND_NO_CHANNEL") {
+    // Reject entry if market is in active falling knife, breaking below floor, or structure in WARMUP
+    const isStructureUnstable =
+      gridZone?.gateStatus === "WAITING_FOR_BASE_CONFIRMATION" ||
+      gridZone?.gateStatus === "DOWNTREND_NO_CHANNEL" ||
+      structure.regime === "WARMUP" ||
+      !structure.isSwingConfirmed ||
+      bottomBound <= 0;
+
+    if (isStructureUnstable) {
+      const gateMsg = gridZone?.gateStatus || (structure.regime === "WARMUP" ? "WARMUP_UNCONFIRMED_BASE" : "UNCONFIRMED_SWING_BASE");
       return {
         hasSignal: false,
         entryPrice: 0,
@@ -254,7 +290,7 @@ export class SwingSignalDetector {
         tp1Price: plannedTp1,
         tp2Price: plannedTp2,
         riskRewardRatio: plannedRr,
-        reason: `Market gated (${gridZone.gateStatus}) — Waiting for confirmed base near LL $${majorFloor.toFixed(4)}`,
+        reason: `Market gated (${gateMsg}) — Waiting for confirmed base near LL $${majorFloor.toFixed(4)}`,
         plannedEntryPrice: plannedEntry,
         plannedSlPrice: plannedSl,
         plannedTp1Price: plannedTp1,
@@ -281,20 +317,28 @@ export class SwingSignalDetector {
 
       if (isPriceInRetestZone) {
         const reversalCheck = this.checkBullishReversal(candles);
-        // Only count micro HL if it also formed inside the Near-LL zone
-        const hasNearLlMicroHl = Boolean(
-          waveCycle?.lastHl &&
-          waveCycle.lastHl.price >= majorFloor &&
-          waveCycle.lastHl.price <= retestZoneMax,
+        const closedCandles = candles.filter((c) => c.isClosed !== false);
+        const lastClosedBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : undefined;
+
+        // Anti-Falling Knife: Live tick price check against the reversal bar
+        // Price must not have collapsed below the open of the reversal candle
+        const isLivePriceHoldingReversal = !lastClosedBar || price >= lastClosedBar.open * 0.9995;
+
+        // Check if there is an unclosed live candle currently dumping hard
+        const liveCandle = candles[candles.length - 1]?.isClosed === false ? candles[candles.length - 1] : undefined;
+        const isLiveDumping = Boolean(
+          liveCandle &&
+          lastClosedBar &&
+          liveCandle.close < liveCandle.open &&
+          (liveCandle.open - liveCandle.close) > (lastClosedBar.close - lastClosedBar.open) * 0.6,
         );
 
-        if ((reversalCheck.isReversal || hasNearLlMicroHl) && hasTrendlineHeadroom(price, plannedSl)) {
+        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom(price, plannedSl)) {
           const actualRisk = price - plannedSl;
           const actualAvgReward = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio)) - price;
           const actualRr = actualRisk > 0 ? actualAvgReward / actualRisk : 0;
 
           if (actualRr >= config.minRiskReward) {
-            const patternDesc = reversalCheck.isReversal ? reversalCheck.pattern : "Confirmed Near-LL Micro HL";
             const tlNote = hasActiveDowntrendTl ? ` | TL TP1: $${plannedTp1.toFixed(4)}` : "";
             return {
               hasSignal: true,
@@ -304,7 +348,7 @@ export class SwingSignalDetector {
               tp1Price: plannedTp1,
               tp2Price: plannedTp2,
               riskRewardRatio: actualRr,
-              reason: `Near Major LL ($${majorFloor.toFixed(4)}) held with ${patternDesc}! Risk: -${((actualRisk / price) * 100).toFixed(2)}%, Target: +${(((plannedTp2 - price) / price) * 100).toFixed(2)}%, R:R: ${actualRr.toFixed(2)}x${tlNote}`,
+              reason: `Near Major LL ($${majorFloor.toFixed(4)}) confirmed with ${reversalCheck.pattern}! Risk: -${((actualRisk / price) * 100).toFixed(2)}%, Target: +${(((plannedTp2 - price) / price) * 100).toFixed(2)}%, R:R: ${actualRr.toFixed(2)}x${tlNote}`,
               plannedEntryPrice: price,
               plannedSlPrice: plannedSl,
               plannedTp1Price: plannedTp1,
@@ -313,9 +357,14 @@ export class SwingSignalDetector {
             };
           }
         } else {
-          const blockReason = !hasTrendlineHeadroom(price, plannedSl)
-            ? `Capped by Descending Trendline at $${tlResistancePrice.toFixed(4)} (insufficient R:R to trendline)`
-            : `Price in Near-LL zone ($${majorFloor.toFixed(4)} - $${retestZoneMax.toFixed(4)}). Waiting for Bullish Reversal candle confirmation`;
+          let blockReason = `Price in Near-LL zone ($${majorFloor.toFixed(4)} - $${retestZoneMax.toFixed(4)}). Waiting for Bullish Reversal candle confirmation`;
+          if (!hasTrendlineHeadroom(price, plannedSl)) {
+            blockReason = `Capped by Descending Trendline at $${tlResistancePrice.toFixed(4)} (insufficient R:R to trendline)`;
+          } else if (reversalCheck.isReversal && (!isLivePriceHoldingReversal || isLiveDumping)) {
+            blockReason = `Reversal formed, but live candle is currently pulling back/dumping. Waiting for price to stabilize above $${lastClosedBar?.open.toFixed(4)}`;
+          } else if (!reversalCheck.isReversal) {
+            blockReason = `Price in Near-LL zone ($${majorFloor.toFixed(4)} - $${retestZoneMax.toFixed(4)}). Waiting for Bullish Reversal candle confirmation (${reversalCheck.pattern})`;
+          }
           return {
             hasSignal: false,
             entryPrice: 0,
@@ -371,12 +420,14 @@ export class SwingSignalDetector {
     if (config.enableHlBaseEntry && waveCycle?.lastHl) {
       const hl = waveCycle.lastHl;
       const isRecentHl = waveCycle.annotatedSwings?.slice(-4).some((s) => s.index === hl.index);
+      const isFormedAfterFloor = Boolean(majorFloorTime === 0 || hl.time >= majorFloorTime);
       const maxHlBasePrice = majorFloor + Math.min(majorSpan * 0.18, majorFloor * 0.012);
       const isUptrendSupportBroken = Boolean(uptrendLine?.isBroken && uptrendLine?.breakoutConfirmed);
 
-      // Strictly require HL to be anchored near Major LL, current price inside Near-LL zone, and uptrend support intact
+      // Strictly require HL to be formed AFTER floor, anchored near Major LL, current price inside Near-LL zone, uptrend support intact, AND confirmed bullish reversal
       if (
         isRecentHl &&
+        isFormedAfterFloor &&
         !isUptrendSupportBroken &&
         hl.price >= majorFloor &&
         hl.price <= maxHlBasePrice &&
@@ -384,29 +435,43 @@ export class SwingSignalDetector {
         price <= retestZoneMax * 1.002 &&
         hasTrendlineHeadroom(price, hl.price * (1 - slBuffer))
       ) {
-        const stopLoss = hl.price * (1 - slBuffer);
-        const risk = price - stopLoss;
-        const tp1 = plannedTp1 > price * 1.008 ? plannedTp1 : midWavePrice;
-        const tp2 = plannedTp2 > tp1 ? plannedTp2 : majorCeil * 0.996;
-        const averageReward = (tp1 * config.tp1CloseRatio) + (tp2 * (1 - config.tp1CloseRatio)) - price;
-        const rr = risk > 0 ? averageReward / risk : 0;
+        const reversalCheck = this.checkBullishReversal(candles);
+        const closedCandles = candles.filter((c) => c.isClosed !== false);
+        const lastClosedBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : undefined;
+        const isLivePriceHoldingReversal = !lastClosedBar || price >= lastClosedBar.open * 0.9995;
+        const liveCandle = candles[candles.length - 1]?.isClosed === false ? candles[candles.length - 1] : undefined;
+        const isLiveDumping = Boolean(
+          liveCandle &&
+          lastClosedBar &&
+          liveCandle.close < liveCandle.open &&
+          (liveCandle.open - liveCandle.close) > (lastClosedBar.close - lastClosedBar.open) * 0.6,
+        );
 
-        if (rr >= config.minRiskReward) {
-          return {
-            hasSignal: true,
-            signalType: "HL_BASE",
-            entryPrice: price,
-            stopLossPrice: stopLoss,
-            tp1Price: tp1,
-            tp2Price: tp2,
-            riskRewardRatio: rr,
-            reason: `Confirmed Near-LL Higher Low (HL) base at $${hl.price.toFixed(4)} with ${rr.toFixed(2)} R:R`,
-            plannedEntryPrice: price,
-            plannedSlPrice: stopLoss,
-            plannedTp1Price: tp1,
-            plannedTp2Price: tp2,
-            plannedRrRatio: rr,
-          };
+        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping) {
+          const stopLoss = hl.price * (1 - slBuffer);
+          const risk = price - stopLoss;
+          const tp1 = plannedTp1 > price * 1.008 ? plannedTp1 : midWavePrice;
+          const tp2 = plannedTp2 > tp1 ? plannedTp2 : majorCeil * 0.996;
+          const averageReward = (tp1 * config.tp1CloseRatio) + (tp2 * (1 - config.tp1CloseRatio)) - price;
+          const rr = risk > 0 ? averageReward / risk : 0;
+
+          if (rr >= config.minRiskReward) {
+            return {
+              hasSignal: true,
+              signalType: "HL_BASE",
+              entryPrice: price,
+              stopLossPrice: stopLoss,
+              tp1Price: tp1,
+              tp2Price: tp2,
+              riskRewardRatio: rr,
+              reason: `Confirmed Near-LL Higher Low (HL) base at $${hl.price.toFixed(4)} confirmed with ${reversalCheck.pattern} (${rr.toFixed(2)} R:R)`,
+              plannedEntryPrice: price,
+              plannedSlPrice: stopLoss,
+              plannedTp1Price: tp1,
+              plannedTp2Price: tp2,
+              plannedRrRatio: rr,
+            };
+          }
         }
       }
     }

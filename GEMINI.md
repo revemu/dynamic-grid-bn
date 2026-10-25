@@ -4087,3 +4087,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ส่ง `nextPlannedEntryPrice`, `nextPlannedSlPrice`, และ `isTrappedPosition` ผ่าน `swingPlan` ใน Telemetry
    - บนหน้าชาร์ต: แสดงเส้นประสีฟ้า `NEXT ENTRY (Near LL)` ที่ระดับราคาฐานใหม่ แม้ว่าบอทจะถือโพซิชันค้างอยู่ข้างบน พร้อมแสดงป้ายสถานะ `⚠️ Trapped Position (TP Aligned to TL)` บนการ์ดกลยุทธ์
    - อัปเกรดเวอร์ชันเป็น `0.2.95` ใน `package.json`, `src/version.ts` และ `app.js?v=3.33` ใน `public/index.html`
+
+
+---
+
+## 96. v0.2.96 — Strict Confirmed Bullish Reversal Engine & Anti-Falling Knife Guards (`src/strategy/swing/signals.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การเข้าซื้อสวนมีดตกโดยไม่มีการกลับตัวจริง (Buying into Falling Knives)**:
+   - บอทเข้าซื้อ `SOMI:USDSO` ที่ `$0.1704` ท่ามกลางแท่งเทียนสีแดงทึบที่กำลังไหลลงต่อเนื่อง 7 แท่งติดกัน และโครงสร้างตลาดอยู่ในสถานะ `DOW: WARMUP`
+   - เหตุผลที่บอทสั่งซื้อระบุว่า `Pinbar Rejection (Lower wick 100%)` ซึ่งเกิดจากการประเมินแท่งเทียนสดที่ยังไม่ปิดแท่ง (Intrabar Live Candle) ที่เปิดเพียง 3 นาที กระตุกขึ้นเพียง 2 pips ทำให้ไส้ล่างคำนวณได้ 100% ทั้งที่ยังเหลือเวลาอีก 12 นาทีก่อนแท่งเทียนจะปิดจริง
+2. **สูตรตรวจแท่งกลับตัวเดิมยอมให้ "แท่งแดง" ผ่านเป็นสัญญาณซื้อ**:
+   - ใน `checkBullishReversal` เดิมตรวจเพียง `lowerWickRatio >= 0.38` โดยไม่ได้เช็ค `close > open` และไม่ได้กำหนดความกว้างขั้นต่ำของแท่ง (`currRange`) ทำให้แท่งแดงเทขายที่มีไส้จิ๋ว หรือแท่ง Doji ขยับ 1-2 ช่อง ถูกนับเป็นสัญญาณกลับตัว
+3. **ช่องโหว่ `|| hasNearLlMicroHl` และ `HL_BASE` ข้ามการรอแท่งกลับตัว**:
+   - ใน `Setup 1` เงื่อนไข `reversalCheck.isReversal || hasNearLlMicroHl` ยอมให้เข้าซื้อทันทีหากมีจุด `HL` ในอดีตค้างอยู่ในโซน แม้ว่าแท่งปัจจุบันกำลังเทรูดลงมาก็ตาม
+   - ใน `Setup 3 (HL_BASE)` ไม่มีการเรียก `checkBullishReversal` เลย ทำให้บอทรับมีดทันทีเมื่อราคาไหลลงมาแตะเส้น `HL`
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Strict Bullish Green Reversal Engine (`checkBullishReversal`)**:
+   - กรองเฉพาะแท่งเทียนที่ปิดสมบูรณ์แล้ว (`c.isClosed !== false`) และต้องมีความกว้างอย่างมีนัยสำคัญ (`currRange / curr.close >= 0.0018` หรือ `>= 0.18%`) ตัด Noise 1-2 pips
+   - **บังคับว่าแท่งกลับตัวต้องเป็นแท่งสีเขียว (`curr.close > curr.open`) เสมอ 100%** ห้ามแท่งแดงมีสิทธิ์นับเป็นการกลับตัวเด็ดขาด
+   - **Bullish Hammer / Pinbar**: บังคับไส้ล่างยาว `>= 50%` ของความยาวแท่งทั้งหมด, ปิดใน 30% บนสุดของแท่ง (`close >= low + range * 0.70`), และไส้บนสั้น `<= 25%`
+   - **Bullish Engulfing / Piercing Line**: แท่งก่อนหน้าต้องเป็นแท่งแดง (`prev.close < prev.open`), แท่งปัจจุบันเป็นแท่งเขียวหนา (`currBody / currRange >= 0.40`) และปิดทะลุเกิน 50% ของเนื้อเทียนแท่งแดงก่อนหน้า
+   - **Bullish Breakout Bar**: แท่งเขียวปิดทะลุเหนือจุดสูงสุด (High) ของแท่งก่อนหน้า (`curr.close > prev.high`) พร้อมเนื้อเทียนชัดเจน
+2. **Anti-Falling Knife & Structure Gate**:
+   - บล็อกการเข้าซื้อทันทีหากโครงสร้างอยู่ในสถานะ `WARMUP` (`structure.regime === "WARMUP"` หรือ `!structure.isSwingConfirmed` หรือ `bottomBound <= 0`)
+   - **Live Tick Validation**: ราคาปัจจุบันต้องไม่ทรุดตัวลงต่ำกว่าราคาเปิดของแท่งกลับตัว (`price >= lastClosed.open * 0.9995`) และหากมีแท่งสดปัจจุบันกำลังวิ่งอยู่ ต้องไม่เป็นแท่งแดงที่กำลังเทรูดลงมาลึกเกิน 60% ของแท่งกลับตัว
+3. **กำจัดช่องโหว่การลัดคิว**:
+   - ตัด `|| hasNearLlMicroHl` ออกจาก `Setup 1` บังคับให้ต้องผ่าน `reversalCheck.isReversal === true` 100%
+   - ใน `Setup 3 (HL_BASE)` บังคับว่าจุด `HL` ต้องเกิดหลัง `majorFloorTime` และต้องผ่านการตรวจแท่งกลับตัว `reversalCheck.isReversal === true` เช่นเดียวกัน
