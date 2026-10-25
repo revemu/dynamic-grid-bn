@@ -738,7 +738,7 @@
           borderColor: "rgba(255, 255, 255, 0.08)",
           timeVisible: true,
           secondsVisible: false,
-          rightOffset: 12,
+          rightOffset: 20,
           barSpacing: 10,
           minBarSpacing: 4,
           tickMarkFormatter: (time, tickMarkType, locale) => {
@@ -898,7 +898,7 @@
       if (btnFitChart) {
         btnFitChart.addEventListener("click", () => {
           chart.timeScale().fitContent();
-          chart.timeScale().applyOptions({ rightOffset: 12 });
+          chart.timeScale().applyOptions({ rightOffset: 20 });
           setTimeout(() => { updateOrderBadgesPositions(); updateSwingBadgesPositions(); }, 50);
         });
       }
@@ -909,6 +909,9 @@
           btnToggleWave.classList.toggle("active", isWaveVisible);
           if (waveCycleLineSeries) {
             waveCycleLineSeries.applyOptions({ visible: isWaveVisible });
+          }
+          if (elChartSwingBadgesLayer) {
+            elChartSwingBadgesLayer.style.display = isWaveVisible ? "block" : "none";
           }
           refreshMarkers();
         });
@@ -1044,7 +1047,7 @@
         rebuildOrderMarkers();
         refreshMarkers();
         chart.timeScale().fitContent();
-        chart.timeScale().applyOptions({ rightOffset: 12 });
+        chart.timeScale().applyOptions({ rightOffset: 20 });
         updateOrderBadgesPositions();
         updateSwingBadgesPositions();
       } catch (err) {
@@ -2594,7 +2597,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Solid,
           axisLabelVisible: true,
-          title: "🏛️ 4H CEIL",
+          title: "",
         });
       } else if (lineHtfCeil) {
         try { candleSeries.removePriceLine(lineHtfCeil); } catch (_) {}
@@ -2608,7 +2611,7 @@
           lineWidth: 2,
           lineStyle: LightweightCharts.LineStyle.Solid,
           axisLabelVisible: true,
-          title: "🏛️ 4H FLOOR",
+          title: "",
         });
       } else if (lineHtfFloor) {
         try { candleSeries.removePriceLine(lineHtfFloor); } catch (_) {}
@@ -2622,7 +2625,7 @@
           lineWidth: 1.5,
           lineStyle: LightweightCharts.LineStyle.Dashed,
           axisLabelVisible: true,
-          title: "📊 POC",
+          title: "",
         });
       } else if (linePoc) {
         try { candleSeries.removePriceLine(linePoc); } catch (_) {}
@@ -2653,7 +2656,7 @@
             lineWidth: 2,
             lineStyle: pos ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: pos ? "ENTRY (Active)" : (signal?.hasSignal ? "ENTRY (Ready)" : "ENTRY (Planned)"),
+            title: "",
           });
         } else if (lineSwingEntry) {
           try { candleSeries.removePriceLine(lineSwingEntry); } catch (_) {}
@@ -2668,7 +2671,7 @@
             lineWidth: 2,
             lineStyle: LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: "TP1 (50%)",
+            title: "",
           });
         } else if (lineSwingTp1) {
           try { candleSeries.removePriceLine(lineSwingTp1); } catch (_) {}
@@ -2683,7 +2686,7 @@
             lineWidth: 2,
             lineStyle: LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: "TP2 (Exit)",
+            title: "",
           });
         } else if (lineSwingTp2) {
           try { candleSeries.removePriceLine(lineSwingTp2); } catch (_) {}
@@ -2698,7 +2701,7 @@
             lineWidth: 2,
             lineStyle: pos ? LightweightCharts.LineStyle.Solid : LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            title: pos?.tp1Executed ? "SL (Breakeven)" : (pos ? "SL (Active)" : "SL (Planned)"),
+            title: "",
           });
         } else if (lineSwingSl) {
           try { candleSeries.removePriceLine(lineSwingSl); } catch (_) {}
@@ -2714,7 +2717,7 @@
             lineWidth: 1,
             lineStyle: LightweightCharts.LineStyle.Dotted,
             axisLabelVisible: true,
-            title: "NEXT ENTRY (Near LL)",
+            title: "",
           });
         } else if (lineSwingNextEntry) {
           try { candleSeries.removePriceLine(lineSwingNextEntry); } catch (_) {}

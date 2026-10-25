@@ -4158,3 +4158,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ในทั้ง 3 จุด (`handleWsExecutionReport`, Maker TP1 fill, IOC TP1 fill): จะย้าย `pos.stopLossPrice = pos.entryPrice` ก็ต่อเมื่อราคาขายได้กำไร (`execPrice >= pos.entryPrice`) และราคาตลาดปัจจุบันอยู่สูงกว่าราคาทุนอย่างปลอดภัย (`refPrice > pos.entryPrice * 1.0005`) เท่านั้น หากราคาตลาดยังต่ำกว่าทุน จะคงค่า SL เดิมไว้ ป้องกันการเกิด Stopout Loop ซ้ำซ้อน
 5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.97` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.35` ใน `public/index.html`
 
+---
+
+## 98. v0.2.98 — Non-Obstructive Clean Chart Price Lines & Right-Offset Breathing Space (`public/app.js`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **ป้ายข้อความระดับราคาในชาร์ทลอยมาบดบังแท่งเทียน (Price Line Title Canvas Overlays)**:
+   - เส้นระดับราคาต่างๆ ได้แก่ `4H CEIL`, `4H FLOOR`, `POC`, `ENTRY`, `TP1`, `TP2`, `SL`, `NEXT ENTRY` มีการส่งข้อความ `title: "🏛️ 4H CEIL"`, `title: "📊 POC"` ฯลฯ เข้าไปยังฟังก์ชัน `candleSeries.createPriceLine()` ของ TradingView Lightweight Charts
+   - Lightweight Charts เรนเดอร์ข้อความเป็นกล่อง Badge ทึบแสงลอยอยู่บนเส้นแนวนอนด้านขวาในแคนวาสของชาร์ท เมื่อแท่งเทียนเคลื่อนที่มาใกล้ขอบขวา ป้ายกล่องข้อความเหล่านี้จะลอยมาทับแท่งเทียน มิดหัวและหางเทียน ทำให้มองไม่เห็นกราฟราคา
+2. **ระยะขอบขวาแคบเกินไป (`rightOffset: 12`)**:
+   - ระยะเว้นขอบขวามีเพียง 12 แท่งเทียน ทำให้แท่งเทียนสดล่าสุดอยู่ชิดกับแนวป้ายขอบขวามากเกินไป ขาดพื้นที่หายใจทางสายตา
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Clean Horizontal Price Lines (`public/app.js`)**:
+   - ปรับ `title: ""` ให้ว่างเปล่าสำหรับทุกเส้นระดับราคา (`lineHtfCeil`, `lineHtfFloor`, `linePoc`, `lineSwingEntry`, `lineSwingTp1`, `lineSwingTp2`, `lineSwingSl`, `lineSwingNextEntry`) ทำให้ไม่มีกล่องข้อความทึบแสงลอยมาบดบังแท่งเทียนในชาร์ทอีกต่อไป 100%
+   - ป้ายตัวเลขราคาพร้อมสีเฉพาะของแต่ละเส้นบนแกนราคาขวาสุด (`axisLabelVisible: true` บน Y-Axis) ยังคงแสดงอยู่ครบถ้วน ชัดเจน และไม่รบกวนพื้นที่กราฟ
+2. **ขยายระยะเว้นว่างด้านขวา (`rightOffset: 20`)**:
+   - ปรับเพิ่ม `rightOffset` จาก 12 เป็น 20 แท่งเทียนในทุกจุด เพื่อให้แท่งเทียนสดล่าสุดมีระยะห่างที่พอดี ไม่เบียดชิดขอบขวา
+3. **Enhanced Wave Cycle Toggle (`btnToggleWave`)**:
+   - เชื่อมปุ่ม `🌊 รอบคลื่น` ให้เปิด/ปิดการแสดงผลเลเยอร์ `elChartSwingBadgesLayer` ทันทีเมื่อคลิก
+4. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.98` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.36` ใน `public/index.html`
+
+
