@@ -4022,3 +4022,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - อัปเดต `pos.tp1Price` และ `pos.tp2Price` (พร้อมยกเลิกและวางใบสั่ง `Maker Limit TP` ใหม่บนกระดานอัตโนมัติ) เมื่อเส้นกด `downtrendLine` หรือเพดานกรอบคลื่นปัจจุบันปรับตัวลดลง (โดยยังคงรักษาระดับสูงกว่าราคาทุนขั้นต่ำ `minProfitablePrice`)
      - เมื่อราคาวิ่งขึ้นไปแตะเส้นกด `downtrendLine` และมีกำไร จะล็อก `stopLossPrice` ขึ้นมาที่จุดคุ้มทุน (`Breakeven+`) ทันที
      - เมื่อราคาขึ้นไปทดสอบเส้นกด `downtrendLine` (หรือทำ `LH` ใต้เส้นกด) แล้วไม่ผ่าน จนเกิดการย่อตัวแรงหรือหลุดเส้นรับ `uptrendLine` (`uptrendLine.breakoutConfirmed`) ระบบจะสั่งขายออก (`Swing Trendline Exit (Re-enter near LL)`) เพื่อล็อกกำไร/รักษาทุนและรอเข้าใหม่ที่จุดใกล้ `LL`
+
+
+---
+
+## 94. v0.2.94 — Swing Trade Order Persistence, PnL Recording, and Historical Trade Recovery (`src/db.ts`, `src/strategy/swing/index.ts`, `src/index.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การส่ง Event `order` ใน `SwingTraderStrategy` ไม่ระบุ `action` และใช้ชื่อฟิลด์ `realizedPnl` แทน `pnl`/`pnlQuote`**:
+   - ใน `src/strategy/swing/index.ts` ทุกจุดที่เรียก `this.emit({ type: "order", data: { ... } })` (`onSwingEntryFilled`, `sellAllUser`, `manageActivePosition`, `handleWsExecutionReport`) ไม่ได้ส่งฟิลด์ `action` (`"BUY_FILL"`, `"CUT"`, `"TAKE_PROFIT"`, `"SELL_FILL"`) และส่ง `realizedPnl: pnl` แทน `pnl`, `pnlQuote`, `pnlUsdso`
+   - ใน `BotDatabase.recordEvent(eventData)` (`src/db.ts`) เมื่อ `eventData.action` เป็น `undefined` โค้ดจึงไหลตกไปเข้าบล็อกสุดท้าย (`CANCEL_BUY / CANCEL_SELL`):
+     - บน **Binance (`:3334`)**: บรรทัด `if (isBinance) return ...` ข้ามการบันทึกออเดอร์ที่ถูกตีเป็น `CANCELLED` ทิ้งทันที ทำให้ไม้ซื้อ `BTCFDUSD` (`0.00185 BTC @ $80,985.025`) ไม่ถูกบันทึกลงใน `db.orders` เลย
+     - บน **DreamDEX (`:3333`)**: ออเดอร์ซื้อและขาย Stop Loss ของ `SOMI:USDSO` ถูกบันทึกเป็น `status: "CANCELLED"` โดยไม่มี `txHash` (เนื่องจาก `0x...` อยู่ใน `orderId`) และเมื่อเซิร์ฟเวอร์รีสตาร์ท ฟังก์ชัน `cleanupBinanceCancelledOrders()` จึงลบรายการเหล่านั้นทิ้งเพราะเห็นเป็น `CANCELLED` ที่ไม่มีค่าแก๊ส
+2. **`getRecentOrders()` ใน `SwingTraderStrategy` คืนค่าเฉพาะ `this.openOrders`**:
+   - ใน `src/strategy/swing/index.ts` เมธอด `getRecentOrders()` คืนค่า `[...this.openOrders]` แทนที่จะดึงประวัติจาก `this.db.getOrders(5000, { symbol: this.symbolInfo.symbol })` ทำให้เมื่อรีเฟรชหน้าเว็บหรือรีสตาร์ทเซิร์ฟเวอร์ ประวัติในแถบ Activity Feed หายไป
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Complete Swing Order & PnL Event Emission (`src/strategy/swing/index.ts`)**:
+   - อัปเดตทุกจุดที่ส่ง `this.emit({ type: "order", data: ... })` ให้ระบุ `action` (`"BUY_FILL"`, `"CUT"`, `"TAKE_PROFIT"`, `"SELL_FILL"`, `"CREATE_BUY"`), ฟิลด์กำไร/ขาดทุนครบทุกฟิลด์ (`pnl`, `pnlQuote`, `pnlUsdso`, `realizedPnl`), `txHash`, `fillPrice`, `time`, และข้อความ `levelDesc` / `reason` ที่แสดงราคาเข้าซื้อเทียบราคาขายออกอย่างชัดเจน (เช่น `Swing Stop Loss ($0.1742 → $0.1710)`)
+   - ใน `emit(event)`: ใช้ค่า `UnifiedOrderRecord` ที่ผ่านการ Normalize จาก `this.db.recordEvent(event.data)` ส่งต่อไปยัง `dashboard.addOrder` เพื่อให้ UI แสดงป้ายสีเขียว/แดง/ส้ม และยอดกำไร/ขาดทุน (`+$...` / `-$...`) ทันที
+   - แก้ไข `getRecentOrders()` ให้คืนค่า `this.db.getOrders(5000, { symbol: this.symbolInfo.symbol })` และเพิ่ม `getRecentTrades()` รวมถึงเชื่อม `wireExchangeGasListener` และ `syncRecentOrdersFromIndexer` บน DreamDEX
+2. **Self-Healing Database & Historical Swing Trade Recovery (`src/db.ts`)**:
+   - ใน `recordEvent(eventData)`: เพิ่มระบบอนุมาน `action` อัตโนมัติจาก `status`, `side`, และ `levelDesc`/`reason` หากไม่ได้ระบุมา, รองรับ `eventData.realizedPnl`, และดึง `txHash` อัตโนมัติหาก `orderId` เป็น Hash `0x...`
+   - เพิ่มเมธอด `recoverMissingSwingTrades()` ที่ทำงานอัตโนมัติเมื่อโหลดฐานข้อมูล:
+     - ซ่อมแซมรายการ Swing ที่เคยถูกตีเป็น `CANCELLED` ให้กลับมาเป็น `FILLED` พร้อม `action` และ `pnl` ที่ถูกต้อง
+     - สร้างรายการ `BUY_FILL` ย้อนหลังอัตโนมัติสำหรับ `activeSwingPosition` ที่กำลังถือครองอยู่แต่ยังไม่มีบันทึกใน `db.orders` (กู้คืนไม้ซื้อ `0.00185 BTC @ $80,985.025` บน `:3334`)
+     - กู้คืนข้อมูลธุรกรรม On-Chain จริงจาก Somnia Indexer สำหรับรอบเทรด Swing บน `:3333` (`SOMI:USDSO` ซื้อ `308.26 SOMI @ $0.1742` Tx `0x0b737c63...` และขาย Stop Loss `308.26 SOMI @ $0.1710` Tx `0x93a52cd1...` ขาดทุน `-$0.9864`) กลับเข้าสู่ฐานข้อมูลและหน้าแดชบอร์ดอย่างครบถ้วน

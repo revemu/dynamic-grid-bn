@@ -478,9 +478,16 @@ async function main(): Promise<void> {
           grid.updateRuntimeSettings(s);
           grid.getDatabase().setSetting("strategyType", targetStrategyType);
           grid.onEvent((event) => {
-            dashboard.broadcast(event.type, event.data);
+            if (event.type === "tick") {
+              dashboard.updateTick(event.data);
+            } else if (event.type === "order") {
+              dashboard.addOrder(event.data);
+            } else if (event.type === "order_gas") {
+              dashboard.updateOrderGas(event.data.txHash, event.data.gasFeeBase, event.data.gasFeeQuote);
+            }
           });
           await grid.syncOnChainOrders();
+          dashboard.setInitialOrders(grid.getRecentOrders());
           grid.emitTelemetryTick();
           log(`✅ [STRATEGY SWITCH] Active strategy is now: ${grid.name} (${grid.strategyType})`);
         } catch (stratErr) {

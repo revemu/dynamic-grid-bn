@@ -226,6 +226,7 @@ export class BotDatabase {
     this.log = opts.log || ((msg) => console.log(`[database] ${msg}`));
     this.data = this.initializeDatabase();
     this.loadSeparateSettings();
+    this.recoverMissingSwingTrades();
     this.backfillMissingSellPnl();
     this.cleanupHijackedMakerFills();
     this.cleanupDuplicateExitFills();
@@ -461,6 +462,295 @@ export class BotDatabase {
         this.flushSync();
       }
     }, 1000);
+  }
+
+  /**
+   * Self-healing migration & recovery for Swing Trader orders:
+   * 1. Repairs any historical Swing orders that were recorded without `action` (and thus marked CANCELLED)
+   *    or recorded with `realizedPnl` instead of `pnl`/`pnlQuote`/`pnlUsdso`.
+   * 2. Reconstructs missing `BUY_FILL` records for any active Swing position (`activeSwingPosition`) in state.
+   * 3. Restores verified on-chain SOMI:USDSO Swing trades on DreamDEX if purged by prior CEX cleanup.
+   */
+  public recoverMissingSwingTrades(): void {
+    if (!this.data) return;
+    if (!Array.isArray(this.data.orders)) {
+      this.data.orders = [];
+    }
+
+    let modified = false;
+
+    // 1. Repair existing Swing records in db.orders
+    for (const o of this.data.orders) {
+      if (o.orderId && o.orderId.startsWith("0x") && o.orderId.length >= 64 && !o.txHash) {
+        o.txHash = o.orderId;
+        o.explorerUrl = formatExplorerUrl(o.txHash);
+        modified = true;
+      }
+
+      const rawRealizedPnl = (o as any).realizedPnl;
+      if (rawRealizedPnl !== undefined && o.pnl === undefined && o.pnlQuote === undefined && o.pnlUsdso === undefined) {
+        const rp = Number(rawRealizedPnl);
+        if (Number.isFinite(rp)) {
+          o.pnl = rp;
+          o.pnlQuote = rp;
+          o.pnlUsdso = rp;
+          modified = true;
+        }
+      }
+
+      const desc = `${o.levelDesc || ""} ${o.reason || ""}`;
+      const isSwingFillRecord = Boolean(
+        desc.includes("Swing Entry") ||
+        desc.includes("Swing TP") ||
+        desc.includes("Swing Stop Loss") ||
+        desc.includes("Swing Exit") ||
+        desc.includes("Swing Trendline") ||
+        (o.id && (o.id.endsWith("_exit") || o.id.endsWith("_tp1") || o.id.endsWith("_tp2") || o.id.endsWith("_buy")))
+      );
+
+      if (isSwingFillRecord) {
+        if (o.status === "CANCELLED" || o.action === "CANCEL_BUY" || o.action === "CANCEL_SELL") {
+          o.status = "FILLED";
+          o.fillTime = o.fillTime || o.placedTime || o.time || Date.now();
+          o.fillPrice = o.fillPrice || o.price;
+          delete o.cancelTime;
+          modified = true;
+        }
+        if (o.status === "FILLED") {
+          const desiredAction: UnifiedOrderRecord["action"] =
+            o.side === "BUY"
+              ? "BUY_FILL"
+              : /stop\s*loss|cut/i.test(desc)
+              ? "CUT"
+              : /tp1|tp2|take\s*profit|target|trendline/i.test(desc)
+              ? "TAKE_PROFIT"
+              : "SELL_FILL";
+          if (o.action !== desiredAction) {
+            o.action = desiredAction;
+            modified = true;
+          }
+        }
+      }
+    }
+
+    // 2. Backfill missing BUY_FILL for any activeSwingPosition in state or statesBySymbol
+    const stateEntries: Array<{ sym: string; st: any }> = [];
+    if (this.data.state && (this.data.state as any).activeSwingPosition) {
+      stateEntries.push({
+        sym: (this.data.state as any).symbol || this.data.settings?.symbol || "BTCFDUSD",
+        st: this.data.state,
+      });
+    }
+    if (this.data.statesBySymbol) {
+      for (const [sym, st] of Object.entries(this.data.statesBySymbol)) {
+        if (st && (st as any).activeSwingPosition) {
+          stateEntries.push({ sym, st });
+        }
+      }
+    }
+
+    for (const { sym, st } of stateEntries) {
+      const pos = st.activeSwingPosition;
+      if (!pos || !(pos.entryPrice > 0) || !(pos.qty > 0)) continue;
+      const entryTime = Number(pos.entryTime || Date.now());
+      const hasBuyRecord = this.data.orders.some(
+        (o) =>
+          o.side === "BUY" &&
+          o.status === "FILLED" &&
+          ((pos.entryOrderId && String(o.orderId) === String(pos.entryOrderId)) ||
+            (Math.abs((o.price || 0) - pos.entryPrice) / pos.entryPrice < 0.002 &&
+              Math.abs((o.placedTime || o.time || 0) - entryTime) < 300_000)),
+      );
+      if (!hasBuyRecord) {
+        const isBinance = this.data.settings?.exchange === "binance" || sym.includes("FDUSD") || sym.includes("USDT");
+        const baseAsset = sym.includes(":") ? sym.split(":")[0] : sym.replace(/(FDUSD|USDT|USDSO|USDC)$/i, "");
+        const quoteAsset = sym.includes(":") ? sym.split(":")[1] : (sym.includes("FDUSD") ? "FDUSD" : sym.includes("USDT") ? "USDT" : "USDSO");
+        const orderIdStr = String(pos.entryOrderId || `ord_${entryTime}`);
+        const txHash = orderIdStr.startsWith("0x") && orderIdStr.length >= 64 ? orderIdStr : undefined;
+        const notional = Number(pos.notionalQuote || pos.entryPrice * pos.qty);
+        const newBuy: UnifiedOrderRecord = {
+          id: `ord_${entryTime}_buy`,
+          orderId: orderIdStr,
+          side: "BUY",
+          price: pos.entryPrice,
+          qty: pos.qty,
+          notionalQuote: notional,
+          notionalUsdso: notional,
+          levelDesc: `Swing Entry (${pos.signalType || "SWING"}) @ $${pos.entryPrice}`,
+          reason: pos.reason || `Swing Entry (${pos.signalType || "SWING"})`,
+          status: "FILLED",
+          action: "BUY_FILL",
+          placedTime: entryTime,
+          fillTime: entryTime,
+          fillPrice: pos.entryPrice,
+          time: entryTime,
+          txHash,
+          fillTxHash: txHash,
+          explorerUrl: formatExplorerUrl(txHash),
+          symbol: sym,
+          baseAsset,
+          quoteAsset,
+          isIoc: !isBinance || this.data.settings?.orderExecutionMode !== "MAKER_LIMIT",
+        };
+        this.data.orders.push(newBuy);
+        modified = true;
+        this.log(`🔄 [recoverSwing] Restored missing BUY_FILL record for active Swing position (${sym}: ${pos.qty} @ $${pos.entryPrice})`);
+      }
+    }
+
+    // 3. Restore verified on-chain SOMI:USDSO Swing trades on DreamDEX instance if missing or incomplete
+    const isDreamdexInstance =
+      this.data.settings?.exchange === "dreamdex" ||
+      this.data.orders.some(
+        (o) =>
+          o.orderId === "2933032307719848704579" ||
+          o.txHash === "0x9641e96e2bfdde804b4700c2a15ff65a4413be9677b17d95d0ae4180a851a8ee" ||
+          o.txHash === "0x93a52cd1fa7f0a6055de313bbaca626b7143eea3249739bfbd014672ff7d4065",
+      );
+
+    if (isDreamdexInstance) {
+      const swingBuyTx = "0x0b737c6329c462501cf78c7613fe97d93a1e30528021190d84de7b90fec8b85e";
+      const swingBuyOrderId = "1328165573307117928510";
+      const swingBuyTime = 1792897346000;
+      const existingBuy = this.data.orders.find(
+        (o) =>
+          o.orderId === swingBuyOrderId ||
+          o.orderId === swingBuyTx ||
+          o.txHash?.toLowerCase() === swingBuyTx,
+      );
+      if (existingBuy) {
+        if (existingBuy.status !== "FILLED" || existingBuy.action !== "BUY_FILL" || !existingBuy.levelDesc?.includes("Swing")) {
+          existingBuy.orderId = swingBuyOrderId;
+          existingBuy.status = "FILLED";
+          existingBuy.action = "BUY_FILL";
+          existingBuy.side = "BUY";
+          existingBuy.price = 0.1742;
+          existingBuy.fillPrice = 0.1742;
+          existingBuy.qty = 308.26;
+          existingBuy.notionalQuote = 53.698892;
+          existingBuy.notionalUsdso = 53.698892;
+          existingBuy.levelDesc = "Swing Entry (HL_BASE) @ $0.1742";
+          existingBuy.reason = "Swing Entry (HL_BASE) @ $0.1742 (308.26 SOMI)";
+          existingBuy.txHash = swingBuyTx;
+          existingBuy.fillTxHash = swingBuyTx;
+          existingBuy.explorerUrl = formatExplorerUrl(swingBuyTx);
+          existingBuy.symbol = "SOMI:USDSO";
+          existingBuy.baseAsset = "SOMI";
+          existingBuy.quoteAsset = "USDSO";
+          existingBuy.isIoc = true;
+          modified = true;
+        }
+      } else {
+        this.data.orders.push({
+          id: `ord_${swingBuyTime}_buy`,
+          orderId: swingBuyOrderId,
+          side: "BUY",
+          price: 0.1742,
+          qty: 308.26,
+          notionalQuote: 53.698892,
+          notionalUsdso: 53.698892,
+          levelDesc: "Swing Entry (HL_BASE) @ $0.1742",
+          reason: "Swing Entry (HL_BASE) @ $0.1742 (308.26 SOMI)",
+          status: "FILLED",
+          action: "BUY_FILL",
+          placedTime: swingBuyTime,
+          fillTime: swingBuyTime,
+          fillPrice: 0.1742,
+          time: swingBuyTime,
+          txHash: swingBuyTx,
+          createTxHash: swingBuyTx,
+          fillTxHash: swingBuyTx,
+          explorerUrl: formatExplorerUrl(swingBuyTx),
+          symbol: "SOMI:USDSO",
+          baseAsset: "SOMI",
+          quoteAsset: "USDSO",
+          isIoc: true,
+        });
+        modified = true;
+        this.log("🔄 [recoverSwing] Restored on-chain SOMI:USDSO Swing Entry Buy (308.26 SOMI @ $0.1742)");
+      }
+
+      const swingSlTx = "0x93a52cd1fa7f0a6055de313bbaca626b7143eea3249739bfbd014672ff7d4065";
+      const swingSlOrderId = "3781582535110488309832";
+      const swingSlTime = 1792908065109;
+      const swingSlPnl = -0.986432;
+      const existingSl = this.data.orders.find(
+        (o) =>
+          o.orderId === swingSlOrderId ||
+          o.orderId === swingSlTx ||
+          o.txHash?.toLowerCase() === swingSlTx,
+      );
+      if (existingSl) {
+        if (
+          existingSl.status !== "FILLED" ||
+          existingSl.action !== "CUT" ||
+          existingSl.pnl === undefined ||
+          Math.abs((existingSl.pnl || 0) - swingSlPnl) > 1e-4
+        ) {
+          existingSl.orderId = swingSlOrderId;
+          existingSl.status = "FILLED";
+          existingSl.action = "CUT";
+          existingSl.side = "SELL";
+          existingSl.price = 0.171;
+          existingSl.fillPrice = 0.171;
+          existingSl.qty = 308.26;
+          existingSl.notionalQuote = 52.71246;
+          existingSl.notionalUsdso = 52.71246;
+          existingSl.pnl = swingSlPnl;
+          existingSl.pnlQuote = swingSlPnl;
+          existingSl.pnlUsdso = swingSlPnl;
+          existingSl.levelDesc = "Swing Stop Loss ($0.1742 → $0.1710)";
+          existingSl.reason = "Swing Stop Loss Triggered | Entry: $0.1742 → Exit: $0.1710 | PnL: -$0.9864";
+          existingSl.txHash = swingSlTx;
+          existingSl.fillTxHash = swingSlTx;
+          existingSl.explorerUrl = formatExplorerUrl(swingSlTx);
+          existingSl.symbol = "SOMI:USDSO";
+          existingSl.baseAsset = "SOMI";
+          existingSl.quoteAsset = "USDSO";
+          existingSl.isIoc = true;
+          modified = true;
+        }
+      } else {
+        this.data.orders.push({
+          id: `ord_${swingSlTime}_exit`,
+          orderId: swingSlOrderId,
+          side: "SELL",
+          price: 0.171,
+          qty: 308.26,
+          notionalQuote: 52.71246,
+          notionalUsdso: 52.71246,
+          pnl: swingSlPnl,
+          pnlQuote: swingSlPnl,
+          pnlUsdso: swingSlPnl,
+          levelDesc: "Swing Stop Loss ($0.1742 → $0.1710)",
+          reason: "Swing Stop Loss Triggered | Entry: $0.1742 → Exit: $0.1710 | PnL: -$0.9864",
+          status: "FILLED",
+          action: "CUT",
+          placedTime: swingSlTime,
+          fillTime: swingSlTime,
+          fillPrice: 0.171,
+          time: swingSlTime,
+          txHash: swingSlTx,
+          createTxHash: swingSlTx,
+          fillTxHash: swingSlTx,
+          explorerUrl: formatExplorerUrl(swingSlTx),
+          symbol: "SOMI:USDSO",
+          baseAsset: "SOMI",
+          quoteAsset: "USDSO",
+          isIoc: true,
+        });
+        modified = true;
+        this.log("🔄 [recoverSwing] Restored on-chain SOMI:USDSO Swing Stop Loss (308.26 SOMI @ $0.1710, PnL: -$0.9864)");
+      }
+    }
+
+    if (modified) {
+      this.data.orders.sort(
+        (a, b) => (b.fillTime || b.placedTime || b.time || 0) - (a.fillTime || a.placedTime || a.time || 0),
+      );
+      this.isDirty = true;
+      this.flushSync();
+    }
   }
 
   /**
@@ -1042,7 +1332,9 @@ export class BotDatabase {
           }
           if (existing.status !== status || (isFilled && !existing.fillTime)) {
             existing.status = status;
-            existing.action = action;
+            if (!["CUT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(existing.action)) {
+              existing.action = action;
+            }
             if (isFilled) {
               existing.fillPrice = ro.price;
               existing.fillTime = time;
@@ -1159,14 +1451,42 @@ export class BotDatabase {
     let action = eventData.action as UnifiedOrderRecord["action"];
     if ((action as any) === "BUY") action = "BUY_FILL";
     if ((action as any) === "SELL") action = "SELL_FILL";
-    const now = eventData.time || Date.now();
+    const now = eventData.time || eventData.fillTime || eventData.placedTime || Date.now();
     const side: "BUY" | "SELL" = eventData.side || (action?.includes("BUY") ? "BUY" : "SELL");
+    if (!action) {
+      const desc = `${eventData.levelDesc || ""} ${eventData.reason || ""}`;
+      if (eventData.status === "FILLED") {
+        if (side === "BUY") {
+          action = "BUY_FILL";
+        } else if (/stop\s*loss|cut/i.test(desc)) {
+          action = "CUT";
+        } else if (/tp1|tp2|take\s*profit|target|trendline/i.test(desc)) {
+          action = "TAKE_PROFIT";
+        } else {
+          action = "SELL_FILL";
+        }
+      } else if (eventData.status === "OPEN") {
+        action = side === "BUY" ? "CREATE_BUY" : "CREATE_SELL";
+      } else {
+        action = side === "BUY" ? "CANCEL_BUY" : "CANCEL_SELL";
+      }
+    }
     const price = Number(eventData.price || 0);
     const qty = Number(eventData.qty || 0);
     const notionalQuote = Number(eventData.notionalQuote || eventData.notionalUsdso || eventData.notional || (price * qty) || 0);
     const notionalUsdso = notionalQuote;
-    const pnlVal = eventData.pnlQuote !== undefined ? eventData.pnlQuote : eventData.pnl !== undefined ? eventData.pnl : eventData.pnlUsdso;
+    const pnlVal =
+      eventData.pnlQuote !== undefined
+        ? eventData.pnlQuote
+        : eventData.pnl !== undefined
+        ? eventData.pnl
+        : eventData.pnlUsdso !== undefined
+        ? eventData.pnlUsdso
+        : eventData.realizedPnl;
     const orderId = eventData.orderId ? String(eventData.orderId) : (action.startsWith("CREATE_") ? `ord_${now}` : "");
+    if (!eventData.txHash && orderId.startsWith("0x") && orderId.length >= 64) {
+      eventData.txHash = orderId;
+    }
 
     const isBinance = this.data.settings?.exchange === "binance";
     const targetSymbol = eventData.symbol || this.data.settings?.symbol;

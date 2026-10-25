@@ -91,7 +91,9 @@ export class SwingTraderStrategy implements IStrategy {
   public mid = 0;
   private lastBalanceRefreshTime = 0;
   private lastOrderSyncTime = 0;
+  private lastIndexerSyncTime = 0;
   private lastTpOrderAdjustTime = 0;
+  private processedGasTxHashes = new Set<string>();
 
   private eventListeners: ((event: StrategyEvent) => void)[] = [];
 
@@ -132,7 +134,50 @@ export class SwingTraderStrategy implements IStrategy {
         this.realizedPnl = savedState.realizedPnl;
       }
     }
+    this.db.recoverMissingSwingTrades();
+    this.wireExchangeGasListener(this.binance);
     this.refreshWalletBalances().catch(() => {});
+  }
+
+  private wireExchangeGasListener(client: IExchangeClient): void {
+    if (!client || !client.hasGasFees) return;
+    client.onGasSpent = (feeSomi: number, label: string, txHash?: string) => {
+      if (!feeSomi || feeSomi <= 0) return;
+      const normTx = (txHash || "").trim().toLowerCase();
+      if (normTx && this.processedGasTxHashes.has(normTx)) return;
+      if (normTx) {
+        this.processedGasTxHashes.add(normTx);
+        if (this.processedGasTxHashes.size > 2000) {
+          const first = this.processedGasTxHashes.values().next().value;
+          if (first) this.processedGasTxHashes.delete(first);
+        }
+      }
+      const isSomiBase = this.symbolInfo.baseAsset.toUpperCase() === "SOMI";
+      const somiPrice = isSomiBase ? (this.lastRefPrice || this.activePosition?.entryPrice || 0.20) : 0.20;
+      const feeQuote = feeSomi * somiPrice;
+      this.log(`⛽ [SwingTrader DEX GAS] ${label || "On-Chain Op"}${txHash ? ` (${txHash.slice(0, 10)}...)` : ""}: Spent ${feeSomi.toFixed(5)} SOMI (~$${feeQuote.toFixed(4)})`);
+      if (txHash && typeof (this.db as any).updateTxGas === "function") {
+        try {
+          (this.db as any).updateTxGas(txHash, {
+            gasUsed: 0,
+            gasSomi: feeSomi,
+            gasUsdso: feeQuote,
+          });
+        } catch {}
+      }
+      if (txHash) {
+        this.emit({
+          type: "order_gas",
+          data: {
+            txHash,
+            gasFeeBase: isSomiBase ? feeSomi : 0,
+            gasFeeQuote: feeQuote,
+            gasFeeSomi: feeSomi,
+            gasFeeUsdso: feeQuote,
+          },
+        });
+      }
+    };
   }
 
   public getIntervalMs(): number {
@@ -232,7 +277,11 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   public getRecentOrders(): any[] {
-    return [...this.openOrders];
+    return this.db.getOrders(5000, { symbol: this.symbolInfo.symbol });
+  }
+
+  public getRecentTrades(): any[] {
+    return this.db.getTrades(5000, this.symbolInfo.symbol);
   }
 
   public onEvent(cb: (event: StrategyEvent) => void): void {
@@ -248,7 +297,10 @@ export class SwingTraderStrategy implements IStrategy {
         quoteAsset: event.data.quoteAsset || this.symbolInfo.quoteAsset,
       };
       try {
-        this.db.recordEvent(event.data);
+        const saved = this.db.recordEvent(event.data);
+        if (saved) {
+          event.data = saved;
+        }
         this.saveState();
       } catch (e) {
         this.log(`[SwingTrader] Failed to persist order event: ${e}`);
@@ -308,6 +360,7 @@ export class SwingTraderStrategy implements IStrategy {
           const execPrice = lastPrice > 0 ? lastPrice : pos.tp1Price;
           const exitQty = this.roundQty(pos.qty * (this.cfg.swingTp1CloseRatio ?? 0.5));
           const pnl = (execPrice - pos.entryPrice) * exitQty;
+          const now = Date.now();
           this.realizedPnl += pnl;
           pos.tp1Executed = true;
           pos.qty = this.roundQty(pos.qty - exitQty);
@@ -319,40 +372,57 @@ export class SwingTraderStrategy implements IStrategy {
           this.emit({
             type: "order",
             data: {
-              id: `ord_${Date.now()}_tp1`,
+              id: `ord_${now}_tp1`,
               orderId,
               symbol: this.symbolInfo.symbol,
               side: "SELL",
+              action: "TAKE_PROFIT",
               price: execPrice,
+              fillPrice: execPrice,
               qty: exitQty,
               notionalQuote: execPrice * exitQty,
-              levelDesc: "Swing TP1 Target (Maker)",
+              notionalUsdso: execPrice * exitQty,
+              levelDesc: `Swing TP1 Target ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
+              reason: `Swing TP1 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
               status: "FILLED",
+              pnl,
+              pnlQuote: pnl,
+              pnlUsdso: pnl,
               realizedPnl: pnl,
-              placedTime: Date.now(),
-              fillTime: Date.now(),
+              placedTime: now,
+              fillTime: now,
+              time: now,
             },
           });
         } else if (pos.tp2OrderId && String(pos.tp2OrderId) === orderId && status === "FILLED") {
           const execPrice = lastPrice > 0 ? lastPrice : pos.tp2Price;
           const exitQty = pos.qty;
           const pnl = (execPrice - pos.entryPrice) * exitQty;
+          const now = Date.now();
           this.realizedPnl += pnl;
           this.emit({
             type: "order",
             data: {
-              id: `ord_${Date.now()}_tp2`,
+              id: `ord_${now}_tp2`,
               orderId,
               symbol: this.symbolInfo.symbol,
               side: "SELL",
+              action: "TAKE_PROFIT",
               price: execPrice,
+              fillPrice: execPrice,
               qty: exitQty,
               notionalQuote: execPrice * exitQty,
-              levelDesc: "Swing TP2 Target (Maker)",
+              notionalUsdso: execPrice * exitQty,
+              levelDesc: `Swing TP2 Target ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
+              reason: `Swing TP2 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
               status: "FILLED",
+              pnl,
+              pnlQuote: pnl,
+              pnlUsdso: pnl,
               realizedPnl: pnl,
-              placedTime: Date.now(),
-              fillTime: Date.now(),
+              placedTime: now,
+              fillTime: now,
+              time: now,
             },
           });
           this.lots = [];
@@ -436,6 +506,19 @@ export class SwingTraderStrategy implements IStrategy {
           placedTime: o.time || Date.now(),
         };
       });
+
+      // On DreamDEX, periodically sync recent on-chain order fills from Somnia GraphQL Indexer
+      const now = Date.now();
+      if (this.binance.exchangeName === "dreamdex" && now - this.lastIndexerSyncTime > 30_000) {
+        this.lastIndexerSyncTime = now;
+        const indexer = (this.binance as any).indexer;
+        const owner = (this.binance as any).getWalletAddress?.();
+        const market = (this.binance as any).resolveMarket?.(this.symbolInfo.symbol);
+        if (indexer && owner) {
+          await this.db.syncRecentOrdersFromIndexer(indexer, owner, market?.pool, 50).catch(() => {});
+          this.db.recoverMissingSwingTrades();
+        }
+      }
     } catch (e) {
       this.log(`[SwingTrader] Failed to sync open orders: ${e}`);
     }
@@ -461,6 +544,7 @@ export class SwingTraderStrategy implements IStrategy {
     this.atrSource = atrSource;
     this.cfg.symbol = nextInfo.symbol;
     this.cfg.exchange = newExchange.exchangeName;
+    this.wireExchangeGasListener(newExchange);
   }
 
   public updateSymbolInfo(nextInfo: ExchangeSymbolInfo, atrSource: AtrSource): void {
@@ -535,28 +619,51 @@ export class SwingTraderStrategy implements IStrategy {
           price: isDreamdex ? dreamdexIocPrice : undefined,
           qty,
         });
+        if (res.status === "CANCELED" || res.orderId === "UNMATCHED_IOC") {
+          this.log(`[SwingTrader] ⚠️ Sell IOC order went unmatched on orderbook. Retrying on next tick.`);
+          return { success: false, soldQty: 0, price: 0, error: "IOC order unmatched" };
+        }
         const execPrice = res.price || sellPrice;
+        const entryPrice = this.activePosition?.entryPrice ?? 0;
         let pnl = 0;
         if (this.activePosition) {
           pnl = (execPrice - this.activePosition.entryPrice) * qty;
           this.realizedPnl += pnl;
         }
 
+        const baseReason = reason || (this.activePosition?.tp1Executed ? "Swing TP2 Target" : "Swing Exit / Stop Loss");
+        const isStopLoss = /stop\s*loss|cut/i.test(baseReason) || (pnl < 0 && !/tp|profit|target/i.test(baseReason));
+        const isTakeProfit = /tp|take\s*profit|target|trendline/i.test(baseReason) || pnl > 0;
+        const action = isStopLoss ? "CUT" : isTakeProfit ? "TAKE_PROFIT" : "SELL_FILL";
+        const priceComparison = entryPrice > 0 ? ` ($${entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})` : "";
+        const now = Date.now();
+        const txHash = (res as any).txHash || (String(res.orderId || "").startsWith("0x") ? String(res.orderId) : undefined);
+
         this.emit({
           type: "order",
           data: {
-            id: `ord_${Date.now()}_exit`,
-            orderId: String(res.orderId || Date.now()),
+            id: `ord_${now}_exit`,
+            orderId: String(res.orderId || now),
+            txHash,
             symbol: this.symbolInfo.symbol,
             side: "SELL",
+            action,
             price: execPrice,
+            fillPrice: execPrice,
             qty,
             notionalQuote: execPrice * qty,
-            levelDesc: reason || (this.activePosition?.tp1Executed ? "Swing TP2 Target" : "Swing Exit / Stop Loss"),
+            notionalUsdso: execPrice * qty,
+            levelDesc: `${baseReason}${priceComparison}`,
+            reason: `${baseReason}${entryPrice > 0 ? ` | Entry: $${entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(4)}` : ""}`,
             status: "FILLED",
+            pnl,
+            pnlQuote: pnl,
+            pnlUsdso: pnl,
             realizedPnl: pnl,
-            placedTime: Date.now(),
-            fillTime: Date.now(),
+            isIoc: true,
+            placedTime: now,
+            fillTime: now,
+            time: now,
           },
         });
 
@@ -951,11 +1058,12 @@ export class SwingTraderStrategy implements IStrategy {
     fillPrice: number,
     qty: number,
     notionalQuote: number,
-    signal: { stopLossPrice: number; tp1Price: number; tp2Price: number; signalType?: string; reason?: string },
+    signal: { stopLossPrice: number; tp1Price: number; tp2Price: number; signalType?: string; reason?: string; txHash?: string },
     cfg: SwingStrategyConfig,
   ): Promise<void> {
+    const now = Date.now();
     this.activePosition = {
-      entryTime: Date.now(),
+      entryTime: now,
       entryPrice: fillPrice,
       qty,
       notionalQuote,
@@ -973,27 +1081,36 @@ export class SwingTraderStrategy implements IStrategy {
     this.lots.push({
       price: fillPrice,
       qty,
-      time: Date.now(),
+      time: now,
     });
 
     this.pendingEntryOrder = undefined;
     this.swingState = "IN_POSITION";
     this.saveState(true);
 
+    const txHash = signal.txHash || (String(orderId).startsWith("0x") ? String(orderId) : undefined);
+
     this.emit({
       type: "order",
       data: {
-        id: `ord_${Date.now()}_buy`,
+        id: `ord_${now}_buy`,
         orderId,
+        txHash,
         symbol: this.symbolInfo.symbol,
         side: "BUY",
+        action: "BUY_FILL",
         price: fillPrice,
+        fillPrice,
         qty,
         notionalQuote,
-        levelDesc: `Swing Entry (${signal.signalType || "SWING"})`,
+        notionalUsdso: notionalQuote,
+        levelDesc: `Swing Entry (${signal.signalType || "SWING"}) @ $${fillPrice.toFixed(4)}`,
+        reason: signal.reason || `Swing Entry (${signal.signalType || "SWING"}) @ $${fillPrice.toFixed(4)}`,
         status: "FILLED",
-        placedTime: Date.now(),
-        fillTime: Date.now(),
+        isIoc: this.cfg.orderExecutionMode !== "MAKER_LIMIT",
+        placedTime: now,
+        fillTime: now,
+        time: now,
       },
     });
 
@@ -1191,6 +1308,7 @@ export class SwingTraderStrategy implements IStrategy {
             const execPrice = o1.price || pos.tp1Price;
             const exitQty = o1.executedQty || this.roundQty(pos.qty * cfg.tp1CloseRatio);
             const pnl = (execPrice - pos.entryPrice) * exitQty;
+            const fillTime = Date.now();
             this.realizedPnl += pnl;
 
             pos.tp1Executed = true;
@@ -1205,18 +1323,27 @@ export class SwingTraderStrategy implements IStrategy {
             this.emit({
               type: "order",
               data: {
-                id: `ord_${Date.now()}_tp1`,
+                id: `ord_${fillTime}_tp1`,
                 orderId: String(o1.orderId),
+                txHash: (o1 as any).txHash,
                 symbol: this.symbolInfo.symbol,
                 side: "SELL",
+                action: "TAKE_PROFIT",
                 price: execPrice,
+                fillPrice: execPrice,
                 qty: exitQty,
                 notionalQuote: execPrice * exitQty,
-                levelDesc: `Swing TP1 Target (Maker)`,
+                notionalUsdso: execPrice * exitQty,
+                levelDesc: `Swing TP1 Target ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
+                reason: `Swing TP1 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
                 status: "FILLED",
+                pnl,
+                pnlQuote: pnl,
+                pnlUsdso: pnl,
                 realizedPnl: pnl,
-                placedTime: (o1 as any).time || (o1 as any).transactTime || Date.now(),
-                fillTime: Date.now(),
+                placedTime: (o1 as any).time || (o1 as any).transactTime || fillTime,
+                fillTime,
+                time: fillTime,
               },
             });
 
@@ -1235,23 +1362,33 @@ export class SwingTraderStrategy implements IStrategy {
             const execPrice = o2.price || pos.tp2Price;
             const exitQty = o2.executedQty || pos.qty;
             const pnl = (execPrice - pos.entryPrice) * exitQty;
+            const fillTime = Date.now();
             this.realizedPnl += pnl;
 
             this.emit({
               type: "order",
               data: {
-                id: `ord_${Date.now()}_tp2`,
+                id: `ord_${fillTime}_tp2`,
                 orderId: String(o2.orderId),
+                txHash: (o2 as any).txHash,
                 symbol: this.symbolInfo.symbol,
                 side: "SELL",
+                action: "TAKE_PROFIT",
                 price: execPrice,
+                fillPrice: execPrice,
                 qty: exitQty,
                 notionalQuote: execPrice * exitQty,
-                levelDesc: `Swing TP2 Target (Maker)`,
+                notionalUsdso: execPrice * exitQty,
+                levelDesc: `Swing TP2 Target ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
+                reason: `Swing TP2 Target (Maker) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
                 status: "FILLED",
+                pnl,
+                pnlQuote: pnl,
+                pnlUsdso: pnl,
                 realizedPnl: pnl,
-                placedTime: (o2 as any).time || (o2 as any).transactTime || Date.now(),
-                fillTime: Date.now(),
+                placedTime: (o2 as any).time || (o2 as any).transactTime || fillTime,
+                fillTime,
+                time: fillTime,
               },
             });
 
@@ -1279,31 +1416,51 @@ export class SwingTraderStrategy implements IStrategy {
           `[SwingTrader] 🎯 TP1 Target reached ($${refPrice.toFixed(4)} >= $${pos.tp1Price.toFixed(4)}) — Closing ${(cfg.tp1CloseRatio * 100).toFixed(0)}% (${exitQty.toFixed(4)})`,
         );
         try {
+          const isDreamdex = this.binance.exchangeName === "dreamdex";
+          const sellPrice = this.bid > 0 ? this.bid : refPrice;
+          const dreamdexIocPrice = this.roundPrice(sellPrice * (1 - (this.cfg.iocSlippagePct ?? 1.0) / 100));
           const res = await this.binance.placeOrder({
             symbol: this.symbolInfo.symbol,
             side: "SELL",
-            type: "MARKET",
+            type: isDreamdex ? "IOC" : "MARKET",
+            price: isDreamdex ? dreamdexIocPrice : undefined,
             qty: exitQty,
           });
+          if (res.status === "CANCELED" || res.orderId === "UNMATCHED_IOC") {
+            this.log(`[SwingTrader] ⚠️ TP1 IOC order went unmatched on orderbook. Retrying on next tick.`);
+            return;
+          }
           const execPrice = res.price || refPrice;
           const pnl = (execPrice - pos.entryPrice) * exitQty;
+          const fillTime = Date.now();
+          const txHash = (res as any).txHash || (String(res.orderId || "").startsWith("0x") ? String(res.orderId) : undefined);
           this.realizedPnl += pnl;
 
           this.emit({
             type: "order",
             data: {
-              id: `ord_${Date.now()}_tp1`,
-              orderId: String(res.orderId || Date.now()),
+              id: `ord_${fillTime}_tp1`,
+              orderId: String(res.orderId || fillTime),
+              txHash,
               symbol: this.symbolInfo.symbol,
               side: "SELL",
+              action: "TAKE_PROFIT",
               price: execPrice,
+              fillPrice: execPrice,
               qty: exitQty,
               notionalQuote: execPrice * exitQty,
-              levelDesc: `Swing TP1 Target (${(cfg.tp1CloseRatio * 100).toFixed(0)}%)`,
+              notionalUsdso: execPrice * exitQty,
+              levelDesc: `Swing TP1 Target (${(cfg.tp1CloseRatio * 100).toFixed(0)}%) ($${pos.entryPrice.toFixed(4)} → $${execPrice.toFixed(4)})`,
+              reason: `Swing TP1 Target (${(cfg.tp1CloseRatio * 100).toFixed(0)}%) | Entry: $${pos.entryPrice.toFixed(4)} → Exit: $${execPrice.toFixed(4)} | PnL: +$${pnl.toFixed(4)}`,
               status: "FILLED",
+              pnl,
+              pnlQuote: pnl,
+              pnlUsdso: pnl,
               realizedPnl: pnl,
-              placedTime: Date.now(),
-              fillTime: Date.now(),
+              isIoc: true,
+              placedTime: fillTime,
+              fillTime,
+              time: fillTime,
             },
           });
 
@@ -1372,17 +1529,19 @@ export class SwingTraderStrategy implements IStrategy {
         });
 
         const orderIdStr = String(res.orderId);
+        const txHash = (res as any).txHash || (orderIdStr.startsWith("0x") ? orderIdStr : undefined);
 
         // Check if filled immediately (some exchanges or dryRun fill limit immediately)
         if (res.status === "FILLED") {
-          await this.onSwingEntryFilled(orderIdStr, entryPrice, qty, maxBudget, signal, cfg);
+          await this.onSwingEntryFilled(orderIdStr, entryPrice, qty, entryPrice * qty, { ...signal, txHash }, cfg);
         } else {
           // Resting on orderbook
+          const now = Date.now();
           this.pendingEntryOrder = {
             orderId: orderIdStr,
             price: entryPrice,
             qty,
-            placedTime: Date.now(),
+            placedTime: now,
             stopLossPrice: this.roundPrice(signal.stopLossPrice),
             tp1Price: this.roundPrice(signal.tp1Price),
             tp2Price: this.roundPrice(signal.tp2Price),
@@ -1392,6 +1551,26 @@ export class SwingTraderStrategy implements IStrategy {
           };
           this.swingState = "PENDING_ENTRY";
           this.saveState(true);
+          this.emit({
+            type: "order",
+            data: {
+              id: `ord_${now}_create_buy`,
+              orderId: orderIdStr,
+              txHash,
+              symbol: this.symbolInfo.symbol,
+              side: "BUY",
+              action: "CREATE_BUY",
+              price: entryPrice,
+              qty,
+              notionalQuote: entryPrice * qty,
+              notionalUsdso: entryPrice * qty,
+              levelDesc: `Swing Entry (Maker Limit) @ $${entryPrice.toFixed(4)}`,
+              reason: signal.reason,
+              status: "OPEN",
+              placedTime: now,
+              time: now,
+            },
+          });
           await this.syncOnChainOrders();
           this.log(`[SwingTrader] 📌 Resting Maker Limit Buy active (OrderId: ${orderIdStr}). Waiting for fill.`);
         }
@@ -1415,8 +1594,13 @@ export class SwingTraderStrategy implements IStrategy {
           price: isDreamdex ? iocPrice : undefined,
           qty,
         });
+        if (res.status === "CANCELED" || res.orderId === "UNMATCHED_IOC") {
+          this.log(`[SwingTrader] ⚠️ Entry IOC order went unmatched on orderbook. Waiting for next tick.`);
+          return;
+        }
         const execPrice = res.price || price;
-        await this.onSwingEntryFilled(String(res.orderId || Date.now()), execPrice, qty, maxBudget, signal, cfg);
+        const txHash = (res as any).txHash || (String(res.orderId || "").startsWith("0x") ? String(res.orderId) : undefined);
+        await this.onSwingEntryFilled(String(res.orderId || Date.now()), execPrice, qty, execPrice * qty, { ...signal, txHash }, cfg);
       } catch (e) {
         this.log(`[SwingTrader] Swing Entry failed: ${e}`);
       }
@@ -1523,7 +1707,7 @@ export class SwingTraderStrategy implements IStrategy {
       symbol: this.symbolInfo.symbol,
       baseAsset: this.symbolInfo.baseAsset,
       quoteAsset: this.symbolInfo.quoteAsset,
-      walletAddress: (this.binance as any).walletAddress || (this.binance as any).getAddress?.() || "",
+      walletAddress: (this.binance as any).getWalletAddress?.() || (this.binance as any).walletAddress || (this.binance as any).getAddress?.() || "",
       walletBaseBalance: this.walletBaseBalance,
       walletQuoteBalance: this.walletQuoteBalance,
       walletSomiBalance: this.walletBaseBalance,
