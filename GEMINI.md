@@ -3919,6 +3919,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - `node --check public/app.js` ผ่าน 100% (0 errors)
   - ขยับเวอร์ชันเป็น `v0.2.90` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+### 111. Gas Reserve Protection, Dual-Sided Cut Loss Fix & DEX Execution Hardening (`v0.2.91`)
+
+- **การแก้ไขปัญหาบอทไม่ Cut Loss (Binance) และบอทไม่เข้าซื้อ (DreamDEX) พร้อมระบบ Gas Reserve Protection**:
+  - **1. แก้ไขบั๊ก Double-Counting ใน `baseHeld()` ที่ทำให้คำสั่ง Cut Loss ล้มเหลวบน Binance**:
+    - **สาเหตุของปัญหา**: โค้ดเดิมใน `src/strategy/swing/index.ts` คำนวณ `baseHeld()` เป็น `walletBaseBalance + lots` ซึ่งเป็นการนำยอดเหรียญในกระเป๋าหลักบน Exchange มารวมกับยอดเหรียญใน Memory Lots อีกรอบ ส่งผลให้ยอดเหรียญที่จะขาย Cut Loss เบิ้ลเป็น 2 เท่าเสมอ เมื่อราคาร่วงหลุด Stop Loss บอทจึงสั่ง Market Sell ด้วยจำนวนที่มากกว่าเหรียญที่มีจริง จน Binance ปฏิเสธคำสั่งด้วย Error `-2010 insufficient balance` และทำให้บอทค้างถือไม้ข้ามคืน
+    - **การแก้ไข**: 
+      - แก้ไขฟังก์ชัน `baseHeld()` ให้คำนวณจาก `this.activePosition ? this.activePosition.qty : this.lots.reduce(...)` ตามขนาดไม้ Swing จริง 100% โดยไม่นำ `walletBaseBalance` มารวมซ้ำ
+      - ใน `sellAllUser()` เพิ่มการตรวจสอบ `availableBase = Math.max(0, this.walletBaseBalance - gasReserve)` และใช้ `Math.min(targetQty, availableBase)` รับประกันว่าคำสั่งขายฉุกเฉินและ Stop Loss จะไม่เกินยอดเหรียญจริงที่มีบนกระดาน และ Match สำเร็จเสมอ
+  - **2. เพิ่มระบบ DreamDEX Gas Reserve Guard (`minGasReserveSomi`) สำหรับ Swing Trader**:
+    - **สาเหตุและความสำคัญ**: บน DreamDEX คู่เหรียญ `SOMI:USDSO` มี SOMI ทำหน้าที่เป็นทั้ง Base Asset และ Native Gas Token สำหรับจ่ายค่าธรรมเนียมธุรกรรมบนเชน Somnia หากไม่มีการกันยอด Gas Reserve ตอนสั่งขาย Cut Loss หรือ Sell All บอทจะกวาดขาย SOMI จนหมดกระเป๋า
+    - **การแก้ไข**:
+      - เพิ่มเมธอด `getEffectiveGasReserveBase()` ใน `SwingTraderStrategy`: หากกระดานเป็น `dreamdex` และ Base Asset คือ `SOMI` ระบบจะล็อกยอดสำรองค่าแก๊สตาม `this.cfg.minGasReserveSomi` (เช่น 10.0 SOMI) ทันที
+      - ยอดนี้จะถูกหักออกจาก `availableBase` ใน `sellAllUser()` และ `placeMakerTakeProfitOrders()` เสมอ ทำให้ไม่มีการขายกินเข้าไปในยอดค่าแก๊สโดยเด็ดขาด
+      - ปรับปรุง `emitTelemetryTick()`: แก้ไขการประเมินมูลค่า Inventory ให้คิดเฉพาะไม้ที่ถืออยู่จริง (`invUsd = activePosition.qty * mid`) ป้องกันหน้าแดชบอร์ดแสดงว่ามี Position ค้าง $1.81 จากยอดเหรียญแก๊ส
+  - **3. แก้ไขการส่งคำสั่งเข้าซื้อและขายฉุกเฉินสำหรับ DreamDEX (DEX CLOB Guard)**:
+    - **สาเหตุของปัญหา**: ในโหมด `IOC_BRACKET` หรือ `MARKET` โค้ดเดิมส่ง `type: "MARKET"` โดยไม่ได้ระบุราคา (`price`) ส่งผลให้ Smart Contract บนเชน Somnia Revert ทันทีเนื่องจากราคาเป็น 0 ทำให้บอทค้างสถานะ `Awaiting Execution` ซ้ำไปเรื่อยๆ
+    - **การแก้ไข**: 
+      - ใน `executeSwingEntry()` สำหรับ `IOC_BRACKET`: หากเป็น DreamDEX ให้คำนวณราคา IOC Slippage Price (`ask * (1 + slippage)`) และส่ง `type: "IOC"` พร้อมระบุราคาเสมอ
+      - ใน `sellAllUser()`: หากเป็น DreamDEX ให้ส่ง `type: "IOC"` พร้อมราคา Slippage ต่ำกว่า Best Bid 1% ป้องกัน Revert บน Smart Contract
+- **Typecheck & Version Bump**:
+  - `npm run typecheck` ผ่าน 100% (0 errors)
+  - `node --check public/app.js` ผ่าน 100% (0 errors)
+  - ขยับเวอร์ชันเป็น `v0.2.91` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

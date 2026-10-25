@@ -207,8 +207,18 @@ export class SwingTraderStrategy implements IStrategy {
     return this.isPaused;
   }
 
+  public getEffectiveGasReserveBase(): number {
+    if (this.binance.exchangeName === "dreamdex" && this.symbolInfo.baseAsset === "SOMI") {
+      return this.cfg.minGasReserveSomi ?? 2.0;
+    }
+    return 0;
+  }
+
   public baseHeld(): number {
-    return this.walletBaseBalance + this.lots.reduce((sum, l) => sum + (l.qty || 0), 0);
+    if (this.activePosition) {
+      return this.activePosition.qty;
+    }
+    return this.lots.reduce((sum, l) => sum + (l.qty || 0), 0);
   }
 
   public getLots(): Lot[] {
@@ -490,17 +500,33 @@ export class SwingTraderStrategy implements IStrategy {
       }
     }
 
-    const held = this.baseHeld();
-    const qty = this.roundQty(held);
+    // Refresh wallet balances from exchange now that resting orders are cancelled
+    await this.refreshWalletBalances().catch(() => {});
+
+    const gasReserve = this.getEffectiveGasReserveBase();
+    const availableBase = Math.max(0, this.walletBaseBalance - gasReserve);
+    const targetQty = this.activePosition ? this.activePosition.qty : this.baseHeld();
+    let qty = targetQty;
+    if (availableBase > 0) {
+      qty = Math.min(targetQty, availableBase);
+    }
+    qty = this.roundQty(qty);
+
     if (qty >= (this.symbolInfo.minQty || 0.0001)) {
       try {
+        const isDreamdex = this.binance.exchangeName === "dreamdex";
+        const sellPrice = this.bid > 0 ? this.bid : this.lastRefPrice;
+        // On DreamDEX, use IOC order with 1% slippage buffer to ensure instant match without price=0 revert
+        const dreamdexIocPrice = this.roundPrice(sellPrice * (1 - (this.cfg.iocSlippagePct ?? 1.0) / 100));
+
         const res = await this.binance.placeOrder({
           symbol: this.symbolInfo.symbol,
           side: "SELL",
-          type: "MARKET",
+          type: isDreamdex ? "IOC" : "MARKET",
+          price: isDreamdex ? dreamdexIocPrice : undefined,
           qty,
         });
-        const execPrice = res.price || this.lastRefPrice;
+        const execPrice = res.price || sellPrice;
         let pnl = 0;
         if (this.activePosition) {
           pnl = (execPrice - this.activePosition.entryPrice) * qty;
@@ -536,8 +562,15 @@ export class SwingTraderStrategy implements IStrategy {
         this.log(`[SwingTrader] Sell execution failed: ${e}`);
         return { success: false, soldQty: 0, price: 0, error: e?.message };
       }
+    } else {
+      // Cleanly reset position state if remaining quantity is dust or zero
+      this.lots = [];
+      this.activePosition = undefined;
+      this.swingState = "WAITING_SETUP";
+      this.saveState(true);
+      await this.refreshWalletBalances();
+      return { success: true, soldQty: 0, price: 0 };
     }
-    return { success: true, soldQty: 0, price: 0 };
   }
 
   public async resetBotState(opts?: any): Promise<{ success: boolean; }> {
@@ -793,30 +826,38 @@ export class SwingTraderStrategy implements IStrategy {
   }
 
   private async placeMakerTakeProfitOrders(pos: ActiveSwingPosition, cfg: SwingStrategyConfig): Promise<void> {
+    const gasReserve = this.getEffectiveGasReserveBase();
+    const availableBase = Math.max(0, this.walletBaseBalance - gasReserve);
+    let totalPositionQty = pos.qty;
+    if (availableBase > 0 && availableBase < totalPositionQty) {
+      totalPositionQty = availableBase;
+    }
+    totalPositionQty = this.roundQty(totalPositionQty);
+
     const minQty = this.symbolInfo.minQty || 0.0001;
     const minNotional = this.symbolInfo.minNotional || 5;
 
     // Calculate TP1 and TP2 quantities
     const tp1Ratio = cfg.tp1CloseRatio > 0 && cfg.tp1CloseRatio < 1 ? cfg.tp1CloseRatio : 0.5;
-    const tp1Qty = this.roundQty(pos.qty * tp1Ratio);
-    const tp2Qty = this.roundQty(pos.qty - tp1Qty);
+    const tp1Qty = this.roundQty(totalPositionQty * tp1Ratio);
+    const tp2Qty = this.roundQty(totalPositionQty - tp1Qty);
 
     const tp1Notional = tp1Qty * pos.tp1Price;
     const tp2Notional = tp2Qty * pos.tp2Price;
 
     // If split is too small for minQty or minNotional, place single full TP at TP1
     if (tp1Qty < minQty || tp1Notional < minNotional || tp2Qty < minQty || tp2Notional < minNotional) {
-      if (!pos.tp1OrderId && pos.qty >= minQty) {
+      if (!pos.tp1OrderId && totalPositionQty >= minQty) {
         try {
           const res = await this.binance.placeOrder({
             symbol: this.symbolInfo.symbol,
             side: "SELL",
             type: "LIMIT",
             price: pos.tp1Price,
-            qty: pos.qty,
+            qty: totalPositionQty,
           });
           pos.tp1OrderId = String(res.orderId);
-          this.log(`[SwingTrader] 🎯 Resting Maker Limit TP placed at $${pos.tp1Price.toFixed(4)} (100% Qty: ${pos.qty}, OrderId: ${res.orderId})`);
+          this.log(`[SwingTrader] 🎯 Resting Maker Limit TP placed at $${pos.tp1Price.toFixed(4)} (100% Qty: ${totalPositionQty}, OrderId: ${res.orderId})`);
         } catch (e) {
           this.log(`[SwingTrader] Failed to place resting TP limit order: ${e}`);
         }
@@ -1192,10 +1233,15 @@ export class SwingTraderStrategy implements IStrategy {
         `[SwingTrader] 🚀 Executing Swing Entry (${signal.signalType}) at $${price.toFixed(4)} | Budget: $${maxBudget.toFixed(2)} | Qty: ${qty} | SL: $${signal.stopLossPrice.toFixed(4)} | TP1: $${signal.tp1Price.toFixed(4)} | TP2: $${signal.tp2Price.toFixed(4)} | R:R: ${signal.riskRewardRatio.toFixed(2)}`,
       );
       try {
+        const isDreamdex = this.binance.exchangeName === "dreamdex";
+        const entryBuyPrice = this.ask > 0 ? this.ask : price;
+        const iocPrice = this.roundPrice(entryBuyPrice * (1 + (this.cfg.iocSlippagePct ?? 0.15) / 100));
+
         const res = await this.binance.placeOrder({
           symbol: this.symbolInfo.symbol,
           side: "BUY",
-          type: "MARKET",
+          type: isDreamdex ? "IOC" : "MARKET",
+          price: isDreamdex ? iocPrice : undefined,
           qty,
         });
         const execPrice = res.price || price;
@@ -1225,7 +1271,7 @@ export class SwingTraderStrategy implements IStrategy {
     });
     const currentMid = this.mid || this.lastRefPrice;
     const baseHeldVal = this.baseHeld();
-    const invUsd = this.activePosition ? this.activePosition.qty * currentMid : (baseHeldVal * currentMid);
+    const invUsd = this.activePosition ? this.activePosition.qty * currentMid : (this.lots.length > 0 ? baseHeldVal * currentMid : 0);
     const somiVal = this.walletBaseBalance * currentMid;
     const totalVal = somiVal + this.walletQuoteBalance;
     const maxInv = this.activePosition
@@ -1313,6 +1359,8 @@ export class SwingTraderStrategy implements IStrategy {
       walletUsdsoBalance: this.walletQuoteBalance,
       walletTotalValueQuote: totalVal,
       walletTotalValueUsdso: totalVal,
+      gasReserveSomi: this.getEffectiveGasReserveBase(),
+      minGasReserveSomi: this.getEffectiveGasReserveBase(),
       baseHeld: baseHeldVal,
       lots: this.lots,
       positionUsdso: invUsd,
