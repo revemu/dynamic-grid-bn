@@ -4564,6 +4564,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
 6. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.111` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 112. v0.2.112 — Bottom-Up Support Architecture: Deprecate Descending Trendline Floor & Anchor to Launchpad Base Low (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `package.json`, `src/version.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **จุดบอดของการใช้เส้นกดเดิมเป็นแนวรับ (Declining Slope & Artificial Breakdowns)**:
+   - เส้นกด Downtrend Line มีความชันเฉียงลง (Negative Slope) ยิ่งเวลาผ่านไป ระดับราคาแนวรับยิ่งลดต่ำลงเรื่อยๆ ทำให้เมื่อราคาแกว่งตัวออกข้าง (Sideways) บอทจะเข้าใจผิดว่าหลุดแนวรับ
+   - ในตลาดจริง ไม่มีสภาพคล่องหรือสถาบันมาตั้ง Limit Bid ตามเส้นเฉียงลาดลง สภาพคล่องที่แท้จริงอยู่ตาม "ฐานสวิงด้านล่าง" (Demand Zone / Valleys)
+2. **สูตร Maker Limit ดันราคาขึ้นไปวางออเดอร์ชนยอดต้าน LH (Overhead Resistance Bug)**:
+   - ตรรกะ `Math.max(supportPrice, Math.min(price, maxEntryForMinRr))` เดิม คำนวณราคาซื้อสูงสุดที่ยังได้ $R:R \ge 1.8x$ ส่งผลให้ราคาเข้าซื้อถูกดันจากแนวรับขึ้นไปอยู่ที่ `$80,410.71` ซึ่งไปตรงกับยอด Lower High (`LH` เก่าที่ $80,379 - $80,438) กลายเป็นการไล่ราคาขึ้นไปรับของตรงแนวต้าน
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **ตัดการใช้เส้นกดเดิมเป็นแนวรับออกทั้งหมด (Deprecate Descending Trendline Support)**:
+   - ยกเลิกตัวแปร `hasBrokenDowntrendTl` จากการเป็น Support Floor
+   - กำหนดให้เส้นกดขาลงทำหน้าที่เป็นเพียง **"ตัวยืนยันการ Breakout"** เท่านั้น แนวรับต้องมาจากโครงสร้างด้านล่าง (Bottom-Up Support) เสมอ
+2. **สถาปัตยกรรมแนวรับจากด้านล่าง (Bottom-Up Support: Breakout Launchpad Base)**:
+   - เมื่อเกิดการยืนยัน Breakout ทะลุเส้นกด ระบบจะดึงสวิง Low ล่าสุดที่เป็นฐานส่งคลื่นเบรก (Launchpad Base เช่น `$79,825.42`) มาเป็น **`HL_BASE` (Higher Low จากด้านล่าง)**
+   - กำหนด `activeSupportType = "HL_BASE"` และ `activeSupportPrice = $79,825.42`
+   - จุด Stop Loss อยู่ใต้ฐานส่งนี้ (`$79,825.42 * (1 - 0.35%) = $79,546.03`)
+3. **ล็อกราคา Maker Limit Dip Entry ให้อยู่ชิดแนวรับจริง**:
+   - ปรับสูตรคำนวณ Maker Limit ให้ล็อกอยู่ภายในกรอบแนวรับจริง ($\le \text{hlSupportPrice} \times 1.0025$) ไม่ดันราคาขึ้นไปตาม $R:R$ จนลอยไปชนแนวต้าน LH ด้านบน
+4. **การแสดงผลบน Telemetry & Dashboard**:
+   - สถานะบนแดชบอร์ดแสดงผลเป็น:  
+     `⏳ Waiting HL Retest (รอราคาย่อทดสอบฐาน HL เดิม $79,825.42)`  
+     `จุดรอรับฐาน HL (Target HL Entry): $79,825.42`  
+     `SL: $79,546.03 | TP1: $81,530.17 | TP2: $82,404.11 | R:R: ~6.9x`
+5. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.112` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

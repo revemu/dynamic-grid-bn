@@ -409,9 +409,11 @@ export class SwingSignalDetector {
       isUptrendSlopeHealthy,
     );
 
-    // ── Broken Descending Trendline (Role Reversal / Support Flip) ───────────
-    // When a descending trendline is broken upwards, it turns from resistance into support.
-    // The swing low immediately preceding the breakout acts as the Breakout Base Low (Launchpad).
+    // ── Bottom-Up Support: Breakout Base Low (Launchpad Support) ────────────
+    // When a descending trendline is broken, the launchpad swing low prior to the breakout
+    // forms the new Higher Low base (Bottom Support) of the recovery wave!
+    // We strictly DO NOT use the descending trendline itself as support because its slope is
+    // negative (declining over time) and lacks horizontal order-book demand.
     const isDowntrendBroken = Boolean(
       downtrendLine &&
       (downtrendLine.breakoutConfirmed || downtrendBreakoutConfirmed) &&
@@ -431,23 +433,16 @@ export class SwingSignalDetector {
       breakoutBaseLow = majorFloor;
     }
 
-    const breakoutBaseSl = breakoutBaseLow * (1 - slBuffer);
-    const hasBrokenDowntrendTl = Boolean(
-      isDowntrendBroken &&
-      price >= breakoutBaseSl &&
-      price >= (downtrendLine?.currentLinePrice ?? 0) * 0.995,
-    );
-
-    if (hasBrokenDowntrendTl && downtrendLine?.p1?.price && downtrendLine.p1.price > majorCeil) {
+    if (isDowntrendBroken && downtrendLine?.p1?.price && downtrendLine.p1.price > majorCeil) {
       majorCeil = Math.max(majorCeil, downtrendLine.p1.price);
     }
 
-    const hasActiveTrendlineSupport = hasActiveUptrendTl || hasBrokenDowntrendTl;
-    const tlSupportPrice = hasActiveUptrendTl
-      ? uptrendLine!.currentLinePrice
-      : (hasBrokenDowntrendTl ? downtrendLine!.currentLinePrice : 0);
+    // Trendline support is strictly from bottom-up: only active ascending trendlines!
+    const hasActiveTrendlineSupport = hasActiveUptrendTl;
+    const tlSupportPrice = hasActiveUptrendTl ? uptrendLine!.currentLinePrice : 0;
 
     // Check confirmed Higher Low (HL) after the floor (must be unbroken and not superseded by a newer LL)
+    // OR qualified Breakout Base Low from the bottom!
     const isHlUnbroken = Boolean(
       waveCycle?.lastHl &&
       !waveCycle.lastHl.isBroken &&
@@ -458,15 +453,19 @@ export class SwingSignalDetector {
       (!lastClosedBar || lastClosedBar.time <= waveCycle.lastHl.time || lastClosedBar.close >= waveCycle.lastHl.price * 0.998),
     );
     const recentHl = isHlUnbroken ? waveCycle!.lastHl : undefined;
-    const hlSupportPrice = (recentHl && recentHl.price <= price * 1.002) ? recentHl.price : 0;
+    let hlSupportPrice = (recentHl && recentHl.price <= price * 1.002) ? recentHl.price : 0;
+
+    // 🎯 Bottom-Up Support: When a downtrend line is broken, the launchpad swing low prior to the breakout
+    // forms the new Higher Low base (Bottom Support) of the recovery wave!
+    if (isDowntrendBroken && breakoutBaseLow > majorFloor && price >= breakoutBaseLow * (1 - slBuffer)) {
+      hlSupportPrice = Math.max(hlSupportPrice, breakoutBaseLow);
+    }
 
     // ── Pre-calculate Stop Loss levels for Candidate Supports ─────────────────
     const llSl = majorFloor * (1 - slBuffer);
     const hlSl = hlSupportPrice > 0 ? hlSupportPrice * (1 - slBuffer) : llSl;
     const tlSl = tlSupportPrice > 0
-      ? (hasBrokenDowntrendTl
-          ? Math.max(breakoutBaseSl, majorFloor * (1 - slBuffer))
-          : Math.min(tlSupportPrice, hlSupportPrice > 0 ? hlSupportPrice : tlSupportPrice) * (1 - slBuffer))
+      ? Math.min(tlSupportPrice, hlSupportPrice > 0 ? hlSupportPrice : tlSupportPrice) * (1 - slBuffer)
       : llSl;
 
     // 🎯 Determine Active Support Floor (Strict Headroom Checked):
@@ -476,7 +475,7 @@ export class SwingSignalDetector {
     let activeSupportType: "TRENDLINE" | "HL_BASE" | "MAJOR_LL" = "MAJOR_LL";
 
     const hasValidHl = hlSupportPrice > majorFloor && hasTrendlineHeadroom(hlSupportPrice, hlSl);
-    const hasValidTl = tlSupportPrice > majorFloor && (hasBrokenDowntrendTl || hasTrendlineHeadroom(tlSupportPrice, tlSl));
+    const hasValidTl = tlSupportPrice > majorFloor && hasTrendlineHeadroom(tlSupportPrice, tlSl);
 
     if (hasValidHl) {
       activeSupportPrice = hlSupportPrice;
@@ -642,7 +641,6 @@ export class SwingSignalDetector {
           const actualRr = actualRisk > 0 ? actualAvgReward / actualRisk : 0;
 
           if (actualRr >= config.minRiskReward) {
-            const tlTypeLabel = hasBrokenDowntrendTl ? "Broken Descending Trendline Retest" : "Uptrend Line Support Retest";
             const tlNote = hasActiveDowntrendTl ? ` | TL TP1: $${plannedTp1.toFixed(4)}` : "";
             return {
               hasSignal: true,
@@ -652,7 +650,7 @@ export class SwingSignalDetector {
               tp1Price: plannedTp1,
               tp2Price: plannedTp2,
               riskRewardRatio: actualRr,
-              reason: `${tlTypeLabel} at $${tlSupportPrice.toFixed(4)} confirmed with ${reversalCheck.pattern}! Risk: -${((actualRisk / price) * 100).toFixed(2)}%, Target: +${(((plannedTp2 - price) / price) * 100).toFixed(2)}%, R:R: ${actualRr.toFixed(2)}x${tlNote}`,
+              reason: `Uptrend Line Support Retest at $${tlSupportPrice.toFixed(4)} confirmed with ${reversalCheck.pattern}! Risk: -${((actualRisk / price) * 100).toFixed(2)}%, Target: +${(((plannedTp2 - price) / price) * 100).toFixed(2)}%, R:R: ${actualRr.toFixed(2)}x${tlNote}`,
               plannedEntryPrice: price,
               plannedSlPrice: tlSl,
               plannedTp1Price: plannedTp1,
@@ -661,11 +659,8 @@ export class SwingSignalDetector {
               plannedSupportType: "TRENDLINE",
             };
           } else {
-            const avgTp = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio));
-            const maxEntryForMinRr = (avgTp + (config.minRiskReward * tlSl)) / (1 + config.minRiskReward);
-            const targetDipEntry = Math.max(tlSupportPrice, Math.min(price, maxEntryForMinRr));
+            const targetDipEntry = Math.max(tlSupportPrice, Math.min(price, tlSupportPrice * 1.0025));
             const isMakerMode = config.orderExecutionMode !== "IOC_BRACKET";
-            const tlTypeLabel = hasBrokenDowntrendTl ? "Broken Trendline" : "Trendline Support";
             const tlNote = hasActiveDowntrendTl ? ` | TL TP1: $${plannedTp1.toFixed(4)}` : "";
 
             if (isMakerMode && targetDipEntry > tlSupportPrice) {
@@ -677,7 +672,7 @@ export class SwingSignalDetector {
                 tp1Price: plannedTp1,
                 tp2Price: plannedTp2,
                 riskRewardRatio: config.minRiskReward,
-                reason: `${tlTypeLabel} ($${tlSupportPrice.toFixed(4)}) bounce confirmed (${reversalCheck.pattern}), resting Maker Limit Buy @ $${targetDipEntry.toFixed(4)} for ${config.minRiskReward.toFixed(2)}x R:R (live price jumped to $${price.toFixed(4)})${tlNote}`,
+                reason: `Trendline Support ($${tlSupportPrice.toFixed(4)}) bounce confirmed (${reversalCheck.pattern}), resting Maker Limit Buy @ $${targetDipEntry.toFixed(4)} for ${config.minRiskReward.toFixed(2)}x R:R (live price jumped to $${price.toFixed(4)})${tlNote}`,
                 plannedEntryPrice: targetDipEntry,
                 plannedSlPrice: tlSl,
                 plannedTp1Price: plannedTp1,
@@ -731,9 +726,7 @@ export class SwingSignalDetector {
               plannedSupportType: "HL_BASE",
             };
           } else {
-            const avgTp = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio));
-            const maxEntryForMinRr = (avgTp + (config.minRiskReward * hlSl)) / (1 + config.minRiskReward);
-            const targetDipEntry = Math.max(hlSupportPrice, Math.min(price, maxEntryForMinRr));
+            const targetDipEntry = Math.max(hlSupportPrice, Math.min(price, hlSupportPrice * 1.0025));
             const isMakerMode = config.orderExecutionMode !== "IOC_BRACKET";
             const tlNote = hasActiveDowntrendTl ? ` | TL TP1: $${plannedTp1.toFixed(4)}` : "";
 
@@ -956,12 +949,11 @@ export class SwingSignalDetector {
 
     let standbyReason = `Price ($${price.toFixed(4)}) is above Near-LL zone. Waiting for pullback near Major LL ($${majorFloor.toFixed(4)} - $${retestZoneMax.toFixed(4)})${tlStatusSuffix}`;
     if (activeSupportType === "TRENDLINE") {
-      const tlDesc = hasBrokenDowntrendTl ? "Broken Trendline Support" : "Trendline Support";
-      standbyReason = `Trendline Breakout confirmed. Price ($${price.toFixed(4)}) is above ${tlDesc}. Waiting for pullback/retest near $${tlSupportPrice.toFixed(4)}${tlStatusSuffix}`;
+      standbyReason = `Price ($${price.toFixed(4)}) is above Trendline Support. Waiting for pullback near Trendline Support ($${tlSupportPrice.toFixed(4)})${tlStatusSuffix}`;
     } else if (activeSupportType === "HL_BASE") {
-      standbyReason = `Price ($${price.toFixed(4)}) is above HL Support. Waiting for pullback near HL Support ($${hlSupportPrice.toFixed(4)})${tlStatusSuffix}`;
+      standbyReason = `Price ($${price.toFixed(4)}) is above Bottom Support (HL Base). Waiting for pullback near HL Support ($${hlSupportPrice.toFixed(4)})${tlStatusSuffix}`;
     } else if (downtrendLine?.breakoutConfirmed && price > downtrendLine.currentLinePrice) {
-      standbyReason = `Trendline Breakout confirmed. Waiting for pullback/retest near support ($${activeSupportPrice.toFixed(4)})${tlStatusSuffix}`;
+      standbyReason = `Trendline Breakout confirmed. Waiting for pullback/retest near bottom support ($${activeSupportPrice.toFixed(4)})${tlStatusSuffix}`;
     } else if (hasActiveDowntrendTl && (waveCycle?.lastHl || uptrendLine) && activeSupportType === "MAJOR_LL") {
       standbyReason = `Price ($${price.toFixed(4)}) is under Descending Trendline ($${tlResistancePrice.toFixed(4)}). Higher supports lack headroom (<0.80% / low R:R) — Waiting for pullback to Major LL ($${majorFloor.toFixed(4)}) or TL Breakout${tlStatusSuffix}`;
     }
