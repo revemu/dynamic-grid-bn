@@ -319,6 +319,10 @@ body {
   border-radius: 20px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
 }
 
 .badge-range     { background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: var(--color-cyan); }
@@ -1285,7 +1289,12 @@ body {
   backdrop-filter: blur(14px);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  padding: 6px 14px;
+  padding: 0 14px;
+  height: 40px;
+  min-height: 40px;
+  max-height: 40px;
+  box-sizing: border-box;
+  flex-wrap: nowrap;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
@@ -1317,26 +1326,34 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  flex-shrink: 0;
+  flex-wrap: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .banner-left-group .status-pill {
   font-size: 10px;
   padding: 3px 8px;
   border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .banner-left-group .regime-badge {
   font-size: 10px;
   padding: 3px 8px;
   border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .banner-left-group .dry-badge {
   font-size: 10px;
   padding: 3px 7px;
   border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .banner-status-pill {
@@ -3213,8 +3230,12 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 /* Bot Status & Operational Control Strip */
 .bot-status-banner {
-  padding: 6px 12px;
+  padding: 0 12px;
   gap: 12px;
+  height: 40px;
+  min-height: 40px;
+  max-height: 40px;
+  box-sizing: border-box;
 }
 
 .bot-status-banner .banner-left-group {

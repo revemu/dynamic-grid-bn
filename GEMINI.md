@@ -4616,6 +4616,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.113` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 114. v0.2.114 — Lock Single-Line Status Banner & Prevent Chart Jitter Architecture (`public/style.css`, `package.json`, `src/version.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การตัดคำขึ้นบรรทัดใหม่ของกล่อง `DOW: DOWNTREND` และ Status Banner (Unintended Word Wrap)**:
+   - ป้าย `.regime-badge` (`DOW: DOWNTREND`) และแถบ `.banner-left-group` ขาดคำสั่ง `white-space: nowrap;` และ `flex-shrink: 0;`
+   - เมื่อเปิดแถบข้าง (Sidebar) หรือในหน้าจอที่มีความกว้างจำกัด คำว่า `DOWNTREND` จะถูกตัดตกไปอยู่บรรทัดที่ 2 กลายเป็น 2 บรรทัด
+   - ส่งผลให้ความสูงของแถบ `.bot-status-banner` ขยายหนาขึ้นจาก 38px ➔ 52px และดันคอนเทนเนอร์ชาร์ทด้านล่างให้ยุบลง
+   - เมื่อข้อความราคาสดในแบนเนอร์ขยับและเปลี่ยนความยาว แถบจะสลับระหว่าง 1 บรรทัด กับ 2 บรรทัดไปมาอย่างต่อเนื่อง ทำให้ชาร์ทกระตุกขึ้น-ลงตลอดเวลา
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Strict Single-Line for Regime Badges (`white-space: nowrap; flex-shrink: 0;`)**:
+   - บังคับให้ `.regime-badge` และ `.zone-status-badge` แสดงผลในบรรทัดเดียวเสมอ ไม่มีการตัดคำตกบรรทัด
+2. **Fixed Height & No-Wrap for Operational Status Banner**:
+   - ล็อกความสูง `.bot-status-banner` ตายตัวที่ `height: 40px; min-height: 40px; max-height: 40px; box-sizing: border-box; overflow: hidden;`
+   - ตั้งค่า `flex-wrap: nowrap;` ให้กับ `.banner-left-group`
+   - กำหนดให้ข้อความเหตุผลตรงกลาง (`.banner-reason-text`) ตัดคำด้วย `text-overflow: ellipsis;` อย่างนุ่มนวลเมื่อพื้นที่หน้าจอแคบ โดยไม่ดันความสูงของแบนเนอร์
+3. **Rock Solid Chart Layout**:
+   - คอนเทนเนอร์ชาร์ทด้านล่างมีตำแหน่งพิกเซลที่นิ่งสนิท 100% ไม่ถูกแถบด้านบนดันขึ้นลงอีกต่อไป
+4. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.114` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
