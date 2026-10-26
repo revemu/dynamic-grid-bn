@@ -4409,6 +4409,38 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - แยกการแสดงผลสถานะ `WAITING_BASE` (`🛑 Searching New Base (หลุดแนวรับ — รอสร้างฐานใหม่)`) ออกจาก `WAITING_LL_RETEST` (`⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)`) อย่างชัดเจน
 5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.106` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.43` ใน `public/index.html`
 
+---
+
+## 107. v0.2.107 — Multi-Bar Secondary Retest Recognition & Dynamic Split-TP R:R Architecture (`src/strategy/swing/signals.ts`, `package.json`, `src/version.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **Mathematical Deadlock ของ `hasTrendlineHeadroom` ที่ขวางการเข้าซื้อที่ฐาน Major LL / ATL (`signals.ts`)**:
+   - เมื่อราคาไหลลงมาทดสอบโซนแนวรับต่ำสุดของคลื่น (`Major LL` / `ATL` เช่น `$79,425.54`) เส้นกดขาลง (`Downtrend Line`) มักจะกดต่ำลงมาตามคลื่น (เช่น `$80,204.98`)
+   - `hasTrendlineHeadroom` บังคับว่าต้องมีระยะห่างถึงเส้นกดอย่างน้อย `0.8%` และต้องมี R:R ถึงเส้นกดอย่างน้อย `1.15x` เทียบกับ `llSl` (`$79,147.55`)
+   - ส่งผลให้ราคาเข้าซื้อต้องต่ำกว่า `$79,448` (ห่างจากพื้นเพียง `$22`) ทำให้แท่งเทียนกลับตัวหรือการย่อทดสอบใดๆ ในโซน `$79,543` – `$79,735` ถูกปฏิเสธทิ้ง 100% ทั้งๆ ที่ `plannedTp1` ถูกกดมารอใต้เส้นกด (`$80,084.67`) เพื่อขายทำกำไรไม้แรกอยู่แล้ว
+2. **การลืมฐานทดสอบรอบสอง (Single-Bar Memory Loss in Secondary Retest)**:
+   - ฟังก์ชัน `checkBullishReversal` เดิมตรวจเฉพาะแท่งเทียนแท่งล่าสุดแท่งเดียว
+   - เมื่อเกิดการทดสอบฐาน 2 จังหวะ: รอบแรกทิ้งไส้ดีดแรงเป็น Hammer ที่ `08:45` (`$79,543.47`), จากนั้นย่อตัวลงมาทดสอบซ้ำรอบสองช่วง `09:15`–`09:45` (`$79,632.46`) แล้วยก Higher Low ย่อยในโซน แต่แท่ง `09:30` เป็นแท่งแดง และ `09:45` ปิดเขียวตัวเล็ก บอทจึงมองไม่เห็นฐานและรายงานว่า `No reversal pattern`
+3. **Catch-22 ของเกณฑ์ Blended R:R เมื่อแบ่งขาย 2 เป้า (`TP1` Mid-Wave + `TP2` Runner)**:
+   - เมื่อคลื่นแกว่งตัวในกรอบปกติ `1.8% – 2.2%` และกลยุทธ์แบ่งขาย 50% ที่ `TP1` (Mid-Wave / Trendline) และ 50% ที่ `TP2` (Swing High Runner) ค่าเฉลี่ยผลตอบแทน (`avgReward`) จะอยู่ที่ประมาณ 75% ของคลื่นเท่านั้น
+   - การบังคับให้ค่าเฉลี่ย `actualRr >= config.minRiskReward` (1.80x) ส่งผลให้เป้า `TP2` เดี่ยวๆ ต้องสูงถึง `2.4x – 2.8x` R:R ซึ่งเป็นไปไม่ได้ทางคณิตศาสตร์ในกรอบคลื่นปกติหลังจากแท่งเทียนกลับตัวปิดเขียว บอทจึงติดสถานะ `waiting for minor pullback` ตลอดเวลา
+4. **ราคา `plannedEntry` ต่ำเกินจริงและไม่สะท้อนฐานรับจริงของคลื่น**:
+   - `plannedEntry` เดิมผูกติดกับ `majorFloor` ในอดีตเสมอ (`$79,530.60`) แม้จะมีฐานยกตัว `lastLl = $79,543.47` หรือ `candidateValley = $79,632.46` รองรับอยู่แล้ว
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Multi-Bar Secondary Retest Detection (`checkSecondaryRetestHold` in `src/strategy/swing/signals.ts`)**:
+   - เพิ่มอัลกอริทึมค้นหาแท่งดีดตัวหลัก (`anchorBar`) ย้อนหลัง 6 แท่งในโซน `retestZoneMax` และตรวจสอบว่าไม่มีแท่งใดหลุดฐาน
+   - ตรวจจับการย่อทดสอบรอบสอง (`retestLow >= anchorBar.low * 0.9998` และ `retestLow >= floorPrice`) พร้อมแรงซื้อพยุงราคา (`hasBuyerDefense`) เพื่อส่งสัญญาณ `Secondary Retest Higher-Low Hold` ได้ทันที
+2. **Floor-Specific Trendline Room & Split-TP Dynamic R:R Hurdle**:
+   - ใน Setup 3 (`LL_RETEST_BOUNCE`): ยกเลิก `hasTrendlineHeadroom` ที่เข้มงวดเกินไป โดยขอเพียงราคาปัจจุบันต่ำกว่าเป้าเส้นกดอย่างน้อย `0.25%` (`tlTargetPrice > price * 1.0025`)
+   - ปรับเกณฑ์ R:R ให้สอดคล้องกับกลยุทธ์ Split-TP: หากเป้าหลัก `TP2` (Swing High Runner) ให้ R:R `>= config.minRiskReward * 0.75` (เช่น `>= 1.35x – 1.80x`), ให้ยอมรับค่าเฉลี่ย `actualRr >= Math.min(config.minRiskReward, 1.15)`
+3. **Anchor Planned Entry to Active Held Base**:
+   - หากมีฐาน `lastLl` หรือ `candidateValley` ที่ยกตัวอยู่เหนือ `majorFloor` ภายในโซนทดสอบ ให้ตั้ง `plannedEntry` อ้างอิงฐานรับจริง (เช่น `$79,632.46` หรือ `$79,680`) แทนการคำนวณที่ `$79,530.60`
+4. **Anti-Falling Knife Threshold via Reversal Low**:
+   - ปรับ `isLivePriceHoldingReversal` ให้ตรวจราคาแบบ Real-time เทียบกับจุดต่ำสุดของแท่งกลับตัว / ฐานรับ (`reversalLowThreshold * 0.9995`) เพื่อไม่ให้บล็อกการเข้าซื้อเมื่อราคาแกว่งในกรอบแท่งกลับตัว
+5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.107` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
