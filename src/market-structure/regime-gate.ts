@@ -15,6 +15,7 @@ export type ChannelGateStatus =
   | "DOWNTREND_NO_CHANNEL"
   | "WAITING_FOR_BASE_CONFIRMATION"
   | "UNSAFE_FLOOR_PROXIMITY"
+  | "WAITING_FOR_CHOCH_BREAKOUT"
   | "WARMUP";
 
 export interface ChannelGateEvaluation {
@@ -23,6 +24,8 @@ export interface ChannelGateEvaluation {
   gateReason: string;
   safeFloorProximityPct: number;
   actualFloorProximityPct: number;
+  isChoChBullish?: boolean;
+  choChLevel?: number;
 }
 
 export interface ChannelGateParams {
@@ -33,6 +36,7 @@ export interface ChannelGateParams {
   waveCycle?: WaveCycleData;
   lastCanonicalLow?: DowSwingPoint;
   lastCanonicalHigh?: DowSwingPoint;
+  lastLh?: DowSwingPoint;
   isDowntrendDropActive?: boolean;
   minFloorProximityPct?: number; // e.g. 1.5% for BTC, 3.5% for SOMI
   enableTrendGating?: boolean;
@@ -50,6 +54,7 @@ export class RegimeChannelGate {
       waveCycle,
       lastCanonicalLow,
       lastCanonicalHigh,
+      lastLh,
       isDowntrendDropActive,
       minFloorProximityPct = 1.5,
       enableTrendGating = true,
@@ -59,6 +64,9 @@ export class RegimeChannelGate {
       ? ((price - proposedFloor) / price) * 100
       : 0;
 
+    const choChLevel = lastLh?.price;
+    const isChoChBullish = !lastLh || lastLh.price <= 0 || price >= lastLh.price * 0.999;
+
     // If gating is explicitly disabled, allow all valid channels
     if (enableTrendGating === false) {
       return {
@@ -67,6 +75,8 @@ export class RegimeChannelGate {
         gateReason: "Trend gating disabled by configuration",
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: actualProximityPct,
+        isChoChBullish,
+        choChLevel,
       };
     }
 
@@ -77,21 +87,39 @@ export class RegimeChannelGate {
         gateReason: "Insufficient structure or warmup in progress",
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: 0,
+        isChoChBullish,
+        choChLevel,
       };
     }
 
-    // ── Pillar 1: No Channel in a Downtrend (LH + LL) ──────────────────────
-    const isDowDowntrend = regime === "DOWNTREND" ||
+    // ── Pillar 1: Dow ChoCh & Downtrend Gate (Horizontal Last LH Breakout) ─────
+    // In Dow Theory, a downtrend is broken only when price breaks above the last Lower High (ChoCh).
+    const isUnderLastLh = Boolean(lastLh && lastLh.price > 0 && price < lastLh.price * 0.999);
+    const isDowntrendStructure = regime === "DOWNTREND" ||
       (lastCanonicalLow?.dowLabel === "LL" && lastCanonicalHigh?.dowLabel === "LH") ||
       Boolean(waveCycle?.activeCycleSummary?.includes("ขาลง"));
 
-    if (isDowDowntrend) {
+    if (isUnderLastLh && isDowntrendStructure) {
+      return {
+        canEstablishChannel: false,
+        gateStatus: "DOWNTREND_NO_CHANNEL",
+        gateReason: `Downtrend active under last LH ($${lastLh.price.toFixed(4)}) — Waiting for Dow ChoCh breakout before opening channel`,
+        safeFloorProximityPct: minFloorProximityPct,
+        actualFloorProximityPct: actualProximityPct,
+        isChoChBullish: false,
+        choChLevel,
+      };
+    }
+
+    if (isDowntrendStructure && !isChoChBullish) {
       return {
         canEstablishChannel: false,
         gateStatus: "DOWNTREND_NO_CHANNEL",
         gateReason: `Downtrend active (LH+LL / ${waveCycle?.activeCycleSummary || "Bear wave"}) — Grid channel disabled to prevent catching falling knives`,
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: actualProximityPct,
+        isChoChBullish: false,
+        choChLevel,
       };
     }
 
@@ -108,6 +136,8 @@ export class RegimeChannelGate {
         gateReason: "Price breaking below previous swing low (BOS) — waiting for Higher Low (HL) base formation",
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: actualProximityPct,
+        isChoChBullish,
+        choChLevel,
       };
     }
 
@@ -121,6 +151,8 @@ export class RegimeChannelGate {
         gateReason: `Floor ($${proposedFloor.toFixed(4)}) is dangerously close (${actualProximityPct.toFixed(2)}%) to price ($${price.toFixed(4)}) — minimum safe proximity is ${minFloorProximityPct.toFixed(2)}%`,
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: actualProximityPct,
+        isChoChBullish,
+        choChLevel,
       };
     }
 
@@ -128,9 +160,13 @@ export class RegimeChannelGate {
     return {
       canEstablishChannel: true,
       gateStatus: "VALID_CHANNEL",
-      gateReason: "Market structure in healthy Range/Base with safe proximity buffer",
+      gateReason: (lastLh && price >= lastLh.price * 0.999)
+        ? `Dow ChoCh confirmed (> $${lastLh.price.toFixed(4)}) • Channel active`
+        : "Market structure in healthy Range/Base with safe proximity buffer",
       safeFloorProximityPct: minFloorProximityPct,
       actualFloorProximityPct: actualProximityPct,
+      isChoChBullish,
+      choChLevel,
     };
   }
 }

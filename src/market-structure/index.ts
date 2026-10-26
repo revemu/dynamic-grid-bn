@@ -353,6 +353,10 @@ export class DowStructureEngine {
     );
 
     // 7. Trend-Gated Structural Channel Gate (Decoupled Module)
+    const lastLhPoint = waveCycle.lastLh;
+    const isChoChBullish = !lastLhPoint || lastLhPoint.price <= 0 || price >= lastLhPoint.price * 0.999;
+    const choChLevel = lastLhPoint?.price;
+
     const gateEvaluation = RegimeChannelGate.evaluateGate({
       price,
       proposedFloor: bottomBound,
@@ -361,6 +365,7 @@ export class DowStructureEngine {
       waveCycle,
       lastCanonicalLow,
       lastCanonicalHigh,
+      lastLh: lastLhPoint,
       isDowntrendDropActive,
       minFloorProximityPct: options?.minFloorProximityPct ?? 1.5,
       enableTrendGating: options?.enableTrendGating !== false,
@@ -410,6 +415,9 @@ export class DowStructureEngine {
       waveCycle,
       isDowntrendDropActive,
       downtrendDropLow,
+      lastLh: lastLhPoint,
+      isChoChBullish,
+      choChLevel,
     };
   }
 

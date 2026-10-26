@@ -60,6 +60,8 @@ export interface GridZone {
   gateReason?: string;           // Explanation for UI and logs
   actualFloorProximityPct?: number; // % distance from price to floor
   minFloorProximityPct?: number;    // configured safe distance %
+  isChoChBullish?: boolean;         // True if price has broken above last LH or no LH exists
+  choChLevel?: number;              // Breakout level of the last LH
 }
 
 export interface TrendLinePoint {
@@ -139,6 +141,9 @@ export interface DowStructure {
   waveCycle?: WaveCycleData;
   isDowntrendDropActive?: boolean;
   downtrendDropLow?: number;
+  lastLh?: DowSwingPoint;
+  isChoChBullish?: boolean;
+  choChLevel?: number;
 }
 
 export interface ChannelOptions {
@@ -147,7 +152,7 @@ export interface ChannelOptions {
   maxChannelWidthPct?: number; // for DOW_SWINGS & FIXED_PCT_CLAMP (e.g. 4.0%)
   atrMinMultiplier?: number;   // for DOW_ATR_CLAMP (default 2.5x ATR)
   atrMaxMultiplier?: number;   // for DOW_ATR_CLAMP (default 5.0x ATR)
-  donchianLookback?: number;   // for DONCHIAN_ATR (default 20 bars)
+  donchianLookback?: number;   // for DONCHIAN_ATR (default 48 bars)
   floorBufferPct?: number;     // safety buffer below floor (e.g. 0.15%)
   atrPct?: number;             // external ATR % if available
   useTrueWick?: boolean;       // use true candle wick instead of body clipping (default true)

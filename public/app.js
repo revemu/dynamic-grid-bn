@@ -2115,6 +2115,8 @@
     const widthPct = data.zoneWidthPct !== undefined ? data.zoneWidthPct : 0;
     let clampStr = data.isSwingConfirmed === false && !data.isChannelLocked
       ? "⚪ ไม่มีกรอบสวิงที่เข้าเกณฑ์ (หยุดรอสวิง)"
+      : data.channelMode === "DONCHIAN_ATR"
+        ? `Donchian 48b + Dow ChoCh (${widthPct.toFixed(1)}%)`
       : data.channelMode === "VOLUME_PROFILE_HTF"
         ? `Hybrid VP + 4H HTF (${widthPct.toFixed(1)}%${data.poc ? ` • POC: $${fmtPrice(data.poc)}` : ""}${data.val ? ` • VAL: $${fmtPrice(data.val)}` : ""})`
         : data.channelMode === "DOW_SWINGS"
@@ -4254,6 +4256,7 @@
       setVal("cfg_initialCandleCount", data.initialCandleCount ?? 300);
       setVal("cfg_maxCandleCount", data.maxCandleCount ?? 600);
       setVal("cfg_channelMode", data.channelMode);
+      setVal("cfg_donchianLookback", data.donchianLookback ?? 48);
       setVal("cfg_minChannelWidthPct", data.minChannelWidthPct);
       setVal("cfg_maxChannelWidthPct", data.maxChannelWidthPct);
       setCheck("cfg_enableNarrowChannelCollapse", data.enableNarrowChannelCollapse !== false);
@@ -4501,6 +4504,7 @@
       initialCandleCount: parseInt(document.getElementById("cfg_initialCandleCount").value, 10) || 300,
       maxCandleCount: parseInt(document.getElementById("cfg_maxCandleCount").value, 10) || 600,
       channelMode: document.getElementById("cfg_channelMode").value,
+      donchianLookback: document.getElementById("cfg_donchianLookback") ? (parseInt(document.getElementById("cfg_donchianLookback").value, 10) || 48) : 48,
       minChannelWidthPct: parseFloat(document.getElementById("cfg_minChannelWidthPct").value),
       maxChannelWidthPct: parseFloat(document.getElementById("cfg_maxChannelWidthPct").value),
       enableNarrowChannelCollapse: document.getElementById("cfg_enableNarrowChannelCollapse") ? document.getElementById("cfg_enableNarrowChannelCollapse").checked : true,

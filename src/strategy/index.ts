@@ -3623,16 +3623,17 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
             : "รอราคาสร้างฐาน Higher Low (HL) ยกตัว ยืนยันกลับตัว",
           severity: "warning",
         };
-      } else if (gateStatus === "DOWNTREND_NO_CHANNEL") {
+      } else if (gateStatus === "DOWNTREND_NO_CHANNEL" || (gateStatus as string) === "WAITING_FOR_CHOCH_BREAKOUT") {
+        const choChPart = gridZone?.choChLevel ? ` (รอเบรก $${gridZone.choChLevel.toFixed(this.pricePrecision)})` : "";
         botActionState = {
-          code: "DOWNTREND_NO_CHANNEL",
-          title: hasPosition ? `🛑 ตลาดขาลง (ถือ $${inventoryQuote.toFixed(1)} • พักซื้อ)` : "🛑 ตลาดขาลง (งดรับมีด)",
-          reason: hasPosition
+          code: gateStatus,
+          title: hasPosition ? `🛑 ตลาดขาลง (ถือ $${inventoryQuote.toFixed(1)} • พักซื้อ)` : `🛑 รอ ChoCh ยืนยันกลับตัว${choChPart}`,
+          reason: gateReason || (hasPosition
             ? "โครงสร้างตลาดเป็นขาลง (LH + LL กดตัว) • พักซื้อเพิ่ม"
-            : "โครงสร้างตลาดเป็นขาลง (LH + LL กดตัว) • ปิดกรอบงดช้อนมีด",
+            : "โครงสร้างตลาดเป็นขาลง (LH + LL กดตัว) • ปิดกรอบงดช้อนมีด"),
           nextTrigger: hasPosition
-            ? `รอคลื่นกลับตัว${sellStatusPart ? ` | ${sellStatusPart}` : ""}`
-            : "รอคลื่นกลับตัวทำ Higher High หรือเบรกเส้นกด",
+            ? `รอ ChoCh เบรกจุดกลับตัว${sellStatusPart ? ` | ${sellStatusPart}` : ""}`
+            : (gridZone?.choChLevel ? `รอราคาเบรกผ่าน Dow ChoCh ($${gridZone.choChLevel.toFixed(this.pricePrecision)})` : "รอแท่งเทียนเบรกผ่าน Lower High (ChoCh)"),
           severity: "warning",
         };
       } else if (gateStatus === "UNSAFE_FLOOR_PROXIMITY") {
@@ -4034,6 +4035,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         gateReason: gridZone?.gateReason,
         actualFloorProximityPct: gridZone?.actualFloorProximityPct,
         minFloorProximityPct: gridZone?.minFloorProximityPct,
+        isChoChBullish: gridZone?.isChoChBullish,
+        choChLevel: gridZone?.choChLevel,
         isChannelLocked: Boolean(isHoldingPosition && lockChannelInPosition && this.lockedChannel),
         liveCalculatedUpperBound: dow?.isSwingConfirmed && (dow.upperBound ?? 0) > 0 ? (dow.gridZone?.upperBound ?? dow.upperBound) : undefined,
         liveCalculatedBottomBound: dow?.isSwingConfirmed && (dow.bottomBound ?? 0) > 0 ? (dow.gridZone?.bottomBound ?? dow.bottomBound) : undefined,

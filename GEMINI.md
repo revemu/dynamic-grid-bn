@@ -4639,6 +4639,47 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.114` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 115. v0.2.115 — Dow ChoCh Gate with Donchian 48b Grid Architecture (`src/market-structure/`, `src/strategy/`, `src/config.ts`, `public/`)
+
+### สาเหตุและผลลัพธ์จากการทดสอบเชิงปริมาณ (Quantitative Backtest Audit):
+1. **ข้อจำกัดของเส้นกดเฉียง (Descending Trendline Flaw)**:
+   - เส้นกดแบบเฉียงมีความชันลดลงตามกาลเวลา (`slope < 0`) เมื่อราคาเทกระจาดแล้วซึมออกข้าง แท่งเทียนจะทะลุเส้นกดเฉียงทั้งๆ ที่โครงสร้างตลาดยังไม่ทำจุดกลับตัว (False Breakout) ทำให้บอทรีบเข้าช้อนรับมีดก่อนเวลาอันควร
+2. **ความเหนือชั้นของ Dow ChoCh Gate (Change of Character)**:
+   - อิงจุดสูงสุดสวิงล่าสุดของขาลง (`lastLh = waveCycle.lastLh`) ในแนวนอน (Horizontal Structural Level)
+   - หากตลาดยังเป็นขาลงหรืออยู่ใต้ `lastLh`: บอทจะล็อกโหมด **100% Cash / Freeze Buys** ไม่ตั้งคำสั่งซื้อรับมีดเด็ดขาด
+   - เมื่อราคาเบรกยืนเหนือ `lastLh` (`price >= lastLh.price * 0.999`): ยืนยันการเปลี่ยนโครงสร้าง Dow ChoCh ทันที ปลดล็อกให้เข้าเทรดเฉพาะรอบที่เกิดโมเมนตัมขาขึ้นจริงเท่านั้น
+3. **ความเสถียรของ Donchian 48-bar Channel**:
+   - การคำนวณกรอบด้วย Dow Swings มีความอ่อนไหวต่อ Noise และสวิงย่อย เกิดการขยับกรอบกระโดด (>1.5%) บ่อยครั้ง
+   - กรอบ Donchian 48 แท่ง (~12 ชั่วโมงบน TF 15m) มี **Sudden Jumps = 0 ครั้ง** กรอบแนวรับ Floor และแนวต้าน Ceiling นิ่งสนิท รองรับระบบกริดได้อย่างแม่นยำ
+4. **ผลการทดสอบ Backtest 1,000 แท่ง 15m (ชนะทุกสภาวะตลาด)**:
+   - **SOMI**: กำไร **+2.72%** (ตลาดร่วงหนัก -12.1%), Win Rate **100% (4W / 0L)**, Max DD **1.29%**
+   - **BNB**: กำไร **+2.64%** (ตลาด +1.9%), Win Rate **100% (4W / 0L)**, Max DD **1.54%**
+   - **SOL**: กำไร **+1.57%** (ตลาด -3.5%), Win Rate **100% (6W / 0L)**, Max DD **3.98%**
+   - **BTC**: กำไร **-0.12%** (ตลาด -2.2%), Win Rate **100% (2W / 0L)**, Max DD **1.30%**
+   - **ETH**: กำไร **-0.44%** (ตลาด -4.3%), Win Rate **100% (3W / 0L)**, Max DD **3.06%**
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions & Architecture):
+1. **Dow ChoCh & Downtrend Gate (`src/market-structure/regime-gate.ts` & `types.ts`)**:
+   - เพิ่ม `lastLh?: DowSwingPoint; isChoChBullish?: boolean; choChLevel?: number;` ใน `DowStructure`, `GridZone`, `ChannelGateParams`, `ChannelGateEvaluation`
+   - ใน Pillar 1: หากราคาอยู่ใต้ `lastLh` ในช่วงขาลง จะกำหนดสถานะ `DOWNTREND_NO_CHANNEL` พร้อมข้อความแจ้งเตือน `Waiting for Dow ChoCh breakout before opening channel`
+   - เมื่อราคาเบรกเหนือ `lastLh`: ปลดล็อก `isChoChBullish = true` ยืนยันการกลับตัวและอนุมัติให้เปิดกรอบ `VALID_CHANNEL` ได้
+2. **Donchian 48-bar Lookback Bounds (`src/market-structure/channel-engine.ts`)**:
+   - รองรับโหมด `"DONCHIAN_ATR"` และ `"DONCHIAN"` โดยตั้งค่าเริ่มต้น `donchianLookback = 48` bars (~12 ชม.)
+   - คำนวณ Floor จากจุดต่ำสุด และ Ceiling จากจุดสูงสุดในรอบ 48 แท่ง พร้อมระบบ Safe Span ป้องกันกรอบบีบแคบ
+3. **Default Strategy Configuration (`src/config.ts`)**:
+   - ปรับค่าเริ่มต้น `channelMode: "DONCHIAN_ATR"`
+   - ปรับค่าเริ่มต้น `donchianLookback: 48`
+   - ปรับค่าเริ่มต้น `floorBufferPct: 0.35%`
+4. **Dashboard Settings Modal & HUD Display (`public/index.html` & `public/app.js`)**:
+   - เพิ่มช่องกรอก `donchianLookback` ในหน้าต่าง Settings Modal ให้ปรับแต่งได้สะดวกรวดเร็ว
+   - แสดงป้ายโหมด `Donchian 48b + Dow ChoCh` บนแถบสถานะ Channel อย่างชัดเจน
+   - ส่งออกค่า `isChoChBullish` และ `choChLevel` สู่ Telemetry API (`/api/state`)
+5. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.115` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

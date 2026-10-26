@@ -55,8 +55,8 @@ export class ChannelEngine {
     let minWidthPct: number | undefined;
     let maxWidthPct: number | undefined;
 
-    if (mode === "DONCHIAN_ATR") {
-      const lookback = Math.min(n, options?.donchianLookback ?? 20);
+    if (mode === "DONCHIAN_ATR" || (mode as string) === "DONCHIAN") {
+      const lookback = Math.min(n, options?.donchianLookback ?? 48);
       const donchianCandles = candles.slice(Math.max(0, n - lookback));
       const allLows = donchianCandles.map((c) => (useTrueWick ? c.low : getEffectiveLow(c, false))).filter(Number.isFinite);
       const allHighs = donchianCandles.map((c) => (useTrueWick ? c.high : getEffectiveHigh(c, false))).filter(Number.isFinite);
@@ -466,6 +466,8 @@ export class ChannelEngine {
       gateReason: gateEvaluation?.gateReason,
       actualFloorProximityPct: gateEvaluation?.actualFloorProximityPct,
       minFloorProximityPct: gateEvaluation?.safeFloorProximityPct,
+      isChoChBullish: gateEvaluation?.isChoChBullish,
+      choChLevel: gateEvaluation?.choChLevel,
     };
 
     return {

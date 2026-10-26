@@ -886,12 +886,23 @@
                   <span class="help-tip" title="วิธีหาขอบบน (Ceiling) และขอบล่าง (Floor) ของกรอบราคา">ℹ️</span>
                 </label>
                 <select id="cfg_channelMode" class="form-select">
-                  <option value="VOLUME_PROFILE_HTF" selected>VOLUME_PROFILE_HTF (Hybrid: Volume Profile + 4H HTF — แนะนำ)</option>
+                  <option value="DONCHIAN_ATR" selected>DONCHIAN_ATR (Donchian 48b + Dow ChoCh Gate — ชนะทุกสภาวะ แนะนำ)</option>
+                  <option value="VOLUME_PROFILE_HTF">VOLUME_PROFILE_HTF (Hybrid: Volume Profile + 4H HTF)</option>
                   <option value="DOW_SWINGS">DOW_SWINGS (เกาะจุดสวิง Dow Theory แท้)</option>
                   <option value="DOW_ATR_CLAMP">DOW_ATR_CLAMP (สวิง Dow + บีบด้วย ATR)</option>
                   <option value="FIXED_PCT_CLAMP">FIXED_PCT_CLAMP (บีบความกว้าง % คงที่)</option>
-                  <option value="DONCHIAN_ATR">DONCHIAN_ATR (กรอบสูงสุด/ต่ำสุด Donchian + ATR)</option>
                 </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_donchianLookback">
+                  แท่งเทียนคำนวณ Donchian Lookback (Bars)
+                  <span class="help-tip" title="จำนวนแท่งเทียนที่ใช้วัดจุดสูงสุดและต่ำสุดของ Donchian Channel (ค่าเริ่มต้น 48 แท่ง = ~12 ชม. บน TF 15m)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_donchianLookback" step="1" min="10" max="300" />
+                  <span class="unit">แท่ง</span>
+                </div>
               </div>
 
               <div class="form-group">

@@ -206,10 +206,10 @@ export const defaultStrategyConfig = {
    * 1. "DOW_SWINGS": Pure Dow Swings with progressive nearest-swing expansion outward from current price.
    * 2. "DOW_ATR_CLAMP": Dow Theory Swings with dynamic ATR min/max width clamping & true wick support.
    * 3. "FIXED_PCT_CLAMP": Dow Theory Swings clamped to fixed min/max percentage width.
-   * 4. "DONCHIAN_ATR": Adaptive Donchian Channel (Highest High & Lowest Low of lookback bars) + ATR buffer.
-   * 5. "VOLUME_PROFILE_HTF" (Default): Hybrid Volume Profile (POC/VAH/VAL) + 4H HTF Structural Anchor.
+   * 4. "DONCHIAN_ATR" (Default): Donchian 48b Channel (Highest High & Lowest Low of lookback bars) + Dow ChoCh Gate.
+   * 5. "VOLUME_PROFILE_HTF": Hybrid Volume Profile (POC/VAH/VAL) + 4H HTF Structural Anchor.
    */
-  channelMode: "VOLUME_PROFILE_HTF" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF",
+  channelMode: "DONCHIAN_ATR" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF",
   /** Lookback bars for Volume Profile calculation on macro candles (default 192 = 48 hours on 15m). */
   vpLookbackBars: 192,
   /** Min channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 1.8%). */
@@ -224,12 +224,12 @@ export const defaultStrategyConfig = {
   atrMinMultiplier: 2.5,
   /** Max channel width multiplier of ATR for DOW_ATR_CLAMP (default 5.0x ATR). */
   atrMaxMultiplier: 5.0,
-  /** Donchian lookback bars for DONCHIAN_ATR mode (default 20 bars). */
-  donchianLookback: 20,
+  /** Donchian lookback bars for DONCHIAN_ATR mode (default 48 bars = ~12 hours on 15m). */
+  donchianLookback: 48,
   /** Shared lookback (bars) for Peak/Valley detection, trendlines and market structure analysis (default 300 = initial candle load). */
   srLookbackCandles: 300,
-  /** Safety buffer below floor (in % of price, default 0.30%). */
-  floorBufferPct: 0.30,
+  /** Safety buffer below floor (in % of price, default 0.35%). */
+  floorBufferPct: 0.35,
   /** When true, dynamically scales Floor Cut-Loss buffer according to rolling ATR volatility to avoid wick stop-outs. Default true. */
   enableDynamicAtrBuffer: true,
   /** Multiplier of rolling ATR percentage to apply to dynamic Floor Buffer (default 0.75x ATR). */
