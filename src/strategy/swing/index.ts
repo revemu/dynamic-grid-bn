@@ -921,6 +921,7 @@ export class SwingTraderStrategy implements IStrategy {
         enableBearishReversalExit: this.cfg.swingEnableBearishReversalExit ?? true,
         bearishReversalMinProfitPct: this.cfg.swingBearishReversalMinProfitPct ?? 0.35,
         bearishReversalResistanceTolerancePct: this.cfg.swingBearishReversalResistanceTolerancePct ?? 0.8,
+        orderExecutionMode: this.cfg.orderExecutionMode ?? "MAKER_LIMIT",
       };
 
       // Evaluate setup strictly on confirmed closed candles to eliminate false intraday wick triggers
@@ -992,7 +993,7 @@ export class SwingTraderStrategy implements IStrategy {
       downtrendLine &&
       !downtrendLine.isBroken &&
       !structure?.downtrendBreakoutConfirmed &&
-      downtrendLine.currentLinePrice <= p.price * 1.008,
+      downtrendLine.currentLinePrice <= p.price * 1.0025,
     );
     const isFrameShiftedLower = plannedEntry > 0 && p.price > plannedEntry * 1.012;
 
@@ -1019,8 +1020,8 @@ export class SwingTraderStrategy implements IStrategy {
       return;
     }
 
-    // 2. Check if price surged away upwards (>1.5% from entry) -> train left, cancel and wait for another setup
-    if (refPrice > p.price * 1.015) {
+    // 2. Check if price surged away upwards (>2.0% from entry) -> train left, cancel and wait for another setup
+    if (refPrice > p.price * 1.020) {
       this.log(
         `[SwingTrader] ⚠️ Cancelling pending entry order ${p.orderId}: Price surged away (+${(((refPrice - p.price) / p.price) * 100).toFixed(2)}%) without fill`,
       );
@@ -1719,10 +1720,10 @@ export class SwingTraderStrategy implements IStrategy {
     const isMakerMode = this.cfg.orderExecutionMode === "MAKER_LIMIT";
 
     // Determine entry limit price:
-    // If MAKER_LIMIT: buy at bestBid (or signal price if lower/equal) to ensure resting on book as maker
-    let entryPrice = price;
+    // If MAKER_LIMIT: buy at signal.entryPrice (or bestBid if signal entry is market) to ensure resting on book as maker
+    let entryPrice = signal.entryPrice > 0 ? signal.entryPrice : price;
     if (isMakerMode && this.bid && this.bid > 0) {
-      entryPrice = Math.min(this.bid, price);
+      entryPrice = Math.min(this.bid, entryPrice);
     }
     entryPrice = this.roundPrice(entryPrice);
 

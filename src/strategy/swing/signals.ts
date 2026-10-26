@@ -644,6 +644,30 @@ export class SwingSignalDetector {
               plannedTp2Price: plannedTp2,
               plannedRrRatio: actualRr,
             };
+          } else {
+            const avgTp = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio));
+            const maxEntryForMinRr = (avgTp + (config.minRiskReward * hlSl)) / (1 + config.minRiskReward);
+            const targetDipEntry = Math.max(hlSupportPrice, Math.min(price, maxEntryForMinRr));
+            const isMakerMode = config.orderExecutionMode !== "IOC_BRACKET";
+            const tlNote = hasActiveDowntrendTl ? ` | TL TP1: $${plannedTp1.toFixed(4)}` : "";
+
+            if (isMakerMode && targetDipEntry > hlSupportPrice) {
+              return {
+                hasSignal: true,
+                signalType: "HL_BASE",
+                entryPrice: targetDipEntry,
+                stopLossPrice: hlSl,
+                tp1Price: plannedTp1,
+                tp2Price: plannedTp2,
+                riskRewardRatio: config.minRiskReward,
+                reason: `Higher Low (HL) Support ($${hlSupportPrice.toFixed(4)}) bounce confirmed (${reversalCheck.pattern}), resting Maker Limit Buy @ $${targetDipEntry.toFixed(4)} for ${config.minRiskReward.toFixed(2)}x R:R (live price jumped to $${price.toFixed(4)})${tlNote}`,
+                plannedEntryPrice: targetDipEntry,
+                plannedSlPrice: hlSl,
+                plannedTp1Price: plannedTp1,
+                plannedTp2Price: plannedTp2,
+                plannedRrRatio: config.minRiskReward,
+              };
+            }
           }
         }
       }
@@ -699,7 +723,7 @@ export class SwingSignalDetector {
         const actualRr = actualRisk > 0 ? actualAvgReward / actualRisk : 0;
         const tp2Rr = actualRisk > 0 ? (plannedTp2 - price) / actualRisk : 0;
         const effectiveMinRr = (tp2Rr >= config.minRiskReward * 0.75 || isTp1CappedByTl)
-          ? Math.min(config.minRiskReward, 1.15)
+          ? Math.min(config.minRiskReward, 1.05)
           : config.minRiskReward;
 
         if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasFloorTlRoom) {
@@ -725,6 +749,27 @@ export class SwingSignalDetector {
             const avgTp = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio));
             const maxEntryForMinRr = (avgTp + (effectiveMinRr * llSl)) / (1 + effectiveMinRr);
             const targetDipEntry = Math.max(majorFloor, Math.min(price, maxEntryForMinRr));
+            const isMakerMode = config.orderExecutionMode !== "IOC_BRACKET";
+            const tlNote = hasActiveDowntrendTl ? ` | TL TP1: $${plannedTp1.toFixed(4)}` : "";
+
+            if (isMakerMode && targetDipEntry > majorFloor) {
+              return {
+                hasSignal: true,
+                signalType: "LL_RETEST_BOUNCE",
+                entryPrice: targetDipEntry,
+                stopLossPrice: llSl,
+                tp1Price: plannedTp1,
+                tp2Price: plannedTp2,
+                riskRewardRatio: effectiveMinRr,
+                reason: `Near Major LL ($${majorFloor.toFixed(4)}) bounce confirmed (${reversalCheck.pattern}), resting Maker Limit Buy @ $${targetDipEntry.toFixed(4)} for ${effectiveMinRr.toFixed(2)}x R:R (live price jumped to $${price.toFixed(4)})${tlNote}`,
+                plannedEntryPrice: targetDipEntry,
+                plannedSlPrice: llSl,
+                plannedTp1Price: plannedTp1,
+                plannedTp2Price: plannedTp2,
+                plannedRrRatio: effectiveMinRr,
+              };
+            }
+
             return {
               hasSignal: false,
               entryPrice: 0,

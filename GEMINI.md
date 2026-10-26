@@ -4440,6 +4440,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ปรับ `isLivePriceHoldingReversal` ให้ตรวจราคาแบบ Real-time เทียบกับจุดต่ำสุดของแท่งกลับตัว / ฐานรับ (`reversalLowThreshold * 0.9995`) เพื่อไม่ให้บล็อกการเข้าซื้อเมื่อราคาแกว่งในกรอบแท่งกลับตัว
 5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.107` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 108. v0.2.108 — Maker Limit Pullback Entry on Reversal Base & Order Placement Pipeline
+
+- **สาเหตุของปัญหา (Root Cause & The Reversal Paradox)**:
+  1. **Paradox ของการรอย่อ (Catch-22)**:
+     - เมื่อแท่งเทียน 15m ดีดตัวกลับตัวจากฐานแนวรับ `Major LL` หรือ `HL` สำเร็จ (เช่น แท่ง Hammer หรือ Engulfing) ราคาปิดแท่งมักจะกระโดดขึ้นไปอยู่ยอดแท่ง ทำให้ระยะทำกำไรไปยัง `TP1` (ซึ่งถูกเส้นกด Downtrend กดเพดานไว้) แคบลง ในขณะที่ระยะคัทลอสไปยัง Stop Loss ยังกว้าง ส่งผลให้ค่าเฉลี่ย `actualRr` ได้เพียง `0.70x – 0.96x` (ต่ำกว่าเกณฑ์)
+     - โค้ดเดิมคำนวณ `targetDipEntry` (เช่น `$79,721` หรือ `$79,543`) ไว้ให้แล้ว แต่กลับคืนค่า `hasSignal: false` ส่งผลให้บอทนั่งรอเฉยๆ บนอากาศ โดยไม่ได้ส่งคำสั่ง `Maker Limit Buy` ไปตั้งดักรอบน Orderbook ของกระดาน
+     - เมื่อแท่งถัดๆ มาราคาย่อทิ้งไส้ลงมาทดสอบโซนฐานจริง (เช่น แตะ `$79,632.46` และ `$79,535.71`) แท่งเทียนที่กำลังย่อตัวเป็น **แท่งสีแดง** ฟิลเตอร์ความปลอดภัยจึงตรวจพบว่าเป็นแท่งแดงและบล็อกว่า "ห้ามรับมีด" ทำให้ราคาลงมาทดสอบก้นหลุมหลายรอบแต่บอทไม่เคยได้เข้าของเลยสักครั้ง
+  2. **`executeSwingEntry` ละเลย `signal.entryPrice`**:
+     - ใน `src/strategy/swing/index.ts` เมธอด `executeSwingEntry` คำนวณราคาเข้าซื้อจาก `entryPrice = price` (ราคาตลาด Real-time) เสมอ ทำให้ไม่สามารถวางคำสั่ง Limit ดักรอที่ราคาเป้าหมายย่อตัว (`targetDipEntry`) ได้
+  3. **`isCappedByTl` ใน `managePendingEntryOrder` เข้มงวดเกินไป**:
+     - มีการดักยกเลิกออเดอร์หาก `downtrendLine.currentLinePrice <= p.price * 1.008` (0.8%) ซึ่งแคบเกินไปและขัดแย้งกับ `signals.ts` ที่ต้องการระยะเพียง `0.25%` ส่งผลให้ออเดอร์ที่ตั้งดักรอในกรอบสามเหลี่ยมบีบตัวเสี่ยงถูกยกเลิกก่อนเวลาอันควร
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Solutions)**:
+  1. **Resting Maker Limit Entry on Pullback (`src/strategy/swing/signals.ts`)**:
+     - ใน Setup 3 (`LL_RETEST_BOUNCE`) และ Setup 2 (`HL_BASE`): เมื่อตรวจพบรูปแบบแท่งกลับตัวที่ฐานแนวรับ (`reversalCheck.isReversal`) แต่ราคาปิดพุ่งสูงจน `actualRr < effectiveMinRr`: หากเปิดโหมด `orderExecutionMode === "MAKER_LIMIT"` ให้ปลดล็อกสัญญาณ `hasSignal: true` พร้อมส่ง `entryPrice: targetDipEntry` ทันที เพื่อนำไปวางเป็นคำสั่ง Maker Limit Buy ดักรอบน Orderbook
+  2. **Respect `signal.entryPrice` in `executeSwingEntry` (`src/strategy/swing/index.ts`)**:
+     - ปรับให้ `let entryPrice = signal.entryPrice > 0 ? signal.entryPrice : price;` และคำนวณ `Math.min(this.bid, entryPrice)` เพื่อให้ออเดอร์ Maker Limit วางดักรอที่ระดับราคาเป้าหมายย่อตัวได้อย่างแม่นยำ
+  3. **Synchronize Trendline Headroom Guard in `managePendingEntryOrder` (`src/strategy/swing/index.ts`)**:
+     - ปรับ `isCappedByTl` ให้ตรวจสอบที่ `<= p.price * 1.0025` สอดคล้องกับ `hasFloorTlRoom` (0.25%) และขยายเงื่อนไข Surge Cancellation เป็น `> 2.0%`
+  4. **Dynamic Split-TP Min R:R Hurdle**:
+     - ปรับ `effectiveMinRr` ให้ยืดหยุ่นขึ้นเป็น `Math.min(config.minRiskReward, 1.05)` เมื่อ `isTp1CappedByTl`
+  5. **เวอร์ชัน**:
+     - อัปเดตเลขเวอร์ชันเป็น `0.2.108` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

@@ -21,4 +21,5 @@ export interface SwingStrategyConfig {
   enableBearishReversalExit?: boolean;
   bearishReversalMinProfitPct?: number;
   bearishReversalResistanceTolerancePct?: number;
+  orderExecutionMode?: "MAKER_LIMIT" | "IOC_BRACKET";
 }
