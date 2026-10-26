@@ -4496,6 +4496,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.109` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 110. v0.2.110 — Reality-Based Resistance Hard Ceiling & Trendline Slope Headroom Architecture (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `package.json`, `src/version.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การจัดลำดับความสำคัญแนวรับโดยไม่ตรวจ Headroom แนวต้าน**:
+   - โค้ดเดิมจัดลำดับ `Trendline Support > HL Base > Major LL` โดยขาดการตรวจสอบระยะห่างปลอดภัยต่อเส้นกดแนวต้าน Downtrend Line
+2. **ความชันและการยืดขยายตามเวลา (Time Extrapolation & Slope Inflation)**:
+   - เส้น Uptrend Line ที่ลากเชื่อมจาก LL ($79,535) ไป HL ($80,125) มี Slope เป็นบวก เมื่อเวลาผ่านไป ระดับราคาของเส้นลอยสูงขึ้นเรื่อยๆ ไปถึง $80,286 ณ แท่งปัจจุบัน
+   - ในขณะที่ด้านบนมีเส้นกดแนวต้าน Downtrend Line กดลงมาอยู่ที่ $80,422 ทำให้ระยะห่างเหลือเพียง 0.17% (เกิดสภาวะบีบอัด Triangle Squeeze)
+   - เงื่อนไขเดิมใช้ `uptrendLine.currentLinePrice <= price * 1.015` ทำให้เส้นที่อยู่เหนือราคาปัจจุบัน ($80,219) ถูกเข้าใจผิดว่าเป็นแนวรับใต้ราคา
+3. **ฐาน HL ก็อยู่สูงเกินไปเทียบกับเส้นกด (Unviable HL R:R)**:
+   - แม้จะดูที่ฐานแนวนอน HL ($80,125) ระยะห่างถึงเส้นกด $80,422 ก็เหลือเพียง 0.22% ในขณะที่ Stop Loss เสี่ยง -0.35% ทำให้ได้ $R:R < 0.63x$ ไม่คุ้มค่าที่จะเข้าเทรด
+4. **การคำนวณ Take Profit ที่มองโลกในแง่ดีเกินความเป็นจริง (Hopium TP & Blind Spot)**:
+   - เมื่อ `tlResistancePrice <= plannedEntry * 1.004` (เส้นกดอยู่ใกล้จุดซื้อเกินไปจนวาง TP1 ใต้เส้นกดไม่ได้) โค้ดเดิมกลับข้ามการแคปเส้นกด และปล่อยให้ TP1 ดีดข้ามหัวเส้นกดไปที่ 50% ของคลื่นใหญ่ ($81,490) และ TP2 ที่ยอดดอย ($82,364)
+   - ส่งผลให้ระบบคำนวณและแสดงผล $R:R = 3.72x$ บนหน้าจอ ทั้งที่ราคาจะชนเส้นกดที่ +0.17% และร่วงลงมา
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Strict Headroom Qualification for Candidate Supports (`hasTrendlineHeadroom`)**:
+   - ย้ายฟังก์ชัน `hasTrendlineHeadroom` ขึ้นมาตรวจสอบตั้งแต่ขั้นตอนคัดเลือกฐานแนวรับ
+   - ฐานแนวรับที่จะถูกเลือก (`hlSupportPrice` หรือ `tlSupportPrice`) ต้องมีระยะห่างถึงเส้นกด $\ge 0.80\%$ และมี $R:R$ ถึงเส้นกด $\ge 1.15x$ เสมอ
+   - ให้ความสำคัญกับฐานแนวนอนจริง (`HL_BASE`) เหนือเส้นเฉียงสมมุติ (`TRENDLINE`)
+   - หากทั้ง HL และ Trendline ติดแนวต้านกด ระบบจะถอยกลับมาเลือกใช้ฐานล่าง `MAJOR_LL` ($79,425 - $79,600) ที่มีระยะวิ่งปลอดภัยและคุ้มความเสี่ยง
+2. **Trendline Under Price & Slope Health Check**:
+   - เส้น Uptrend Line ต้องอยู่ใต้หรือแตะราคาปัจจุบันเท่านั้น (`currentLinePrice <= price * 1.0005`)
+   - ตรวจสอบความชันของเส้นเทรนด์ไลน์ไม่ให้ชันเกินเกณฑ์ปกติ ($\le 0.35\%/\text{hr}$) ป้องกันการดันจุดซื้อขึ้นไปตามความชัน
+3. **Hard Ceiling on Take Profit Targets**:
+   - ล็อกเส้น Downtrend Line ให้เป็นกำแพงจริง โดย `plannedTp1` ต้องถูกแคปใต้เส้นกดเสมอ (`tlResistancePrice * 0.9985`) ห้ามดีดเป้าข้ามหัวเส้นกดเด็ดขาด
+4. **Synchronized Planned Support Type in Strategy Telemetry**:
+   - เพิ่มฟิลด์ `plannedSupportType?: "TRENDLINE" | "HL_BASE" | "MAJOR_LL"` ใน `SwingSignal`
+   - ใน `src/strategy/swing/index.ts` อ้างอิง `plannedSupportType` ตรงจากสัญญาณ ทำให้หัวข้อการ์ดสถานะบน UI (`⏳ Waiting LL Retest`, `⏳ Waiting HL Retest`, `⏳ Waiting Trendline Retest`) ตรงกับฐานแนวรับที่บอทเลือกจริง 100%
+5. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.110` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

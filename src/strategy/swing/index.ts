@@ -1953,14 +1953,17 @@ export class SwingTraderStrategy implements IStrategy {
       !structure.uptrendLine.isBroken &&
       !structure.uptrendLine.breakoutConfirmed &&
       structure.uptrendLine.currentLinePrice > (structure.bottomBound || 0) &&
-      structure.uptrendLine.currentLinePrice <= currentMid * 1.015,
+      structure.uptrendLine.currentLinePrice <= currentMid * 1.0005,
     );
     const hasValidHl = Boolean(
       structure?.waveCycle?.lastHl &&
       !structure.waveCycle.lastHl.isBroken &&
       (!structure.waveCycle.lastLl || structure.waveCycle.lastLl.time < structure.waveCycle.lastHl.time) &&
       structure.waveCycle.lastHl.price > (structure.bottomBound || 0) &&
-      structure.waveCycle.lastHl.price <= currentMid * 1.005,
+      structure.waveCycle.lastHl.price <= currentMid * 1.002,
+    );
+    const plannedSupportType = this.lastSignal?.plannedSupportType ?? (
+      hasValidHl ? "HL_BASE" : (hasValidTl ? "TRENDLINE" : "MAJOR_LL")
     );
 
     const telemetry = {
@@ -2083,7 +2086,7 @@ export class SwingTraderStrategy implements IStrategy {
         nextPlannedEntryPrice,
         nextPlannedSlPrice,
         isTrappedPosition,
-        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : (entryPrice > 0 ? (hasValidTl ? "WAITING_TL_RETEST" : (hasValidHl ? "WAITING_HL_RETEST" : "WAITING_LL_RETEST")) : "WAITING_BASE")),
+        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : (entryPrice > 0 ? (plannedSupportType === "TRENDLINE" ? "WAITING_TL_RETEST" : (plannedSupportType === "HL_BASE" ? "WAITING_HL_RETEST" : "WAITING_LL_RETEST")) : "WAITING_BASE")),
         reason: this.activePosition?.reason || this.lastSignal?.reason || "Waiting for structure support confirmation",
         state: this.swingState,
         isPlannedOnly: !this.activePosition && !this.lastSignal?.hasSignal,
@@ -2113,9 +2116,9 @@ export class SwingTraderStrategy implements IStrategy {
               : (this.lastSignal?.hasSignal
                   ? "🎯 Swing Setup Ready"
                   : (entryPrice > 0
-                      ? (hasValidTl
+                      ? (plannedSupportType === "TRENDLINE"
                           ? "⏳ Waiting Trendline Retest"
-                          : (hasValidHl ? "⏳ Waiting HL Retest" : "⏳ Waiting LL Retest"))
+                          : (plannedSupportType === "HL_BASE" ? "⏳ Waiting HL Retest" : "⏳ Waiting LL Retest"))
                       : "🛑 Searching New Base")),
             reason: this.activePosition
               ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`

@@ -24,6 +24,7 @@ export interface SwingSignalResult {
   plannedTp1Price?: number;
   plannedTp2Price?: number;
   plannedRrRatio?: number;
+  plannedSupportType?: "TRENDLINE" | "HL_BASE" | "MAJOR_LL";
 }
 
 export class SwingSignalDetector {
@@ -382,13 +383,30 @@ export class SwingSignalDetector {
     );
     const tlResistancePrice = hasActiveDowntrendTl ? downtrendLine!.currentLinePrice : 0;
 
+    // Helper to check if a candidate support price has enough headroom below an active descending trendline
+    const hasTrendlineHeadroom = (entryCandidate: number, slCandidate: number): boolean => {
+      if (!hasActiveDowntrendTl || tlResistancePrice <= 0) return true;
+      // Do not buy right into an unbroken descending trendline (need >= 0.8% room and >= 1.15x R:R to trendline)
+      const roomToTl = tlResistancePrice * 0.9985 - entryCandidate;
+      const roomPct = (roomToTl / entryCandidate) * 100;
+      const riskToSl = Math.max(1e-8, entryCandidate - slCandidate);
+      const rrToTl = roomToTl / riskToSl;
+      return roomPct >= 0.8 && rrToTl >= 1.15;
+    };
+
     // Check active unbroken Ascending Trendline (Uptrend Support Line)
+    // 1. Must be unbroken and not confirmed breakout below
+    // 2. Line price must be strictly AT or BELOW current price (support line cannot be floating above market price)
+    // 3. Slope must be healthy (<= 0.35%/hr) to prevent artificial parabolic inflation
+    const tlPctPerHour = uptrendLine ? Math.abs((uptrendLine.slope * 3600) / Math.max(1, uptrendLine.p1.price)) * 100 : 0;
+    const isUptrendSlopeHealthy = tlPctPerHour > 0 && tlPctPerHour <= 0.35;
     const hasActiveUptrendTl = Boolean(
       uptrendLine &&
       !uptrendLine.isBroken &&
       !uptrendLine.breakoutConfirmed &&
       uptrendLine.currentLinePrice > majorFloor &&
-      uptrendLine.currentLinePrice <= price * 1.015,
+      uptrendLine.currentLinePrice <= price * 1.0005 &&
+      isUptrendSlopeHealthy,
     );
     const tlSupportPrice = hasActiveUptrendTl ? uptrendLine!.currentLinePrice : 0;
 
@@ -403,18 +421,33 @@ export class SwingSignalDetector {
       (!lastClosedBar || lastClosedBar.time <= waveCycle.lastHl.time || lastClosedBar.close >= waveCycle.lastHl.price * 0.998),
     );
     const recentHl = isHlUnbroken ? waveCycle!.lastHl : undefined;
-    const hlSupportPrice = (recentHl && recentHl.price <= price * 1.005) ? recentHl.price : 0;
+    const hlSupportPrice = (recentHl && recentHl.price <= price * 1.002) ? recentHl.price : 0;
 
-    // 🎯 Determine Active Support Floor (Trendline Support > HL Base > Major LL)
+    // ── Pre-calculate Stop Loss levels for Candidate Supports ─────────────────
+    const llSl = majorFloor * (1 - slBuffer);
+    const hlSl = hlSupportPrice > 0 ? hlSupportPrice * (1 - slBuffer) : llSl;
+    const tlSl = tlSupportPrice > 0
+      ? Math.min(tlSupportPrice, hlSupportPrice > 0 ? hlSupportPrice : tlSupportPrice) * (1 - slBuffer)
+      : llSl;
+
+    // 🎯 Determine Active Support Floor (Strict Headroom Checked):
+    // Candidate supports MUST have sufficient headroom below any active descending trendline!
+    // Horizontal HL Base is prioritized over projected trendlines because it is a confirmed price pivot.
     let activeSupportPrice = majorFloor;
     let activeSupportType: "TRENDLINE" | "HL_BASE" | "MAJOR_LL" = "MAJOR_LL";
 
-    if (hasActiveUptrendTl && tlSupportPrice > majorFloor) {
-      activeSupportPrice = tlSupportPrice;
-      activeSupportType = "TRENDLINE";
-    } else if (hlSupportPrice > majorFloor) {
+    const hasValidHl = hlSupportPrice > majorFloor && hasTrendlineHeadroom(hlSupportPrice, hlSl);
+    const hasValidTl = tlSupportPrice > majorFloor && hasTrendlineHeadroom(tlSupportPrice, tlSl);
+
+    if (hasValidHl) {
       activeSupportPrice = hlSupportPrice;
       activeSupportType = "HL_BASE";
+    } else if (hasValidTl) {
+      activeSupportPrice = tlSupportPrice;
+      activeSupportType = "TRENDLINE";
+    } else {
+      activeSupportPrice = majorFloor;
+      activeSupportType = "MAJOR_LL";
     }
 
     // Ensure minimum healthy swing width (>= 1.5% span to avoid micro-channels)
@@ -425,11 +458,6 @@ export class SwingSignalDetector {
     }
 
     // ── 3. Calculate Planned Levels & Trendline-Aware Risk:Reward ─────────────
-    const llSl = majorFloor * (1 - slBuffer);
-    const hlSl = hlSupportPrice > 0 ? hlSupportPrice * (1 - slBuffer) : llSl;
-    const tlSl = tlSupportPrice > 0
-      ? Math.min(tlSupportPrice, hlSupportPrice > 0 ? hlSupportPrice : tlSupportPrice) * (1 - slBuffer)
-      : llSl;
 
     // 🎯 Strict Retest Zone Thresholds:
     const maxNearLlSpan = Math.max(majorFloor * 0.004, Math.min(majorSpan * 0.20, majorFloor * 0.010));
@@ -478,11 +506,11 @@ export class SwingSignalDetector {
       : midWavePrice;
 
     // 📐 Trendline Target Integration:
-    // If an unbroken descending trendline is pressing down below rawTp1 (and above plannedEntry),
-    // set TP1 right under the descending trendline (-0.15% buffer) to take profit at the trendline!
+    // When an active descending trendline is pressing down, it is a HARD CEILING.
+    // TP1 MUST be placed under the descending trendline (-0.15% buffer) whenever the trendline is lower than rawTp1!
     let plannedTp1 = rawTp1;
     let isTp1CappedByTl = false;
-    if (hasActiveDowntrendTl && tlResistancePrice > plannedEntry * 1.004) {
+    if (hasActiveDowntrendTl && tlResistancePrice > 0) {
       const tlTargetPrice = tlResistancePrice * 0.9985;
       if (tlTargetPrice < plannedTp1) {
         plannedTp1 = tlTargetPrice;
@@ -549,19 +577,9 @@ export class SwingSignalDetector {
         plannedTp1Price: 0,
         plannedTp2Price: 0,
         plannedRrRatio: 0,
+        plannedSupportType: activeSupportType,
       };
     }
-
-    // Helper to check if current price has enough room below an active descending trendline
-    const hasTrendlineHeadroom = (entryCandidate: number, slCandidate: number): boolean => {
-      if (!hasActiveDowntrendTl || tlResistancePrice <= 0) return true;
-      // Do not buy right into an unbroken descending trendline (need >= 0.8% room and >= 1.15x R:R to trendline)
-      const roomToTl = tlResistancePrice * 0.9985 - entryCandidate;
-      const roomPct = (roomToTl / entryCandidate) * 100;
-      const riskToSl = Math.max(1e-8, entryCandidate - slCandidate);
-      const rrToTl = roomToTl / riskToSl;
-      return roomPct >= 0.8 && rrToTl >= 1.15;
-    };
 
     // ── Setup 1: Uptrend Line Support Retest & Bounce (SUPPORT_RETEST) ───────
     if (config.enableSupportRetestEntry && hasActiveUptrendTl && tlSupportPrice > majorFloor) {
@@ -600,6 +618,7 @@ export class SwingSignalDetector {
               plannedTp1Price: plannedTp1,
               plannedTp2Price: plannedTp2,
               plannedRrRatio: actualRr,
+              plannedSupportType: "TRENDLINE",
             };
           }
         }
@@ -643,6 +662,7 @@ export class SwingSignalDetector {
               plannedTp1Price: plannedTp1,
               plannedTp2Price: plannedTp2,
               plannedRrRatio: actualRr,
+              plannedSupportType: "HL_BASE",
             };
           } else {
             const avgTp = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio));
@@ -666,6 +686,7 @@ export class SwingSignalDetector {
                 plannedTp1Price: plannedTp1,
                 plannedTp2Price: plannedTp2,
                 plannedRrRatio: config.minRiskReward,
+                plannedSupportType: "HL_BASE",
               };
             }
           }
@@ -743,6 +764,7 @@ export class SwingSignalDetector {
               plannedTp1Price: plannedTp1,
               plannedTp2Price: plannedTp2,
               plannedRrRatio: actualRr,
+              plannedSupportType: "MAJOR_LL",
             };
           } else {
             // Reversal confirmed, but current price jumped slightly too high for effectiveMinRr; calculate max entry price for min R:R
@@ -767,6 +789,7 @@ export class SwingSignalDetector {
                 plannedTp1Price: plannedTp1,
                 plannedTp2Price: plannedTp2,
                 plannedRrRatio: effectiveMinRr,
+                plannedSupportType: "MAJOR_LL",
               };
             }
 
@@ -783,6 +806,7 @@ export class SwingSignalDetector {
               plannedTp1Price: plannedTp1,
               plannedTp2Price: plannedTp2,
               plannedRrRatio: effectiveMinRr,
+              plannedSupportType: "MAJOR_LL",
             };
           }
         } else {
@@ -807,6 +831,7 @@ export class SwingSignalDetector {
             plannedTp1Price: plannedTp1,
             plannedTp2Price: plannedTp2,
             plannedRrRatio: plannedRr,
+            plannedSupportType: "MAJOR_LL",
           };
         }
       }
@@ -852,6 +877,7 @@ export class SwingSignalDetector {
             plannedTp1Price: tp1,
             plannedTp2Price: tp2,
             plannedRrRatio: rr,
+            plannedSupportType: "TRENDLINE",
           };
         }
       }
@@ -859,7 +885,7 @@ export class SwingSignalDetector {
 
     // ── Standby Mode: Waiting for Pullback to Active Support Zone ─────────────
     const tlStatusSuffix = hasActiveDowntrendTl
-      ? ` | TL Res: $${tlResistancePrice.toFixed(4)} (TP1 capped at TL)`
+      ? ` | TL Res: $${tlResistancePrice.toFixed(4)}${isTp1CappedByTl ? " (TP1 capped at TL)" : ""}`
       : (uptrendLine?.isBroken ? ` | Uptrend Support Broken ($${uptrendLine.currentLinePrice.toFixed(4)})` : "");
 
     let standbyReason = `Price ($${price.toFixed(4)}) is above Near-LL zone. Waiting for pullback near Major LL ($${majorFloor.toFixed(4)} - $${retestZoneMax.toFixed(4)})${tlStatusSuffix}`;
@@ -869,6 +895,8 @@ export class SwingSignalDetector {
       standbyReason = `Price ($${price.toFixed(4)}) is above HL Support. Waiting for pullback near HL Support ($${hlSupportPrice.toFixed(4)})${tlStatusSuffix}`;
     } else if (downtrendLine?.breakoutConfirmed && price > downtrendLine.currentLinePrice) {
       standbyReason = `Trendline Breakout confirmed. Waiting for pullback/retest near support ($${activeSupportPrice.toFixed(4)})${tlStatusSuffix}`;
+    } else if (hasActiveDowntrendTl && (waveCycle?.lastHl || uptrendLine) && activeSupportType === "MAJOR_LL") {
+      standbyReason = `Price ($${price.toFixed(4)}) is under Descending Trendline ($${tlResistancePrice.toFixed(4)}). Higher supports lack headroom (<0.80% / low R:R) — Waiting for pullback to Major LL ($${majorFloor.toFixed(4)}) or TL Breakout${tlStatusSuffix}`;
     }
 
     return {
@@ -884,6 +912,7 @@ export class SwingSignalDetector {
       plannedTp1Price: plannedTp1,
       plannedTp2Price: plannedTp2,
       plannedRrRatio: plannedRr,
+      plannedSupportType: activeSupportType,
     };
   }
 }
