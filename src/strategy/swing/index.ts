@@ -1948,12 +1948,19 @@ export class SwingTraderStrategy implements IStrategy {
        (structure?.downtrendLine && !structure.downtrendLine.isBroken && structure.downtrendLine.currentLinePrice <= this.activePosition.entryPrice * 1.008))
     );
 
+    const hasBrokenDowntrendTl = Boolean(
+      structure?.downtrendLine &&
+      (structure.downtrendLine.breakoutConfirmed || structure.downtrendBreakoutConfirmed) &&
+      structure.downtrendLine.currentLinePrice > (structure.bottomBound || 0) &&
+      currentMid >= structure.downtrendLine.currentLinePrice * 0.995,
+    );
     const hasValidTl = Boolean(
-      structure?.uptrendLine &&
+      (structure?.uptrendLine &&
       !structure.uptrendLine.isBroken &&
       !structure.uptrendLine.breakoutConfirmed &&
       structure.uptrendLine.currentLinePrice > (structure.bottomBound || 0) &&
-      structure.uptrendLine.currentLinePrice <= currentMid * 1.0005,
+      structure.uptrendLine.currentLinePrice <= currentMid * 1.0005) ||
+      hasBrokenDowntrendTl
     );
     const hasValidHl = Boolean(
       structure?.waveCycle?.lastHl &&

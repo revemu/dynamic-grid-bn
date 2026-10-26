@@ -4530,6 +4530,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.110` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 111. v0.2.111 — Broken Descending Trendline Retest Support (Polarity Flip) & Breakout Base SL Architecture (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `package.json`, `src/version.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **ขาดระบบรองรับการย่อทดสอบเส้นกดหลังเบรกเอาท์ (Missing Trendline Throwback / Retest Support)**:
+   - เมื่อเกิดการทะลุเส้นกดขาลง (`downtrendLine.breakoutConfirmed === true`) แท่งเทียนพุ่งแรงข้ามเส้นกดทำให้ราคาเกินระยะ 0.20% เหนือเส้น (`isNearLine` เป็น false) ระบบจึงไม่เข้าซื้อไล่ราคาใน Setup 4 (`TL_BREAKOUT`) ซึ่งถูกต้องตามหลักวินัย
+   - แต่ระบบไม่มีตรรกะรองรับจังหวะ Throwback/Retest เมื่อราคาย่อตัวกลับลงมาหาเส้นกดเดิม ตัวแปร `tlSupportPrice` ดักจับเฉพาะ `uptrendLine` ขาขึ้นเท่านั้น โดยไม่ได้นำเส้นกดที่เพิ่งถูกทำลายมาทำหน้าที่เป็นแนวรับใหม่ (Role Reversal / Polarity Flip)
+2. **Fallthrough กลับไปดักรับก้นเหว 2 วันก่อน ($79,425.54) ขัดกับตรรกะ Breakout (Logic Conflict)**:
+   - เมื่อไม่มี `uptrendLine` และ `lastHl` ถูกทำลายไปก่อนหน้า ระบบจึง Fallthrough ตกไปใช้ Setup 3 (`MAJOR_LL`) โดยไปกวาดหาจุดต่ำสุดจาก 20 สวิงย้อนหลัง จนไปคว้าเอา `$79,425.54` ของเมื่อวานซืนมาเป็นแนวรับ
+   - ส่งผลให้แดชบอร์ดแสดงข้อความขัดแย้งอย่างรุนแรง: `"Trendline Breakout confirmed. Waiting for pullback/retest near support ($79425.5400) (Wait Dip -1.0%)"` ทั้งที่ในทางเทคนิค หากราคารูดกลับลงไปถึง $79,425 นั่นคือ Failed Breakout (เบรกหลอกแล้วไหลกลับเข้ากรอบ) ไม่ใช่การย่อทดสอบที่ดี
+3. **ระยะ Stop Loss ถอยลึกเกินความจำเป็น**:
+   - การอิง SL จาก $79,425 ทำให้ SL หล่นไปอยู่ที่ $79,147 (เสี่ยงเกิน -1.5%) ทั้งที่ในการเทรด Breakout จุดยอมแพ้ควรอยู่ที่ฐานของคลื่นที่ส่งราคาขึ้นไปเบรก (`Breakout Base Low`)
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Broken Descending Trendline Support (Role Reversal / Support Flip)**:
+   - ใน `src/strategy/swing/signals.ts` เมื่อ `downtrendLine?.breakoutConfirmed` เป็นจริง และราคายังยืนอยู่เหนือเส้นกด (`price >= currentLinePrice * 0.995`):
+     - กำหนด `hasBrokenDowntrendTl = true`
+     - กำหนด `tlSupportPrice = downtrendLine.currentLinePrice`
+     - ตั้งค่า `activeSupportType = "TRENDLINE"`
+2. **Breakout Base Low Anchor for Stop Loss**:
+   - ดึงสวิง Low ล่าสุดก่อนเกิดการเบรก (Launchpad ฐานส่งคลื่นเบรก เช่น `$79,825.42`) มาเป็น `breakoutBaseLow`
+   - จุด Stop Loss ของแผน Trendline Retest จะวางไว้ใต้ฐานส่งนี้ (`breakoutBaseLow * (1 - slBuffer)`) แทนการถอยลึกไปถึง $79,147 ทำให้ Risk:Reward ดีขึ้นและปลอดภัยจากการกวาดสภาพคล่องของฐานใหญ่
+3. **Expansion of Breakout Target Headroom (`majorCeil`)**:
+   - เมื่อเกิด Breakout Retest ระบบจะนำจุดเริ่มต้นของเส้นกด (`downtrendLine.p1.price` เช่น `$81,099`) หรือ `upperBound` มาเป็นเป้าหมายบน (TP2) เพื่อให้ได้อัตราส่วนกำไรต่อความเสี่ยงที่สมจริงตามพฤติกรรมราคา
+4. **Trendline Retest & Bounce Signal Integration (`Setup 1: SUPPORT_RETEST`)**:
+   - ปรับ Setup 1 ให้รองรับทั้ง Uptrend Line และ Broken Downtrend Line (`hasActiveTrendlineSupport`)
+   - เมื่อราคาย่อตัวลงมาแตะแนวรับเส้นกดและมีสัญญาณแท่งเทียนกลับตัว (Bullish Reversal) จะออก Signal `SUPPORT_RETEST` เข้าซื้อทันที พร้อมคำนวณ Maker Limit dip entry กรณีราคาดีดตัวเล็กน้อย
+5. **Harmonized Telemetry & Dashboard Status**:
+   - ปรับสถานะ Standby ให้ระบุชัดเจน: `"Trendline Breakout confirmed. Price ($...) is above Broken Trendline Support. Waiting for pullback/retest near $..."`
+   - ป้ายบนหน้าจอ UI แสดงผลเป็น `⏳ Waiting Trendline Retest (รอราคาย่อทดสอบแนวรับ Trendline)` และ `จุดรอรับแนวเบรก Trendline` พร้อมระดับราคาที่ถูกต้องสอดคล้องกัน 100%
+6. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.111` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
