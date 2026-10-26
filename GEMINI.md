@@ -4466,6 +4466,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
   5. **เวอร์ชัน**:
      - อัปเดตเลขเวอร์ชันเป็น `0.2.108` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 109. v0.2.109 — Classical Dow Theory Trendline & False Retest Protection Architecture (`src/market-structure/trendline-engine.ts`, `package.json`, `src/version.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **การลากเส้นแนวรับขาขึ้น (Uptrend Support Line) ไปเกาะจุด Lower Low (LL) ที่หลุดฐาน**:
+   - ใน `TrendlineEngine.calculateTrendlines`: การค้นหาจุดฐาน V2 ตรวจสอบเพียง `v2.price > v1.price` เท่านั้น โดยไม่ได้ตรวจสอบสถานะโครงสร้าง Dow ของจุด V2
+   - ในกรณีที่ราคาจบคลื่นขาขึ้นที่ยอด Macro Peak (เช่น SOMI ที่ `$0.1774`) แล้วเกิดคลื่นทุบหลุดแนวรับ `$0.1732` ลงมาทำ Lower Low (LL) ที่ `$0.1724` เนื่องจาก `$0.1724 > $0.1683` (ก้นหลุมของคลื่นเก่าเมื่อ 18 ชม. ก่อน) ระบบจึงดึงเส้น Uptrend Line ลากเชื่อมข้ามวันและข้ามยอดดอยมาเกาะจุด LL `$0.1724`
+   - ตามหลัก Dow Theory เส้นแนวรับขาขึ้น (Uptrend Support) ต้องเชื่อมจุดฐานยกสูง (**Higher Low: HL**) เท่านั้น การเชื่อมไปยังจุดหลุดฐาน (**Lower Low: LL**) เป็นข้อผิดพลาดร้ายแรงทางเทคนิคอล (False Trendline)
+2. **ตัวตรวจจับยอดคั่นกลาง (Peak Barrier Check) ตรวจจับไม่ครอบคลุม**:
+   - เงื่อนไขเดิม `if (activePeak) { isV1BeforePeak !== isV2BeforePeak }` ตรวจเฉพาะ `activePeak` ปัจจุบัน (ซึ่งในขณะนั้นถูกอัปเดตเป็นยอดเด้งเตี้ย `$0.1770` ที่เกิด *หลัง* V2) ทำให้ไม่พบว่าระหว่าง V1 กับ V2 มียอด Cycle Peak `$0.1774` คั่นกลางอยู่
+3. **ส่งผลให้ Swing Strategy วางแผนรับมีดสวนแนวโน้มขาลง (`WAITING_TL_RETEST`)**:
+   - บอทมองว่ามีเส้นแนวรับ Uptrend Line เฉียงขึ้นมาอยู่ที่ `$0.17314` จึงขึ้นสถานะ `⏳ Waiting Trendline Retest (รอรับแนวรับ Trendline)` และตั้งเป้าเข้าซื้อที่ `$0.17314` ทั้งที่ภาพรวมของ Dow Cycle กำลังเป็น `รอบคลื่น: ขาลง (LH + LL กดตัว)`
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Strict Dow Point Validation for Trendline Anchors (`src/market-structure/trendline-engine.ts`)**:
+   - **ฝั่ง Uptrend Line (Support)**:
+     - จุด V2 ต้องเป็น Higher Low (`HL`) เท่านั้น โดยตรวจสอบทั้งจาก `annotatedSwings.dowLabel !== "LL"` และตรวจสอบเรขาคณิต `v2.price > immediatePrevLow.price`
+     - หาก V2 ทำจุดต่ำสุดใหม่เทียบกับฐานก่อนหน้า (Lower Low) จะถูกปฏิเสธจากการเป็นจุดสัมผัส Trendline ทันที 100%
+   - **ฝั่ง Downtrend Line (Resistance)**:
+     - จุด P2 ต้องเป็น Lower High (`LH`) เท่านั้น โดยตรวจสอบ `annotatedSwings.dowLabel !== "HH"` และ `p2.price < immediatePrevHigh.price` ป้องกันการลากเส้นกดไปแตะจุดที่เบรกทำยอดใหม่
+2. **Intermediate Peak & Trough Wave Integrity Barrier (`src/market-structure/trendline-engine.ts`)**:
+   - **Uptrend Line**: ตรวจสอบ Swing High ทั้งหมดระหว่าง V1 และ V2 (`highsBetween`) หากมีสวิง High ใดๆ ที่ทำยอดและตามด้วยสวิง Low ที่ถูก V2 ทุบหลุด (`v2.price <= lowAfterPeak`) หรือเป็นยอด `macroPeak` / `lastHh` จะปฏิเสธไม่ให้ลากเส้นตัดข้ามยอดดอยทันที
+   - **Downtrend Line**: ตรวจสอบ Swing Low ทั้งหมดระหว่าง P1 และ P2 (`lowsBetween`) หากมีสวิง Low ใดๆ ที่ตามด้วยสวิง High ที่ถูก P2 เบรกทะลุ หรือเป็นก้น `macroLow` / `lastLl` จะปฏิเสธไม่ให้ลากเส้นตัดข้ามก้นหลุมทันที
+3. **Active Cycle Regime Compatibility**:
+   - ไม่อนุญาตให้ดึง Uptrend Line จากฐานเก่าก่อนยอด `lastHh` มาใช้งานหากวงจรคลื่นปัจจุบันยืนยันเป็นขาลง (`lastLl.time > lastHh.time`)
+   - ไม่อนุญาตให้ดึง Downtrend Line จากยอดเก่าก่อนก้น `lastLl` มาใช้งานหากวงจรคลื่นปัจจุบันยืนยันเป็นขาขึ้น (`lastHh.time > lastLl.time`)
+4. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.109` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 

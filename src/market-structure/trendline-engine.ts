@@ -10,9 +10,9 @@ export class TrendlineEngine {
     currentPrice: number,
     activeValley?: SwingPoint,
     activePeak?: SwingPoint,
-    _lastHh?: SwingPoint,
-    _lastLl?: SwingPoint,
-    _annotatedSwings?: DowSwingPoint[],
+    lastHh?: SwingPoint,
+    lastLl?: SwingPoint,
+    annotatedSwings?: DowSwingPoint[],
     useTrueWick = true,
     wickThresholdPct = 0.20,
   ): {
@@ -89,6 +89,40 @@ export class TrendlineEngine {
             if (isP1BeforeValley !== isP2BeforeValley) {
               continue; // Reject lines spanning across the bottom trough
             }
+          }
+
+          // 🛡️ Dow Theory Point Integrity: P2 MUST be a Lower High (LH)
+          const p2Dow = annotatedSwings?.find(
+            (s) => s.time === p2.time || (s.type === "HIGH" && s.index === p2.index),
+          );
+          if (p2Dow && p2Dow.dowLabel === "HH") {
+            continue; // Cannot anchor descending resistance line to a Higher High (breakout point)!
+          }
+          const priorHighs = confirmedHighs.filter((h) => h.index < p2.index);
+          const immPrevH = priorHighs[priorHighs.length - 1];
+          if (immPrevH && p2.price >= immPrevH.price) {
+            continue; // Must be a Lower High relative to preceding high
+          }
+
+          // A downtrend line cannot span across an intermediate bottom trough where price subsequently broke out
+          const lowsBetween = confirmedLows.filter((l) => l.time > p1.time && l.time < p2.time);
+          if (lowsBetween.length > 0) {
+            const lowestBetween = lowsBetween.reduce((min, l) => (l.price < min.price ? l : min), lowsBetween[0]!);
+            const highsAfterTrough = confirmedHighs.filter((h) => h.time > lowestBetween.time && h.time < p2.time);
+            if (highsAfterTrough.some((h) => p2.price >= h.price)) {
+              continue; // P2 broke above a high that formed after the bottom trough -> part of an upwave breakout
+            }
+            if (macroLow && lowestBetween.time === macroLow.time && highsAfterTrough.length > 0) {
+              continue; // Spans across the macro bottom
+            }
+            if (lastLl && lowestBetween.time === lastLl.time && highsAfterTrough.length > 0) {
+              continue; // Spans across wave cycle lastLl bottom
+            }
+          }
+
+          // Cannot anchor downtrend line to pre-uptrend peak while active cycle is in an established uptrend
+          if (lastHh && lastLl && lastHh.time > lastLl.time && p1.time < lastLl.time) {
+            continue;
           }
 
           const timeDiff = p2.time - p1.time;
@@ -278,6 +312,40 @@ export class TrendlineEngine {
             if (isV1BeforePeak !== isV2BeforePeak) {
               continue; // Reject lines spanning across the top peak
             }
+          }
+
+          // 🛡️ Dow Theory Point Integrity: V2 MUST be a Higher Low (HL)
+          const v2Dow = annotatedSwings?.find(
+            (s) => s.time === v2.time || (s.type === "LOW" && s.index === v2.index),
+          );
+          if (v2Dow && v2Dow.dowLabel === "LL") {
+            continue; // An uptrend support line cannot anchor to a Lower Low (breakdown point)!
+          }
+          const priorLows = confirmedLows.filter((l) => l.index < v2.index);
+          const immPrevL = priorLows[priorLows.length - 1];
+          if (immPrevL && v2.price <= immPrevL.price) {
+            continue; // Must be a Higher Low relative to preceding low (cannot be an LL)
+          }
+
+          // An uptrend line cannot span across an intermediate cycle peak where price subsequently broke down
+          const highsBetween = confirmedHighs.filter((h) => h.time > v1.time && h.time < v2.time);
+          if (highsBetween.length > 0) {
+            const highestBetween = highsBetween.reduce((max, h) => (h.price > max.price ? h : max), highsBetween[0]!);
+            const lowsAfterPeak = confirmedLows.filter((l) => l.time > highestBetween.time && l.time < v2.time);
+            if (lowsAfterPeak.some((l) => v2.price <= l.price)) {
+              continue; // V2 broke below a low that formed after the peak -> V2 is in a breakdown downwave!
+            }
+            if (macroPeak && highestBetween.time === macroPeak.time && lowsAfterPeak.length > 0) {
+              continue; // Spans across the macro peak
+            }
+            if (lastHh && highestBetween.time === lastHh.time && lowsAfterPeak.length > 0) {
+              continue; // Spans across wave cycle lastHh peak
+            }
+          }
+
+          // Cannot anchor uptrend line to pre-downtrend trough while active cycle is in an established downtrend
+          if (lastHh && lastLl && lastLl.time > lastHh.time && v1.time < lastHh.time) {
+            continue;
           }
 
           const timeDiff = v2.time - v1.time;
