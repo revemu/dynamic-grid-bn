@@ -1198,10 +1198,12 @@
           plan.reason?.includes("Support broken") ||
           plan.reason?.includes("New Low") ||
           plan.signalType === "WAITING_NEW_BASE" ||
+          plan.signalType === "WAITING_BASE" ||
+          entryPrice <= 0 ||
           data.regime === "WARMUP"
         );
         if (isBroken) {
-          elSignalType.textContent = "🛑 Support Broken (หลุดแนวรับ — รอสร้างฐานใหม่)";
+          elSignalType.textContent = "🛑 Searching New Base (หลุดแนวรับ — รอสร้างฐานใหม่)";
           elSignalType.style.color = "#ef4444";
         } else if (plan.signalType === "WAITING_TL_RETEST" || plan.reason?.includes("Trendline Support")) {
           elSignalType.textContent = "⏳ Waiting Trendline Retest (รอราคาย่อทดสอบแนวรับ Trendline)";

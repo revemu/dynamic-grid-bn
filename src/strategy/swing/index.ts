@@ -1947,6 +1947,21 @@ export class SwingTraderStrategy implements IStrategy {
        (structure?.downtrendLine && !structure.downtrendLine.isBroken && structure.downtrendLine.currentLinePrice <= this.activePosition.entryPrice * 1.008))
     );
 
+    const hasValidTl = Boolean(
+      structure?.uptrendLine &&
+      !structure.uptrendLine.isBroken &&
+      !structure.uptrendLine.breakoutConfirmed &&
+      structure.uptrendLine.currentLinePrice > (structure.bottomBound || 0) &&
+      structure.uptrendLine.currentLinePrice <= currentMid * 1.015,
+    );
+    const hasValidHl = Boolean(
+      structure?.waveCycle?.lastHl &&
+      !structure.waveCycle.lastHl.isBroken &&
+      (!structure.waveCycle.lastLl || structure.waveCycle.lastLl.time < structure.waveCycle.lastHl.time) &&
+      structure.waveCycle.lastHl.price > (structure.bottomBound || 0) &&
+      structure.waveCycle.lastHl.price <= currentMid * 1.005,
+    );
+
     const telemetry = {
       time: Math.floor(Date.now() / 1000),
       mid: currentMid,
@@ -2067,7 +2082,7 @@ export class SwingTraderStrategy implements IStrategy {
         nextPlannedEntryPrice,
         nextPlannedSlPrice,
         isTrappedPosition,
-        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : (entryPrice > 0 ? (structure?.uptrendLine && !structure.uptrendLine.isBroken && structure.uptrendLine.currentLinePrice > (structure.bottomBound || 0) ? "WAITING_TL_RETEST" : (structure?.waveCycle?.lastHl ? "WAITING_HL_RETEST" : "WAITING_LL_RETEST")) : "WAITING_BASE")),
+        signalType: this.activePosition?.signalType || this.lastSignal?.signalType || (this.lastSignal?.hasSignal ? "READY" : (entryPrice > 0 ? (hasValidTl ? "WAITING_TL_RETEST" : (hasValidHl ? "WAITING_HL_RETEST" : "WAITING_LL_RETEST")) : "WAITING_BASE")),
         reason: this.activePosition?.reason || this.lastSignal?.reason || "Waiting for structure support confirmation",
         state: this.swingState,
         isPlannedOnly: !this.activePosition && !this.lastSignal?.hasSignal,
@@ -2097,9 +2112,9 @@ export class SwingTraderStrategy implements IStrategy {
               : (this.lastSignal?.hasSignal
                   ? "🎯 Swing Setup Ready"
                   : (entryPrice > 0
-                      ? (structure?.uptrendLine && !structure.uptrendLine.isBroken && structure.uptrendLine.currentLinePrice > (structure.bottomBound || 0)
+                      ? (hasValidTl
                           ? "⏳ Waiting Trendline Retest"
-                          : (structure?.waveCycle?.lastHl ? "⏳ Waiting HL Retest" : "⏳ Waiting LL Retest"))
+                          : (hasValidHl ? "⏳ Waiting HL Retest" : "⏳ Waiting LL Retest"))
                       : "🛑 Searching New Base")),
             reason: this.activePosition
               ? `Holding ${this.activePosition.qty.toFixed(4)} from $${this.activePosition.entryPrice.toFixed(4)} (SL: $${this.activePosition.stopLossPrice.toFixed(4)} | TP1: $${this.activePosition.tp1Price.toFixed(4)} | TP2: $${this.activePosition.tp2Price.toFixed(4)})`

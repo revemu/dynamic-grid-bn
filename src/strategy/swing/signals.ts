@@ -57,27 +57,29 @@ export class SwingSignalDetector {
       return { isReversal: false, pattern: "Current closed candle is red/bearish" };
     }
 
-    // 1. Bullish Hammer / Pinbar Rejection: Long lower wick >= 50%, closes in upper 30% of range, small upper wick <= 25%
+    // 1. Bullish Hammer / Pinbar / Sweep Rejection:
+    // - Classic Pinbar: Lower wick >= 45%, closes in upper 30% of range, small upper wick <= 25%
+    // - Strong Sweep Rejection: Lower wick >= 28% + solid green body >= 38%, closes in upper 25% of range
     const lowerWick = curr.open - curr.low;
     const upperWick = curr.high - curr.close;
     const lowerWickRatio = lowerWick / currRange;
     const upperWickRatio = upperWick / currRange;
+    const bodyRatio = currBody / currRange;
     if (
-      lowerWickRatio >= 0.50 &&
-      curr.close >= curr.low + currRange * 0.70 &&
-      upperWickRatio <= 0.25
+      (lowerWickRatio >= 0.45 && curr.close >= curr.low + currRange * 0.70 && upperWickRatio <= 0.25) ||
+      (lowerWickRatio >= 0.28 && bodyRatio >= 0.38 && curr.close >= curr.low + currRange * 0.75 && upperWickRatio <= 0.25)
     ) {
-      return { isReversal: true, pattern: `Bullish Hammer (Lower wick ${(lowerWickRatio * 100).toFixed(0)}%, Upper wick ${(upperWickRatio * 100).toFixed(0)}%)` };
+      return { isReversal: true, pattern: `Bullish Hammer / Rejection (Lower wick ${(lowerWickRatio * 100).toFixed(0)}%, Body ${(bodyRatio * 100).toFixed(0)}%)` };
     }
 
     // 2. Bullish Engulfing or Piercing Line Reversal:
-    // Previous candle was red, current candle is solid green and pierces >= 50% into previous body or engulfs
+    // Previous candle was red, current candle is solid green and pierces >= 45% into previous body or engulfs
     if (prev.close < prev.open) {
       const prevRedBody = prev.open - prev.close;
-      // Piercing line: closes above 50% of previous red body
-      const piercingThreshold = prev.close + (prevRedBody * 0.50);
+      // Piercing line: closes above 45% of previous red body
+      const piercingThreshold = prev.close + (prevRedBody * 0.45);
       const isPiercingOrEngulfing = curr.close >= piercingThreshold;
-      const hasSolidBody = (currBody / currRange) >= 0.40;
+      const hasSolidBody = bodyRatio >= 0.40 && upperWickRatio <= 0.30;
 
       if (isPiercingOrEngulfing && hasSolidBody) {
         const isEngulfing = curr.close >= prev.open && curr.open <= prev.close;
@@ -214,26 +216,32 @@ export class SwingSignalDetector {
       gridZone,
     } = structure;
 
+    const slBuffer = Math.max(0.3, config.stopLossBufferPct) / 100;
+    const floorSweepTolerance = Math.max(0.004, slBuffer);
+    const closedCandles = candles.filter((c) => c.isClosed !== false);
+    const lastClosedBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : undefined;
+    const prevClosedBar = closedCandles.length > 1 ? closedCandles[closedCandles.length - 2] : undefined;
+
     // ── 1. Identify Major Support Floor (Previous Major LL of Current Wave) ───
-    let majorFloor = (bottomBound > 0 && bottomBound <= price * 1.002) ? bottomBound : 0;
+    let majorFloor = (bottomBound > 0 && bottomBound <= price * (1 + floorSweepTolerance)) ? bottomBound : 0;
     let majorFloorTime = activeValley?.time ?? 0;
 
     const recentLows = Array.isArray(swingLows) ? swingLows.slice(-20) : [];
     const candidateLows: { price: number; time: number }[] = [];
-    if (waveCycle?.lastLl?.price && waveCycle.lastLl.price > 0 && waveCycle.lastLl.price <= price * 1.002) {
+    if (waveCycle?.lastLl?.price && waveCycle.lastLl.price > 0 && waveCycle.lastLl.price <= price * (1 + floorSweepTolerance)) {
       candidateLows.push({ price: waveCycle.lastLl.price, time: waveCycle.lastLl.time });
     }
-    if (activeValley?.price && activeValley.price > 0 && activeValley.price <= price * 1.002) {
+    if (activeValley?.price && activeValley.price > 0 && activeValley.price <= price * (1 + floorSweepTolerance)) {
       candidateLows.push({ price: activeValley.price, time: activeValley.time });
     }
     for (const s of recentLows) {
-      if (s.price > 0 && s.price <= price * 1.002) {
+      if (s.price > 0 && s.price <= price * (1 + floorSweepTolerance)) {
         candidateLows.push({ price: s.price, time: s.time });
       }
     }
     if (waveCycle?.annotatedSwings) {
       for (const s of waveCycle.annotatedSwings.slice(-24)) {
-        if (s.type === "LOW" && s.price > 0 && s.price <= price * 1.002) {
+        if (s.type === "LOW" && s.price > 0 && s.price <= price * (1 + floorSweepTolerance)) {
           candidateLows.push({ price: s.price, time: s.time });
         }
       }
@@ -286,18 +294,6 @@ export class SwingSignalDetector {
     );
     const tlResistancePrice = hasActiveDowntrendTl ? downtrendLine!.currentLinePrice : 0;
 
-    // If an unbroken descending trendline is active, anchor the wave ceiling to the trendline structure (P2 / latest LH)
-    if (hasActiveDowntrendTl && downtrendLine) {
-      const p2Price = downtrendLine.p2?.price ?? 0;
-      const latestLhPrice = (waveCycle?.lastLh?.price && waveCycle.lastLh.price > majorFloor && waveCycle.lastLh.time >= majorFloorTime)
-        ? waveCycle.lastLh.price
-        : 0;
-      const trendlineCeilAnchor = Math.max(tlResistancePrice, p2Price, latestLhPrice);
-      if (trendlineCeilAnchor > majorFloor && trendlineCeilAnchor < majorCeil) {
-        majorCeil = trendlineCeilAnchor;
-      }
-    }
-
     // Check active unbroken Ascending Trendline (Uptrend Support Line)
     const hasActiveUptrendTl = Boolean(
       uptrendLine &&
@@ -308,11 +304,18 @@ export class SwingSignalDetector {
     );
     const tlSupportPrice = hasActiveUptrendTl ? uptrendLine!.currentLinePrice : 0;
 
-    // Check confirmed Higher Low (HL) after the floor
-    const recentHl = (waveCycle?.lastHl && waveCycle.lastHl.price > majorFloor && (majorFloorTime === 0 || waveCycle.lastHl.time >= majorFloorTime))
-      ? waveCycle.lastHl
-      : undefined;
-    const hlSupportPrice = (recentHl && recentHl.price <= price * 1.015) ? recentHl.price : 0;
+    // Check confirmed Higher Low (HL) after the floor (must be unbroken and not superseded by a newer LL)
+    const isHlUnbroken = Boolean(
+      waveCycle?.lastHl &&
+      !waveCycle.lastHl.isBroken &&
+      (!waveCycle.lastLl || waveCycle.lastLl.time < waveCycle.lastHl.time) &&
+      waveCycle.lastHl.price > majorFloor &&
+      (majorFloorTime === 0 || waveCycle.lastHl.time >= majorFloorTime) &&
+      price >= waveCycle.lastHl.price * (1 - slBuffer) &&
+      (!lastClosedBar || lastClosedBar.time <= waveCycle.lastHl.time || lastClosedBar.close >= waveCycle.lastHl.price * 0.998),
+    );
+    const recentHl = isHlUnbroken ? waveCycle!.lastHl : undefined;
+    const hlSupportPrice = (recentHl && recentHl.price <= price * 1.005) ? recentHl.price : 0;
 
     // 🎯 Determine Active Support Floor (Trendline Support > HL Base > Major LL)
     let activeSupportPrice = majorFloor;
@@ -334,23 +337,28 @@ export class SwingSignalDetector {
     }
 
     // ── 3. Calculate Planned Levels & Trendline-Aware Risk:Reward ─────────────
-    const slBuffer = Math.max(0.3, config.stopLossBufferPct) / 100;
-    let plannedSl = majorFloor * (1 - slBuffer);
+    const llSl = majorFloor * (1 - slBuffer);
+    const hlSl = hlSupportPrice > 0 ? hlSupportPrice * (1 - slBuffer) : llSl;
+    const tlSl = tlSupportPrice > 0
+      ? Math.min(tlSupportPrice, hlSupportPrice > 0 ? hlSupportPrice : tlSupportPrice) * (1 - slBuffer)
+      : llSl;
+
+    let plannedSl = llSl;
     let plannedEntry = majorFloor + Math.min(majorSpan * 0.06, majorFloor * 0.004);
 
     if (activeSupportType === "TRENDLINE") {
-      plannedSl = Math.min(tlSupportPrice, hlSupportPrice > 0 ? hlSupportPrice : tlSupportPrice) * (1 - slBuffer);
+      plannedSl = tlSl;
       plannedEntry = tlSupportPrice;
     } else if (activeSupportType === "HL_BASE") {
-      plannedSl = hlSupportPrice * (1 - slBuffer);
+      plannedSl = hlSl;
       plannedEntry = hlSupportPrice;
     }
 
     // Raw TP1 is Mid-Wave (~50% retracement) or POC if within wave
     const midWavePrice = activeSupportPrice + (majorSpan * 0.50);
     const pocPrice = gridZone?.poc ?? 0;
-    let rawTp1 = (pocPrice > plannedEntry * 1.008 && pocPrice < majorCeil * 0.98)
-      ? pocPrice
+    let rawTp1 = (pocPrice > plannedEntry * 1.006 && pocPrice < majorCeil * 0.996)
+      ? Math.max(midWavePrice, pocPrice)
       : midWavePrice;
 
     // 📐 Trendline Target Integration:
@@ -366,7 +374,7 @@ export class SwingSignalDetector {
 
     // TP2 is Retest of Post-Bottom Major High / Trendline P2-P1 Anchor
     let plannedTp2 = majorCeil * 0.996;
-    if (hasActiveDowntrendTl && downtrendLine?.p2?.price && downtrendLine.p2.price > plannedTp1 * 1.008) {
+    if (hasActiveDowntrendTl && downtrendLine?.p2?.price && downtrendLine.p2.price > plannedTp1 * 1.006) {
       // When capped by a descending trendline, anchor TP2 to the recent LH / trendline anchor
       const postPeakTarget = downtrendLine.p2.price * 0.996;
       if (postPeakTarget > plannedTp1 && postPeakTarget < plannedTp2) {
@@ -374,7 +382,7 @@ export class SwingSignalDetector {
       }
     }
     if (plannedTp2 <= plannedTp1) {
-      plannedTp2 = plannedTp1 * 1.015;
+      plannedTp2 = plannedTp1 * 1.012;
     }
 
     const plannedRisk = Math.max(1e-8, plannedEntry - plannedSl);
@@ -382,23 +390,27 @@ export class SwingSignalDetector {
     const plannedRr = plannedRisk > 0 ? plannedAvgReward / plannedRisk : 0;
 
     // 🎯 Strict Retest Zone Thresholds:
-    const maxNearLlSpan = Math.min(majorSpan * 0.15, majorFloor * 0.010);
+    const maxNearLlSpan = Math.max(majorFloor * 0.004, Math.min(majorSpan * 0.20, majorFloor * 0.010));
     const retestZoneMax = majorFloor + maxNearLlSpan;
 
-    // Reject entry if market is in active falling knife, breaking below floor, or structure in WARMUP
-    const isSupportBroken = majorFloor <= 0 || price < majorFloor * 0.998;
+    // Reject entry if market is breaking below Major LL Stop Loss, confirmed breakdown below floor, or structure in WARMUP
+    const isConfirmedBreakdown = Boolean(
+      lastClosedBar &&
+      majorFloorTime > 0 &&
+      lastClosedBar.time > majorFloorTime &&
+      lastClosedBar.close < majorFloor * 0.997,
+    );
+    const isSupportBroken = majorFloor <= 0 || price < llSl || isConfirmedBreakdown;
     const isStructureUnstable =
-      gridZone?.gateStatus === "WAITING_FOR_BASE_CONFIRMATION" ||
-      gridZone?.gateStatus === "DOWNTREND_NO_CHANNEL" ||
       structure.regime === "WARMUP" ||
       !structure.isSwingConfirmed ||
-      bottomBound <= 0 ||
+      (bottomBound <= 0 && majorFloor <= 0) ||
       isSupportBroken;
 
     if (isStructureUnstable) {
       const gateMsg = isSupportBroken
         ? "SUPPORT_BROKEN_NEW_LOW"
-        : (gridZone?.gateStatus || (structure.regime === "WARMUP" ? "WARMUP_UNCONFIRMED_BASE" : "UNCONFIRMED_SWING_BASE"));
+        : (structure.regime === "WARMUP" ? "WARMUP_UNCONFIRMED_BASE" : "UNCONFIRMED_SWING_BASE");
 
       return {
         hasSignal: false,
@@ -423,7 +435,7 @@ export class SwingSignalDetector {
     // Helper to check if current price has enough room below an active descending trendline
     const hasTrendlineHeadroom = (entryCandidate: number, slCandidate: number): boolean => {
       if (!hasActiveDowntrendTl || tlResistancePrice <= 0) return true;
-      // Do not buy right into an unbroken descending trendline (need >= 0.8% room and >= 1.2x R:R to trendline)
+      // Do not buy right into an unbroken descending trendline (need >= 0.8% room and >= 1.15x R:R to trendline)
       const roomToTl = tlResistancePrice * 0.9985 - entryCandidate;
       const roomPct = (roomToTl / entryCandidate) * 100;
       const riskToSl = Math.max(1e-8, entryCandidate - slCandidate);
@@ -433,12 +445,10 @@ export class SwingSignalDetector {
 
     // ── Setup 1: Uptrend Line Support Retest & Bounce (SUPPORT_RETEST) ───────
     if (config.enableSupportRetestEntry && hasActiveUptrendTl && tlSupportPrice > majorFloor) {
-      const isPriceInTlRetestZone = price >= plannedSl && price <= tlSupportPrice * 1.010;
+      const isPriceInTlRetestZone = price >= tlSl && price <= tlSupportPrice * 1.010;
 
       if (isPriceInTlRetestZone) {
         const reversalCheck = this.checkBullishReversal(candles);
-        const closedCandles = candles.filter((c) => c.isClosed !== false);
-        const lastClosedBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : undefined;
 
         const isLivePriceHoldingReversal = !lastClosedBar || price >= lastClosedBar.open * 0.9995;
         const liveCandle = candles[candles.length - 1]?.isClosed === false ? candles[candles.length - 1] : undefined;
@@ -449,8 +459,8 @@ export class SwingSignalDetector {
           (liveCandle.open - liveCandle.close) > (lastClosedBar.close - lastClosedBar.open) * 0.6,
         );
 
-        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom(price, plannedSl)) {
-          const actualRisk = price - plannedSl;
+        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom(price, tlSl)) {
+          const actualRisk = price - tlSl;
           const actualAvgReward = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio)) - price;
           const actualRr = actualRisk > 0 ? actualAvgReward / actualRisk : 0;
 
@@ -460,13 +470,13 @@ export class SwingSignalDetector {
               hasSignal: true,
               signalType: "SUPPORT_RETEST",
               entryPrice: price,
-              stopLossPrice: plannedSl,
+              stopLossPrice: tlSl,
               tp1Price: plannedTp1,
               tp2Price: plannedTp2,
               riskRewardRatio: actualRr,
               reason: `Uptrend Line Support Retest at $${tlSupportPrice.toFixed(4)} confirmed with ${reversalCheck.pattern}! Risk: -${((actualRisk / price) * 100).toFixed(2)}%, Target: +${(((plannedTp2 - price) / price) * 100).toFixed(2)}%, R:R: ${actualRr.toFixed(2)}x${tlNote}`,
               plannedEntryPrice: price,
-              plannedSlPrice: plannedSl,
+              plannedSlPrice: tlSl,
               plannedTp1Price: plannedTp1,
               plannedTp2Price: plannedTp2,
               plannedRrRatio: actualRr,
@@ -478,12 +488,10 @@ export class SwingSignalDetector {
 
     // ── Setup 2: Higher Low (HL) Support Retest & Bounce (HL_BASE) ───────────
     if (config.enableHlBaseEntry && hlSupportPrice > majorFloor) {
-      const isPriceInHlRetestZone = price >= plannedSl && price <= hlSupportPrice * 1.010;
+      const isPriceInHlRetestZone = price >= hlSl && price <= hlSupportPrice * 1.010;
 
       if (isPriceInHlRetestZone) {
         const reversalCheck = this.checkBullishReversal(candles);
-        const closedCandles = candles.filter((c) => c.isClosed !== false);
-        const lastClosedBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : undefined;
 
         const isLivePriceHoldingReversal = !lastClosedBar || price >= lastClosedBar.open * 0.9995;
         const liveCandle = candles[candles.length - 1]?.isClosed === false ? candles[candles.length - 1] : undefined;
@@ -494,8 +502,8 @@ export class SwingSignalDetector {
           (liveCandle.open - liveCandle.close) > (lastClosedBar.close - lastClosedBar.open) * 0.6,
         );
 
-        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom(price, plannedSl)) {
-          const actualRisk = price - plannedSl;
+        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom(price, hlSl)) {
+          const actualRisk = price - hlSl;
           const actualAvgReward = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio)) - price;
           const actualRr = actualRisk > 0 ? actualAvgReward / actualRisk : 0;
 
@@ -505,13 +513,13 @@ export class SwingSignalDetector {
               hasSignal: true,
               signalType: "HL_BASE",
               entryPrice: price,
-              stopLossPrice: plannedSl,
+              stopLossPrice: hlSl,
               tp1Price: plannedTp1,
               tp2Price: plannedTp2,
               riskRewardRatio: actualRr,
               reason: `Higher Low (HL) Support Retest at $${hlSupportPrice.toFixed(4)} confirmed with ${reversalCheck.pattern}! Risk: -${((actualRisk / price) * 100).toFixed(2)}%, Target: +${(((plannedTp2 - price) / price) * 100).toFixed(2)}%, R:R: ${actualRr.toFixed(2)}x${tlNote}`,
               plannedEntryPrice: price,
-              plannedSlPrice: plannedSl,
+              plannedSlPrice: hlSl,
               plannedTp1Price: plannedTp1,
               plannedTp2Price: plannedTp2,
               plannedRrRatio: actualRr,
@@ -523,13 +531,24 @@ export class SwingSignalDetector {
 
     // ── Setup 3: Major LL Retest & Bullish Reversal Bounce (LL_RETEST_BOUNCE) ─
     if (config.enableSupportRetestEntry) {
-      // Strictly require price to be inside the Near-LL Retest Zone
-      const isPriceInRetestZone = price >= plannedSl && price <= retestZoneMax;
+      // Check if current price or the reversal bar(s) tested the Near-LL Retest Zone without breaking SL
+      const lastBarTouchedZone = Boolean(
+        lastClosedBar &&
+        (majorFloorTime === 0 || lastClosedBar.time >= majorFloorTime) &&
+        lastClosedBar.low <= retestZoneMax &&
+        lastClosedBar.low >= llSl,
+      );
+      const prevBarTouchedZone = Boolean(
+        prevClosedBar &&
+        (majorFloorTime === 0 || prevClosedBar.time >= majorFloorTime) &&
+        prevClosedBar.low <= retestZoneMax &&
+        prevClosedBar.low >= llSl,
+      );
+      const isPriceInRetestZone = price >= llSl && price <= retestZoneMax;
+      const isPriceInLowerWave = price >= llSl && price <= majorFloor + (majorSpan * 0.35);
 
-      if (isPriceInRetestZone) {
+      if (isPriceInRetestZone || ((lastBarTouchedZone || prevBarTouchedZone) && isPriceInLowerWave)) {
         const reversalCheck = this.checkBullishReversal(candles);
-        const closedCandles = candles.filter((c) => c.isClosed !== false);
-        const lastClosedBar = closedCandles.length > 0 ? closedCandles[closedCandles.length - 1] : undefined;
 
         // Anti-Falling Knife: Live tick price check against the reversal bar
         const isLivePriceHoldingReversal = !lastClosedBar || price >= lastClosedBar.open * 0.9995;
@@ -543,32 +562,51 @@ export class SwingSignalDetector {
           (liveCandle.open - liveCandle.close) > (lastClosedBar.close - lastClosedBar.open) * 0.6,
         );
 
-        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom(price, plannedSl)) {
-          const actualRisk = price - plannedSl;
-          const actualAvgReward = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio)) - price;
-          const actualRr = actualRisk > 0 ? actualAvgReward / actualRisk : 0;
+        const actualRisk = price - llSl;
+        const actualAvgReward = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio)) - price;
+        const actualRr = actualRisk > 0 ? actualAvgReward / actualRisk : 0;
 
+        if (reversalCheck.isReversal && isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom(price, llSl)) {
           if (actualRr >= config.minRiskReward) {
             const tlNote = hasActiveDowntrendTl ? ` | TL TP1: $${plannedTp1.toFixed(4)}` : "";
             return {
               hasSignal: true,
               signalType: "LL_RETEST_BOUNCE",
               entryPrice: price,
-              stopLossPrice: plannedSl,
+              stopLossPrice: llSl,
               tp1Price: plannedTp1,
               tp2Price: plannedTp2,
               riskRewardRatio: actualRr,
               reason: `Near Major LL ($${majorFloor.toFixed(4)}) confirmed with ${reversalCheck.pattern}! Risk: -${((actualRisk / price) * 100).toFixed(2)}%, Target: +${(((plannedTp2 - price) / price) * 100).toFixed(2)}%, R:R: ${actualRr.toFixed(2)}x${tlNote}`,
               plannedEntryPrice: price,
-              plannedSlPrice: plannedSl,
+              plannedSlPrice: llSl,
               plannedTp1Price: plannedTp1,
               plannedTp2Price: plannedTp2,
               plannedRrRatio: actualRr,
             };
+          } else {
+            // Reversal confirmed, but current price jumped slightly too high for minRiskReward; calculate max entry price for min R:R
+            const avgTp = (plannedTp1 * config.tp1CloseRatio) + (plannedTp2 * (1 - config.tp1CloseRatio));
+            const maxEntryForMinRr = (avgTp + (config.minRiskReward * llSl)) / (1 + config.minRiskReward);
+            const targetDipEntry = Math.max(majorFloor, Math.min(price, maxEntryForMinRr));
+            return {
+              hasSignal: false,
+              entryPrice: 0,
+              stopLossPrice: llSl,
+              tp1Price: plannedTp1,
+              tp2Price: plannedTp2,
+              riskRewardRatio: config.minRiskReward,
+              reason: `Major LL ($${majorFloor.toFixed(4)}) bounce confirmed (${reversalCheck.pattern}), waiting for minor pullback <= $${targetDipEntry.toFixed(4)} to achieve ${config.minRiskReward.toFixed(2)}x R:R (current: ${actualRr.toFixed(2)}x)`,
+              plannedEntryPrice: targetDipEntry,
+              plannedSlPrice: llSl,
+              plannedTp1Price: plannedTp1,
+              plannedTp2Price: plannedTp2,
+              plannedRrRatio: config.minRiskReward,
+            };
           }
-        } else {
+        } else if (isPriceInRetestZone) {
           let blockReason = `Price in Near-LL zone ($${majorFloor.toFixed(4)} - $${retestZoneMax.toFixed(4)}). Waiting for Bullish Reversal candle confirmation`;
-          if (!hasTrendlineHeadroom(price, plannedSl)) {
+          if (!hasTrendlineHeadroom(price, llSl)) {
             blockReason = `Capped by Descending Trendline at $${tlResistancePrice.toFixed(4)} (insufficient R:R to trendline)`;
           } else if (reversalCheck.isReversal && (!isLivePriceHoldingReversal || isLiveDumping)) {
             blockReason = `Reversal formed, but live candle is currently pulling back/dumping. Waiting for price to stabilize above $${lastClosedBar?.open.toFixed(4)}`;
@@ -578,13 +616,13 @@ export class SwingSignalDetector {
           return {
             hasSignal: false,
             entryPrice: 0,
-            stopLossPrice: plannedSl,
+            stopLossPrice: llSl,
             tp1Price: plannedTp1,
             tp2Price: plannedTp2,
             riskRewardRatio: plannedRr,
             reason: blockReason,
             plannedEntryPrice: plannedEntry,
-            plannedSlPrice: plannedSl,
+            plannedSlPrice: llSl,
             plannedTp1Price: plannedTp1,
             plannedTp2Price: plannedTp2,
             plannedRrRatio: plannedRr,

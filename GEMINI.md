@@ -4376,6 +4376,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - หากผู้ใช้เปิดใช้งานผ่านหน้าแดชบอร์ด สัญญาณจะถูกคุ้มกันด้วย Freshness, Proximity, และ Anti-Peak Guard อย่างเข้มงวด
 4. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.105` ใน `package.json`, `src/version.ts`
 
+---
+
+## 106. v0.2.106 — Major LL / ATL Retest Bounce Architecture & Unbroken HL Validation (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`, `public/app.js`, `public/index.html`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **Gate ขาลงของระบบ Grid (`DOWNTREND_NO_CHANNEL`) บล็อกกลยุทธ์ Swing LL Retest ทั้งระบบ (Dead Code Blocker)**:
+   - ใน `src/strategy/swing/signals.ts` บรรทัด 390–421 เดิมนำ `gridZone?.gateStatus === "DOWNTREND_NO_CHANNEL"` และ `"WAITING_FOR_BASE_CONFIRMATION"` มาบล็อกก่อนถึงการประเมิน Setup
+   - ในความเป็นจริง เมื่อราคาไหลจากยอดคลื่นลงมาทดสอบฐานต่ำสุดเดิม (`Major LL` / `ATL` เช่น `$79,425.54`) โครงสร้างย่อยระหว่างทางจะต้องทำ `LH` และ `LL` เสมอ ส่งผลให้ `gateStatus` เป็น `DOWNTREND_NO_CHANNEL` ตลอดเวลา
+   - ผลลัพธ์คือ ฟังก์ชันสั่ง `return` ออกพร้อมล้างค่า `plannedEntryPrice = 0` ทำให้เส้นประแผนการเทรดหายไปทั้งหมด และ **Setup 3 (`LL_RETEST_BOUNCE`) ไม่มีวันถูกประมวลผลได้เลย 100%**
+2. **บั๊กการดึง `lastHl` ที่ถูกทุบพังไปแล้ว (`isBroken: true`) มาตั้งเป็นฐานแนวรับและ Stop Loss**:
+   - เดิมเช็คเพียง `waveCycle?.lastHl && waveCycle.lastHl.price <= price * 1.015` โดยไม่ตรวจสอบ `!waveCycle.lastHl.isBroken` และไม่ตรวจสอบว่ามีสวิง `LL` ใหม่เกิดขึ้นภายหลังหรือไม่
+   - เมื่อราคาทุบหลุด `HL` เก่า (`$80,700`) ลงมาที่ `$79,870` (ยังอยู่ในระยะ `1.015`) ระบบกลับเข้าใจผิดว่า `activeSupportType = "HL_BASE"` ที่ `$80,700` และตั้ง `plannedSl = $80,417.55` (สูงกว่าราคาปัจจุบัน) ทำให้เงื่อนไข `price >= plannedSl && price <= retestZoneMax` เป็นไปไม่ได้ทางคณิตศาสตร์
+3. **ความขัดแย้งระหว่างโซนทดสอบ (`retestZoneMax`) กับราคาปิดของแท่งเทียนกลับตัว (`checkBullishReversal`)**:
+   - เมื่อแท่งเทียนทิ้งไส้ลงไปทดสอบโซนใกล้ `majorFloor` (เช่น Low ที่ `$79,543.47` เหนือ `$79,425.54` เพียง `+0.14%`) แล้วดีดกลับขึ้นมาปิดเขียวเป็น Bullish Hammer หรือ Piercing Line ราคาปิดจะขยับขึ้นมาเหนือ `retestZoneMax` เล็กน้อย ทำให้เงื่อนไขเดิมที่เช็คเฉพาะราคาปิด (`price <= retestZoneMax`) ปฏิเสธสัญญาณทันที
+4. **บั๊กการคำนวณเพดานคลื่นและ POC (`pocPrice < majorCeil * 0.98`)**:
+   - เงื่อนไข `majorCeil * 0.98` หักลบถึง `-2.0%` จากยอดคลื่น ซึ่งในคลื่น BTC ที่กว้าง `1.8%` ทำให้ค่าที่ได้ต่ำกว่าฐาน `majorFloor` ส่งผลให้ระบบตัด `pocPrice` ทิ้งเสมอ
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Unbroken HL Validation & Independent Setup Stop-Losses (`src/strategy/swing/signals.ts`, `src/strategy/swing/index.ts`)**:
+   - บังคับตรวจสอบ `isHlUnbroken`: ต้องมี `!waveCycle.lastHl.isBroken`, ไม่มี `lastLl` ที่เกิดหลัง `lastHl`, และราคาปัจจุบันไม่หลุด `hlSl`
+   - แยกคำนวณ Stop Loss ประจำแต่ละ Setup อย่างอิสระ (`llSl`, `hlSl`, `tlSl`) โดย `llSl = majorFloor * (1 - slBuffer)` จะไม่ถูกเขียนทับด้วยค่าของ `HL` หรือ `Trendline`
+2. **Unlock Major LL Retest Planning & Execution under Downtrend (`src/strategy/swing/signals.ts`)**:
+   - ปลดล็อก `DOWNTREND_NO_CHANNEL` และ `WAITING_FOR_BASE_CONFIRMATION` ออกจาก `isStructureUnstable` ตราบใดที่ฐานหลัก `majorFloor` ยังไม่ถูกทำลายจริง (`price >= llSl` และไม่มีแท่งเทียนปิดหลุด `majorFloor * 0.997`)
+   - แสดงเส้นประแผนการเทรด (`plannedEntry`, `plannedSl`, `plannedTp1`, `plannedTp2`, `plannedRr`) บนกราฟและการ์ด Swing Targets ตลอดเวลาขณะที่ราคาย่อลงมาหาฐาน
+3. **Wick-Touch Retest Detection & Min R:R Pullback Calculation (`src/strategy/swing/signals.ts`)**:
+   - ใน **Setup 3 (`LL_RETEST_BOUNCE`)**: ตรวจสอบว่าจุดต่ำสุด (`low`) ของแท่งเทียนกลับตัวที่ปิดแล้ว (หรือแท่งก่อนหน้าในคู่ Reversal 2 แท่ง) ได้ลงมาสัมผัสโซน `retestZoneMax` โดยไม่หลุด `llSl` และราคาปัจจุบันยังอยู่ในโซนล่างของคลื่น (`<= 35%` ของ `majorSpan`)
+   - เมื่อเกิดแท่งกลับตัว (`checkBullishReversal`) และผ่าน Anti-Falling Knife Guard (`isLivePriceHoldingReversal && !isLiveDumping && hasTrendlineHeadroom`):
+     - หาก `actualRr >= config.minRiskReward` ($\ge 1.8\text{x}$): ส่งสัญญาณเข้าซื้อ `LL_RETEST_BOUNCE` ทันที
+     - หากแท่งกลับตัวปิดพุ่งแรงจน `actualRr < config.minRiskReward`: คำนวณระดับราคาสูงสุดที่ให้ R:R ตามเกณฑ์ (`targetDipEntry`) และแสดงสถานะรอย่อตัวระยะสั้นเพื่อเข้าซื้อในจุดที่ได้ `1.8x R:R` โดยไม่ไล่ราคา
+4. **การปรับปรุงการแสดงผล Dashboard UI (`public/app.js`, `public/index.html`)**:
+   - แยกการแสดงผลสถานะ `WAITING_BASE` (`🛑 Searching New Base (หลุดแนวรับ — รอสร้างฐานใหม่)`) ออกจาก `WAITING_LL_RETEST` (`⏳ Waiting LL Retest (รอราคาย่อทดสอบฐาน LL เดิม)`) อย่างชัดเจน
+5. **เวอร์ชัน**: อัปเดตเลขเวอร์ชันเป็น `0.2.106` ใน `package.json`, `src/version.ts`, และ `app.js?v=3.43` ใน `public/index.html`
+
+
 
 
 
