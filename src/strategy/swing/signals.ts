@@ -539,7 +539,16 @@ export class SwingSignalDetector {
     // Raw TP1 is Mid-Wave (~50% retracement) or POC if within wave
     const midWavePrice = activeSupportPrice + (majorSpan * 0.50);
     const pocPrice = gridZone?.poc ?? 0;
-    let rawTp1 = (pocPrice > plannedEntry * 1.006 && pocPrice < majorCeil * 0.996)
+    // Only use POC for TP1 if it sits in a healthy sweet-spot:
+    // 1. Above entry (+0.6%)
+    // 2. Below majorCeil with sufficient headroom (<= activeSupportPrice + majorSpan * 0.65)
+    //    so it doesn't crowd out TP2!
+    const isPocInHealthyMidRange =
+      pocPrice > plannedEntry * 1.006 &&
+      pocPrice <= activeSupportPrice + (majorSpan * 0.65) &&
+      pocPrice < majorCeil * 0.985;
+
+    let rawTp1 = isPocInHealthyMidRange
       ? Math.max(midWavePrice, pocPrice)
       : midWavePrice;
 
@@ -557,9 +566,22 @@ export class SwingSignalDetector {
     }
 
     // TP2 is Retest of Post-Bottom Major High / Wave Origin Peak (Runner Target)
+    // Strictly enforce minimum healthy separation between TP1 and TP2 (>= 1.0% separation)
     let plannedTp2 = majorCeil * 0.996;
-    if (plannedTp2 <= plannedTp1) {
-      plannedTp2 = plannedTp1 * 1.012;
+    const minTp2Separation = Math.max(plannedTp1 * 1.010, plannedTp1 + (majorSpan * 0.35));
+    if (plannedTp2 < minTp2Separation) {
+      let higherStructuralTarget = 0;
+      if (Array.isArray(swingHighs)) {
+        const higherHighs = swingHighs.filter((s) => s.price >= minTp2Separation);
+        if (higherHighs.length > 0) {
+          higherStructuralTarget = Math.min(...higherHighs.map((s) => s.price)) * 0.996;
+        }
+      }
+      if (higherStructuralTarget >= minTp2Separation) {
+        plannedTp2 = higherStructuralTarget;
+      } else {
+        plannedTp2 = minTp2Separation;
+      }
     }
 
     // Ensure plannedEntry for MAJOR_LL never exceeds the maximum price that still yields valid R:R
@@ -916,8 +938,8 @@ export class SwingSignalDetector {
       if (!isConsumed && isFreshBreakout && isNearLine && !isNearPeak && !isOverExtended) {
         const stopLoss = activeSupportPrice * (1 - slBuffer);
         const risk = price - stopLoss;
-        const tp1 = plannedTp1 > price * 1.01 ? plannedTp1 : midWavePrice;
-        const tp2 = majorCeil > tp1 ? majorCeil * 0.996 : price * 1.04;
+        const tp1 = plannedTp1 > price * 1.006 ? plannedTp1 : midWavePrice;
+        const tp2 = Math.max(plannedTp2, tp1 * 1.010);
         const averageReward = (tp1 * config.tp1CloseRatio) + (tp2 * (1 - config.tp1CloseRatio)) - price;
         const rr = risk > 0 ? averageReward / risk : 0;
 

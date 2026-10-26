@@ -730,8 +730,8 @@
           borderColor: "rgba(255, 255, 255, 0.08)",
           autoScale: true,
           scaleMargins: {
-            top: 0.02,
-            bottom: 0.03,
+            top: 0.08,
+            bottom: 0.08,
           },
         },
         timeScale: {

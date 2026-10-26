@@ -4593,6 +4593,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.112` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 113. v0.2.113 — Healthy TP1 & TP2 Target Separation & Chart Auto-Scale Buffer Architecture (`src/strategy/swing/signals.ts`, `public/app.js`, `package.json`, `src/version.ts`)
+
+### สาเหตุของปัญหา (Root Causes):
+1. **เส้น TP1 และ TP2 ทับกันเกือบสนิท (Narrow Target Overlap Bug)**:
+   - ตรรกะเดิมดึงระดับ POC ($80,782.51) จาก Volume Profile มาเป็น TP1 โดยไม่มีการตรวจสอบว่า POC ลอยขึ้นไปชิดเพดานบน `majorCeil` ($80,851.76) หรือไม่
+   - ตัวกันระยะห่างเดิมตรวจสอบเพียง `if (plannedTp2 <= plannedTp1)` ทำให้เมื่อ TP2 อยู่สูงกว่า TP1 เพียง $69.25 (0.08%) ระบบไม่ยอมขยายระยะห่าง ส่งผลให้ TP1 (+1.20%) และ TP2 (+1.29%) ซ้อนทับกันเป็นเส้นคู่แฝด ทำลายประโยชน์ของ 2-Stage Exit ตามหลัก Money Management
+2. **ชาร์ทกระเพื่อม/ขยับขึ้นลงตามแท่งเทียนสด (Tight Chart Scale Margins)**:
+   - ใน `public/app.js` มีการตั้ง `scaleMargins: { top: 0.02, bottom: 0.03 }` ซึ่งแคบเกินไป (เผื่อขอบบนแค่ 2%) เมื่อแท่งเทียนสดขยับเข้าใกล้ขอบบน ระบบ TradingView Lightweight Charts จะถูกบังคับให้บีบ/ขยายสเกลแนวตั้ง (Re-scale) ถี่ๆ ทุก Tick จนดูเหมือนชาร์ทเต้นตลอดเวลา
+
+### การแก้ไขและสถาปัตยกรรมใหม่ (Solutions):
+1. **Healthy Mid-Wave TP1 Qualification (`isPocInHealthyMidRange`)**:
+   - ใน `src/strategy/swing/signals.ts` จะเลือกใช้ POC เป็น TP1 ได้ก็ต่อเมื่อ POC อยู่ในโซนกลางคลื่นที่เหมาะสมเท่านั้น ($\le \text{activeSupportPrice} + \text{majorSpan} \times 0.65$ และ $< \text{majorCeil} \times 0.985$)
+   - หาก POC อยู่สูงเกินไป จะดึง TP1 กลับมาอยู่ที่ **Mid-Wave Retracement จริง (~50% แถว ~$80,500)** เสมอ
+2. **Enforce Minimum Separation Between TP1 and TP2 ($\ge 1.0\%$)**:
+   - บังคับให้ TP2 ต้องอยู่ห่างจาก TP1 อย่างน้อย $\ge 1.0\%$ และ $\ge \text{plannedTp1} + (\text{majorSpan} \times 0.35)$
+   - หากเพดานบนใกล้เกินไป ระบบจะขยาย TP2 ไปอิงยอดแนวต้านสวิง High ถัดไปด้านบน (`swingHighs` หรือ `htfCeil` ~$81,300 - $81,600) เพื่อให้เป็นเป้า Runner ที่แท้จริง
+3. **Smooth Chart Scale Margins (8% Breathing Room)**:
+   - ปรับ `scaleMargins: { top: 0.08, bottom: 0.08 }` ใน `public/app.js` เพื่อให้ชาร์ทมีพื้นที่ว่างขอบบนและล่างมากขึ้น กราฟจะไม่เต้นหรือบีบสเกลตามราคาสดอีกต่อไป
+4. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.113` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
