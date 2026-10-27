@@ -141,6 +141,8 @@ export const defaultStrategyConfig = {
   buyLevelPcts: [42, 32, 22, 12, 2] as number[],
   /** Grid zone percentage allocations for Sell Targets 1..5 (default [52, 62, 72, 82, 92]%). */
   sellLevelPcts: [52, 62, 72, 82, 92] as number[],
+  /** Relative tranche weights for Sell Targets 1..5 (default [50, 50, 0, 0, 0]). */
+  sellLevelWeights: [50, 50, 0, 0, 0] as number[],
   /**
    * Buy Tranche Sizing Mode:
    * 1. "PYRAMID" (Default): Weighted sizing [10%, 15%, 20%, 25%, 30%] from Buy L1..L5 to pull average entry lower toward the floor.
@@ -410,6 +412,13 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
         const defaultSells = [52, 62, 72, 82, 92];
         while (merged.sellLevelPcts.length < 5) {
           merged.sellLevelPcts.push(defaultSells[merged.sellLevelPcts.length] ?? 92);
+        }
+      }
+      if (Array.isArray(saved.sellLevelWeights)) {
+        merged.sellLevelWeights = saved.sellLevelWeights.map((v: any) => Math.max(0, Number(v) || 0));
+        const defaultSellWeights = [50, 50, 0, 0, 0];
+        while (merged.sellLevelWeights.length < 5) {
+          merged.sellLevelWeights.push(defaultSellWeights[merged.sellLevelWeights.length] ?? 0);
         }
       }
       return merged;

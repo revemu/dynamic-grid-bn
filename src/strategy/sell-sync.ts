@@ -489,6 +489,14 @@ export class SellOrderSynchronizer {
         const activeSellIndices = eligibleIndices.slice(0, targetTrancheCount);
         const numActive = activeSellIndices.length > 0 ? activeSellIndices.length : 1;
         const trancheQty = held / numActive;
+        const totalSellWeight = activeSellIndices.reduce((sum, idx) => sum + (this.host.cfg.sellLevelWeights?.[idx] ?? 0), 0);
+        const getCustomSellQty = (idx: number, isLast: boolean, currentHeld: number): number => {
+          if (totalSellWeight > 0 && (this.host.cfg.sellLevelWeights?.[idx] ?? 0) > 0) {
+            if (isLast) return currentHeld;
+            return currentHeld * ((this.host.cfg.sellLevelWeights?.[idx] ?? 0) / totalSellWeight);
+          }
+          return trancheQty;
+        };
 
         const hasMissingEligibleSellOrders = activeSellIndices.some((idx) => {
           const lvlPrice = sellLevels[idx];
@@ -553,8 +561,8 @@ export class SellOrderSynchronizer {
                   const iocCooldownKey = `ioc_sell_${sellNames[i]}`;
                   const lastIoc = this.host.orderCooldowns.get(iocCooldownKey) ?? 0;
                   if (Date.now() - lastIoc > 15_000) {
-                    let desiredSellQty = trancheQty;
-                    if (isLastActive && mode !== "LOT_BASED_PROFIT") {
+                    let desiredSellQty = getCustomSellQty(i, isLastActive, heldNow);
+                    if (isLastActive && mode !== "LOT_BASED_PROFIT" && totalSellWeight <= 0) {
                       desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numActive - 1)));
                     }
                     desiredSellQty = Math.min(this.lotTracker.baseHeld(), desiredSellQty);
@@ -580,7 +588,7 @@ export class SellOrderSynchronizer {
           const isEligibleForNewOrder = lvlPrice > minAllowedSellPrice;
           if (!currentOpenSellAtLvl && !isEligibleForNewOrder) continue;
 
-          let desiredSellQty = trancheQty;
+          let desiredSellQty = getCustomSellQty(i, isLastActive, this.lotTracker.baseHeld());
 
           if (mode === "LOT_BASED_PROFIT") {
             const profitableLots = this.host.lots.filter((l) => l.price * 1.001 <= lvlPrice);
@@ -601,7 +609,7 @@ export class SellOrderSynchronizer {
             desiredSellQty = Math.min(desiredSellQty, availableProfitableQty);
           }
 
-          if (isLastActive && mode !== "LOT_BASED_PROFIT") {
+          if (isLastActive && mode !== "LOT_BASED_PROFIT" && totalSellWeight <= 0) {
             desiredSellQty = Math.max(trancheQty, this.lotTracker.baseHeld() - (trancheQty * (numActive - 1)));
           }
 
@@ -747,6 +755,14 @@ export class SellOrderSynchronizer {
     const activeSellIndices = eligibleSellIndices.slice(0, targetTrancheCount);
     const numActiveLevels = activeSellIndices.length > 0 ? activeSellIndices.length : (sellLevels.length || 5);
     const trancheQty = held / numActiveLevels;
+    const totalSellWeight2 = activeSellIndices.reduce((sum, idx) => sum + (this.host.cfg.sellLevelWeights?.[idx] ?? 0), 0);
+    const getCustomSellQty2 = (idx: number, isLast: boolean, currentHeld: number): number => {
+      if (totalSellWeight2 > 0 && (this.host.cfg.sellLevelWeights?.[idx] ?? 0) > 0) {
+        if (isLast) return currentHeld;
+        return currentHeld * ((this.host.cfg.sellLevelWeights?.[idx] ?? 0) / totalSellWeight2);
+      }
+      return trancheQty;
+    };
 
     const hasMissingEligibleSellOrders = activeSellIndices.some((idx) => {
       const lvlPrice = sellLevels[idx];
@@ -808,8 +824,8 @@ export class SellOrderSynchronizer {
               const iocCooldownKey = `ioc_sell_${sellNames[i]}`;
               const lastIoc = this.host.orderCooldowns.get(iocCooldownKey) ?? 0;
               if (Date.now() - lastIoc > 15_000) {
-                let desiredSellQty = trancheQty;
-                if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
+                let desiredSellQty = getCustomSellQty2(i, isFinalExitLevel, heldNow);
+                if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT" && totalSellWeight2 <= 0) {
                   desiredSellQty = Math.max(trancheQty, heldNow - (trancheQty * (numActiveLevels - 1)));
                 }
                 desiredSellQty = Math.min(this.lotTracker.baseHeld(), desiredSellQty);
@@ -838,8 +854,8 @@ export class SellOrderSynchronizer {
         lvlPrice = Math.max(lvlPrice, minMakerPrice);
       }
 
-      let desiredSellQty = trancheQty;
-      if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT") {
+      let desiredSellQty = getCustomSellQty2(i, isFinalExitLevel, this.lotTracker.baseHeld());
+      if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT" && totalSellWeight2 <= 0) {
         desiredSellQty = Math.max(trancheQty, this.lotTracker.baseHeld() - (trancheQty * (numActiveLevels - 1)));
       }
 

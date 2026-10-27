@@ -391,10 +391,21 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
           if (c.high >= sPrice && lots.length > 0) {
             const isProfitOk = cfg.sellProfitMode !== "PORTFOLIO_AVG_PROFIT" || sPrice >= avgEntry * (1 + cfg.minNetProfitPct / 100);
             if (isProfitOk) {
-              // If this is the last eligible target OR holding only 1 lot, sell entire remaining inventory!
-              const sellQty = (eligibleTargets.length === 1 || lots.length === 1)
+              // If this is the last eligible target, sell entire remaining inventory!
+              const isLastTarget = eligibleTargets.length <= 1;
+              let sellFraction = 1 / Math.max(1, eligibleTargets.length);
+              const sellWeights = cfg.sellLevelWeights;
+              if (Array.isArray(sellWeights) && sellWeights.some((w) => w > 0)) {
+                const totalActiveWeight = eligibleTargets.reduce((sum, t) => sum + (sellWeights[t.idx] ?? 0), 0);
+                const targetWeight = sellWeights[item.idx] ?? 0;
+                if (totalActiveWeight > 0 && targetWeight > 0) {
+                  sellFraction = targetWeight / totalActiveWeight;
+                }
+              }
+
+              const sellQty = isLastTarget
                 ? currentBaseHeld
-                : currentBaseHeld / eligibleTargets.length;
+                : currentBaseHeld * sellFraction;
 
               if (sellQty > 0) {
                 let rem = sellQty;
@@ -738,17 +749,18 @@ async function main() {
 
   const configs: BacktestConfig[] = [
     {
-      name: "1. Optimized Sniper Grid (Front-Load [50,30,20] + FastCut 🛡️) 🌟",
+      name: "1. Proposal 1: Multi-Stage TP (50% at 60% + 50% at Ceil) 🌟",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
       minChannelWidthPct: 1.8,
       maxChannelWidthPct: 6.0,
       buyLevelPcts: [15, 8, 2, 1, 0.5],
-      sellLevelPcts: [60, 80, 100, 100, 100],
+      sellLevelPcts: [60, 100, 100, 100, 100],
       buyLevelWeights: [50, 30, 20, 10, 10],
+      sellLevelWeights: [50, 50, 0, 0, 0],
       enabledBuyLevels: [true, true, true, false, false],
-      enabledSellTargets: [true, true, true, false, false],
+      enabledSellTargets: [true, true, false, false, false],
       minNetProfitPct: 0.50,
       floorBufferPct: 0.35,
       dowTrendFilter: true,

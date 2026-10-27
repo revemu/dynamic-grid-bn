@@ -670,6 +670,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       enabledSellTargets: Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true],
       buyLevelPcts: Array.isArray(this.cfg.buyLevelPcts) ? this.cfg.buyLevelPcts : [42, 32, 22, 12, 2],
       sellLevelPcts: Array.isArray(this.cfg.sellLevelPcts) ? this.cfg.sellLevelPcts : [52, 62, 72, 82, 92],
+      sellLevelWeights: Array.isArray(this.cfg.sellLevelWeights) ? this.cfg.sellLevelWeights : [50, 50, 0, 0, 0],
       buySizingMode: this.cfg.buySizingMode ?? "PYRAMID",
       buyLevelWeights: Array.isArray(this.cfg.buyLevelWeights) ? this.cfg.buyLevelWeights : [10, 15, 20, 25, 30],
       minNetProfitPct: this.cfg.minNetProfitPct ?? 0.25,
@@ -863,6 +864,17 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
             this.cfg.buyLevelWeights.push(defaultWeights[this.cfg.buyLevelWeights.length] ?? 20);
           }
           this.needsBuyRebalance = true;
+          continue;
+        }
+        if (key === "sellLevelWeights" && Array.isArray(val)) {
+          this.cfg.sellLevelWeights = val.map((v: any) => Math.max(0, Number(v) || 0));
+          const defaultSellWeights = [50, 50, 0, 0, 0];
+          while (this.cfg.sellLevelWeights.length < 5) {
+            this.cfg.sellLevelWeights.push(defaultSellWeights[this.cfg.sellLevelWeights.length] ?? 0);
+          }
+          this.needsSellRebalance = true;
+          this.iocBracketSellCycle = undefined;
+          this.soldSellIndices.clear();
           continue;
         }
         if (key === "minNetProfitPct") {
@@ -4011,6 +4023,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         enabledSellTargets: this.cfg.enabledSellTargets ?? [true, true, true, true, true],
         buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],
         sellLevelPcts: this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92],
+        sellLevelWeights: this.cfg.sellLevelWeights ?? [50, 50, 0, 0, 0],
         buySizingMode: this.cfg.buySizingMode ?? "PYRAMID",
         buyLevelWeights: this.cfg.buyLevelWeights ?? [10, 15, 20, 25, 30],
         buyWeightFractions: this.getBuyLevelWeightFractions(),

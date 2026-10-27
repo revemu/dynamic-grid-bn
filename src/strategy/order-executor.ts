@@ -1552,9 +1552,19 @@ export class OrderExecutor {
             const remainingUnsold = activeSellIndices.filter((idx) => !this.host.soldSellIndices.has(idx));
             const isFinalTranche = remainingUnsold.length <= 1 || targetTrancheToSell === activeSellIndices[activeSellIndices.length - 1];
 
+            let sellFrac = 1 / Math.max(1, remainingUnsold.length);
+            const sellWeights = this.host.cfg.sellLevelWeights;
+            if (Array.isArray(sellWeights) && sellWeights.some((w) => w > 0)) {
+              const totalUnsoldWeight = remainingUnsold.reduce((sum, idx) => sum + (sellWeights[idx] ?? 0), 0);
+              const targetWeight = sellWeights[targetTrancheToSell] ?? 0;
+              if (totalUnsoldWeight > 0 && targetWeight > 0) {
+                sellFrac = targetWeight / totalUnsoldWeight;
+              }
+            }
+
             const rawDesiredQty = isFinalTranche
               ? held
-              : roundToStep(held / Math.max(1, remainingUnsold.length), this.getStepSize(), this.host.qtyPrecision);
+              : roundToStep(held * sellFrac, this.getStepSize(), this.host.qtyPrecision);
             const desiredQty = Math.min(held, rawDesiredQty);
 
             if (desiredQty >= this.host.minQty) {

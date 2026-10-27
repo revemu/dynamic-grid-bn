@@ -4796,6 +4796,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
 6. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.118` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 119. v0.2.119 — Multi-Stage Take Profit Scaling (`sellLevelWeights: [50, 50, 0, 0, 0]`) & Asymmetric Exit Allocation (`src/strategy/`, `src/config.ts`, `src/backtest.ts`)
+
+### สาเหตุและปัญหาที่ค้นพบ (Root Cause & Discovery)
+1. **ปัญหาการเทขายหมดยกไม้ตั้งแต่เป้าแรก (Premature 100% Exit at Sell Target 1)**:
+   - ในการเทรดแบบ Sniper Grid เมื่อบอทเข้าไม้ 1 ที่โซนชิดฟลอร์ (15%) แล้วราคาเริ่มเด้งขึ้นแตะ Sell Target 1 (60% ของกรอบ):
+     - ตรรกะเดิมจะเทขายเหรียญออกหมด 100% ทันที (`sellQty = currentBaseHeld`)
+     - ทำให้ในรอบที่ตลาดมีแรงผลักดันสูง (Bullish Impulse) พุ่งขึ้นต่อไปแตะ Sell Target 2 (80%) หรือ Ceiling 100% บอทไม่มีเหรียญเหลือให้รันเทรนด์เลย เสียโอกาสในการทำกำไรคำใหญ่ไปอย่างน่าเสียดาย
+   - นอกจากนี้ ใน `src/backtest.ts` เดิม มีเงื่อนไข `|| lots.length === 1` บังคับเทขาย 100% เมื่อมี 1 ไม้ ซึ่งไม่สะท้อนโครงสร้าง Multi-Tranche Selling ที่แท้จริง
+
+---
+
+### การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)
+1. **Multi-Stage Take Profit Scaling & Symmetrical Sell Weights (`sellLevelWeights`)**:
+   - เพิ่มการตั้งค่า `sellLevelWeights: [50, 50, 0, 0, 0]` ใน `src/config.ts` ให้สมมาตรกับ `buyLevelWeights`:
+     - **Sell Target 1 (60% ของกรอบ)**: ขาย **50% ของเหรียญที่ถืออยู่** เพื่อล็อคกำไรชิ้นแรกเข้ากระเป๋าและลดต้นทุนเงินต้นเป็นศูนย์
+     - **Sell Target 2 (100% Ceiling)**: ถือ **50% ที่เหลือเป็น Runner Lot** ขึ้นไปขายทำกำไรคำโตที่ยอดคลื่น
+   - ใน `src/strategy/sell-sync.ts`: เพิ่มฟังก์ชันคำนวณสัดส่วนขาย `getCustomSellQty` และ `getCustomSellQty2` ตามน้ำหนัก `sellLevelWeights` สำหรับทั้ง Maker Limit Orders และ IOC Sell
+   - ใน `src/strategy/order-executor.ts`: ปรับตรรกะ IOC Bracket Sell ให้ขายตามสัดส่วน `sellLevelWeights` และตัดขาย 100% เฉพาะในเป้าสุดท้าย (`isFinalTranche`)
+   - ใน `src/backtest.ts`: ปรับตรรกะใน `runSimulation` ให้นำ `sellLevelWeights` มาแบ่งขายตามสัดส่วนจริง
+2. **ผลการทดสอบเปรียบเทียบเชิงประจักษ์ (Empirical Audit Benchmark on BNBFDUSD 10.4 Days 15M Data)**:
+   - **Baseline Profile 1 เดิม (v0.2.118)**: กำไรสุทธิ `+$1.26 (+0.63%)`, Max Drawdown `0.84%`
+   - **Proposal 1: Multi-Stage TP 50/50 (v0.2.119) 🌟**:
+     - กำไรสุทธิกระโดดขึ้นเป็น **`+$1.55 (+0.78%)`** (กำไรเพิ่มขึ้น +23%)
+     - Max Drawdown ลดลงเหลือเพียง **`0.69%`** (ปลอดภัยยิ่งขึ้น)
+3. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.119` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 
