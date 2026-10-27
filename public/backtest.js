@@ -32,11 +32,52 @@
 
   // Inputs
   const inpSymbol = document.getElementById("btSymbol");
+  const inpSymbolCustom = document.getElementById("btSymbolCustom");
   const inpTimeframe = document.getElementById("btTimeframe");
   const inpLimit = document.getElementById("btLimit");
   const inpSpread = document.getElementById("btSpread");
   const inpSlMode = document.getElementById("btSlMode");
   const inpBudget = document.getElementById("btBudget");
+
+  if (inpSymbol && inpSymbolCustom) {
+    inpSymbol.addEventListener("change", () => {
+      if (inpSymbol.value === "custom") {
+        inpSymbolCustom.style.display = "block";
+        inpSymbolCustom.focus();
+      } else {
+        inpSymbolCustom.style.display = "none";
+      }
+    });
+  }
+
+  function getSelectedSymbol() {
+    if (!inpSymbol) return "BNBFDUSD";
+    if (inpSymbol.value === "custom") {
+      return (inpSymbolCustom?.value || "BNBFDUSD").trim().toUpperCase();
+    }
+    return (inpSymbol.value || "BNBFDUSD").trim().toUpperCase();
+  }
+
+  function setSymbolValue(sym) {
+    if (!sym || !inpSymbol) return;
+    const clean = sym.toUpperCase().replace(/[\/\-_:]/g, "");
+    let found = false;
+    for (const opt of inpSymbol.options) {
+      if (opt.value.toUpperCase().replace(/[\/\-_:]/g, "") === clean) {
+        inpSymbol.value = opt.value;
+        if (inpSymbolCustom) inpSymbolCustom.style.display = "none";
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      inpSymbol.value = "custom";
+      if (inpSymbolCustom) {
+        inpSymbolCustom.value = sym.toUpperCase();
+        inpSymbolCustom.style.display = "block";
+      }
+    }
+  }
 
   // Legend elements
   const legSymTf = document.getElementById("legSymTf");
@@ -1017,7 +1058,7 @@
 
   // Run Backtest Trigger
   async function runBacktest() {
-    const symbol = inpSymbol.value.trim().toUpperCase() || "BNBFDUSD";
+    const symbol = getSelectedSymbol();
     const timeframe = inpTimeframe.value;
     const limit = Number(inpLimit.value) || 1000;
     const spreadThreshold = inpSpread.value === "auto" ? "auto" : Number(inpSpread.value);
@@ -1122,7 +1163,7 @@
       if (!data.success || !data.record) throw new Error(data.error || "Record not found");
 
       // Populate input controls with loaded record settings
-      inpSymbol.value = data.record.symbol || "BNBFDUSD";
+      setSymbolValue(data.record.symbol || "BNBFDUSD");
       inpTimeframe.value = data.record.timeframe || "5m";
       inpSpread.value = String(data.record.spreadThreshold || "0.25");
       if (inpSlMode && data.record.useRatchetSl !== undefined) {
@@ -1191,7 +1232,7 @@
     // Check if query params exist (e.g. symbol from live bot)
     const urlParams = new URLSearchParams(window.location.search);
     const sym = urlParams.get("symbol");
-    if (sym) inpSymbol.value = sym.toUpperCase();
+    if (sym) setSymbolValue(sym);
 
     // Automatically trigger initial backtest for immediate gratification!
     setTimeout(() => {

@@ -30,9 +30,34 @@
 
       <!-- Controls Form -->
       <div class="bt-controls">
-        <div class="bt-input-group">
+        <div class="bt-input-group" style="min-width: 165px;">
           <label>คู่เหรียญ</label>
-          <input type="text" id="btSymbol" value="BNBFDUSD" placeholder="e.g. BNBFDUSD" />
+          <select id="btSymbol">
+            <optgroup label="🟡 FDUSD Pairs (Binance Spot)">
+              <option value="BNBFDUSD" selected>BNB / FDUSD</option>
+              <option value="BTCFDUSD">BTC / FDUSD</option>
+              <option value="ETHFDUSD">ETH / FDUSD</option>
+              <option value="SOLFDUSD">SOL / FDUSD</option>
+            </optgroup>
+            <optgroup label="💵 USDT Pairs (High Liquidity)">
+              <option value="BTCUSDT">BTC / USDT</option>
+              <option value="ETHUSDT">ETH / USDT</option>
+              <option value="BNBUSDT">BNB / USDT</option>
+              <option value="SOLUSDT">SOL / USDT</option>
+              <option value="XRPUSDT">XRP / USDT</option>
+              <option value="DOGEUSDT">DOGE / USDT</option>
+              <option value="ADAUSDT">ADA / USDT</option>
+              <option value="AVAXUSDT">AVAX / USDT</option>
+              <option value="LINKUSDT">LINK / USDT</option>
+            </optgroup>
+            <optgroup label="💎 USDC Pairs">
+              <option value="BTCUSDC">BTC / USDC</option>
+              <option value="ETHUSDC">ETH / USDC</option>
+              <option value="SOLUSDC">SOL / USDC</option>
+            </optgroup>
+            <option value="custom">✏️ พิมพ์เอง (Custom)...</option>
+          </select>
+          <input type="text" id="btSymbolCustom" placeholder="เช่น NEARUSDT" style="display: none; margin-top: 4px; text-transform: uppercase;" />
         </div>
 
         <div class="bt-input-group">

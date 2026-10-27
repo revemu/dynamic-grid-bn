@@ -5109,6 +5109,19 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ตรวจสอบ TypeScript ด้วย `npm run typecheck` ผ่าน 100% (0 errors)
    - อัปเดตเวอร์ชันเป็น `v0.2.131` และ Push ขึ้น Git เรียบร้อย
 
+## 132. v0.2.132 — Trading Pair Select Dropdown with Popular Preset Pairs & Custom Input in Backtest Studio
+
+1. **การปรับปรุงช่องเลือกคู่เหรียญใน Backtest Studio (`public/backtest.html` & `public/backtest.js`)**:
+   - **ปัญหาเดิม**: ช่องเลือกคู่เหรียญเป็น `<input type="text">` ธรรมดา ผู้ใช้ต้องพิมพ์ชื่อเหรียญเอง เช่น `BNBFDUSD` ทุกครั้ง
+   - **สถาปัตยกรรมใหม่**:
+     - เปลี่ยนเป็น `<select id="btSymbol">` แบบจัดหมวดหมู่ (`<optgroup>`):
+       - 🟡 **FDUSD Pairs (Binance Spot 0% Fee)**: `BNB / FDUSD`, `BTC / FDUSD`, `ETH / FDUSD`, `SOL / FDUSD`
+       - 💵 **USDT Pairs (High Liquidity)**: `BTC / USDT`, `ETH / USDT`, `BNB / USDT`, `SOL / USDT`, `XRP / USDT`, `DOGE / USDT`, `ADA / USDT`, `AVAX / USDT`, `LINK / USDT`
+       - 💎 **USDC Pairs**: `BTC / USDC`, `ETH / USDC`, `SOL / USDC`
+       - ✏️ **พิมพ์เอง (Custom)...**: แสดงช่อง `<input type="text" id="btSymbolCustom">` เพื่อพิมพ์คู่เหรียญที่ต้องการได้อิสระ
+     - รองรับการสลับค่าอัตโนมัติเมื่อกดโหลดประวัติการทดสอบเก่า หรือส่งค่าผ่าน URL Query Param `?symbol=...`
+
+
 
 
 
