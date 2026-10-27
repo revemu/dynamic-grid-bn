@@ -3200,6 +3200,20 @@ input:checked + .slider:before { transform: translateX(20px); }
   line-height: 1;
 }
 
+.menu-btn-backtest {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(79, 70, 229, 0.28));
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  color: #e0e7ff;
+}
+
+.menu-btn-backtest:hover {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.35), rgba(79, 70, 229, 0.5));
+  border-color: #818cf8;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+}
+
 .menu-btn-trades {
   background: rgba(56, 189, 248, 0.12);
   border: 1px solid rgba(56, 189, 248, 0.38);

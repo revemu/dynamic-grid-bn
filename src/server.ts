@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Candle } from "./market-structure.js";
 import { BotDatabase, getDatabase } from "./db.js";
 import { APP_VERSION_INFO } from "./version.js";
+import { BacktestService } from "./backtest-service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -691,6 +692,90 @@ export class DashboardServer {
           usdc: [],
         }));
       })();
+      return;
+    }
+
+    // ─── Backtest API Endpoints ──────────────────────────────────────────────
+    if (pathname === "/api/backtest/run" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          const symbol = parsed.symbol || this.latestTick?.symbol || "BNBFDUSD";
+          const timeframe = parsed.timeframe || "5m";
+          const limit = Number(parsed.limit) || 1000;
+          const spreadThreshold = parsed.spreadThreshold === "auto" ? "auto" : (Number(parsed.spreadThreshold) || 0.25);
+          const budget = Number(parsed.budget) || 200;
+          const slBufferPct = Number(parsed.slBufferPct) || 0.25;
+
+          const candles = await BacktestService.fetchBinanceCandles(symbol, timeframe, limit);
+          const result = BacktestService.runMaFanSimulation(candles, {
+            symbol,
+            timeframe,
+            spreadThreshold,
+            initialCapital: budget,
+            slBufferPct,
+          });
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, ...result }));
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        }
+      });
+      return;
+    }
+
+    if (pathname === "/api/backtest/history" && req.method === "GET") {
+      const history = BacktestService.getHistoryList();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, history }));
+      return;
+    }
+
+    if (pathname === "/api/backtest/history/get" && req.method === "GET") {
+      const id = parsedUrl.searchParams.get("id");
+      if (!id) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: "Missing backtest ID" }));
+        return;
+      }
+      const record = BacktestService.getRecordById(id);
+      if (!record) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: "Backtest record not found" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, record }));
+      return;
+    }
+
+    if (
+      (pathname === "/api/backtest/history/delete" && req.method === "POST") ||
+      (pathname === "/api/backtest/delete" && req.method === "POST")
+    ) {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          const id = parsed.id || parsedUrl.searchParams.get("id");
+          if (!id) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, error: "Missing ID" }));
+            return;
+          }
+          const ok = BacktestService.deleteRecordById(id);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: ok }));
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        }
+      });
       return;
     }
 

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MA Fan Sniper — Backtest Studio</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="backtest.css?v=1.0" />
+  <!-- TradingView Lightweight Charts -->
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <div class="bt-app">
+    <!-- Top Navigation Toolbar -->
+    <header class="bt-header">
+      <div class="bt-brand">
+        <a href="/" class="bt-back-link" title="กลับสู่หน้าเทรดสด">
+          <span class="bt-back-icon">←</span> หน้าเทรดสด
+        </a>
+        <div class="bt-title-wrap">
+          <span class="bt-badge">MA FAN SNIPER</span>
+          <h1 class="bt-title">🧪 Backtest Studio</h1>
+        </div>
+      </div>
+
+      <!-- Controls Form -->
+      <div class="bt-controls">
+        <div class="bt-input-group">
+          <label>คู่เหรียญ</label>
+          <input type="text" id="btSymbol" value="BNBFDUSD" placeholder="e.g. BNBFDUSD" />
+        </div>
+
+        <div class="bt-input-group">
+          <label>Timeframe</label>
+          <select id="btTimeframe">
+            <option value="5m" selected>5m (Execution)</option>
+            <option value="15m">15m (Supervisor)</option>
+            <option value="1h">1h (Macro)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
+          <label>จำนวนแท่ง</label>
+          <select id="btLimit">
+            <option value="500">500 แท่ง (~1.7 วัน)</option>
+            <option value="1000" selected>1,000 แท่ง (~3.5 วัน)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
+          <label>Min Fan Spread</label>
+          <select id="btSpread">
+            <option value="auto">Auto Calibrate</option>
+            <option value="0.25" selected>≥ 0.25% (มาตรฐาน)</option>
+            <option value="0.35">≥ 0.35% (ตึงปานกลาง)</option>
+            <option value="0.45">≥ 0.45% (ตึงมาก)</option>
+            <option value="0.55">≥ 0.55% (Extreme)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
+          <label>เงินทุน ($)</label>
+          <input type="number" id="btBudget" value="200" min="10" step="10" />
+        </div>
+
+        <button id="btnRunBacktest" class="btn-run">
+          <span class="btn-run-icon">🚀</span> รัน Backtest
+        </button>
+
+        <button id="btnOpenHistory" class="btn-history" title="ดูประวัติการทดสอบที่บันทึกไว้">
+          📂 ประวัติที่บันทึกไว้ (<span id="historyCount">0</span>)
+        </button>
+      </div>
+    </header>
+
+    <!-- KPI Summary Cards -->
+    <section class="bt-kpi-bar" id="kpiBar">
+      <div class="kpi-card" id="kpiNetPnlCard">
+        <div class="kpi-label">กำไรสุทธิ (NET PNL)</div>
+        <div class="kpi-val" id="kpiNetPnl">+0.00%</div>
+        <div class="kpi-sub" id="kpiNetPnlQuote">$0.00</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">WIN RATE</div>
+        <div class="kpi-val" id="kpiWinRate">0.0%</div>
+        <div class="kpi-sub" id="kpiWinLoss">0 ชนะ / 0 แพ้</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">จำนวนไม้ทั้งหมด</div>
+        <div class="kpi-val" id="kpiTotalTrades">0 ไม้</div>
+        <div class="kpi-sub" id="kpiAvgBars">เฉลี่ย 0 แท่ง/ไม้</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">PROFIT FACTOR</div>
+        <div class="kpi-val" id="kpiProfitFactor">0.00</div>
+        <div class="kpi-sub" id="kpiFactorSub">Gross P/L Ratio</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">MAX DRAWDOWN</div>
+        <div class="kpi-val text-loss" id="kpiMaxDrawdown">0.00%</div>
+        <div class="kpi-sub">ความเสี่ยงย่อลึกสุด</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">BEST / WORST TRADE</div>
+        <div class="kpi-val" id="kpiBestTrade">+0.00%</div>
+        <div class="kpi-sub" id="kpiWorstTrade">-0.00%</div>
+      </div>
+    </section>
+
+    <!-- Chart Container -->
+    <main class="bt-chart-section">
+      <div class="bt-chart-overlay-bar" id="chartOverlayBar">
+        <div class="overlay-left">
+          <span class="overlay-status" id="overlayStatus">พร้อมรันการทดสอบ</span>
+          <span class="overlay-info" id="overlayInfo">เลือกพารามิเตอร์แล้วกด '🚀 รัน Backtest'</span>
+        </div>
+        <div class="overlay-right">
+          <span class="legend-badge leg-buy">🟢 BUY (Sniper)</span>
+          <span class="legend-badge leg-tp1">🔵 TP1 (EMA 25)</span>
+          <span class="legend-badge leg-tp2">🟣 TP2 (EMA 75/200)</span>
+          <span class="legend-badge leg-sl">🔴 SL (Swing Low)</span>
+        </div>
+      </div>
+
+      <!-- In-Chart Legend (OHLC & EMAs) -->
+      <div class="bt-chart-legend" id="chartLegend">
+        <div class="leg-row-title">
+          <span id="legSymTf" class="leg-sym">BNBFDUSD 5M</span>
+          <span id="legOhlc" class="leg-ohlc">O: -- H: -- L: -- C: --</span>
+        </div>
+        <div class="leg-row-emas">
+          <span class="ema-item" style="color: #10b981;">EMA 4: <b id="legValEma4">--</b></span>
+          <span class="ema-item" style="color: #eab308;">EMA 8: <b id="legValEma8">--</b></span>
+          <span class="ema-item" style="color: #f97316;">EMA 16: <b id="legValEma16">--</b></span>
+          <span class="ema-item" style="color: #06b6d4;">EMA 25: <b id="legValEma25">--</b></span>
+          <span class="ema-item" style="color: #a855f7;">EMA 75: <b id="legValEma75">--</b></span>
+          <span class="ema-item" style="color: #ec4899;">EMA 200: <b id="legValEma200">--</b></span>
+        </div>
+      </div>
+
+      <div id="btChartContainer" class="bt-chart-box"></div>
+    </main>
+
+    <!-- Interactive Trade Table Panel -->
+    <section class="bt-trades-section">
+      <div class="trades-header">
+        <div class="trades-title-wrap">
+          <h2 class="trades-title">📋 รายการไม้เทรด (Trade Rounds)</h2>
+          <span class="trades-hint">💡 คลิกที่แถวไม้เทรดเพื่อเลื่อนกราฟ (Scroll) และซูมไปยังจุดซื้อ-ขายนั้นทันที</span>
+        </div>
+        <div class="trades-filter">
+          <button class="filter-btn active" data-filter="ALL">ทั้งหมด (<span id="cntAll">0</span>)</button>
+          <button class="filter-btn" data-filter="WIN">ไม้ชนะ (<span id="cntWin">0</span>)</button>
+          <button class="filter-btn" data-filter="LOSS">ไม้แพ้ (<span id="cntLoss">0</span>)</button>
+        </div>
+      </div>
+
+      <div class="trades-table-wrap">
+        <table class="bt-table" id="tradesTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>จุดเข้าซื้อ (Entry)</th>
+              <th>Spread ตอนเข้า</th>
+              <th>จุดออก (Exit)</th>
+              <th>ประเภทการออก</th>
+              <th>ระยะถือครอง</th>
+              <th>กำไร/ขาดทุน (%)</th>
+              <th>กำไร/ขาดทุน ($)</th>
+              <th>การกระทำ</th>
+            </tr>
+          </thead>
+          <tbody id="tradesTableBody">
+            <tr>
+              <td colspan="9" class="td-empty">ยังไม่มีข้อมูลการทดสอบ กดปุ่ม '🚀 รัน Backtest' ด้านบนเพื่อเริ่มจำลอง</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Modal: Saved Backtest History -->
+    <div class="bt-modal-backdrop" id="historyModalBackdrop" style="display: none;">
+      <div class="bt-modal">
+        <div class="bt-modal-header">
+          <h3 class="bt-modal-title">📂 ประวัติการ Backtest ที่บันทึกไว้</h3>
+          <button class="bt-modal-close" id="btnCloseHistoryModal">✕</button>
+        </div>
+        <div class="bt-modal-body">
+          <p class="modal-desc">ผลการทดสอบทั้งหมดจะถูกบันทึกเก็บไว้ในระบบโดยอัตโนมัติ ไม่เกี่ยวข้องกับพอร์ตเทรดจริง</p>
+          <div class="history-list" id="historyList">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading Indicator Overlay -->
+    <div class="bt-loading-overlay" id="loadingOverlay" style="display: none;">
+      <div class="loading-spinner"></div>
+      <div class="loading-text" id="loadingText">กำลังดึงแท่งเทียนและจำลองการเทรด...</div>
+    </div>
+  </div>
+
+  <script src="backtest.js?v=1.0"></script>
+</body>
+</html>

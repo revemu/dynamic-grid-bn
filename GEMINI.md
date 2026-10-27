@@ -4986,6 +4986,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - Fan Spread วัดระยะห่างระหว่างเส้นเร็วสุด (EMA 4) กับแกนกลางพัด (EMA 25): $\frac{|\text{EMA 25} - \text{EMA 4}|}{\text{EMA 25}} \times 100$
    - ช่วยกรองช่วงตลาดไซด์เวย์ (Anti-Chop) ไม่ให้เข้าเทรดตอนเส้นพันกัน และรอจังหวะราคาเทแรงจนพัดถ่างกางตึงสุด (Oversold Exhaustion $\ge 0.25\%$) ก่อนดักจังหวะ Momentum Hook เพื่อเข้าซื้อ Sniper เด้งคืนหา EMA 25 (TP1)
 
+---
+
+## 127. v0.2.127 — Dedicated Backtest Studio (`/backtest.html`), Persistent Results Database & Visual Chart Trade Markers
+
+1. **ห้องทดลอง Backtest แยกหน้าต่างเฉพาะ (`public/backtest.html`, `public/backtest.js`, `public/backtest.css`)**:
+   - **แยกจากหน้าเทรดสด 100% (Completely Decoupled)**: ไม่ยุ่งเกี่ยวกับสถานะบอทสด, WebSocket Streams, พอร์ตเงินจริง หรือการส่งคำสั่งซื้อขายจริง เพื่อความปลอดภัยสูงสุด
+   - เข้าใช้งานได้ผ่าน URL `/backtest.html` หรือกดปุ่ม **"🧪 Backtest Studio ↗"** บน Top Navbar ของหน้าหลัก ซึ่งจะเปิดหน้าต่างใหม่ทันที
+   - มีชาร์ต TradingView Lightweight Charts ขนาดใหญ่เต็มจอ พร้อมเส้น EMA Ribbon ทั้ง 6 เส้น (EMA 4, 8, 16, 25, 75, 200) ที่ซิงค์ตามสีที่ผู้ใช้ตั้งค่าไว้
+2. **การพล็อตจุดซื้อ-ขายบนกราฟอย่างละเอียด (Visual Trade Markers on Chart)**:
+   - 🟢 **BUY (Sniper)**: ลูกศรสีเขียวชี้ขึ้นบนแท่งเทียนจุดเข้าซื้อ พร้อมระบุราคาและค่า Fan Spread
+   - 🔵 **TP1 (EMA 25)**: วงกลมสีฟ้าเมื่อราคาเด้งแตะ EMA 25 เพื่อขายทำกำไร 50% แรกและขยับ SL ไปล็อกทุน
+   - 🟣 **TP2 (EMA 75/200 / Trailing)**: ลูกศรสีม่วงชี้ลงเมื่อราคาเด้งแตะ EMA 75/200 หรือชน Trailing Stop เพื่อปิดไม้ 50% ที่เหลือ
+   - 🔴 **SL (Swing Low)**: ลูกศรสีแดงชี้ลงเมื่อราคาหลุดแนวรับ Swing Low เพื่อตัดขาดทุน
+3. **ตารางไม้เทรดและการคลิกซูมชาร์ต (Interactive Trade List & Zoom)**:
+   - ตารางแจกแจงไม้เทรดทุกไม้ (#1, #2, #3...) พร้อมตัวกรอง (ทั้งหมด / ไม้ชนะ / ไม้แพ้)
+   - **Interactive Click-to-Zoom**: เมื่อคลิกที่แถวไม้เทรดใดๆ กราฟจะ Scroll และ Zoom ไปยังช่วงเวลาของไม้เทรดนั้นบนชาร์ตทันที
+4. **ระบบบันทึกผลการทดสอบลงฐานข้อมูลถาวร (`data/backtest-history.db.json` & `src/backtest-service.ts`)**:
+   - บันทึกผลการทดสอบอัตโนมัติทุกครั้งที่รัน Backtest
+   - มี Modal **"📂 ประวัติที่บันทึกไว้ (Saved Backtests)"** ให้เรียกดูผลย้อนหลัง เปรียบเทียบผลลัพธ์ของแต่ละพารามิเตอร์ หรือลบประวัติได้ทันที
+   - รองรับ API:
+     - `POST /api/backtest/run`: รัน Simulation จำลองกลยุทธ์ MA Fan บนแท่งเทียนจริง
+     - `GET /api/backtest/history`: ดึงรายการประวัติผลการทดสอบ
+     - `GET /api/backtest/history/get?id=...`: โหลดข้อมูลผลการทดสอบเดิมพร้อมแท่งเทียนและ Markers
+     - `POST /api/backtest/history/delete`: ลบประวัติการทดสอบ
+
+
 
 
 
