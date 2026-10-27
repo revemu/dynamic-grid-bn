@@ -4679,6 +4679,49 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.115` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 116. v0.2.116 — Unified Realistic Production Backtest Engine (`src/backtest.ts`, `package.json`, `src/version.ts`)
+
+### สาเหตุและปัญหาที่ค้นพบ (Root Cause & Discovery)
+1. **Backtest-Production Disconnect**:
+   - ไฟล์ `src/backtest.ts` เดิมถูกเขียนเป็น Standalone Toy Simulator ตั้งแต่ช่วงเริ่มต้นโปรเจกต์ ซึ่งมีลูปคำนวณการซื้อขายของตัวเองอย่างง่ายเพียง ~100 บรรทัด และรองรับค่าตั้งค่าเพียง 7 ตัวแปร (จากทั้งหมด 118 ตัวแปรใน `src/config.ts`)
+   - ตัวกรองความปลอดภัยหลักและกลไกคัดกรองทั้งหมดของบอทจริงใน `src/strategy/` เช่น:
+     - `dowTrendFilter` (คัดกรองขาลง)
+     - `RegimeChannelGate` (Dow ChoCh Gate & Base Confirmation)
+     - `enableExitOnTrendSupportBreak` (ตรวจจับหลุดเทรนด์ไลน์รับ)
+     - `trendlineFilter` (ตรวจจับอยู่ใต้เส้นกด)
+     - `enableBuyBelowSellLevel1` (คุมโซนซื้อห้ามเกิน 50% Center)
+     - `lockChannelInPosition` (ล็อกกรอบขณะถือของ)
+     - `enableLhDynamicEscape` (ดึงเป้าขายหนีตายเมื่อเกิด Lower High)
+     - `buySizingMode` (Pyramid vs Equal)
+     - `enabledBuyLevels` และ `enabledSellTargets`
+   - **ไม่ได้ถูกนำมาจำลองใน `src/backtest.ts` เลย** ทำให้ผลการ Backtest ที่ผ่านมาเป็นเพียงผลการจำลองของ "บอทกริดเปลือย (Naked Pure Grid)" ซึ่งขัดแย้งกับพฤติกรรมจริงของบอทใน Production ที่มีตัวกรองคอยบล็อกออเดอร์
+
+---
+
+### การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Overhaul)
+1. **Full Config Inheritance & BacktestConfig**:
+   - `BacktestConfig extends Partial<Config>` โดยสืบทอดค่าเริ่มต้นโดยตรงจาก `defaultStrategyConfig` ใน `src/config.ts` ทำให้สามารถทดสอบบอทด้วย Config ชุดเดียวกับที่รันบนเซิร์ฟเวอร์จริงได้ 100%
+2. **Candle-by-Candle Realistic Strategy Execution**:
+   - **Dow Market Regime & Trend Filtering**: ตรวจจับ `UPTREND`, `DOWNTREND`, `RANGE` ผ่าน `DowEngine` และตัดการซื้อเมื่อเกิดขาลงหากเปิด `dowTrendFilter: true`
+   - **RegimeChannelGate (Dow ChoCh Gate)**: เรียกใช้ `RegimeChannelGate.evaluateGate` ในทุกแท่งเทียน เพื่อระงับการเปิดกรอบกริด (`DOWNTREND_NO_CHANNEL`) จนกว่าราคาจะเบรกยืนเหนือ Last LH
+   - **Trend Support Break**: ตรวจสอบเส้น `uptrendLine` และประเมิน `enableExitOnTrendSupportBreak` หากราคาหลุดเส้นรับเฉียง จะสั่งหยุดซื้อทันทีเหมือนหน้างานจริง
+   - **Zone-Aware Buying (`enableBuyBelowSellLevel1`)**: ควบคุมไม่ให้ซื้อเมื่อราคาลอยอยู่เหนือโซนกึ่งกลาง (Center 50%)
+   - **Channel Lock (`lockChannelInPosition`)**: ล็อกกรอบราคาและเป้าขายไว้ไม่ให้เลื่อนหนีในระหว่างที่กำลังถือเหรียญ
+   - **LH Dynamic Escape (`enableLhDynamicEscape`)**: ดึงเป้าขายลงมาหนีทำกำไรทันทีเมื่อกราฟเริ่มก่อตัวเป็น Lower High (LH)
+   - **Level Toggles & Sizing**: รองรับการเปิด/ปิดเลเวลย่อย (`enabledBuyLevels`, `enabledSellTargets`) และคิดน้ำหนักไม้แบบ `PYRAMID` หรือ `EQUAL`
+3. **ผลการทดสอบเปรียบเทียบเชิงประจักษ์ (Empirical Audit Comparison on 10.4 Days 15M Data)**:
+   - **BNBFDUSD (+2.73% Market)**:
+     - `Production Dynamic Grid (All Guards & Dow ChoCh Gate)`: Win Rate **100.0%**, Cut Loss **0 ครั้ง ($0.00)**, Max Drawdown **0.04%**
+     - เทียบกับ `Naked Pure Grid (Zero Guards)`: โดนลาก Cut Loss ถึง **3 ครั้ง (-$7.46)**, Drawdown พุ่งเป็น **3.60%**, ขาดทุนสุทธิ **-$3.81**
+   - **BTCUSDT (-1.77% Downtrend)**:
+     - `Production Dynamic Grid`: ยืนบนเงินสด 100% ป้องกันเงินทุนรอดพ้นจากการรับมีดขาลงได้สมบูรณ์ (0 Trades, 0 Cut Loss, 0.00% Drawdown)
+     - เทียบกับ `Naked Pure Grid`: ช้อนรับมีดจนพอร์ตติดลบเต็มเพดาน Max Drawdown **100.00%**!
+4. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.116` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

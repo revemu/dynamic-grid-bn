@@ -1,7 +1,18 @@
+/**
+ * @license
+ * Copyright DreamDEX S.A.
+ *
+ * Use of this source code is governed by an MIT-style license that can be
+ * found in the LICENSE file at https://github.com/somnia-chain/dreamdex-bot-kit/blob/main/LICENSE
+ */
+
 import { DowStructureEngine } from "./market-structure/index.js";
+import { DowEngine } from "./market-structure/dow-engine.js";
+import { RegimeChannelGate } from "./market-structure/regime-gate.js";
 import { VolumeProfileEngine } from "./market-structure/volume-profile.js";
 import { SwingSignalDetector } from "./strategy/swing/signals.js";
 import type { SwingStrategyConfig } from "./strategy/swing/config.js";
+import { defaultStrategyConfig, type Config } from "./config.js";
 
 export interface Candle {
   time: number;
@@ -27,17 +38,12 @@ export interface TradeRecord {
   time: number;
 }
 
-export interface BacktestConfig {
+export interface BacktestConfig extends Partial<Config> {
   name: string;
   budget: number;
-  sellProfitMode: "GRID_CASHFLOW" | "PORTFOLIO_AVG_PROFIT";
-  channelMode?: "DOW_SWINGS" | "VOLUME_PROFILE_HTF" | "DOW_ATR_CLAMP";
-  minChannelWidthPct: number;
-  maxChannelWidthPct: number;
-  buyWeights: number[];
-  minNetProfitPct: number;
-  cutLossMode: "CONFIRMED_CLOSE" | "WICK_INSTANT" | "OFF";
-  floorBufferPct: number;
+  cutLossMode?: "CONFIRMED_CLOSE" | "WICK_INSTANT" | "OFF";
+  floorBufferPct?: number;
+  buyWeights?: number[];
 }
 
 export interface BacktestResult {
@@ -58,6 +64,10 @@ export interface BacktestResult {
   gridCashflowProfit: number;
   tpProfit: number;
   cutLossLoss: number;
+  ceilingExitsCount: number;
+  lhEscapesCount: number;
+  floorCutLossCount: number;
+  trendSupportBreakCount: number;
 }
 
 export async function fetchKlines(symbol: string, interval = "15m", limit = 500): Promise<Candle[]> {
@@ -75,11 +85,30 @@ export async function fetchKlines(symbol: string, interval = "15m", limit = 500)
   }));
 }
 
-export function runSimulation(symbol: string, candles: Candle[], cfg: BacktestConfig): BacktestResult {
-  const engine = new DowStructureEngine(3, true, 20.0, 600);
+/**
+ * Full Production-Aligned Strategy Simulator
+ * Accurately models Dow Theory Market Structure, RegimeChannelGate (ChoCh Gate),
+ * Trendline Support & Resistance, Zone Midline Caps, Dynamic Escapes, and Floor Cut Loss.
+ */
+export function runSimulation(symbol: string, candles: Candle[], customCfg: BacktestConfig): BacktestResult {
+  const cfg: Config & BacktestConfig = {
+    ...defaultStrategyConfig,
+    ...customCfg,
+    name: customCfg.name,
+    budget: customCfg.budget,
+    cutLossMode: customCfg.cutLossMode ?? "CONFIRMED_CLOSE",
+    floorBufferPct: customCfg.floorBufferPct ?? defaultStrategyConfig.floorBufferPct,
+  };
+
+  const engine = new DowStructureEngine(
+    cfg.dowSwingLookback ?? 3,
+    cfg.useTrueWick ?? true,
+    cfg.wickThresholdPct ?? 20.0,
+    cfg.maxCandleCount ?? 600,
+  );
   const warmupCount = 120;
 
-  for (let i = 0; i < warmupCount; i++) {
+  for (let i = 0; i < warmupCount && i < candles.length; i++) {
     engine.addCandle(candles[i]!);
   }
 
@@ -93,28 +122,50 @@ export function runSimulation(symbol: string, candles: Candle[], cfg: BacktestCo
   let winTrades = 0;
   let lossTrades = 0;
 
-  const totalWeight = cfg.buyWeights.reduce((s, w) => s + w, 0);
+  let ceilingExitsCount = 0;
+  let lhEscapesCount = 0;
+  let floorCutLossCount = 0;
+  let trendSupportBreakCount = 0;
+
+  // State guards mirroring src/strategy/index.ts
+  let waitingForHigherLow = false;
+  let trendSupportBroken = false;
+  let breakdownLow = 0;
+  let lastTrendSupportBreakKey: string | undefined;
+
+  let lockedChannel: {
+    lowerBound: number;
+    upperBound: number;
+    center: number;
+    buyLevels: number[];
+    sellLevels: number[];
+  } | null = null;
 
   for (let i = warmupCount; i < candles.length; i++) {
     const c = candles[i]!;
+
     let volumeProfile;
     if (cfg.channelMode === "VOLUME_PROFILE_HTF") {
-      volumeProfile = VolumeProfileEngine.calculate(engine.getCandles(), 192);
+      volumeProfile = VolumeProfileEngine.calculate(engine.getCandles(), cfg.vpLookbackBars ?? 192);
     }
+
     const structure = engine.getStructure(c.open, c.open, {
       mode: cfg.channelMode || "DOW_SWINGS",
       minChannelWidthPct: cfg.minChannelWidthPct,
       maxChannelWidthPct: cfg.maxChannelWidthPct,
       floorBufferPct: cfg.floorBufferPct,
       volumeProfile,
+      useOnlyClosedCandles: cfg.adjustChannelOnClosedOnly ?? true,
     });
 
     const isSwingConfirmed = structure.isSwingConfirmed;
-    const lowerBound = structure.bottomBound;
-    const upperBound = structure.upperBound;
-    const cutLossBound = lowerBound * (1 - cfg.floorBufferPct / 100);
-    const buyLevels = structure.gridZone?.buyLevels ?? [];
-    const sellLevels = structure.gridZone?.sellLevels ?? [];
+
+    // 1. Position-Locked Channel Logic
+    let lowerBound = structure.bottomBound;
+    let upperBound = structure.upperBound;
+    let center = structure.centerPrice;
+    let buyLevels = structure.gridZone?.buyLevels ?? [];
+    let sellLevels = structure.gridZone?.sellLevels ?? [];
 
     const currentBaseHeld = lots.reduce((sum, l) => sum + l.qty, 0);
     const avgEntry = currentBaseHeld > 0 ? lots.reduce((sum, l) => sum + l.price * l.qty, 0) / currentBaseHeld : 0;
@@ -124,105 +175,255 @@ export function runSimulation(symbol: string, candles: Candle[], cfg: BacktestCo
     const dd = peakEquity > 0 ? ((peakEquity - currentEquity) / peakEquity) * 100 : 0;
     if (dd > maxDrawdown) maxDrawdown = dd;
 
-    if (isSwingConfirmed && lowerBound > 0 && upperBound > 0) {
-      // 1. Cut Loss evaluation
-      let isCutLossTriggered = false;
-      let cutLossPrice = cutLossBound;
+    if (cfg.lockChannelInPosition && currentBaseHeld > 0 && lockedChannel) {
+      lowerBound = lockedChannel.lowerBound;
+      upperBound = lockedChannel.upperBound;
+      center = lockedChannel.center;
+      buyLevels = lockedChannel.buyLevels;
+      sellLevels = lockedChannel.sellLevels;
+    } else if (currentBaseHeld > 0 && !lockedChannel && lowerBound > 0 && upperBound > 0) {
+      lockedChannel = { lowerBound, upperBound, center, buyLevels, sellLevels };
+    } else if (currentBaseHeld <= 0) {
+      lockedChannel = null;
+    }
 
-      if (cfg.cutLossMode === "CONFIRMED_CLOSE") {
-        if (currentBaseHeld > 0 && c.close < cutLossBound) {
-          isCutLossTriggered = true;
-          cutLossPrice = c.close;
-        }
-      } else if (cfg.cutLossMode === "WICK_INSTANT") {
-        if (currentBaseHeld > 0 && c.low < cutLossBound) {
-          isCutLossTriggered = true;
-          cutLossPrice = cutLossBound;
-        }
-      }
+    // 2. Dow Market Regime & Trend Filtering
+    const regime = structure.regime ?? DowEngine.determineMarketRegime(structure.swingHighs, structure.swingLows, isSwingConfirmed);
+    const isDowntrend = regime === "DOWNTREND";
+    const trendFiltered = Boolean(cfg.dowTrendFilter && isDowntrend);
 
-      if (isCutLossTriggered && currentBaseHeld > 0) {
-        const pnl = (cutLossPrice - avgEntry) * currentBaseHeld;
-        cash += currentBaseHeld * cutLossPrice;
-        if (pnl >= 0) {
-          grossProfit += pnl;
-          winTrades++;
-        } else {
-          grossLoss += Math.abs(pnl);
-          lossTrades++;
-        }
-        trades.push({ type: "CUT_LOSS", price: cutLossPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Cut Loss" });
-        lots = [];
-      }
-      // 2. 100% Take Profit at Upper Bound
-      else if (
-        currentBaseHeld > 0 &&
-        c.high >= upperBound &&
-        (cfg.sellProfitMode !== "PORTFOLIO_AVG_PROFIT" || c.high >= avgEntry * (1 + cfg.minNetProfitPct / 100))
-      ) {
-        const exitPrice = upperBound;
+    // 3. Regime Channel Gate (Dow ChoCh Gate & Base Confirmation)
+    const gate = RegimeChannelGate.evaluateGate({
+      price: c.open,
+      proposedFloor: lowerBound,
+      proposedCeiling: upperBound,
+      regime,
+      waveCycle: structure.waveCycle,
+      lastCanonicalLow: structure.waveCycle?.annotatedSwings?.filter((s) => s.type === "LOW").slice(-1)[0],
+      lastCanonicalHigh: structure.waveCycle?.annotatedSwings?.filter((s) => s.type === "HIGH").slice(-1)[0],
+      lastLh: structure.lastLh,
+      isDowntrendDropActive: structure.isDowntrendDropActive,
+      minFloorProximityPct: cfg.minFloorProximityPct ?? 1.5,
+      enableTrendGating: cfg.enableTrendChannelGating !== false,
+    });
+    const canEstablishChannel = gate.canEstablishChannel;
+
+    // 4. Trendline Evaluations
+    const downtrendLine = structure.downtrendLine;
+    const isTrendlineFiltered = Boolean(cfg.trendlineFilter && downtrendLine && !downtrendLine.isBroken);
+
+    const uptrendLine = structure.uptrendLine;
+    const uptrendKey = uptrendLine ? `${uptrendLine.p1.time}_${uptrendLine.p2.time}` : undefined;
+    const isNewUptrendBreak = uptrendKey ? (lastTrendSupportBreakKey !== uptrendKey) : true;
+    const trendSupportBufferPct = Math.max(0.20, cfg.floorBufferPct ?? 0.35);
+
+    const isUptrendBroken = Boolean(
+      uptrendLine && isNewUptrendBreak && (
+        structure.uptrendBreakdownConfirmed ||
+        (uptrendLine.brokenCandleCount ?? 0) >= 1 ||
+        c.low < uptrendLine.currentLinePrice * (1 - trendSupportBufferPct / 100)
+      )
+    );
+
+    if (cfg.enableExitOnTrendSupportBreak && isUptrendBroken) {
+      if (uptrendKey) lastTrendSupportBreakKey = uptrendKey;
+      if (currentBaseHeld > 0 && cfg.liquidateOnTrendSupportBreak) {
+        // Liquidate
+        const exitPrice = Math.min(c.open, uptrendLine!.currentLinePrice);
         const pnl = (exitPrice - avgEntry) * currentBaseHeld;
         cash += currentBaseHeld * exitPrice;
-        if (pnl >= 0) {
-          grossProfit += pnl;
-          winTrades++;
-        } else {
-          grossLoss += Math.abs(pnl);
-          lossTrades++;
-        }
-        trades.push({ type: "TAKE_PROFIT", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Ceiling Exit" });
+        if (pnl >= 0) { grossProfit += pnl; winTrades++; }
+        else { grossLoss += Math.abs(pnl); lossTrades++; }
+        trades.push({ type: "CUT_LOSS", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Trend Support Liquidate" });
         lots = [];
+        lockedChannel = null;
+        trendSupportBreakCount++;
       }
-      // 3. Grid Sell Targets
-      else if (currentBaseHeld > 0 && sellLevels.length > 0) {
-        for (let sIdx = 0; sIdx < sellLevels.length; sIdx++) {
-          const sPrice = sellLevels[sIdx]!;
-          if (c.high >= sPrice && lots.length > 0) {
-            const isProfitOk =
-              cfg.sellProfitMode !== "PORTFOLIO_AVG_PROFIT" || sPrice >= avgEntry * (1 + cfg.minNetProfitPct / 100);
-            if (isProfitOk) {
-              const trancheQty = currentBaseHeld / Math.max(1, sellLevels.length);
-              const sellQty = Math.min(lots.reduce((s, l) => s + l.qty, 0), trancheQty);
-              if (sellQty > 0) {
-                let rem = sellQty;
-                let tradePnl = 0;
-                while (rem > 0 && lots.length > 0) {
-                  const l = lots[0]!;
-                  const take = Math.min(l.qty, rem);
-                  tradePnl += (sPrice - l.price) * take;
-                  l.qty -= take;
-                  rem -= take;
-                  if (l.qty <= 1e-8) lots.shift();
-                }
-                cash += sellQty * sPrice;
-                if (tradePnl >= 0) {
-                  grossProfit += tradePnl;
-                  winTrades++;
-                } else {
-                  grossLoss += Math.abs(tradePnl);
-                  lossTrades++;
-                }
-                trades.push({ type: "SELL", price: sPrice, qty: sellQty, pnl: tradePnl, time: c.time, reason: `Sell Target ${sIdx + 1}` });
-                break;
+      trendSupportBroken = true;
+      waitingForHigherLow = true;
+      breakdownLow = c.low;
+    }
+
+    // 5. Recovery & Reclaim Checks
+    if (waitingForHigherLow || trendSupportBroken) {
+      // Reclaim above Buy Level 2
+      if (cfg.enableBuyLevel2Recovery && buyLevels.length > 1 && c.close > buyLevels[1]!) {
+        waitingForHigherLow = false;
+        trendSupportBroken = false;
+      }
+      // Reversal above Last LH (ChoCh)
+      if (structure.lastLh && c.close >= structure.lastLh.price * 0.999) {
+        waitingForHigherLow = false;
+        trendSupportBroken = false;
+      }
+      // Confirmed Higher Low
+      if (structure.waveCycle?.lastHl && structure.waveCycle.lastHl.price > breakdownLow) {
+        waitingForHigherLow = false;
+        trendSupportBroken = false;
+      }
+    }
+
+    // 6. Triangle Squeeze Detection
+    let isSqueezePaused = false;
+    if (cfg.enableTriangleSqueezeExit && uptrendLine && downtrendLine && !uptrendLine.isBroken && !downtrendLine.isBroken) {
+      const tlSpreadPct = Math.abs((downtrendLine.currentLinePrice - uptrendLine.currentLinePrice) / uptrendLine.currentLinePrice) * 100;
+      if (tlSpreadPct <= (cfg.triangleSqueezeSpreadPct ?? 1.5)) {
+        isSqueezePaused = true;
+      }
+    }
+
+    // ── 7. EXECUTION: SELLS & EXITS ──────────────────────────────────────────
+    const cutLossBound = lowerBound * (1 - (cfg.floorBufferPct ?? 0.35) / 100);
+    let isCutLossTriggered = false;
+    let cutLossPrice = cutLossBound;
+
+    if (cfg.cutLossMode === "CONFIRMED_CLOSE") {
+      if (currentBaseHeld > 0 && c.close < cutLossBound) {
+        isCutLossTriggered = true;
+        cutLossPrice = c.close;
+      }
+    } else if (cfg.cutLossMode === "WICK_INSTANT") {
+      if (currentBaseHeld > 0 && c.low < cutLossBound) {
+        isCutLossTriggered = true;
+        cutLossPrice = cutLossBound;
+      }
+    }
+
+    // A. Floor Cut Loss
+    if (isCutLossTriggered && currentBaseHeld > 0) {
+      const pnl = (cutLossPrice - avgEntry) * currentBaseHeld;
+      cash += currentBaseHeld * cutLossPrice;
+      if (pnl >= 0) { grossProfit += pnl; winTrades++; }
+      else { grossLoss += Math.abs(pnl); lossTrades++; }
+      trades.push({ type: "CUT_LOSS", price: cutLossPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Floor Cut Loss" });
+      lots = [];
+      lockedChannel = null;
+      waitingForHigherLow = true;
+      breakdownLow = c.low;
+      floorCutLossCount++;
+    }
+    // B. Upper Bound Take Profit
+    else if (
+      currentBaseHeld > 0 &&
+      (cfg.takeProfitAtUpperBound !== false) &&
+      c.high >= upperBound &&
+      (cfg.sellProfitMode !== "PORTFOLIO_AVG_PROFIT" || c.high >= avgEntry * (1 + cfg.minNetProfitPct / 100))
+    ) {
+      const exitPrice = upperBound;
+      const pnl = (exitPrice - avgEntry) * currentBaseHeld;
+      cash += currentBaseHeld * exitPrice;
+      if (pnl >= 0) { grossProfit += pnl; winTrades++; }
+      else { grossLoss += Math.abs(pnl); lossTrades++; }
+      trades.push({ type: "TAKE_PROFIT", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Ceiling 100% Exit" });
+      lots = [];
+      lockedChannel = null;
+      ceilingExitsCount++;
+    }
+    // C. LH Dynamic Escape
+    else if (
+      currentBaseHeld > 0 &&
+      cfg.enableLhDynamicEscape !== false &&
+      structure.lastLh &&
+      structure.lastLh.price < upperBound &&
+      structure.lastLh.price >= avgEntry * (1 + cfg.minNetProfitPct / 100) &&
+      c.high >= structure.lastLh.price
+    ) {
+      const exitPrice = structure.lastLh.price;
+      const pnl = (exitPrice - avgEntry) * currentBaseHeld;
+      cash += currentBaseHeld * exitPrice;
+      if (pnl >= 0) { grossProfit += pnl; winTrades++; }
+      else { grossLoss += Math.abs(pnl); lossTrades++; }
+      trades.push({ type: "SELL", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "LH Dynamic Escape" });
+      lots = [];
+      lockedChannel = null;
+      lhEscapesCount++;
+    }
+    // D. Grid Sell Targets
+    else if (currentBaseHeld > 0 && sellLevels.length > 0) {
+      for (let sIdx = 0; sIdx < sellLevels.length; sIdx++) {
+        if (cfg.enabledSellTargets && cfg.enabledSellTargets[sIdx] === false) continue;
+        let sPrice = sellLevels[sIdx]!;
+
+        // Cap target if enableSellBelowTrendResistance is active
+        if (cfg.enableSellBelowTrendResistance && downtrendLine && !downtrendLine.isBroken && downtrendLine.currentLinePrice < sPrice) {
+          sPrice = downtrendLine.currentLinePrice;
+        }
+
+        if (c.high >= sPrice && lots.length > 0) {
+          const isProfitOk = cfg.sellProfitMode !== "PORTFOLIO_AVG_PROFIT" || sPrice >= avgEntry * (1 + cfg.minNetProfitPct / 100);
+          if (isProfitOk) {
+            const activeTargets = cfg.enabledSellTargets ? cfg.enabledSellTargets.filter(Boolean).length : sellLevels.length;
+            const trancheQty = currentBaseHeld / Math.max(1, activeTargets);
+            const sellQty = Math.min(lots.reduce((s, l) => s + l.qty, 0), trancheQty);
+            if (sellQty > 0) {
+              let rem = sellQty;
+              let tradePnl = 0;
+              while (rem > 0 && lots.length > 0) {
+                const l = lots[0]!;
+                const take = Math.min(l.qty, rem);
+                tradePnl += (sPrice - l.price) * take;
+                l.qty -= take;
+                rem -= take;
+                if (l.qty <= 1e-8) lots.shift();
               }
+              cash += sellQty * sPrice;
+              if (tradePnl >= 0) { grossProfit += tradePnl; winTrades++; }
+              else { grossLoss += Math.abs(tradePnl); lossTrades++; }
+              trades.push({ type: "SELL", price: sPrice, qty: sellQty, pnl: tradePnl, time: c.time, reason: `Sell Target ${sIdx + 1}` });
+              if (lots.length === 0) lockedChannel = null;
+              break;
             }
           }
         }
       }
+    }
 
-      // 4. Grid Buy Levels with Cumulative Exposure Quota Guard (v0.2.45)
+    // ── 8. EXECUTION: BUYS ───────────────────────────────────────────────────
+    const midRef = center > 0 ? center : (lowerBound + upperBound) / 2;
+    const inBuyZone = (cfg.enableBuyBelowSellLevel1 !== false) ? (c.low <= midRef) : true;
+
+    const canBuy = (
+      canEstablishChannel &&
+      !trendFiltered &&
+      !isTrendlineFiltered &&
+      !trendSupportBroken &&
+      !isSqueezePaused &&
+      !waitingForHigherLow &&
+      inBuyZone &&
+      isSwingConfirmed &&
+      lowerBound > 0 &&
+      upperBound > 0
+    );
+
+    if (canBuy && buyLevels.length > 0 && c.low >= lowerBound) {
+      const weights = cfg.buySizingMode === "EQUAL"
+        ? buyLevels.map(() => 20)
+        : (customCfg.buyWeights || cfg.buyLevelWeights || [35, 35, 30, 10, 10]);
+      const totalWeight = weights.reduce((s, w) => s + w, 0);
+
       const currentHeldQuote = lots.reduce((sum, l) => sum + l.price * l.qty, 0);
       const currentHoldFrac = cfg.budget > 0 ? currentHeldQuote / cfg.budget : 0;
 
-      if (buyLevels.length > 0 && currentHoldFrac < 0.95 && c.low >= lowerBound) {
+      if (currentHoldFrac < 0.95) {
         for (let bIdx = 0; bIdx < buyLevels.length; bIdx++) {
-          const bPrice = buyLevels[bIdx]!;
+          if (cfg.enabledBuyLevels && cfg.enabledBuyLevels[bIdx] === false) continue;
+          let bPrice = buyLevels[bIdx]!;
+
+          // Buy above trend support override
+          if (cfg.enableBuyAboveTrendSupport && uptrendLine && !uptrendLine.isBroken && uptrendLine.currentLinePrice > bPrice && uptrendLine.currentLinePrice < midRef) {
+            bPrice = uptrendLine.currentLinePrice;
+          }
+
           let cumWeight = 0;
-          for (let w = 0; w <= bIdx; w++) cumWeight += cfg.buyWeights[w] ?? 20;
+          for (let w = 0; w <= bIdx; w++) {
+            if (!cfg.enabledBuyLevels || cfg.enabledBuyLevels[w] !== false) {
+              cumWeight += weights[w] ?? 20;
+            }
+          }
           const targetFrac = cumWeight / totalWeight;
 
           if (currentHoldFrac < targetFrac - 0.01 && c.low <= bPrice) {
-            const weightFrac = (cfg.buyWeights[bIdx] ?? 20) / totalWeight;
+            const weightFrac = (weights[bIdx] ?? 20) / totalWeight;
             const trancheBudget = Math.min(cash, cfg.budget * weightFrac);
             if (trancheBudget >= 5.0) {
               const buyQty = trancheBudget / bPrice;
@@ -275,6 +476,10 @@ export function runSimulation(symbol: string, candles: Candle[], cfg: BacktestCo
     gridCashflowProfit,
     tpProfit,
     cutLossLoss,
+    ceilingExitsCount,
+    lhEscapesCount,
+    floorCutLossCount,
+    trendSupportBreakCount,
   };
 }
 
@@ -287,7 +492,7 @@ export function runSwingSimulation(
   const engine = new DowStructureEngine(3, true, 20.0, 600);
   const warmupCount = 120;
 
-  for (let i = 0; i < warmupCount; i++) {
+  for (let i = 0; i < warmupCount && i < candles.length; i++) {
     engine.addCandle(candles[i]!);
   }
 
@@ -427,7 +632,7 @@ export function runSwingSimulation(
 
   return {
     symbol,
-    configName: "5. Major LL Retest & Reversal Swing Strategy",
+    configName: "4. Major LL Retest & Reversal Swing Strategy",
     initialBudget,
     finalEquity: initialBudget + netPnl,
     netPnl,
@@ -440,65 +645,75 @@ export function runSwingSimulation(
     profitFactor,
     holdingLotsCount: activePos ? 1 : 0,
     unrealizedPnl,
-    gridCashflowProfit: 0,
+    gridCashflowProfit: tpProfit,
     tpProfit,
     cutLossLoss,
+    ceilingExitsCount: 0,
+    lhEscapesCount: 0,
+    floorCutLossCount: 0,
+    trendSupportBreakCount: 0,
   };
 }
 
 async function main() {
-  const symbols = (process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["ETHFDUSD", "BTCUSDT", "SOMIUSDT"]);
+  const symbols = ["BNBFDUSD", "BTCUSDT"];
+
   const configs: BacktestConfig[] = [
     {
-      name: "1. Confirmed-Close Buffer CutLoss (Safe Buffer 0.35%)",
+      name: "1. Production Dynamic Grid (All Guards & Dow ChoCh Gate)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
+      channelMode: "DONCHIAN_ATR",
       minChannelWidthPct: 1.8,
       maxChannelWidthPct: 6.0,
-      buyWeights: [10, 15, 20, 25, 30],
+      buyWeights: [35, 35, 30],
       minNetProfitPct: 0.25,
-      cutLossMode: "CONFIRMED_CLOSE",
       floorBufferPct: 0.35,
+      dowTrendFilter: true,
+      enableTrendChannelGating: true,
+      enableExitOnTrendSupportBreak: false, // Standard Grid setting
+      enableBuyBelowSellLevel1: true,
+      enableLhDynamicEscape: true,
+      lockChannelInPosition: true,
     },
     {
-      name: "2. Pure Grid Cashflow (No Instant CutLoss, Hold & Turn)",
+      name: "2. Production Grid with Trend Support Break = TRUE",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
+      channelMode: "DONCHIAN_ATR",
       minChannelWidthPct: 1.8,
       maxChannelWidthPct: 6.0,
-      buyWeights: [10, 15, 20, 25, 30],
+      buyWeights: [35, 35, 30],
       minNetProfitPct: 0.25,
-      cutLossMode: "OFF",
-      floorBufferPct: 0.0,
+      floorBufferPct: 0.35,
+      dowTrendFilter: true,
+      enableTrendChannelGating: true,
+      enableExitOnTrendSupportBreak: true, // Shows the exact effect of trendline break pause!
+      enableBuyBelowSellLevel1: true,
+      enableLhDynamicEscape: true,
+      lockChannelInPosition: true,
     },
     {
-      name: "3. Optimized Dynamic Adaptive (Narrow 1.5% / Cashflow)",
+      name: "3. Naked Pure Grid (Zero Guards Baseline)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DOW_SWINGS",
-      minChannelWidthPct: 1.5,
-      maxChannelWidthPct: 5.0,
-      buyWeights: [12, 16, 20, 24, 28],
-      minNetProfitPct: 0.30,
-      cutLossMode: "CONFIRMED_CLOSE",
-      floorBufferPct: 0.25,
-    },
-    {
-      name: "4. Volume Profile Tactical (Hybrid VP & 15M Swings)",
-      budget: 200,
-      sellProfitMode: "GRID_CASHFLOW",
-      channelMode: "VOLUME_PROFILE_HTF",
-      minChannelWidthPct: 2.0,
+      minChannelWidthPct: 1.8,
       maxChannelWidthPct: 6.0,
-      buyWeights: [10, 15, 20, 25, 30],
+      buyWeights: [35, 35, 30],
       minNetProfitPct: 0.25,
-      cutLossMode: "CONFIRMED_CLOSE",
       floorBufferPct: 0.35,
+      dowTrendFilter: false,
+      enableTrendChannelGating: false,
+      enableExitOnTrendSupportBreak: false,
+      enableBuyBelowSellLevel1: false,
+      enableLhDynamicEscape: false,
+      lockChannelInPosition: false,
     },
   ];
 
   console.log("==========================================================================================================");
-  console.log("🚀 PRODUCTION BACKTEST COMPARISON: ETHFDUSD vs BTCUSDT vs SOMIUSDT");
+  console.log("🚀 UNIFIED REALISTIC PRODUCTION BACKTEST ENGINE (Full Safety & Regime Gates)");
   console.log("   Data: 1000 Binance 15m Candles (~10.4 Days) | Simulated Budget: $200");
   console.log("==========================================================================================================\n");
 
@@ -518,16 +733,16 @@ async function main() {
         results.push(res);
       }
 
-      // 5. Major LL Retest & Reversal Swing Strategy
+      // 4. Major LL Retest & Reversal Swing Strategy
       const swingCfg: SwingStrategyConfig = {
-        minRiskReward: 2.0,
-        stopLossBufferPct: 0.5,
-        maxPositionPct: 60.0,
+        minRiskReward: 1.8,
+        stopLossBufferPct: 0.35,
+        maxPositionPct: 50.0,
         tp1CloseRatio: 0.5,
         tp1TargetType: "CENTER_POC",
         tp2TargetType: "SWING_HIGH_HH",
-        trailingActivationPct: 1.5,
-        trailingPullbackPct: 0.8,
+        trailingActivationPct: 1.2,
+        trailingPullbackPct: 0.5,
         enableHlBaseEntry: true,
         enableTrendlineBreakoutEntry: true,
         enableSupportRetestEntry: true,
@@ -539,27 +754,27 @@ async function main() {
     }
   }
 
-  console.log("========================================================================================================================================================");
-  console.log("| Symbol   | Profile                                           | Net Return | Cashflow ($) | TP PnL ($) | CutLoss ($) | Win Rate  | Trades | Max DD (%) |");
-  console.log("========================================================================================================================================================");
+  console.log("\n==================================================================================================================================================");
+  console.log("🏆 PERFORMANCE AUDIT SUMMARY (10.4 DAYS 15M CANDLES)");
+  console.log("==================================================================================================================================================");
+  console.log("| Symbol   | Profile                                                    | Net Return        | Trades | Win Rate | CutLoss        | Max DD  | Final ($) |");
+  console.log("--------------------------------------------------------------------------------------------------------------------------------------------------");
 
   for (const r of results) {
-    const pnlSign = r.netPnl >= 0 ? "+" : "";
-    const retStr = `${pnlSign}${r.netPnlPct.toFixed(2)}% ($${r.netPnl.toFixed(2)})`.padEnd(17);
-    const cfStr = `+$${r.gridCashflowProfit.toFixed(2)}`.padEnd(12);
-    const tpStr = `+$${r.tpProfit.toFixed(2)}`.padEnd(10);
-    const clStr = `-$${r.cutLossLoss.toFixed(2)}`.padEnd(11);
-    const winStr = `${r.winRate.toFixed(1)}%`.padEnd(9);
-    const tradesStr = `${r.totalTrades}`.padEnd(6);
-    const ddStr = `${r.maxDrawdownPct.toFixed(2)}%`.padEnd(10);
     const symStr = r.symbol.padEnd(8);
-    const cfgStr = r.configName.padEnd(49);
+    const profStr = r.configName.padEnd(58);
+    const retStr = `${r.netPnl >= 0 ? "+" : ""}$${r.netPnl.toFixed(2)} (${r.netPnlPct >= 0 ? "+" : ""}${r.netPnlPct.toFixed(2)}%)`.padEnd(17);
+    const trStr = String(r.totalTrades).padEnd(6);
+    const wrStr = `${r.winRate.toFixed(1)}%`.padEnd(8);
+    const clStr = `-$${r.cutLossLoss.toFixed(2)} (${r.floorCutLossCount}x)`.padEnd(14);
+    const ddStr = `${r.maxDrawdownPct.toFixed(2)}%`.padEnd(7);
+    const finStr = `$${r.finalEquity.toFixed(2)}`.padEnd(9);
 
-    console.log(`| ${symStr} | ${cfgStr} | ${retStr} | ${cfStr} | ${tpStr} | ${clStr} | ${winStr} | ${tradesStr} | ${ddStr} |`);
+    console.log(`| ${symStr} | ${profStr} | ${retStr} | ${trStr} | ${wrStr} | ${clStr} | ${ddStr} | ${finStr} |`);
   }
-  console.log("========================================================================================================================================================\n");
+  console.log("==================================================================================================================================================\n");
 }
 
-if (process.argv[1]?.includes("backtest")) {
+if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` || process.argv[1]?.includes("backtest")) {
   main().catch(console.error);
 }
