@@ -181,6 +181,33 @@
   let ema25Series = null;
   let ema75Series = null;
   let ema200Series = null;
+
+  const DEFAULT_MA_COLORS = {
+    c4: "#38bdf8",
+    c8: "#0284c7",
+    c16: "#3b82f6",
+    c25: "#f59e0b",
+    c75: "#a855f7",
+    c200: "#f43f5e",
+  };
+
+  function getMaFanColors() {
+    try {
+      const saved = localStorage.getItem("ma_fan_colors");
+      if (saved) return { ...DEFAULT_MA_COLORS, ...JSON.parse(saved) };
+    } catch (_) {}
+    return { ...DEFAULT_MA_COLORS };
+  }
+
+  function applyMaFanColors(colors) {
+    const c = colors || getMaFanColors();
+    if (ema4Series) ema4Series.applyOptions({ color: c.c4 });
+    if (ema8Series) ema8Series.applyOptions({ color: c.c8 });
+    if (ema16Series) ema16Series.applyOptions({ color: c.c16 });
+    if (ema25Series) ema25Series.applyOptions({ color: c.c25 });
+    if (ema75Series) ema75Series.applyOptions({ color: c.c75 });
+    if (ema200Series) ema200Series.applyOptions({ color: c.c200 });
+  }
   let isWaveVisible = true;
   const elWaveStatusPill = document.getElementById("waveStatusPill");
   const elWaveStatusText = document.getElementById("waveStatusText");
@@ -843,8 +870,9 @@
         precision: activePricePrecision,
         minMove: activeTickSize || (1 / Math.pow(10, activePricePrecision)),
       };
+      const maColors = getMaFanColors();
       ema4Series = chart.addLineSeries({
-        color: "#38bdf8", // Bright Cyan
+        color: maColors.c4, // EMA 4
         lineWidth: 1,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
         title: "EMA 4",
@@ -853,7 +881,7 @@
         priceFormat: pFormat,
       });
       ema8Series = chart.addLineSeries({
-        color: "#0284c7", // Sky Blue
+        color: maColors.c8, // EMA 8
         lineWidth: 1,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
         title: "EMA 8",
@@ -862,7 +890,7 @@
         priceFormat: pFormat,
       });
       ema16Series = chart.addLineSeries({
-        color: "#3b82f6", // Royal Blue
+        color: maColors.c16, // EMA 16
         lineWidth: 1,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
         title: "EMA 16",
@@ -871,16 +899,16 @@
         priceFormat: pFormat,
       });
       ema25Series = chart.addLineSeries({
-        color: "#f59e0b", // Gold / Amber (Baseline TP1)
+        color: maColors.c25, // EMA 25
         lineWidth: 2,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
-        title: "EMA 25 (TP1)",
+        title: "EMA 25",
         lastValueVisible: true,
         priceLineVisible: false,
         priceFormat: pFormat,
       });
       ema75Series = chart.addLineSeries({
-        color: "#a855f7", // Purple / Violet (Macro TP2)
+        color: maColors.c75, // EMA 75
         lineWidth: 2,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
         title: "EMA 75",
@@ -889,7 +917,7 @@
         priceFormat: pFormat,
       });
       ema200Series = chart.addLineSeries({
-        color: "#f43f5e", // Rose / Crimson (Macro Trend)
+        color: maColors.c200, // EMA 200
         lineWidth: 2,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
         title: "EMA 200",
@@ -1164,14 +1192,15 @@
       ema75Series.setData(e75);
       ema200Series.setData(e200);
 
-      // Update legend values with latest point
+      // Update legend values with latest point and active colors
+      const curColors = getMaFanColors();
       const getVal = (arr) => arr.length > 0 ? fmtPrice(arr[arr.length - 1].value) : "--";
-      const el4 = document.getElementById("legEma4"); if (el4) el4.textContent = getVal(e4);
-      const el8 = document.getElementById("legEma8"); if (el8) el8.textContent = getVal(e8);
-      const el16 = document.getElementById("legEma16"); if (el16) el16.textContent = getVal(e16);
-      const el25 = document.getElementById("legEma25"); if (el25) el25.textContent = getVal(e25);
-      const el75 = document.getElementById("legEma75"); if (el75) el75.textContent = getVal(e75);
-      const el200 = document.getElementById("legEma200"); if (el200) el200.textContent = getVal(e200);
+      const el4 = document.getElementById("legEma4"); if (el4) { el4.textContent = getVal(e4); el4.style.color = curColors.c4; }
+      const el8 = document.getElementById("legEma8"); if (el8) { el8.textContent = getVal(e8); el8.style.color = curColors.c8; }
+      const el16 = document.getElementById("legEma16"); if (el16) { el16.textContent = getVal(e16); el16.style.color = curColors.c16; }
+      const el25 = document.getElementById("legEma25"); if (el25) { el25.textContent = getVal(e25); el25.style.color = curColors.c25; }
+      const el75 = document.getElementById("legEma75"); if (el75) { el75.textContent = getVal(e75); el75.style.color = curColors.c75; }
+      const el200 = document.getElementById("legEma200"); if (el200) { el200.textContent = getVal(e200); el200.style.color = curColors.c200; }
     } catch (err) {
       console.warn("Error updating MA Fan lines:", err);
     }
@@ -3087,32 +3116,12 @@
         const tp1Price = pos?.tp1Price || ribbon.ema25 || 0;
         const tp2Price = Math.max(ribbon.ema75 || 0, ribbon.ema200 || 0);
 
-        // MA Fan TP1 Line (EMA 25 - Light Blue)
-        if (tp1Price > 0) {
-          lineMfTp1 = setPriceLine(lineMfTp1, {
-            price: tp1Price,
-            color: "#38bdf8",
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: "🪭 TP1 (EMA 25)",
-          });
-        } else if (lineMfTp1) {
+        // Clean up TP price lines on chart completely (keeps chart clean and prevents overlap with MA lines)
+        if (lineMfTp1) {
           try { candleSeries.removePriceLine(lineMfTp1); } catch (_) {}
           lineMfTp1 = null;
         }
-
-        // MA Fan TP2 Line (EMA 75/200 - Purple)
-        if (tp2Price > 0) {
-          lineMfTp2 = setPriceLine(lineMfTp2, {
-            price: tp2Price,
-            color: "#c084fc",
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: "🚀 TP2 Runner",
-          });
-        } else if (lineMfTp2) {
+        if (lineMfTp2) {
           try { candleSeries.removePriceLine(lineMfTp2); } catch (_) {}
           lineMfTp2 = null;
         }
@@ -4752,6 +4761,14 @@
       setVal("cfg_maFanSlBufferPct", data.maFanSlBufferPct ?? 0.25);
       setVal("cfg_maFanBreakevenFeeBufferPct", data.maFanBreakevenFeeBufferPct ?? 0.05);
 
+      const maColors = getMaFanColors();
+      setVal("cfg_maColor4", maColors.c4);
+      setVal("cfg_maColor8", maColors.c8);
+      setVal("cfg_maColor16", maColors.c16);
+      setVal("cfg_maColor25", maColors.c25);
+      setVal("cfg_maColor75", maColors.c75);
+      setVal("cfg_maColor200", maColors.c200);
+
       updateGridSimulatorPreview();
       updateSettingsConditionalVisibility();
     } catch (e) {
@@ -5010,6 +5027,19 @@
       maFanBreakevenFeeBufferPct: parseFloat(document.getElementById("cfg_maFanBreakevenFeeBufferPct")?.value) || 0.05,
     };
 
+    const newMaColors = {
+      c4: document.getElementById("cfg_maColor4")?.value || "#38bdf8",
+      c8: document.getElementById("cfg_maColor8")?.value || "#0284c7",
+      c16: document.getElementById("cfg_maColor16")?.value || "#3b82f6",
+      c25: document.getElementById("cfg_maColor25")?.value || "#f59e0b",
+      c75: document.getElementById("cfg_maColor75")?.value || "#a855f7",
+      c200: document.getElementById("cfg_maColor200")?.value || "#f43f5e",
+    };
+    try {
+      localStorage.setItem("ma_fan_colors", JSON.stringify(newMaColors));
+    } catch (_) {}
+    applyMaFanColors(newMaColors);
+
     try {
       const res = await fetch(`${API_BASE}/api/db/settings`, {
         method: "POST",
@@ -5077,6 +5107,24 @@
   if (elSaveSettingsBtn) {
     elSaveSettingsBtn.addEventListener("click", saveSettings);
   }
+
+  // Live preview for MA Fan color picker inputs
+  ["4", "8", "16", "25", "75", "200"].forEach((p) => {
+    const el = document.getElementById(`cfg_maColor${p}`);
+    if (el) {
+      el.addEventListener("input", () => {
+        const colors = {
+          c4: document.getElementById("cfg_maColor4")?.value || "#38bdf8",
+          c8: document.getElementById("cfg_maColor8")?.value || "#0284c7",
+          c16: document.getElementById("cfg_maColor16")?.value || "#3b82f6",
+          c25: document.getElementById("cfg_maColor25")?.value || "#f59e0b",
+          c75: document.getElementById("cfg_maColor75")?.value || "#a855f7",
+          c200: document.getElementById("cfg_maColor200")?.value || "#f43f5e",
+        };
+        applyMaFanColors(colors);
+      });
+    }
+  });
 
   const cachedExchangeSymbols = {
     binance: null,

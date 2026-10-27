@@ -4946,6 +4946,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ใน `initFeeds`: หากเป็นโหมด `ma_fan` จะดึงแท่งเทียนหลักตาม `maFanExecutionTimeframe` (5m) และ HTF ตาม `maFanSupervisorTimeframe` (15m)
    - หน้าชาร์ตแสดงป้าย `(5m Execution Candles)` และปุ่มสลับ Timeframe ปรับเป็น `5M` และ `15M (HTF)` อัตโนมัติ
 
+---
+
+## 125. v0.2.125 — Clean Chart Interface, Full EMA Ribbon Color Customization & Live Status Banner
+
+### วัตถุประสงค์และการปรับปรุง (Chart Clarity & EMA Customization)
+1. **ลบเส้นประและป้ายกำกับราคา TP ออกจากชาร์ตอย่างสมบูรณ์ (`public/app.js`)**:
+   - นำเส้นประและป้ายกำกับราคา `TP1` และ `TP2` ออกจากชาร์ตทั้งหมด เพื่อไม่ให้เกิดการซ้อนทับกับป้ายบอกราคาของเส้น EMA 6 เส้น
+   - ปรับป้ายกำกับแกนราคาของเส้น EMA 25 จาก `EMA 25 (TP1)` ให้เหลือเพียง `EMA 25` สั้นกระชับ สบายตา
+   - เป้าหมายกำไร TP1, TP2 และแผนการเทรดยังคงแสดงผลอย่างชัดเจนในกล่องด้านขวา "แผนการเทรด MA Fan Sniper"
+2. **ระบบปรับแต่งสีเส้น EMA Ribbon ทั้ง 6 เส้นอิสระ (Full EMA Color Customization in `public/index.html` & `public/app.js`)**:
+   - เพิ่มหมวด **"🎨 ปรับแต่งสีเส้น EMA Ribbon"** ในหน้าต่างการตั้งค่า (แท็บ `🪭 6. MA Fan Sniper`)
+   - รองรับ Color Picker เลือกปรับเปลี่ยนสีของเส้น EMA 4, 8, 16, 25, 75, 200 ได้อิสระ
+   - มีระบบ Live Preview เปลี่ยนสีบนชาร์ตแบบ Real-time ทันทีที่เลือกสี พร้อมบันทึกลง Persistent LocalStorage ถาวร
+   - ซิงค์สีของตัวเลขสถิติบนหัวชาร์ต (`#legendMaRow`) ให้ตรงกับสีเส้นที่ผู้ใช้กำหนด
+3. **แก้ไขแถบสถานะสดและราคา Best Bid / Ask ใน MA Fan Adapter (`src/strategy/ma-fan/strategy-adapter.ts`)**:
+   - ส่งข้อมูล `botAction` เพื่อเปลี่ยนแถบสถานะเดิม `Synchronizing order book...` ให้แสดงสถานะ MA Fan จริง:
+     - เช่น `🪭 MA Fan Scanning` | `กำลังสแกนพัด (ปัจจุบัน: 0.18% / ต้องการ ≥ 0.25%)` | `รอพัดกางตึง + ปลายพัดม้วนกลับ (Hook)`
+   - ส่งราคา `bestBid` และ `bestAsk` สดๆ ขึ้นกล่องราคาด้านขวา ไม่ให้ขึ้น `--.----`
+   - ปรับป้ายกำกับมุมซ้ายบนจาก `DOW: WARMUP` ให้แสดงสภาวะเทรนด์ใหญ่ `HTF: BULL` หรือ `HTF: BEAR`
+
+
 
 
 

@@ -42,6 +42,8 @@ export class MaFanTradingStrategy implements IStrategy {
   private walletBaseTotal: number = 0;
   private walletQuoteTotal: number = 0;
   private currentMid: number = 0;
+  private bestBid: number = 0;
+  private bestAsk: number = 0;
   private lastBalanceSyncTs: number = 0;
 
   constructor(context: StrategyContext) {
@@ -130,6 +132,8 @@ export class MaFanTradingStrategy implements IStrategy {
       const refPrice = top.mid > 0 ? top.mid : (top.bestAsk + top.bestBid) / 2;
       if (refPrice > 0) {
         this.currentMid = refPrice;
+        if (top.bestBid > 0) this.bestBid = top.bestBid;
+        if (top.bestAsk > 0) this.bestAsk = top.bestAsk;
         await this.maFan.step(refPrice);
       }
     } catch (err: any) {
@@ -184,6 +188,47 @@ export class MaFanTradingStrategy implements IStrategy {
     const totalQuoteBal = this.walletQuoteTotal > 0 ? this.walletQuoteTotal : this.walletQuote;
     const totalWalletValQuote = (totalBaseBal * (this.currentMid || 0)) + totalQuoteBal;
 
+    const pos = state.activePosition;
+    const ribbon = state.ribbon;
+    const curSpread = ribbon?.fanSpreadPct ?? 0;
+    const reqSpread = state.effectiveSpreadThreshold ?? 0.25;
+
+    let botAction = {
+      title: "🪭 MA Fan Scanning",
+      reason: `กำลังสแกนพัด (ปัจจุบัน: ${curSpread.toFixed(2)}% / ต้องการ ≥ ${reqSpread.toFixed(2)}%)`,
+      nextTrigger: "รอพัดกางตึงสุด + ปลายพัดม้วนกลับ (Hook)",
+      severity: "info",
+    };
+
+    if (pos) {
+      if (pos.tp1Filled) {
+        botAction = {
+          title: "🚀 TP2 Runner Active",
+          reason: `แตะ TP1 แล้ว (ล็อกทุน $${pos.stopLossPrice.toFixed(2)}) ถือรันเทรนด์`,
+          nextTrigger: `เป้าหมาย TP2: EMA 75/200 (~$${Math.max(ribbon?.ema75 || 0, ribbon?.ema200 || 0).toFixed(2)})`,
+          severity: "success",
+        };
+      } else {
+        botAction = {
+          title: "🎯 Position Active",
+          reason: `ถือ ${pos.remainingQty} @ $${pos.entryPrice.toFixed(2)} | SL: $${pos.stopLossPrice.toFixed(2)}`,
+          nextTrigger: `รอเด้งแตะ TP1: EMA 25 (~$${(ribbon?.ema25 || 0).toFixed(2)})`,
+          severity: "success",
+        };
+      }
+    } else if (ribbon?.isFanningDown && curSpread >= reqSpread) {
+      botAction = {
+        title: "⚡ Stretched Fan Alert",
+        reason: `พัดกางตึงแล้ว (${curSpread.toFixed(2)}% ≥ ${reqSpread.toFixed(2)}%)`,
+        nextTrigger: "รอดักจังหวะม้วนหัว Hook เพื่อเข้าซื้อทันที",
+        severity: "warning",
+      };
+    }
+
+    const regimeStr = state.htfRegime
+      ? `HTF: ${state.htfRegime.isBullish ? "BULL" : "BEAR"}`
+      : "ACTIVE";
+
     const tickData = {
       ...state,
       strategyType: "ma_fan",
@@ -195,6 +240,10 @@ export class MaFanTradingStrategy implements IStrategy {
       quoteAsset: this.symbolInfo.quoteAsset,
       mid: this.currentMid,
       valuationPrice: this.currentMid,
+      bestBid: this.bestBid || this.currentMid,
+      bestAsk: this.bestAsk || this.currentMid,
+      regime: regimeStr,
+      botAction,
       walletBaseBalance: this.walletBase,
       walletQuoteBalance: this.walletQuote,
       walletBaseLocked: this.walletBaseLocked,
@@ -217,7 +266,11 @@ export class MaFanTradingStrategy implements IStrategy {
 
   public handleWsBookTicker(b: any): void {
     if (b && b.bestBid && b.bestAsk) {
-      const mid = (parseFloat(b.bestBid) + parseFloat(b.bestAsk)) / 2;
+      const bid = parseFloat(b.bestBid);
+      const ask = parseFloat(b.bestAsk);
+      if (bid > 0) this.bestBid = bid;
+      if (ask > 0) this.bestAsk = ask;
+      const mid = (bid + ask) / 2;
       if (mid > 0) {
         this.currentMid = mid;
         this.maFan.step(mid).catch((err) => this.log(`⚠️ step error: ${err.message}`));
