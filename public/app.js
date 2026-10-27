@@ -875,8 +875,8 @@
         color: maColors.c4, // EMA 4
         lineWidth: 1,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
-        title: "EMA 4",
-        lastValueVisible: true,
+        title: "",
+        lastValueVisible: false,
         priceLineVisible: false,
         priceFormat: pFormat,
       });
@@ -884,7 +884,7 @@
         color: maColors.c8, // EMA 8
         lineWidth: 1,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
-        title: "EMA 8",
+        title: "",
         lastValueVisible: false,
         priceLineVisible: false,
         priceFormat: pFormat,
@@ -893,7 +893,7 @@
         color: maColors.c16, // EMA 16
         lineWidth: 1,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
-        title: "EMA 16",
+        title: "",
         lastValueVisible: false,
         priceLineVisible: false,
         priceFormat: pFormat,
@@ -902,8 +902,8 @@
         color: maColors.c25, // EMA 25
         lineWidth: 2,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
-        title: "EMA 25",
-        lastValueVisible: true,
+        title: "",
+        lastValueVisible: false,
         priceLineVisible: false,
         priceFormat: pFormat,
       });
@@ -911,8 +911,8 @@
         color: maColors.c75, // EMA 75
         lineWidth: 2,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
-        title: "EMA 75",
-        lastValueVisible: true,
+        title: "",
+        lastValueVisible: false,
         priceLineVisible: false,
         priceFormat: pFormat,
       });
@@ -920,8 +920,8 @@
         color: maColors.c200, // EMA 200
         lineWidth: 2,
         lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
-        title: "EMA 200",
-        lastValueVisible: true,
+        title: "",
+        lastValueVisible: false,
         priceLineVisible: false,
         priceFormat: pFormat,
       });

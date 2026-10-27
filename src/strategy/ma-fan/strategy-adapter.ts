@@ -470,7 +470,8 @@ export class MaFanTradingStrategy implements IStrategy {
         address: "Binance Spot",
       };
     } catch (err: any) {
-      this.log(`⚠️ [BALANCE QUERY] Failed to fetch balances for ${this.symbolInfo.symbol}: ${err?.message || err}`);
+      const errMsg = (err?.message || String(err)).replace(/[\r\n]+/g, " ").trim();
+      this.log(`⚠️ [BALANCE QUERY] Failed to fetch balances for ${this.symbolInfo.symbol}: ${errMsg}`);
       return { base: this.walletBase, quote: this.walletQuote, somi: 0, usdso: 0, address: "" };
     }
   }

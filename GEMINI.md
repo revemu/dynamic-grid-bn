@@ -4966,6 +4966,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ส่งราคา `bestBid` และ `bestAsk` สดๆ ขึ้นกล่องราคาด้านขวา ไม่ให้ขึ้น `--.----`
    - ปรับป้ายกำกับมุมซ้ายบนจาก `DOW: WARMUP` ให้แสดงสภาวะเทรนด์ใหญ่ `HTF: BULL` หรือ `HTF: BEAR`
 
+---
+
+## 126. v0.2.126 — CloudFront & HTML Error Log Sanitization (Single-Line Compact Errors) & Removal of Price Scale EMA Badges
+
+1. **ระบบแปลงและทำความสะอาด Error Log จาก HTML/CloudFront เป็น Single-Line (`src/exchange/binance/client.ts` & `src/index.ts`)**:
+   - **สาเหตุของปัญหา**: เมื่อ Binance API หรือ CDN Edge Server (AWS CloudFront) ปฏิเสธคำขอ (เช่น 403 Forbidden / Request blocked / WAF / Geo-block / 502 Bad Gateway) Response ที่ส่งกลับมาเป็น HTML ทั้งหน้ากระดาษ (มีแท็ก `<!DOCTYPE>`, `<HTML>`, `<PRE>`, `Request ID: ...`) ทำให้ `JSON.parse` ล้มเหลวและโยน Error ที่บรรจุโค้ด HTML หลายสิบบรรทัด ส่งผลให้ Console และ Activity Feed แดชบอร์ดแสดงผล HTML ยืดยาวรกหน้าจอ
+   - **แนวทางแก้ไข**:
+     - สร้างฟังก์ชัน `sanitizeHttpErrorBody(status, text)` สกัดเฉพาะหัวข้อปัญหา (Summary) และ CloudFront Request ID พร้อมถอดรหัส Entity (`&#x3D;` -> `=`) และตัดแท็ก HTML ออกทั้งหมด
+     - ควบคุมผลลัพธ์ให้อยู่ใน **1 บรรทัดกระชับ (Single-line)** เช่น:
+       `Binance HTTP 403: CloudFront: Request blocked / The request could not be satisfied (Request ID: AkOIrVpYfXID27Ra_AdW7e0KkQUSmVigePiT5DQOxv6DU4Lic9U07Q==)`
+     - เพิ่มการกรองในฟังก์ชัน `log()` (`src/index.ts`) และ `refreshWalletBalances()` (`src/strategy/ma-fan/strategy-adapter.ts`) เพื่อไม่ให้มี multi-line error หลุดออกไปใน console
+2. **นำป้ายกำกับราคาและชื่อ EMA ออกจากแกนราคาขวาสุด (Price Scale Badges Removal in `public/app.js`)**:
+   - ปรับแต่งเส้น Line Series ของ EMA ทั้ง 6 เส้น (`ema4Series`, `ema8Series`, `ema16Series`, `ema25Series`, `ema75Series`, `ema200Series`):
+     - กำหนด `lastValueVisible: false`
+     - กำหนด `title: ""`
+   - **ผลลัพธ์**: ป้ายกล่องข้อความ EMA ทั้งหมดบนแกนราคาขวาสุดหายไปอย่างสมบูรณ์ 100% สเกลราคาโปร่งโล่งสบายตา ไม่ทับซ้อนกัน โดยผู้ใช้ยังคงอ่านค่าตัวเลข EMA ของแต่ละเส้นได้สะดวกและชัดเจนจากกล่อง Legend มุมซ้ายบนของกราฟ
+3. **คำอธิบายและแนวคิดของ Fan Spread ($\ge 0.25\%$)**:
+   - Fan Spread วัดระยะห่างระหว่างเส้นเร็วสุด (EMA 4) กับแกนกลางพัด (EMA 25): $\frac{|\text{EMA 25} - \text{EMA 4}|}{\text{EMA 25}} \times 100$
+   - ช่วยกรองช่วงตลาดไซด์เวย์ (Anti-Chop) ไม่ให้เข้าเทรดตอนเส้นพันกัน และรอจังหวะราคาเทแรงจนพัดถ่างกางตึงสุด (Oversold Exhaustion $\ge 0.25\%$) ก่อนดักจังหวะ Momentum Hook เพื่อเข้าซื้อ Sniper เด้งคืนหา EMA 25 (TP1)
+
+
 
 
 
