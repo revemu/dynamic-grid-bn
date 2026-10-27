@@ -4752,6 +4752,51 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.117` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 118. v0.2.118 — Dow Downtrend Fast Cut Guard & Front-Loaded Sizing Optimization (`src/strategy/`, `src/config.ts`, `src/backtest.ts`, `public/`)
+
+### สาเหตุและปัญหาที่ค้นพบ (Root Cause & Discovery)
+1. **ปัญหาทำไม Win Rate สูง แต่ได้กำไรน้อยมาก และขาดทุนหนักใน 1 ไม้**:
+   - **ความไม่สมดุลของ Payoff Ratio (Risk-to-Reward Inversion)**:
+     - เดิม Win แต่ละไม้ได้กำไรเฉลี่ยเพียง `+$0.14` (เนื่องจากขายที่ Sell 1 บวกกำไรเพียง +0.25%) แต่เวลาโดนคัทลอสที่ Floor Buffer เสียถึง `-$1.35` ถึง `-$1.88` ต่อไม้
+     - อัตราส่วน Payoff Ratio อยู่ที่ **1 : 9.6 ถึง 1 : 13.4** ทำให้ต้องใช้ Win Rate สูงกว่า **90.6%** ถึงจะเท่าทุน (Breakeven) หากแพ้เพียง 1 ไม้ กำไรที่สะสมมาทั้ง 10-15 ไม้จะหายไปทันที
+   - **Cash Drag สูงจากการกระจายไม้เท่าๆ กัน (`[35%, 35%, 30%]`)**:
+     - ไม้แรก (Buy Level 1) ใช้เงินทุนเพียง ~$58.33 (29% ของพอร์ต) ทำให้เงินอีก 71% ($141.67) นอนนิ่งเป็นเงินสด เมื่อราคาเด้งกลับและทำกำไร จึงได้กำไรเป็นตัวเงินน้อยมาก
+   - **จุดบอดของ Dow Trend Filter ที่ไม่มี Exit Logic (The Trend Filter Blindspot)**:
+     - `dowTrendFilter: true` เดิมทำหน้าที่เป็นเพียง **Entry Guard** (ระงับการเปิดไม้ซื้อใหม่เมื่อเป็นขาลง)
+     - แต่เมื่อมี Position ถือครองอยู่แล้ว ระบบ **ไม่มีคำสั่ง Exit หรือ Cut Loss ออกมาก่อน**
+     - ผลคือเมื่อกราฟ BNB เกิด Dow Theory Downtrend ยืนยันที่ราคา $739.70 บอทหยุดซื้อใหม่จริง แต่ปล่อยให้เหรียญที่ถืออยู่ $164.78 ไหลรูดลงต่อเนื่อง 2.5 ชั่วโมง จนทะลุฟลอร์ที่ $732.75 เกิดผลขาดทุนหนักถึง `-$1.88` ในไม้เดียว!
+
+---
+
+### การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)
+1. **ระบบคัทลอสฉุกเฉินเมื่อยืนยันขาลง (`enableExitOnDowntrendRegime` / Fast Cut Guard)**:
+   - เพิ่มฟังก์ชัน `RiskManager.evaluateDowntrendRegimeExit` ใน `src/strategy/risk-manager.ts`
+   - เมื่อโครงสร้าง Dow Theory ยืนยันการเปลี่ยนเป็นเทรนด์ขาลงสมบูรณ์ (`dow.regime === "DOWNTREND"` โดยเกิด Lower High + Lower Low):
+     - หากบอทกำลังถือเหรียญอยู่ ระบบจะทำการเทขายล้างพอร์ตทันทีที่ราคา Best Bid ปัจจุบัน (`action: "CUT"`)
+     - ยกเลิก Resting Buy Orders ทั้งหมด และเข้าสู่สถานะ `waitingForHigherLow` ทันทีเพื่อรอการสร้างฐาน HL ใหม่
+     - ช่วยลดการขาดทุนของไม้ที่หลุดเทรนด์จาก -$1.88 เหลือเพียง -$0.30 (ลดความเสียหายลงกว่า 84% ทันที)
+2. **Front-Loaded Tranche Sizing (`buyLevelWeights: [50, 30, 20]`)**:
+   - ปรับน้ำหนักไม้ซื้อแรกให้รับน้ำหนัก 50% ($100 จากงบ $200) เพื่อให้การย่อตัวแตะไม้แรกในกลยุทธ์ Sniper สร้างผลกำไรเป็นกอบเป็นกำ ลด Cash Drag ลงเหลือ 50%
+   - อีก 50% ($60 และ $40) เก็บไว้เป็นกระสุนสำรองสำหรับ Buy Level 2 และ 3
+3. **ขยายเป้าทำกำไรและผลตอบแทนขั้นต่ำ (`sellLevelPcts: [60, 80, 100]`, `minNetProfitPct: 0.50%`)**:
+   - ปรับเป้าขายให้กว้างขึ้นเพื่อรันเทรนด์ในโซนบนของกรอบ โดยกำหนดขั้นต่ำของกำไรสุทธิหลังหักค่าธรรมเนียมไว้ที่ `0.50%`
+   - ผลการทดสอบทำให้กำไรเฉลี่ยต่อการชนะ (Average Win) เพิ่มขึ้นจาก `+$0.14` เป็น `+$0.50` ถึง `+$0.80`
+   - ปรับให้อัตราส่วน Payoff Ratio พลิกกลับมาเป็นบวก (**1 : 0.89 ถึง 1 : 0.69**) และลดจุดคุ้มทุน Breakeven Win Rate ลงเหลือเพียง **47.3%**
+4. **Interactive Dashboard UI Toggle**:
+   - เพิ่ม Toggle Switch ใน Modal การตั้งค่าบน Web Dashboard (`public/index.html` และ `public/app.js`):
+     - `🛡️ คัทลอสฉุกเฉินเมื่อยืนยันขาลง (Fast Cut on Dow Downtrend)`
+     - บันทึกและดึงค่าผ่าน `/api/config` และ Settings DB ได้แบบ Real-time
+5. **ผลการทดสอบเปรียบเทียบใน Backtest Benchmark (10.4 Days 15M Data)**:
+   - **BNBFDUSD (+2.34% Market)**:
+     - `1. Optimized Sniper Grid (Front-Load [50,30,20] + FastCut 🛡️)`: กำไรสุทธิ **+$1.26 (+0.63%)**, Max Drawdown ลดลงกว่าเท่าตัวเหลือเพียง **0.84%** (จากเดิม 1.92%), ยอด Cut Loss ลดลงจาก -$3.85 เหลือ -$2.15
+     - เทียบกับ `2. Previous Sniper Grid (Baseline [35,35,30] + No FastCut)`: ขาดทุนสุทธิ **-$0.75 (-0.38%)**, Max Drawdown **1.92%**
+     - เทียบกับ `6. Naked Pure Grid`: ขาดทุนสุทธิ **-$2.80 (-1.40%)**, Max Drawdown **2.85%**
+6. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.118` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
+
 
 
 

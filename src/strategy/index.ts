@@ -622,6 +622,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       enableBuyAboveTrendSupport: Boolean(this.cfg.enableBuyAboveTrendSupport),
       enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
       liquidateOnTrendSupportBreak: Boolean(this.cfg.liquidateOnTrendSupportBreak),
+      enableExitOnDowntrendRegime: Boolean(this.cfg.enableExitOnDowntrendRegime),
       enableSellBelowTrendResistance: this.cfg.enableSellBelowTrendResistance !== false,
       enableSellAtRealCeiling: this.cfg.enableSellAtRealCeiling !== false,
       sellProfitMode: this.cfg.sellProfitMode || (this.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"),
@@ -3031,6 +3032,20 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     });
     if (trendSupportBrokenHandled) return;
 
+    const downtrendRegimeExitHandled = await this.riskManager.evaluateDowntrendRegimeExit({
+      dow,
+      refPrice,
+      lowerBound,
+      span,
+      buyLevels,
+      bestBid,
+      effectiveMid,
+      isChannelReady,
+      cancelAllRestingOrders: (side, reason) => this.orderExecutor.cancelAllRestingOrders(side, reason),
+      sellAll: (price, action, anchorRefPrice) => this.orderExecutor.sellAll(price, action, anchorRefPrice),
+    });
+    if (downtrendRegimeExitHandled) return;
+
     const cutLossHandled = await this.riskManager.evaluateCutLoss({
       isChannelReady,
       lowerBound,
@@ -4014,6 +4029,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         })),
         enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
         liquidateOnTrendSupportBreak: Boolean(this.cfg.liquidateOnTrendSupportBreak),
+        enableExitOnDowntrendRegime: Boolean(this.cfg.enableExitOnDowntrendRegime),
         breakevenEscapeProfitPct: this.cfg.breakevenEscapeProfitPct ?? 0.06,
         maxActiveMakerBuys: this.cfg.maxActiveMakerBuys ?? 2,
         isBelowFloor,

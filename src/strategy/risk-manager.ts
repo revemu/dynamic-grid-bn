@@ -164,6 +164,75 @@ export class RiskManager {
   }
 
   /**
+   * Evaluates Dow Theory confirmed Downtrend Regime (LH + LL).
+   * If enableExitOnDowntrendRegime is true and Dow is in DOWNTREND while holding inventory,
+   * liquidates immediately at the current market bid to prevent suffering a full floor crash loss.
+   */
+  public async evaluateDowntrendRegimeExit(params: {
+    dow?: DowStructure;
+    refPrice: number;
+    lowerBound: number;
+    span: number;
+    buyLevels: number[];
+    bestBid?: number;
+    effectiveMid: number;
+    isChannelReady: boolean;
+    cancelAllRestingOrders: (side?: "BUY" | "SELL", reason?: string) => Promise<void>;
+    sellAll: (price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number) => Promise<boolean | void>;
+  }): Promise<boolean> {
+    const { dow, refPrice, lowerBound, span, buyLevels, bestBid, effectiveMid, isChannelReady, cancelAllRestingOrders, sellAll } = params;
+    if (!this.host.cfg.enableExitOnDowntrendRegime || this.host.isPaused) {
+      return false;
+    }
+
+    const isDowntrendRegime = dow?.regime === "DOWNTREND";
+    if (!isDowntrendRegime) {
+      return false;
+    }
+
+    const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
+    const isHolding = this.host.baseHeld() >= dustThreshold || this.host.lots.length > 0;
+    if (!isHolding) {
+      return false;
+    }
+
+    const exitBid = bestBid ?? effectiveMid;
+    this.host.log(
+      `🚨 [FAST CUT: DOWNTREND REGIME] Dow Theory confirmed DOWNTREND (LH+LL) while holding ${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset} — Liquidating early at bid $${exitBid.toFixed(6)} to prevent full floor cut loss!`,
+    );
+
+    if (this.host.openOrders.length > 0) {
+      await cancelAllRestingOrders();
+    }
+    await sellAll(exitBid, "CUT");
+
+    this.host.lastCutLossTime = Date.now();
+    this.host.waitingForHigherLow = true;
+    this.host.isFlatChannelShiftWaiting = false;
+    this.host.isTrendSupportExitActive = true;
+    this.host.postCutSingleTrancheOnly = true;
+    this.host.iocBracketSellCycle = undefined;
+    this.host.stuckSince = undefined;
+    this.host.lastBuyFillTime = 0;
+    this.host.lastBuyFillPrice = 0;
+    this.host.lastBuyFillCandleTime = 0;
+    this.host.breakdownFloorPrice = lowerBound;
+    this.host.breakdownLowPrice = exitBid;
+    this.host.breakdownTime = Math.floor(Date.now() / 1000);
+    this.host.breakdownBuyLevel2Price = isChannelReady && buyLevels.length > 1 && buyLevels[1] > 0.0001
+      ? buyLevels[1]
+      : (lowerBound > 0 ? lowerBound + span * 0.32 : exitBid * 1.01);
+    this.host.bufferBreakStartTime = undefined;
+    this.host.cutLossStage1Executed = false;
+    this.host.cutLossStage1Price = undefined;
+    this.host.cutLossStage1CandleTime = undefined;
+    this.host.cutLossStage1Time = undefined;
+    this.host.breakdownCandleTimes.clear();
+    this.host.saveState();
+    return true;
+  }
+
+  /**
    * Evaluates Cut Loss / Stop Loss logic at 0% Channel Floor.
    * Handles:
    * 1. Fast Buffer Cut (instant or delay / candle close below buffer)

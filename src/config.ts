@@ -123,6 +123,8 @@ export const defaultStrategyConfig = {
   enableExitOnTrendSupportBreak: true,
   /** When true, immediately liquidates 100% inventory to cash on trend support break. Default false (retains inventory and waits for reversal or 0% Floor cut). */
   liquidateOnTrendSupportBreak: false,
+  /** When true, immediately liquidates inventory on Dow Theory confirmed DOWNTREND (LH+LL) to avoid taking full floor cut loss. Default false. */
+  enableExitOnDowntrendRegime: false,
   /** When true, only places sell orders strictly below descending Trendline Resistance. */
   enableSellBelowTrendResistance: false,
   /** When true, enables selling at the real frame (Real S/R Ceil) when it adjusts down, choosing the lower price between trendline and real ceiling. Default true. */
@@ -374,6 +376,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.enableBuyAboveTrendSupport !== undefined) merged.enableBuyAboveTrendSupport = Boolean(saved.enableBuyAboveTrendSupport);
       if (saved.enableExitOnTrendSupportBreak !== undefined) merged.enableExitOnTrendSupportBreak = Boolean(saved.enableExitOnTrendSupportBreak);
       if (saved.liquidateOnTrendSupportBreak !== undefined) merged.liquidateOnTrendSupportBreak = Boolean(saved.liquidateOnTrendSupportBreak);
+      if (saved.enableExitOnDowntrendRegime !== undefined) merged.enableExitOnDowntrendRegime = Boolean(saved.enableExitOnDowntrendRegime);
       if (saved.buySizingMode === "EQUAL" || saved.buySizingMode === "PYRAMID") {
         merged.buySizingMode = saved.buySizingMode;
       }

@@ -4274,6 +4274,7 @@
       setCheck("cfg_enableBuyAboveTrendSupport", Boolean(data.enableBuyAboveTrendSupport));
       setCheck("cfg_enableExitOnTrendSupportBreak", data.enableExitOnTrendSupportBreak !== false);
       setCheck("cfg_liquidateOnTrendSupportBreak", Boolean(data.liquidateOnTrendSupportBreak));
+      setCheck("cfg_enableExitOnDowntrendRegime", Boolean(data.enableExitOnDowntrendRegime));
       setCheck("cfg_enableSellBelowTrendResistance", data.enableSellBelowTrendResistance !== false);
       setCheck("cfg_enableSellAtRealCeiling", data.enableSellAtRealCeiling !== false);
       setVal("cfg_sellProfitMode", data.sellProfitMode || (data.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"));
@@ -4522,6 +4523,7 @@
       enableBuyAboveTrendSupport: document.getElementById("cfg_enableBuyAboveTrendSupport").checked,
       enableExitOnTrendSupportBreak: document.getElementById("cfg_enableExitOnTrendSupportBreak").checked,
       liquidateOnTrendSupportBreak: Boolean(document.getElementById("cfg_liquidateOnTrendSupportBreak")?.checked),
+      enableExitOnDowntrendRegime: Boolean(document.getElementById("cfg_enableExitOnDowntrendRegime")?.checked),
       enableSellBelowTrendResistance: document.getElementById("cfg_enableSellBelowTrendResistance").checked,
       enableSellAtRealCeiling: document.getElementById("cfg_enableSellAtRealCeiling").checked,
       sellProfitMode: document.getElementById("cfg_sellProfitMode").value,

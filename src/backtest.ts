@@ -300,8 +300,24 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
       }
     }
 
+    // A0. Fast Cut: Dow Downtrend Emergency Exit
+    if (cfg.enableExitOnDowntrendRegime && currentBaseHeld > 0 && isDowntrend) {
+      const exitPrice = c.open;
+      const pnl = (exitPrice - avgEntry) * currentBaseHeld;
+      cash += currentBaseHeld * exitPrice;
+      if (pnl >= 0) { grossProfit += pnl; winTrades++; }
+      else { grossLoss += Math.abs(pnl); lossTrades++; }
+      trades.push({ type: "CUT_LOSS", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Fast Cut: Dow Downtrend" });
+      lots = [];
+      lockedChannel = null;
+      soldSellIndices.clear();
+      filledBuyIndices.clear();
+      waitingForHigherLow = true;
+      breakdownLow = c.low;
+      floorCutLossCount++;
+    }
     // A. Floor Cut Loss
-    if (isCutLossTriggered && currentBaseHeld > 0) {
+    else if (isCutLossTriggered && currentBaseHeld > 0) {
       const pnl = (cutLossPrice - avgEntry) * currentBaseHeld;
       cash += currentBaseHeld * cutLossPrice;
       if (pnl >= 0) { grossProfit += pnl; winTrades++; }
@@ -722,7 +738,30 @@ async function main() {
 
   const configs: BacktestConfig[] = [
     {
-      name: "1. Sniper Grid (ชิดฟลอร์ 15/8/2% + Dow ChoCh Gate 🛡️) 🌟",
+      name: "1. Optimized Sniper Grid (Front-Load [50,30,20] + FastCut 🛡️) 🌟",
+      budget: 200,
+      sellProfitMode: "GRID_CASHFLOW",
+      channelMode: "DONCHIAN_ATR",
+      minChannelWidthPct: 1.8,
+      maxChannelWidthPct: 6.0,
+      buyLevelPcts: [15, 8, 2, 1, 0.5],
+      sellLevelPcts: [60, 80, 100, 100, 100],
+      buyLevelWeights: [50, 30, 20, 10, 10],
+      enabledBuyLevels: [true, true, true, false, false],
+      enabledSellTargets: [true, true, true, false, false],
+      minNetProfitPct: 0.50,
+      floorBufferPct: 0.35,
+      dowTrendFilter: true,
+      enableTrendChannelGating: true,
+      enableExitOnDowntrendRegime: true,
+      enableExitOnTrendSupportBreak: false,
+      enableBuyBelowSellLevel1: true,
+      enableSellBelowTrendResistance: true,
+      enableLhDynamicEscape: false,
+      lockChannelInPosition: true,
+    },
+    {
+      name: "2. Previous Sniper Grid (Baseline [35,35,30] + No FastCut)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
@@ -737,6 +776,7 @@ async function main() {
       floorBufferPct: 0.35,
       dowTrendFilter: true,
       enableTrendChannelGating: true,
+      enableExitOnDowntrendRegime: false,
       enableExitOnTrendSupportBreak: false,
       enableBuyBelowSellLevel1: true,
       enableSellBelowTrendResistance: true,
@@ -744,7 +784,7 @@ async function main() {
       lockChannelInPosition: true,
     },
     {
-      name: "2. Sniper Grid (ชิดฟลอร์ 15/8/2% + SupportBreak = TRUE)",
+      name: "3. Sniper Grid (ชิดฟลอร์ 15/8/2% + SupportBreak = TRUE)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
@@ -766,7 +806,7 @@ async function main() {
       lockChannelInPosition: true,
     },
     {
-      name: "3. Classic Wide Grid (กระจายเต็มกรอบ 42/32/22%)",
+      name: "4. Classic Wide Grid (กระจายเต็มกรอบ 42/32/22%)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
@@ -788,7 +828,7 @@ async function main() {
       lockChannelInPosition: true,
     },
     {
-      name: "4. Equal 5-Tranche Wide Grid (กระจายเท่ากัน 5 ไม้ x 20%)",
+      name: "5. Equal 5-Tranche Wide Grid (กระจายเท่ากัน 5 ไม้ x 20%)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
@@ -810,7 +850,7 @@ async function main() {
       lockChannelInPosition: true,
     },
     {
-      name: "5. Naked Pure Grid (Zero Guards Baseline)",
+      name: "6. Naked Pure Grid (Zero Guards Baseline)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DOW_SWINGS",
@@ -852,9 +892,9 @@ async function main() {
         results.push(res);
       }
 
-      // 6. Swing Strategy Raw (LL Retest, Breakout)
+      // 7. Swing Strategy Raw (LL Retest, Breakout)
       const swingCfgRaw: SwingStrategyConfig & { enableChoChGate?: boolean; name?: string } = {
-        name: "6. Swing Strategy (Raw LL Retest & Breakout)",
+        name: "7. Swing Strategy (Raw LL Retest & Breakout)",
         minRiskReward: 1.8,
         stopLossBufferPct: 0.35,
         maxPositionPct: 50.0,
@@ -870,9 +910,9 @@ async function main() {
       };
       results.push(runSwingSimulation(sym, candles, swingCfgRaw, 200));
 
-      // 7. Guarded Swing Strategy with Dow ChoCh Gate
+      // 8. Guarded Swing Strategy with Dow ChoCh Gate
       const swingCfgGuarded: SwingStrategyConfig & { enableChoChGate?: boolean; name?: string } = {
-        name: "7. Guarded Swing Strategy (with Dow ChoCh Gate 🛡️)",
+        name: "8. Guarded Swing Strategy (with Dow ChoCh Gate 🛡️)",
         minRiskReward: 1.8,
         stopLossBufferPct: 0.35,
         maxPositionPct: 50.0,
