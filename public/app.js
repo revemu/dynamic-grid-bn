@@ -1500,9 +1500,6 @@
     elCandleInspectorCard.style.left = `${Math.round(left)}px`;
     elCandleInspectorCard.style.top = `${Math.round(top)}px`;
   }
-      console.warn("Error updating MA Fan lines:", err);
-    }
-  }
 
   function applyCurrentTimeframeCandles() {
     if (!candleSeries || !chart) return;

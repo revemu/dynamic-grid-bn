@@ -5099,6 +5099,17 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - **ซิงค์ Pan/Zoom**: กล่อง Inspector และเส้นปักหมุดจะเลื่อนตามกราฟแบบ Pixel-perfect และซ่อนอัตโนมัติหากเลื่อนหลุดหน้าจอ
      - ใช้งานได้ทั้งบน **แดชบอร์ดเทรดจริง (`/`)** และ **Backtest Studio (`/backtest.html`)**
 
+## 131. v0.2.131 — Fix Syntax Error in `public/app.js` Restoring Main Chart Rendering
+
+1. **สาเหตุของปัญหาหน้าหลักไม่ขึ้นชาร์ต**:
+   - ในไฟล์ `public/app.js` บรรทัดที่ 1503-1505 มี block `console.warn("Error updating MA Fan lines:", err); } }` ตกค้างจากการผสานโค้ดชุดตรวจวัดแท่งเทียน ส่งผลให้เกิด `SyntaxError: Unexpected token '}'` เมื่อเบราว์เซอร์ดาวน์โหลดไฟล์ `public/app.js` ทำให้สคริปต์ฝั่ง Client-side หยุดทำงานตั้งแต่ขั้นตอนการ Compile ส่งผลให้ตัวสร้างกราฟ (`initChart()`) ไม่ถูกเรียกใช้งาน
+2. **การแก้ไขและการตรวจสอบ**:
+   - ลบโค้ดส่วนที่ตกค้างออก และตรวจสอบความถูกต้องของโครงสร้างฟังก์ชันทั้งหมด
+   - ตรวจสอบไวยากรณ์ด้วย `node --check public/app.js` และ `node --check public/backtest.js` ผ่าน 100% (0 syntax errors)
+   - ตรวจสอบ TypeScript ด้วย `npm run typecheck` ผ่าน 100% (0 errors)
+   - อัปเดตเวอร์ชันเป็น `v0.2.131` และ Push ขึ้น Git เรียบร้อย
+
+
 
 
 
