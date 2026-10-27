@@ -27,6 +27,7 @@ export interface Lot {
   price: number;
   qty: number;
   time: number;
+  buyIdx?: number;
 }
 
 export interface TradeRecord {
@@ -57,6 +58,7 @@ export interface BacktestResult {
   winTrades: number;
   lossTrades: number;
   winRate: number;
+  completedCycles: number;
   maxDrawdownPct: number;
   profitFactor: number;
   holdingLotsCount: number;
@@ -68,6 +70,7 @@ export interface BacktestResult {
   lhEscapesCount: number;
   floorCutLossCount: number;
   trendSupportBreakCount: number;
+  trades?: TradeRecord[];
 }
 
 export async function fetchKlines(symbol: string, interval = "15m", limit = 500): Promise<Candle[]> {
@@ -126,12 +129,16 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
   let lhEscapesCount = 0;
   let floorCutLossCount = 0;
   let trendSupportBreakCount = 0;
+  let completedCycles = 0;
 
   // State guards mirroring src/strategy/index.ts
   let waitingForHigherLow = false;
   let trendSupportBroken = false;
   let breakdownLow = 0;
   let lastTrendSupportBreakKey: string | undefined;
+
+  const soldSellIndices = new Set<number>();
+  const filledBuyIndices = new Set<number>();
 
   let lockedChannel: {
     lowerBound: number;
@@ -185,6 +192,8 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
       lockedChannel = { lowerBound, upperBound, center, buyLevels, sellLevels };
     } else if (currentBaseHeld <= 0) {
       lockedChannel = null;
+      soldSellIndices.clear();
+      filledBuyIndices.clear();
     }
 
     // 2. Dow Market Regime & Trend Filtering
@@ -193,20 +202,20 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
     const trendFiltered = Boolean(cfg.dowTrendFilter && isDowntrend);
 
     // 3. Regime Channel Gate (Dow ChoCh Gate & Base Confirmation)
-    const gate = RegimeChannelGate.evaluateGate({
-      price: c.open,
-      proposedFloor: lowerBound,
-      proposedCeiling: upperBound,
-      regime,
-      waveCycle: structure.waveCycle,
-      lastCanonicalLow: structure.waveCycle?.annotatedSwings?.filter((s) => s.type === "LOW").slice(-1)[0],
-      lastCanonicalHigh: structure.waveCycle?.annotatedSwings?.filter((s) => s.type === "HIGH").slice(-1)[0],
-      lastLh: structure.lastLh,
-      isDowntrendDropActive: structure.isDowntrendDropActive,
-      minFloorProximityPct: cfg.minFloorProximityPct ?? 1.5,
-      enableTrendGating: cfg.enableTrendChannelGating !== false,
-    });
-    const canEstablishChannel = gate.canEstablishChannel;
+    const lastLh = structure.lastLh;
+    const isUnderLastLh = Boolean(lastLh && lastLh.price > 0 && c.open < lastLh.price * 0.999);
+    const isDowntrendStructure = regime === "DOWNTREND" || (
+      structure.waveCycle?.annotatedSwings?.filter((s) => s.type === "LOW").slice(-1)[0]?.dowLabel === "LL" &&
+      structure.waveCycle?.annotatedSwings?.filter((s) => s.type === "HIGH").slice(-1)[0]?.dowLabel === "LH"
+    );
+    const isChoChBullish = !lastLh || lastLh.price <= 0 || c.open >= lastLh.price * 0.999;
+    const isBreakingLow = Boolean(structure.isDowntrendDropActive || (lowerBound > 0 && c.open < lowerBound));
+
+    const canEstablishChannel = cfg.enableTrendChannelGating === false || (
+      !(isUnderLastLh && isDowntrendStructure) &&
+      !(isDowntrendStructure && !isChoChBullish) &&
+      !isBreakingLow
+    );
 
     // 4. Trendline Evaluations
     const downtrendLine = structure.downtrendLine;
@@ -237,10 +246,12 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
         trades.push({ type: "CUT_LOSS", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Trend Support Liquidate" });
         lots = [];
         lockedChannel = null;
+        soldSellIndices.clear();
+        filledBuyIndices.clear();
         trendSupportBreakCount++;
       }
       trendSupportBroken = true;
-      waitingForHigherLow = true;
+      waitingForHigherLow = false;
       breakdownLow = c.low;
     }
 
@@ -298,7 +309,9 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
       trades.push({ type: "CUT_LOSS", price: cutLossPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Floor Cut Loss" });
       lots = [];
       lockedChannel = null;
-      waitingForHigherLow = true;
+      soldSellIndices.clear();
+      filledBuyIndices.clear();
+      waitingForHigherLow = false;
       breakdownLow = c.low;
       floorCutLossCount++;
     }
@@ -312,11 +325,13 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
       const exitPrice = upperBound;
       const pnl = (exitPrice - avgEntry) * currentBaseHeld;
       cash += currentBaseHeld * exitPrice;
-      if (pnl >= 0) { grossProfit += pnl; winTrades++; }
+      if (pnl >= 0) { grossProfit += pnl; winTrades++; completedCycles++; }
       else { grossLoss += Math.abs(pnl); lossTrades++; }
       trades.push({ type: "TAKE_PROFIT", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "Ceiling 100% Exit" });
       lots = [];
       lockedChannel = null;
+      soldSellIndices.clear();
+      filledBuyIndices.clear();
       ceilingExitsCount++;
     }
     // C. LH Dynamic Escape
@@ -331,47 +346,69 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
       const exitPrice = structure.lastLh.price;
       const pnl = (exitPrice - avgEntry) * currentBaseHeld;
       cash += currentBaseHeld * exitPrice;
-      if (pnl >= 0) { grossProfit += pnl; winTrades++; }
+      if (pnl >= 0) { grossProfit += pnl; winTrades++; completedCycles++; }
       else { grossLoss += Math.abs(pnl); lossTrades++; }
       trades.push({ type: "SELL", price: exitPrice, qty: currentBaseHeld, pnl, time: c.time, reason: "LH Dynamic Escape" });
       lots = [];
       lockedChannel = null;
+      soldSellIndices.clear();
+      filledBuyIndices.clear();
       lhEscapesCount++;
     }
     // D. Grid Sell Targets
     else if (currentBaseHeld > 0 && sellLevels.length > 0) {
-      for (let sIdx = 0; sIdx < sellLevels.length; sIdx++) {
-        if (cfg.enabledSellTargets && cfg.enabledSellTargets[sIdx] === false) continue;
-        let sPrice = sellLevels[sIdx]!;
+      const activeTargets = cfg.enabledSellTargets
+        ? sellLevels.map((lvl, idx) => ({ lvl, idx })).filter((item) => cfg.enabledSellTargets![item.idx] !== false)
+        : sellLevels.map((lvl, idx) => ({ lvl, idx }));
 
-        // Cap target if enableSellBelowTrendResistance is active
-        if (cfg.enableSellBelowTrendResistance && downtrendLine && !downtrendLine.isBroken && downtrendLine.currentLinePrice < sPrice) {
-          sPrice = downtrendLine.currentLinePrice;
-        }
+      const eligibleTargets = activeTargets.filter((item) => !soldSellIndices.has(item.idx));
 
-        if (c.high >= sPrice && lots.length > 0) {
-          const isProfitOk = cfg.sellProfitMode !== "PORTFOLIO_AVG_PROFIT" || sPrice >= avgEntry * (1 + cfg.minNetProfitPct / 100);
-          if (isProfitOk) {
-            const activeTargets = cfg.enabledSellTargets ? cfg.enabledSellTargets.filter(Boolean).length : sellLevels.length;
-            const trancheQty = currentBaseHeld / Math.max(1, activeTargets);
-            const sellQty = Math.min(lots.reduce((s, l) => s + l.qty, 0), trancheQty);
-            if (sellQty > 0) {
-              let rem = sellQty;
-              let tradePnl = 0;
-              while (rem > 0 && lots.length > 0) {
-                const l = lots[0]!;
-                const take = Math.min(l.qty, rem);
-                tradePnl += (sPrice - l.price) * take;
-                l.qty -= take;
-                rem -= take;
-                if (l.qty <= 1e-8) lots.shift();
+      if (eligibleTargets.length > 0) {
+        for (const item of eligibleTargets) {
+          let sPrice = item.lvl;
+
+          // Cap target if enableSellBelowTrendResistance is active
+          if (cfg.enableSellBelowTrendResistance && downtrendLine && !downtrendLine.isBroken && downtrendLine.currentLinePrice < sPrice) {
+            sPrice = downtrendLine.currentLinePrice;
+          }
+
+          if (c.high >= sPrice && lots.length > 0) {
+            const isProfitOk = cfg.sellProfitMode !== "PORTFOLIO_AVG_PROFIT" || sPrice >= avgEntry * (1 + cfg.minNetProfitPct / 100);
+            if (isProfitOk) {
+              // If this is the last eligible target OR holding only 1 lot, sell entire remaining inventory!
+              const sellQty = (eligibleTargets.length === 1 || lots.length === 1)
+                ? currentBaseHeld
+                : currentBaseHeld / eligibleTargets.length;
+
+              if (sellQty > 0) {
+                let rem = sellQty;
+                let tradePnl = 0;
+                while (rem > 0 && lots.length > 0) {
+                  const l = lots[0]!;
+                  const take = Math.min(l.qty, rem);
+                  tradePnl += (sPrice - l.price) * take;
+                  l.qty -= take;
+                  rem -= take;
+                  if (l.qty <= 1e-8) {
+                    if (l.buyIdx !== undefined) filledBuyIndices.delete(l.buyIdx);
+                    lots.shift();
+                  }
+                }
+                cash += sellQty * sPrice;
+                if (tradePnl >= 0) { grossProfit += tradePnl; winTrades++; }
+                else { grossLoss += Math.abs(tradePnl); lossTrades++; }
+                trades.push({ type: "SELL", price: sPrice, qty: sellQty, pnl: tradePnl, time: c.time, reason: `Sell Target ${item.idx + 1}` });
+
+                soldSellIndices.add(item.idx);
+
+                if (lots.length === 0) {
+                  completedCycles++;
+                  lockedChannel = null;
+                  soldSellIndices.clear();
+                  filledBuyIndices.clear();
+                }
+                break;
               }
-              cash += sellQty * sPrice;
-              if (tradePnl >= 0) { grossProfit += tradePnl; winTrades++; }
-              else { grossLoss += Math.abs(tradePnl); lossTrades++; }
-              trades.push({ type: "SELL", price: sPrice, qty: sellQty, pnl: tradePnl, time: c.time, reason: `Sell Target ${sIdx + 1}` });
-              if (lots.length === 0) lockedChannel = null;
-              break;
             }
           }
         }
@@ -407,6 +444,7 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
       if (currentHoldFrac < 0.95) {
         for (let bIdx = 0; bIdx < buyLevels.length; bIdx++) {
           if (cfg.enabledBuyLevels && cfg.enabledBuyLevels[bIdx] === false) continue;
+          if (filledBuyIndices.has(bIdx)) continue;
           let bPrice = buyLevels[bIdx]!;
 
           // Buy above trend support override
@@ -428,7 +466,8 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
             if (trancheBudget >= 5.0) {
               const buyQty = trancheBudget / bPrice;
               cash -= trancheBudget;
-              lots.push({ price: bPrice, qty: buyQty, time: c.time });
+              lots.push({ price: bPrice, qty: buyQty, time: c.time, buyIdx: bIdx });
+              filledBuyIndices.add(bIdx);
               trades.push({ type: "BUY", price: bPrice, qty: buyQty, time: c.time, reason: `Buy Level ${bIdx + 1}` });
               break;
             }
@@ -469,6 +508,7 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
     winTrades,
     lossTrades,
     winRate,
+    completedCycles,
     maxDrawdownPct: maxDrawdown,
     profitFactor,
     holdingLotsCount: lots.length,
@@ -480,6 +520,7 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
     lhEscapesCount,
     floorCutLossCount,
     trendSupportBreakCount,
+    trades,
   };
 }
 
@@ -660,6 +701,7 @@ export function runSwingSimulation(
     winTrades,
     lossTrades,
     winRate,
+    completedCycles: winTrades,
     maxDrawdownPct: maxDrawdown,
     profitFactor,
     holdingLotsCount: activePos ? 1 : 0,
@@ -671,6 +713,7 @@ export function runSwingSimulation(
     lhEscapesCount: 0,
     floorCutLossCount: 0,
     trendSupportBreakCount: 0,
+    trades: [],
   };
 }
 
@@ -679,7 +722,7 @@ async function main() {
 
   const configs: BacktestConfig[] = [
     {
-      name: "1. Sniper Grid (ชิดฟลอร์ 15/8/2% + SupportBreak = FALSE) 🌟",
+      name: "1. Sniper Grid (ชิดฟลอร์ 15/8/2% + Dow ChoCh Gate 🛡️) 🌟",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
@@ -697,7 +740,7 @@ async function main() {
       enableExitOnTrendSupportBreak: false,
       enableBuyBelowSellLevel1: true,
       enableSellBelowTrendResistance: true,
-      enableLhDynamicEscape: true,
+      enableLhDynamicEscape: false,
       lockChannelInPosition: true,
     },
     {
@@ -850,25 +893,26 @@ async function main() {
     }
   }
 
-  console.log("\n==================================================================================================================================================");
+  console.log("\n==========================================================================================================================================================");
   console.log("🏆 COMPREHENSIVE STRATEGY BENCHMARK AUDIT (10.4 DAYS 15M CANDLES)");
-  console.log("==================================================================================================================================================");
-  console.log("| Symbol   | Profile                                                    | Net Return        | Trades | Win Rate | CutLoss        | Max DD  | Final ($) |");
-  console.log("--------------------------------------------------------------------------------------------------------------------------------------------------");
+  console.log("==========================================================================================================================================================");
+  console.log("| Symbol   | Profile                                                    | Net Return        | Trades | Cycles | Win Rate | CutLoss        | Max DD  | Final ($) |");
+  console.log("----------------------------------------------------------------------------------------------------------------------------------------------------------");
 
   for (const r of results) {
     const symStr = r.symbol.padEnd(8);
     const profStr = r.configName.padEnd(58);
     const retStr = `${r.netPnl >= 0 ? "+" : ""}$${r.netPnl.toFixed(2)} (${r.netPnlPct >= 0 ? "+" : ""}${r.netPnlPct.toFixed(2)}%)`.padEnd(17);
     const trStr = String(r.totalTrades).padEnd(6);
+    const cycStr = String(r.completedCycles ?? 0).padEnd(6);
     const wrStr = `${r.winRate.toFixed(1)}%`.padEnd(8);
     const clStr = `-$${r.cutLossLoss.toFixed(2)} (${r.floorCutLossCount}x)`.padEnd(14);
     const ddStr = `${r.maxDrawdownPct.toFixed(2)}%`.padEnd(7);
     const finStr = `$${r.finalEquity.toFixed(2)}`.padEnd(9);
 
-    console.log(`| ${symStr} | ${profStr} | ${retStr} | ${trStr} | ${wrStr} | ${clStr} | ${ddStr} | ${finStr} |`);
+    console.log(`| ${symStr} | ${profStr} | ${retStr} | ${trStr} | ${cycStr} | ${wrStr} | ${clStr} | ${ddStr} | ${finStr} |`);
   }
-  console.log("==================================================================================================================================================\n");
+  console.log("==========================================================================================================================================================\n");
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` || process.argv[1]?.includes("backtest")) {

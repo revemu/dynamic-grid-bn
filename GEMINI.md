@@ -4721,6 +4721,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.116` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 117. v0.2.117 — Production Backtest Lot Clearance, Cycle Re-cycling & Per-Level Buy Flags (`src/backtest.ts`, `package.json`, `src/version.ts`)
+
+### สาเหตุและปัญหาที่ค้นพบ (Root Cause & Discovery)
+1. **ปัญหา Win Rate 100% แต่ได้กำไรน้อยมาก**:
+   - ผู้ใช้สังเกตว่าผลการจำลองใน `src/backtest.ts` บน BNBFDUSD 10.4 วัน แม้ว่า Win Rate จะเป็น 100% (ชนะทุกไม้ ไม่โดน Cut Loss) แต่ทำกำไรได้เพียง `+$0.11` ถึง `+$0.13`
+   - จากการตรวจสอบเชิงลึกพบสาเหตุ 4 ประการ:
+     1. **Cash Drag สูง**: เงินทุน $200 ถูกแบ่งน้ำหนัก Sniper `[35%, 35%, 30%]` ซึ่งกราฟ BNB ย่อลงมาแตะแค่ไม้แรก (Buy Level 1) ทำให้เงินถูกใช้ไปเพียง ~$58.33 ขณะที่เงินอีก 65% ($141.67) นอนนิ่งเป็นเงินสด
+     2. **Infinite Lot Slicing**: ใน `src/backtest.ts` เดิม เมื่อแตะ Sell Target 1 ระบบสั่งแบ่งขาย `trancheQty = currentBaseHeld / 3` แต่ในแท่งถัดไประบบเอาเศษที่เหลือมาหาร 3 ซ้ำๆ (ขาย $19 -> $13 -> $8 -> ... -> $0.000000002) รวมกว่า 40 ครั้ง ทำให้ไม้ 1 ไม่เคยถูกขายออกหมด 100%
+     3. **Position Lock ไม่เคยปลด**: เนื่องจาก `lots` มีเศษเหรียญค้างอยู่ตลอดเวลา ทำให้ `lockedChannel` ล็อกกรอบเดิมค้างไว้ และ `currentHoldFrac` ไม่อนุญาตให้เปิดรอบซื้อใหม่ (Cycle Reset ไม่ทำงาน)
+     4. **ขาดตัวแปรควบคุมสถานะระดับเลเวล (`soldSellIndices` & `filledBuyIndices`)**: ในบอทจริง (`src/strategy/sell-sync.ts`) มีการติดตามว่า Sell Target ไหนขายไปแล้วในรอบปัจจุบัน และเมื่อเคลียร์หมดจะล้างสถานะเพื่อเริ่มรอบใหม่ แต่ใน Backtest ขาดตรรกะนี้
+
+---
+
+### การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)
+1. **Per-Level Tracking (`soldSellIndices` & `filledBuyIndices`)**:
+   - นำระบบติดตามสถานะระดับเลเวลจาก `src/strategy/` มาใส่ใน `src/backtest.ts`:
+     - `filledBuyIndices: Set<number>`: ป้องกันไม่ให้ไม้เดิมถูกซื้อซ้ำซ้อนในรอบเดียวกัน
+     - `soldSellIndices: Set<number>`: ป้องกันไม่ให้ Sell Target เดิมถูกซอยขายซ้ำซ้อนทุกแท่งเทียน
+2. **Full Lot Clearance on Last Target / Single Lot Holding**:
+   - เมื่อราคาแตะ Sell Target หากถือครองเพียง 1 ไม้ หรือเป็นเป้าขายสุดท้ายที่เหลืออยู่ ระบบจะขายออกเต็มจำนวน (100% Inventory Exit) เพื่อรับเงินสดและกำไรกลับคืนมาทันที
+   - เมื่อ `lots.length === 0`: สั่งรีเซ็ต `lockedChannel = null`, `soldSellIndices.clear()`, `filledBuyIndices.clear()` และเพิ่มตัวนับ `completedCycles++` เพื่อพร้อมเริ่มรอบซื้อใหม่รอบถัดไป
+3. **Refined Regime Channel Gate**:
+   - ปรับเงื่อนไข `canEstablishChannel` ใน Backtest ให้สะท้อนโครงสร้าง Dow ChoCh Gate และ Base Confirmation จาก `isDowntrendDropActive` ป้องกันไม่ให้ Minor Pullback ปกติถูกเข้าใจผิดว่าเป็นการหลุดฟลอร์
+4. **Enhanced BacktestResult & Audit Table**:
+   - เพิ่มฟิลด์ `completedCycles: number` และ `trades: TradeRecord[]` ใน `BacktestResult`
+   - ปรับการแสดงผลตาราง Audit Benchmark ให้มีคอลัมน์ `Cycles` แสดงจำนวนรอบการเทรดที่ปิดสมบูรณ์ (Buy -> Sell จบรอบ) ให้เห็นอย่างชัดเจน
+5. **เวอร์ชัน**:
+   - อัปเดตเลขเวอร์ชันเป็น `0.2.117` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
+
 
 
 
