@@ -5033,6 +5033,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ผู้ใช้สามารถกดสลับโหมดและกด "รัน Backtest" เพื่อเปรียบเทียบผลลัพธ์และความแตกต่างบนกราฟได้ทันที
    - แสดงป้ายกำกับบนชาร์ตและตารางไม้เทรด: `🟠 RATCHET SL` พร้อมสีส้มสดใส
 
+## 129. v0.2.129 — Post-TP1 Decision Optimization & Circular 'B'/'S' Badges with Hover Tooltips in Backtest Studio
+
+1. **การตัดสินใจต่อเนื่องหลังขาย TP1 (Post-TP1 Runner & Trailing Optimization)**:
+   - **ปัญหาเดิม**:
+     - ไม้ #4 ซื้อที่ $739.34 และขาย TP1 50% ที่ $739.71 ได้อย่างถูกต้อง จากนั้นราคาพุ่งทะลุ EMA 75 และ EMA 200 ขึ้นไปถึง $743.92 (+0.62%)
+     - แต่เงื่อนไข TP2 เดิมมีบั๊กตรรกะ: `hitTarget = c.high >= target && target > entryPrice * 1.004;` ซึ่งนำเส้น `target` (EMA 200 = $741.91) ไปเทียบกับ `entryPrice * 1.004` ($742.30) แทนที่จะนำ `c.high` ไปเทียบ ทำให้เงื่อนไขเป็น `false` บอทจึงไม่ยอมขาย TP2 แล้วปล่อยให้ราคาไหลร่วงยาว 21 แท่งกลับมากิน Breakeven SL ที่ $739.71 ได้กำไรเพียงเศษสตางค์
+   - **การแก้ไขใน `src/backtest-service.ts` & `src/strategy/ma-fan/strategy.ts`**:
+     - ปรับเงื่อนไข TP2 ให้ตรวจสอบราคาสูงสุดของแท่งเทียน: `c.high >= target && c.high > entryPrice * 1.0035`
+     - นำ Dynamic Ratchet SL มาล็อกกำไรต่อเนื่องหลัง TP1 ด้วย
+   - **ผลลัพธ์การทดสอบ (Trade #4 Resolved)**:
+     - ไม้ #4 ปิดรอบที่เป้า TP2 $741.95 บนแท่งที่ 8 (+40 นาที) ด้วยกำไร `+0.28% (+$0.55)` (จากเดิมที่รอ 21 แท่งแล้วจบที่ $739.71 ได้เพียง +$0.14)
+     - สถิติภาพรวม 1,000 แท่ง 5m ของ BNBFDUSD:
+       - Win Rate พุ่งแตะ **83.3%** (ชนะ 5 / แพ้ 1 จาก 6 ไม้)
+       - Net PnL เพิ่มเป็น **+1.66% (+$3.32)**
+       - Profit Factor พุ่งขึ้นเป็น **8.79** (จากเดิม 4.21 และ 6.28)
+       - Max Drawdown ลดเหลือเพียง **0.38%**
+       - ขาดทุนลึกสุดของไม้ที่แพ้ (Worst Trade) เพียง **-0.22%**
+
+2. **ระบบปุ่มป้ายทรงกลม B/S พร้อม Tooltip ลอยตัวบนชาร์ต Backtest Studio (`public/backtest.html`, `public/backtest.css`, `public/backtest.js`)**:
+   - **ปัญหาเดิม**: Native Markers ของ Lightweight Charts (`candleSeries.setMarkers(...)`) มีข้อความยาวรุงรังบังแท่งเทียน
+   - **สถาปัตยกรรมใหม่**:
+     - เคลียร์ native text markers ออกทั้งหมด (`candleSeries.setMarkers([])`)
+     - สร้าง Overlay DOM Layer (`#btChartOrderBadgesLayer`) วางอยู่ภายใน `#btChartContainer`
+     - แสดงป้ายปุ่มทรงกลมแบบเดียวกับหน้าเทรดจริง:
+       - 🟢 **`B`**: เข้าซื้อ Sniper Hook วางใต้ก้นแท่งเทียน (Low - 14px)
+       - 🔵 **`TP1`**: ขายทำกำไร 50% (EMA 25) วางเหนือยอดแท่งเทียน (High + 14px)
+       - 🟣 **`TP2`**: ขายทำกำไรไม้รัน (EMA 75/200) วางเหนือยอดแท่งเทียน
+       - 🟠 **`SL`**: Ratchet SL ยกฐานตัดขาดทุนเร็ว วางใต้แท่งเทียน
+       - 🟡 **`SL`**: Breakeven SL หลัง TP1 วางใต้แท่งเทียน
+       - 🔴 **`SL`**: Fixed SL ก้นเหวเดิม วางใต้แท่งเทียน
+     - **Interactive Hover Tooltip (`#btChartOrderTooltip`)**:
+       - เมื่อชี้เมาส์ (Hover) ไปที่ป้ายปุ่ม จะปรากฏกล่อง Tooltip สไตล์กระจกฝ้า แสดงราคาเข้า, Fan Spread ตอนเข้า, ราคาขาย, กำไร %, สถานะ SL, กำไรสุทธิทั้งรอบ, และเวลาอย่างละเอียด
+     - **Zoom & Pan Synchronization**:
+       - ผูก Event `subscribeVisibleLogicalRangeChange`, `subscribeVisibleTimeRangeChange`, `wheel`, `mousemove`, และ `ResizeObserver` ทำให้ป้ายปุ่มขยับตามพิกัดของแท่งเทียนแบบ Pixel-perfect
+     - **Click-to-Highlight**: คลิกที่ป้ายปุ่มบนชาร์ตเพื่อเลื่อนตารางไม้เทรดด้านล่างไปยังไม้นั้นทันที
+
+
 
 
 

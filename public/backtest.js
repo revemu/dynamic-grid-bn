@@ -71,6 +71,13 @@
   const cntWin = document.getElementById("cntWin");
   const cntLoss = document.getElementById("cntLoss");
 
+  // Badges & Tooltip
+  const elChartOrderBadgesLayer = document.getElementById("btChartOrderBadgesLayer");
+  const elChartOrderTooltip = document.getElementById("btChartOrderTooltip");
+  let orderBadgesData = [];
+  const badgeDomPool = new Map();
+  const candlesMap = new Map();
+
   // Colors for EMA ribbons (matching user preferences)
   function getMaColors() {
     try {
@@ -241,8 +248,32 @@
           width: chartContainer.clientWidth,
           height: chartContainer.clientHeight || 520,
         });
+        updateOrderBadgesPositions();
       }
     });
+
+    // Synchronize circular order badges with chart scroll, pan, zoom, and drag
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      updateOrderBadgesPositions();
+    });
+    chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+      updateOrderBadgesPositions();
+    });
+    chartContainer.addEventListener("mousemove", (e) => {
+      if (e.buttons > 0) updateOrderBadgesPositions();
+    });
+    chartContainer.addEventListener("wheel", () => {
+      requestAnimationFrame(updateOrderBadgesPositions);
+    }, { passive: true });
+    chartContainer.addEventListener("mouseleave", () => {
+      hideOrderTooltip();
+    });
+    if (window.ResizeObserver && chartContainer) {
+      const ro = new ResizeObserver(() => {
+        updateOrderBadgesPositions();
+      });
+      ro.observe(chartContainer);
+    }
   }
 
   // Display Backtest Record on Chart & Dashboard
@@ -286,15 +317,15 @@
       if (e200.length > 0) legValEma200.textContent = fmtPrice(e200[e200.length - 1].value);
     }
 
-    // 3. Set Markers on Chart
-    if (record.markers && Array.isArray(record.markers)) {
-      candleSeries.setMarkers(record.markers);
-    } else {
-      candleSeries.setMarkers([]);
-    }
+    // 3. Set Badges on Chart (Circular Badges with Hover Tooltips)
+    candleSeries.setMarkers([]);
+    buildOrderBadges(record);
 
     // Fit chart
     chart.timeScale().fitContent();
+    setTimeout(() => {
+      updateOrderBadgesPositions();
+    }, 60);
 
     // 4. Update KPI Summary Cards
     const sum = record.summary || {};
@@ -322,6 +353,285 @@
 
     // Refresh history badge count
     loadHistoryList();
+  }
+
+  // Build and render circular order badges on chart overlay layer
+  function buildOrderBadges(record) {
+    if (!elChartOrderBadgesLayer) return;
+    elChartOrderBadgesLayer.innerHTML = "";
+    badgeDomPool.clear();
+    orderBadgesData = [];
+
+    if (!record || !record.trades || !record.candles) return;
+
+    candlesMap.clear();
+    for (const c of record.candles) {
+      candlesMap.set(c.time, c);
+    }
+
+    const items = [];
+
+    for (const t of record.trades) {
+      // 1. Entry Badge (B)
+      items.push({
+        tradeId: t.id,
+        action: "BUY",
+        text: "B",
+        time: t.entryTime,
+        price: t.entryPrice,
+        cssClass: "badge-buy",
+        badgeType: "BUY",
+        trade: t,
+      });
+
+      // 2. TP1 Badge (TP1) if hit
+      if (t.tp1Time && t.tp1Price) {
+        items.push({
+          tradeId: t.id,
+          action: "TP1",
+          text: "TP1",
+          time: t.tp1Time,
+          price: t.tp1Price,
+          cssClass: "badge-tp1",
+          badgeType: "TP1",
+          trade: t,
+        });
+      }
+
+      // 3. Exit Badge (TP2, SL_BE, RATCHET_SL, SL)
+      if (t.exitType === "TP1+TP2") {
+        items.push({
+          tradeId: t.id,
+          action: "TP2",
+          text: "TP2",
+          time: t.tp2Time || t.exitTime,
+          price: t.tp2Price || t.exitPrice,
+          cssClass: "badge-tp2",
+          badgeType: "TP2",
+          trade: t,
+        });
+      } else if (t.exitType === "TP1+SL_BE") {
+        items.push({
+          tradeId: t.id,
+          action: "SL_BE",
+          text: "SL",
+          time: t.exitTime,
+          price: t.exitPrice,
+          cssClass: "badge-sl-be",
+          badgeType: "SL_BE",
+          trade: t,
+        });
+      } else if (t.exitType === "RATCHET_SL") {
+        items.push({
+          tradeId: t.id,
+          action: "RATCHET_SL",
+          text: "SL",
+          time: t.exitTime,
+          price: t.exitPrice,
+          cssClass: "badge-sl-ratchet",
+          badgeType: "RATCHET_SL",
+          trade: t,
+        });
+      } else {
+        items.push({
+          tradeId: t.id,
+          action: "SL",
+          text: "SL",
+          time: t.exitTime,
+          price: t.exitPrice,
+          cssClass: "badge-sl-fixed",
+          badgeType: "SL",
+          trade: t,
+        });
+      }
+    }
+
+    orderBadgesData = items;
+
+    // Create DOM element for each badge
+    for (const item of orderBadgesData) {
+      const key = `${item.tradeId}_${item.action}_${item.time}`;
+      const el = document.createElement("div");
+      el.className = `chart-order-badge ${item.cssClass}`;
+      el.textContent = item.text;
+
+      // Tooltip triggers
+      el.addEventListener("mouseenter", (e) => {
+        showOrderTooltip(item, e);
+      });
+      el.addEventListener("mouseleave", () => {
+        hideOrderTooltip();
+      });
+
+      // Click: Highlight trade in table
+      el.addEventListener("click", () => {
+        highlightTradeRow(item.tradeId);
+      });
+
+      elChartOrderBadgesLayer.appendChild(el);
+      badgeDomPool.set(key, el);
+    }
+
+    updateOrderBadgesPositions();
+  }
+
+  // Update badge positions on pan/zoom/resize
+  function updateOrderBadgesPositions() {
+    if (!chart || !candleSeries || !elChartOrderBadgesLayer || orderBadgesData.length === 0) return;
+
+    const chartWidth = chartContainer.clientWidth;
+    const chartHeight = chartContainer.clientHeight;
+
+    for (const item of orderBadgesData) {
+      const key = `${item.tradeId}_${item.action}_${item.time}`;
+      const el = badgeDomPool.get(key);
+      if (!el) continue;
+
+      const x = chart.timeScale().timeToCoordinate(item.time);
+      if (x === null || x < -25 || x > chartWidth + 25) {
+        el.style.display = "none";
+        continue;
+      }
+
+      const candle = candlesMap.get(item.time);
+      const isBelow = item.action === "BUY" || item.action === "SL" || item.action === "RATCHET_SL" || item.action === "SL_BE";
+
+      let refPrice = item.price;
+      if (candle) {
+        refPrice = isBelow ? candle.low : candle.high;
+      }
+
+      const yCoord = candleSeries.priceToCoordinate(refPrice);
+      if (yCoord === null || yCoord < -30 || yCoord > chartHeight + 30) {
+        el.style.display = "none";
+        continue;
+      }
+
+      const y = isBelow ? yCoord + 14 : yCoord - 14;
+
+      el.style.left = `${Math.round(x)}px`;
+      el.style.top = `${Math.round(y)}px`;
+      el.style.display = "flex";
+    }
+  }
+
+  // Show hover tooltip with trade details
+  function showOrderTooltip(item, e) {
+    if (!elChartOrderTooltip || !chartContainer) return;
+    const t = item.trade;
+    const rect = chartContainer.getBoundingClientRect();
+
+    let actionTitle = "";
+    let actionColor = "#10b981";
+    let bodyHtml = "";
+
+    if (item.action === "BUY") {
+      actionTitle = `🟢 เข้าซื้อ (BUY) ไม้ #${t.id}`;
+      actionColor = "#10b981";
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาเข้า (Entry):</span><span class="cot-val" style="color: #34d399;">$${fmtPrice(t.entryPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">Fan Spread ตอนเข้า:</span><span class="cot-val">${t.fanSpreadAtEntry ? t.fanSpreadAtEntry.toFixed(2) + "%" : "--"}</span></div>
+        <div class="cot-row"><span class="cot-label">Stop Loss เริ่มต้น:</span><span class="cot-val" style="color: #f87171;">$${fmtPrice(t.stopLossPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาเปิดไม้:</span><span class="cot-val">${fmtDateTime(t.entryTime)}</span></div>
+      `;
+    } else if (item.action === "TP1") {
+      actionTitle = `🔵 ขาย TP1 50% (EMA 25) ไม้ #${t.id}`;
+      actionColor = "#38bdf8";
+      const pnlPct = t.tp1PnlPct ?? (((t.tp1Price - t.entryPrice) / t.entryPrice) * 100);
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาขาย (TP1):</span><span class="cot-val" style="color: #38bdf8;">$${fmtPrice(t.tp1Price)}</span></div>
+        <div class="cot-row"><span class="cot-label">กำไรส่วน TP1:</span><span class="cot-val text-win">+${pnlPct.toFixed(2)}%</span></div>
+        <div class="cot-row"><span class="cot-label">สถานะ SL:</span><span class="cot-val" style="color: #fbbf24;">ขยับเป็น Breakeven ($${fmtPrice(t.entryPrice * 1.0005)})</span></div>
+        <div class="cot-row"><span class="cot-label">เวลา TP1:</span><span class="cot-val">${fmtDateTime(t.tp1Time)}</span></div>
+      `;
+    } else if (item.action === "TP2") {
+      actionTitle = `🟣 ขาย TP2 เต็มรอบ (EMA 75/200) ไม้ #${t.id}`;
+      actionColor = "#a855f7";
+      const pnlPct = t.tp2PnlPct ?? (((t.exitPrice - t.entryPrice) / t.entryPrice) * 100);
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาขาย (TP2):</span><span class="cot-val" style="color: #c084fc;">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">กำไรไม้รัน (TP2):</span><span class="cot-val text-win">+${pnlPct.toFixed(2)}%</span></div>
+        <div class="cot-row"><span class="cot-label">กำไรสุทธิทั้งรอบ:</span><span class="cot-val text-win">+${t.pnlPct.toFixed(2)}% (+$${Math.abs(t.pnlQuote).toFixed(2)})</span></div>
+        <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาปิดรอบ:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
+      `;
+    } else if (item.action === "SL_BE") {
+      actionTitle = `🟡 ปิดรอบ SL Breakeven ไม้ #${t.id}`;
+      actionColor = "#f59e0b";
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาปิด (SL BE):</span><span class="cot-val" style="color: #fbbf24;">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">ผลลัพธ์รอบนี้:</span><span class="cot-val text-win">+${t.pnlPct.toFixed(2)}% (กำไรจาก TP1 50%)</span></div>
+        <div class="cot-row"><span class="cot-label">กำไรสุทธิ:</span><span class="cot-val text-win">+$${Math.abs(t.pnlQuote).toFixed(2)}</span></div>
+        <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาปิดไม้:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
+      `;
+    } else if (item.action === "RATCHET_SL") {
+      actionTitle = `🟠 Ratchet SL ยกฐานตัดขาดทุน ไม้ #${t.id}`;
+      actionColor = "#f97316";
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาตัดขาดทุน:</span><span class="cot-val" style="color: #fb923c;">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">ขาดทุนสุทธิ:</span><span class="cot-val text-loss">${t.pnlPct.toFixed(2)}% (-$${Math.abs(t.pnlQuote).toFixed(2)})</span></div>
+        <div class="cot-row"><span class="cot-label">กลยุทธ์:</span><span class="cot-val" style="color: #fed7aa;">ยกฐานหนีตามแท่งเทียน ช่วยลดการลากยาว</span></div>
+        <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาตัดขาดทุน:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
+      `;
+    } else {
+      actionTitle = `🔴 ตัดขาดทุนก้นเหว (Fixed SL) ไม้ #${t.id}`;
+      actionColor = "#ef4444";
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาตัดขาดทุน:</span><span class="cot-val" style="color: #f87171;">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">ขาดทุนสุทธิ:</span><span class="cot-val text-loss">${t.pnlPct.toFixed(2)}% (-$${Math.abs(t.pnlQuote).toFixed(2)})</span></div>
+        <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาตัดขาดทุน:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
+      `;
+    }
+
+    elChartOrderTooltip.innerHTML = `
+      <div class="cot-title" style="color: ${actionColor};">
+        <span>${actionTitle}</span>
+      </div>
+      ${bodyHtml}
+    `;
+
+    const relX = e.clientX - rect.left;
+    const relY = e.clientY - rect.top;
+
+    let left = relX + 16;
+    let top = relY - 40;
+
+    const tooltipWidth = 260;
+    const tooltipHeight = 160;
+
+    if (left + tooltipWidth > chartContainer.clientWidth - 10) {
+      left = relX - tooltipWidth - 16;
+    }
+    if (top < 10) {
+      top = 10;
+    }
+    if (top + tooltipHeight > chartContainer.clientHeight - 10) {
+      top = chartContainer.clientHeight - tooltipHeight - 10;
+    }
+
+    elChartOrderTooltip.style.left = `${Math.round(left)}px`;
+    elChartOrderTooltip.style.top = `${Math.round(top)}px`;
+    elChartOrderTooltip.classList.add("active");
+  }
+
+  function hideOrderTooltip() {
+    if (elChartOrderTooltip) {
+      elChartOrderTooltip.classList.remove("active");
+    }
+  }
+
+  function highlightTradeRow(tradeId) {
+    const row = tradesTableBody.querySelector(`tr[data-trade-id="${tradeId}"]`);
+    if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      row.style.backgroundColor = "rgba(99, 102, 241, 0.25)";
+      setTimeout(() => {
+        row.style.backgroundColor = "";
+      }, 1500);
+    }
   }
 
   // Render Trades Table with Filters
@@ -405,6 +715,7 @@
 
     try {
       chart.timeScale().setVisibleRange({ from: fromTime, to: toTime });
+      setTimeout(() => updateOrderBadgesPositions(), 50);
     } catch (e) {
       console.warn("Could not set visible range:", e);
     }

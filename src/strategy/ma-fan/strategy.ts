@@ -209,7 +209,7 @@ export class MaFanStrategy {
         // C. Take Profit 2 (Macro Runner / Trailing Stop)
         if (pos.tp1Filled && pos.remainingQty > 0) {
           const macroTarget = Math.max(ribbon.ema75, ribbon.ema200);
-          const hitMacro = refPrice >= macroTarget && macroTarget > pos.entryPrice * 1.004;
+          const hitMacro = refPrice >= macroTarget && refPrice > pos.entryPrice * 1.0035;
 
           const trailingHit =
             pos.highestPriceSinceTp1 > pos.entryPrice * (1 + (this.config.trailingPullbackPct * 1.5) / 100) &&
