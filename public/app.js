@@ -174,6 +174,13 @@
   let downtrendLineSeries = null;
   let uptrendLineSeries = null;
   let waveCycleLineSeries = null;
+  // MA Fan Ribbon Series (4, 8, 16, 25, 75, 200)
+  let ema4Series = null;
+  let ema8Series = null;
+  let ema16Series = null;
+  let ema25Series = null;
+  let ema75Series = null;
+  let ema200Series = null;
   let isWaveVisible = true;
   const elWaveStatusPill = document.getElementById("waveStatusPill");
   const elWaveStatusText = document.getElementById("waveStatusText");
@@ -830,6 +837,67 @@
         },
       });
 
+      // ── MA Fan Ribbon 6 Series (4, 8, 16, 25, 75, 200) ──────────────────────
+      const pFormat = {
+        type: "price",
+        precision: activePricePrecision,
+        minMove: activeTickSize || (1 / Math.pow(10, activePricePrecision)),
+      };
+      ema4Series = chart.addLineSeries({
+        color: "#38bdf8", // Bright Cyan
+        lineWidth: 1,
+        lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
+        title: "EMA 4",
+        lastValueVisible: true,
+        priceLineVisible: false,
+        priceFormat: pFormat,
+      });
+      ema8Series = chart.addLineSeries({
+        color: "#0284c7", // Sky Blue
+        lineWidth: 1,
+        lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
+        title: "EMA 8",
+        lastValueVisible: false,
+        priceLineVisible: false,
+        priceFormat: pFormat,
+      });
+      ema16Series = chart.addLineSeries({
+        color: "#3b82f6", // Royal Blue
+        lineWidth: 1,
+        lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
+        title: "EMA 16",
+        lastValueVisible: false,
+        priceLineVisible: false,
+        priceFormat: pFormat,
+      });
+      ema25Series = chart.addLineSeries({
+        color: "#f59e0b", // Gold / Amber (Baseline TP1)
+        lineWidth: 2,
+        lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
+        title: "EMA 25 (TP1)",
+        lastValueVisible: true,
+        priceLineVisible: false,
+        priceFormat: pFormat,
+      });
+      ema75Series = chart.addLineSeries({
+        color: "#a855f7", // Purple / Violet (Macro TP2)
+        lineWidth: 2,
+        lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
+        title: "EMA 75",
+        lastValueVisible: true,
+        priceLineVisible: false,
+        priceFormat: pFormat,
+      });
+      ema200Series = chart.addLineSeries({
+        color: "#f43f5e", // Rose / Crimson (Macro Trend)
+        lineWidth: 2,
+        lineStyle: lc.LineStyle ? lc.LineStyle.Solid : 0,
+        title: "EMA 200",
+        lastValueVisible: true,
+        priceLineVisible: false,
+        priceFormat: pFormat,
+      });
+
       // Crosshair Hover Inspection for in-chart Legend & Order Details Tooltip
       chart.subscribeCrosshairMove((param) => {
         if (
@@ -1038,6 +1106,77 @@
     return Array.from(timeMap.values()).sort((a, b) => a.time - b.time);
   }
 
+  function calcEMAForChart(candles, period) {
+    if (!Array.isArray(candles) || candles.length === 0) return [];
+    const k = 2 / (period + 1);
+    const data = [];
+    const initial = Math.min(period, candles.length);
+    let sum = 0;
+    for (let i = 0; i < initial; i++) sum += candles[i].close;
+    let prevEma = sum / initial;
+
+    for (let i = 0; i < candles.length; i++) {
+      if (i < initial - 1) continue;
+      if (i === initial - 1) {
+        data.push({ time: candles[i].time, value: prevEma });
+      } else {
+        prevEma = candles[i].close * k + prevEma * (1 - k);
+        data.push({ time: candles[i].time, value: prevEma });
+      }
+    }
+    return data;
+  }
+
+  function updateMaFanRibbonLines(candles) {
+    if (!ema4Series || !ema8Series || !ema16Series || !ema25Series || !ema75Series || !ema200Series) return;
+    const isMaFanMode = latestGridData?.strategyType === "ma_fan" || latestGridData?.strategyMode === "ma_fan" || (document.getElementById("cfg_strategyType")?.value === "ma_fan");
+
+    const elLegendMaRow = document.getElementById("legendMaRow");
+    const elLegendDowRow = document.getElementById("legendDowRow");
+
+    if (!isMaFanMode || !candles || candles.length < 10) {
+      ema4Series.setData([]);
+      ema8Series.setData([]);
+      ema16Series.setData([]);
+      ema25Series.setData([]);
+      ema75Series.setData([]);
+      ema200Series.setData([]);
+      if (elLegendMaRow) elLegendMaRow.style.display = "none";
+      if (elLegendDowRow) elLegendDowRow.style.display = "flex";
+      return;
+    }
+
+    if (elLegendMaRow) elLegendMaRow.style.display = "flex";
+    if (elLegendDowRow) elLegendDowRow.style.display = "none";
+
+    try {
+      const e4 = calcEMAForChart(candles, 4);
+      const e8 = calcEMAForChart(candles, 8);
+      const e16 = calcEMAForChart(candles, 16);
+      const e25 = calcEMAForChart(candles, 25);
+      const e75 = calcEMAForChart(candles, 75);
+      const e200 = calcEMAForChart(candles, 200);
+
+      ema4Series.setData(e4);
+      ema8Series.setData(e8);
+      ema16Series.setData(e16);
+      ema25Series.setData(e25);
+      ema75Series.setData(e75);
+      ema200Series.setData(e200);
+
+      // Update legend values with latest point
+      const getVal = (arr) => arr.length > 0 ? fmtPrice(arr[arr.length - 1].value) : "--";
+      const el4 = document.getElementById("legEma4"); if (el4) el4.textContent = getVal(e4);
+      const el8 = document.getElementById("legEma8"); if (el8) el8.textContent = getVal(e8);
+      const el16 = document.getElementById("legEma16"); if (el16) el16.textContent = getVal(e16);
+      const el25 = document.getElementById("legEma25"); if (el25) el25.textContent = getVal(e25);
+      const el75 = document.getElementById("legEma75"); if (el75) el75.textContent = getVal(e75);
+      const el200 = document.getElementById("legEma200"); if (el200) el200.textContent = getVal(e200);
+    } catch (err) {
+      console.warn("Error updating MA Fan lines:", err);
+    }
+  }
+
   function applyCurrentTimeframeCandles() {
     if (!candleSeries || !chart) return;
     const targetList = currentActiveTimeframe === "4h" ? cachedHtfCandles : cachedPrimaryCandles;
@@ -1045,6 +1184,7 @@
     if (cleanCandles.length > 0) {
       try {
         candleSeries.setData(cleanCandles);
+        updateMaFanRibbonLines(cleanCandles);
         latestCandle = cleanCandles[cleanCandles.length - 1];
         latestCandleTime = latestCandle.time;
         renderOhlc(latestCandle);
@@ -1106,6 +1246,7 @@
           latestCandleTime = Math.max(latestCandleTime, candle.time);
           updateOrderBadgesPositions();
           updateSwingBadgesPositions();
+          updateMaFanRibbonLines(cachedPrimaryCandles);
         } catch (err) {
           console.warn("Error updating single candle:", err);
         }
@@ -1141,6 +1282,7 @@
           latestCandleTime = Math.max(latestCandleTime, candle.time);
           updateOrderBadgesPositions();
           updateSwingBadgesPositions();
+          updateMaFanRibbonLines(cachedPrimaryCandles);
         } catch (err) {
           console.warn("Error updating single HTF candle:", err);
         }
@@ -1519,12 +1661,18 @@
       if (elSwingPlanCard) elSwingPlanCard.style.display = "none";
       if (elMaFanPlanCard) elMaFanPlanCard.style.display = "flex";
       updateMaFanPlanUI(data);
+      if (cachedPrimaryCandles && cachedPrimaryCandles.length > 0) {
+        updateMaFanRibbonLines(cachedPrimaryCandles);
+      }
       return;
     } else {
       if (elGridTitle) elGridTitle.textContent = "🎯 ระดับกริด & เป้าหมาย (Grid Ladder)";
       if (elVerticalLadder) elVerticalLadder.style.display = "";
       if (elSwingPlanCard) elSwingPlanCard.style.display = "none";
       if (elMaFanPlanCard) elMaFanPlanCard.style.display = "none";
+      if (ema4Series) {
+        updateMaFanRibbonLines([]);
+      }
     }
     const pos = data.positionPct !== undefined ? data.positionPct : 50;
     const floor = data.bottomBound ?? 0;

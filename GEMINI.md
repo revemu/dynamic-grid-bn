@@ -4868,6 +4868,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **ETHFDUSD (ตลาด -3.94% 🔻)**: กำไร **+$1.77 (+0.89%)**, ชนะ **100.0% (2/2)**, Max DD **0.48%**
 - **BTCUSDT (ตลาด -2.37% 🔻)**: กำไร **+$1.28 (+0.64%)**, ชนะ **100.0% (2/2)**, Max DD **0.13%**
 
+---
+
+## 121. v0.2.121 — Full MA Ribbon (4, 8, 16, 25, 75, 200) Interactive Chart Rendering & Numeric Legend (`public/app.js`, `public/index.html`)
+
+### วัตถุประสงค์และการปรับปรุง (Visual MA Ribbon Implementation)
+1. **การพล็อตเส้น MA Ribbon ทั้ง 6 เส้นลงบนกราฟ TradingView Lightweight Charts**:
+   - ผู้ใช้ต้องการเห็นเส้นค่าเฉลี่ยทั้งหมดบนกราฟเพื่อสังเกตการ "กางเข้ากางออก" ของพัดตามเวลาจริง
+   - ใน `public/app.js`: สร้าง Line Series 6 เส้นพร้อมชุดสีและน้ำหนักเส้นที่แยกแยะได้ชัดเจน:
+     - **EMA 4**: สีฟ้าสว่าง (Cyan `#38bdf8`, 1px) — ปลายพัดไวสุด
+     - **EMA 8**: สีฟ้าคราม (Sky Blue `#0284c7`, 1px) — เส้น Trigger Hook
+     - **EMA 16**: สีน้ำเงินสว่าง (Royal Blue `#3b82f6`, 1px) — เส้นโครงสร้างเร็ว
+     - **EMA 25**: สีทองส้ม (Amber/Gold `#f59e0b`, 2px) — แกนกลางเป้าหมาย TP1 (Mean Reversion)
+     - **EMA 75**: สีม่วง (Purple `#a855f7`, 2px) — เป้าหมาย TP2 Macro Mid
+     - **EMA 200**: สีชมพูแดง (Rose `#f43f5e`, 2px) — แนวรับ/ต้านเทรนด์ใหญ่ Macro Baseline
+2. **ระบบคำนวณและอัปเดตแบบ Dynamic Real-Time (`calcEMAForChart` & `updateMaFanRibbonLines`)**:
+   - คำนวณค่า EMA ครบทุกแท่งเทียนย้อนหลังและพล็อตเส้นต่อเนื่องตั้งแต่แท่งแรกจนถึงแท่งปัจจุบัน
+   - เมื่อมีแท่งเทียนใหม่เข้ามา (`updateSingleCandle`) หรือสลับ Timeframe / สลับเหรียญ เส้นจะอัปเดตต่อเนื่องทันที
+   - **Smart Display Mode**: เส้น MA ทั้ง 6 เส้นจะแสดงผลอัตโนมัติเฉพาะเมื่อผู้ใช้อยู่ในโหมด `ma_fan` (และจะเคลียร์หน้ากราฟให้สะอาดเมื่อสลับกลับไปโหมด Grid หรือ Swing Trade)
+3. **แถบตัวเลขสถิติบนหัวชาร์ต (`#legendMaRow` ใน `public/index.html`)**:
+   - แสดงค่าราคาตัวเลขของ EMA แต่ละเส้นแบบสดๆ ที่มุมบนซ้ายของกราฟ (`EMA4: $... | EMA8: $... | EMA16: $... | EMA25: $... | EMA75: $... | EMA200: $...`) ให้ผู้ใช้ตรวจสอบระยะการกางของพัดได้ด้วยสายตาทันที
+
+
 
 
 
