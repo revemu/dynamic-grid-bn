@@ -486,7 +486,7 @@ export function runSimulation(symbol: string, candles: Candle[], customCfg: Back
 export function runSwingSimulation(
   symbol: string,
   candles: Candle[],
-  swingCfg: SwingStrategyConfig,
+  swingCfg: SwingStrategyConfig & { enableChoChGate?: boolean; name?: string },
   initialBudget = 200,
 ): BacktestResult {
   const engine = new DowStructureEngine(3, true, 20.0, 600);
@@ -594,24 +594,43 @@ export function runSwingSimulation(
         activePos = null;
       }
     } else {
-      // Look for Entry Setup
-      const signal = SwingSignalDetector.evaluateSetup(c.close, structure, swingCfg, engine.getCandles());
-      if (signal.hasSignal && signal.entryPrice > 0) {
-        const budgetForTrade = cash * (swingCfg.maxPositionPct / 100);
-        const entryPrice = c.close;
-        const qty = budgetForTrade / entryPrice;
-        cash -= budgetForTrade;
-        activePos = {
-          entryPrice,
-          qty,
-          notional: budgetForTrade,
-          stopLossPrice: signal.stopLossPrice,
-          tp1Price: signal.tp1Price,
-          tp2Price: signal.tp2Price,
-          tp1Executed: false,
-          highestPrice: entryPrice,
-          trailingStopActive: false,
-        };
+      // 🛡️ Macro ChoCh Gate check for Swing Entry
+      let canEnter = true;
+      if (swingCfg.enableChoChGate) {
+        const gate = RegimeChannelGate.evaluateGate({
+          price: c.close,
+          proposedFloor: structure.bottomBound,
+          proposedCeiling: structure.upperBound,
+          regime: structure.regime,
+          waveCycle: structure.waveCycle,
+          lastLh: structure.lastLh,
+          isDowntrendDropActive: structure.isDowntrendDropActive,
+        });
+        if (structure.regime === "DOWNTREND" && !gate.isChoChBullish) {
+          canEnter = false;
+        }
+      }
+
+      if (canEnter) {
+        // Look for Entry Setup
+        const signal = SwingSignalDetector.evaluateSetup(c.close, structure, swingCfg, engine.getCandles());
+        if (signal.hasSignal && signal.entryPrice > 0) {
+          const budgetForTrade = cash * (swingCfg.maxPositionPct / 100);
+          const entryPrice = c.close;
+          const qty = budgetForTrade / entryPrice;
+          cash -= budgetForTrade;
+          activePos = {
+            entryPrice,
+            qty,
+            notional: budgetForTrade,
+            stopLossPrice: signal.stopLossPrice,
+            tp1Price: signal.tp1Price,
+            tp2Price: signal.tp2Price,
+            tp1Executed: false,
+            highestPrice: entryPrice,
+            trailingStopActive: false,
+          };
+        }
       }
     }
 
@@ -632,7 +651,7 @@ export function runSwingSimulation(
 
   return {
     symbol,
-    configName: "4. Major LL Retest & Reversal Swing Strategy",
+    configName: swingCfg.name || "6. Swing Strategy (Raw LL Retest & Breakout)",
     initialBudget,
     finalEquity: initialBudget + netPnl,
     netPnl,
@@ -660,46 +679,102 @@ async function main() {
 
   const configs: BacktestConfig[] = [
     {
-      name: "1. Production Dynamic Grid (All Guards & Dow ChoCh Gate)",
+      name: "1. Sniper Grid (ชิดฟลอร์ 15/8/2% + SupportBreak = FALSE) 🌟",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
       minChannelWidthPct: 1.8,
       maxChannelWidthPct: 6.0,
-      buyWeights: [35, 35, 30],
+      buyLevelPcts: [15, 8, 2, 1, 0.5],
+      sellLevelPcts: [50, 75, 95, 98, 100],
+      buyLevelWeights: [35, 35, 30, 10, 10],
+      enabledBuyLevels: [true, true, true, false, false],
+      enabledSellTargets: [true, true, true, false, false],
       minNetProfitPct: 0.25,
       floorBufferPct: 0.35,
       dowTrendFilter: true,
       enableTrendChannelGating: true,
-      enableExitOnTrendSupportBreak: false, // Standard Grid setting
+      enableExitOnTrendSupportBreak: false,
       enableBuyBelowSellLevel1: true,
+      enableSellBelowTrendResistance: true,
       enableLhDynamicEscape: true,
       lockChannelInPosition: true,
     },
     {
-      name: "2. Production Grid with Trend Support Break = TRUE",
+      name: "2. Sniper Grid (ชิดฟลอร์ 15/8/2% + SupportBreak = TRUE)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DONCHIAN_ATR",
       minChannelWidthPct: 1.8,
       maxChannelWidthPct: 6.0,
-      buyWeights: [35, 35, 30],
+      buyLevelPcts: [15, 8, 2, 1, 0.5],
+      sellLevelPcts: [50, 75, 95, 98, 100],
+      buyLevelWeights: [35, 35, 30, 10, 10],
+      enabledBuyLevels: [true, true, true, false, false],
+      enabledSellTargets: [true, true, true, false, false],
       minNetProfitPct: 0.25,
       floorBufferPct: 0.35,
       dowTrendFilter: true,
       enableTrendChannelGating: true,
-      enableExitOnTrendSupportBreak: true, // Shows the exact effect of trendline break pause!
+      enableExitOnTrendSupportBreak: true,
       enableBuyBelowSellLevel1: true,
+      enableSellBelowTrendResistance: true,
       enableLhDynamicEscape: true,
       lockChannelInPosition: true,
     },
     {
-      name: "3. Naked Pure Grid (Zero Guards Baseline)",
+      name: "3. Classic Wide Grid (กระจายเต็มกรอบ 42/32/22%)",
+      budget: 200,
+      sellProfitMode: "GRID_CASHFLOW",
+      channelMode: "DONCHIAN_ATR",
+      minChannelWidthPct: 1.8,
+      maxChannelWidthPct: 6.0,
+      buyLevelPcts: [42, 32, 22, 12, 2],
+      sellLevelPcts: [52, 62, 72, 82, 92],
+      buyLevelWeights: [35, 35, 30, 10, 10],
+      enabledBuyLevels: [true, true, true, false, false],
+      enabledSellTargets: [true, true, true, false, false],
+      minNetProfitPct: 0.25,
+      floorBufferPct: 0.35,
+      dowTrendFilter: true,
+      enableTrendChannelGating: true,
+      enableExitOnTrendSupportBreak: false,
+      enableBuyBelowSellLevel1: true,
+      enableSellBelowTrendResistance: true,
+      enableLhDynamicEscape: true,
+      lockChannelInPosition: true,
+    },
+    {
+      name: "4. Equal 5-Tranche Wide Grid (กระจายเท่ากัน 5 ไม้ x 20%)",
+      budget: 200,
+      sellProfitMode: "GRID_CASHFLOW",
+      channelMode: "DONCHIAN_ATR",
+      minChannelWidthPct: 1.8,
+      maxChannelWidthPct: 6.0,
+      buySizingMode: "EQUAL",
+      buyLevelPcts: [42, 32, 22, 12, 2],
+      sellLevelPcts: [52, 62, 72, 82, 92],
+      enabledBuyLevels: [true, true, true, true, true],
+      enabledSellTargets: [true, true, true, true, true],
+      minNetProfitPct: 0.25,
+      floorBufferPct: 0.35,
+      dowTrendFilter: true,
+      enableTrendChannelGating: true,
+      enableExitOnTrendSupportBreak: false,
+      enableBuyBelowSellLevel1: true,
+      enableSellBelowTrendResistance: true,
+      enableLhDynamicEscape: true,
+      lockChannelInPosition: true,
+    },
+    {
+      name: "5. Naked Pure Grid (Zero Guards Baseline)",
       budget: 200,
       sellProfitMode: "GRID_CASHFLOW",
       channelMode: "DOW_SWINGS",
       minChannelWidthPct: 1.8,
       maxChannelWidthPct: 6.0,
+      buyLevelPcts: [42, 32, 22, 12, 2],
+      sellLevelPcts: [52, 62, 72, 82, 92],
       buyWeights: [35, 35, 30],
       minNetProfitPct: 0.25,
       floorBufferPct: 0.35,
@@ -713,7 +788,7 @@ async function main() {
   ];
 
   console.log("==========================================================================================================");
-  console.log("🚀 UNIFIED REALISTIC PRODUCTION BACKTEST ENGINE (Full Safety & Regime Gates)");
+  console.log("🚀 UNIFIED REALISTIC PRODUCTION BACKTEST BENCHMARK (All Profiles Evaluated)");
   console.log("   Data: 1000 Binance 15m Candles (~10.4 Days) | Simulated Budget: $200");
   console.log("==========================================================================================================\n");
 
@@ -728,13 +803,15 @@ async function main() {
       const priceChangePct = ((endPrice - startPrice) / startPrice) * 100;
       console.log(`   Market: $${startPrice.toFixed(4)} -> $${endPrice.toFixed(4)} (${priceChangePct >= 0 ? "+" : ""}${priceChangePct.toFixed(2)}%)\n`);
 
+      // 1-5: Grid Profiles
       for (const cfg of configs) {
         const res = runSimulation(sym, candles, cfg);
         results.push(res);
       }
 
-      // 4. Major LL Retest & Reversal Swing Strategy
-      const swingCfg: SwingStrategyConfig = {
+      // 6. Swing Strategy Raw (LL Retest, Breakout)
+      const swingCfgRaw: SwingStrategyConfig & { enableChoChGate?: boolean; name?: string } = {
+        name: "6. Swing Strategy (Raw LL Retest & Breakout)",
         minRiskReward: 1.8,
         stopLossBufferPct: 0.35,
         maxPositionPct: 50.0,
@@ -746,16 +823,35 @@ async function main() {
         enableHlBaseEntry: true,
         enableTrendlineBreakoutEntry: true,
         enableSupportRetestEntry: true,
+        enableChoChGate: false,
       };
-      const swingRes = runSwingSimulation(sym, candles, swingCfg, 200);
-      results.push(swingRes);
+      results.push(runSwingSimulation(sym, candles, swingCfgRaw, 200));
+
+      // 7. Guarded Swing Strategy with Dow ChoCh Gate
+      const swingCfgGuarded: SwingStrategyConfig & { enableChoChGate?: boolean; name?: string } = {
+        name: "7. Guarded Swing Strategy (with Dow ChoCh Gate 🛡️)",
+        minRiskReward: 1.8,
+        stopLossBufferPct: 0.35,
+        maxPositionPct: 50.0,
+        tp1CloseRatio: 0.5,
+        tp1TargetType: "CENTER_POC",
+        tp2TargetType: "SWING_HIGH_HH",
+        trailingActivationPct: 1.2,
+        trailingPullbackPct: 0.5,
+        enableHlBaseEntry: true,
+        enableTrendlineBreakoutEntry: true,
+        enableSupportRetestEntry: true,
+        enableChoChGate: true,
+      };
+      results.push(runSwingSimulation(sym, candles, swingCfgGuarded, 200));
+
     } catch (err) {
       console.error(`❌ Error testing ${sym}:`, (err as Error).message);
     }
   }
 
   console.log("\n==================================================================================================================================================");
-  console.log("🏆 PERFORMANCE AUDIT SUMMARY (10.4 DAYS 15M CANDLES)");
+  console.log("🏆 COMPREHENSIVE STRATEGY BENCHMARK AUDIT (10.4 DAYS 15M CANDLES)");
   console.log("==================================================================================================================================================");
   console.log("| Symbol   | Profile                                                    | Net Return        | Trades | Win Rate | CutLoss        | Max DD  | Final ($) |");
   console.log("--------------------------------------------------------------------------------------------------------------------------------------------------");
