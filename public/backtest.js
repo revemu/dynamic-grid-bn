@@ -35,6 +35,7 @@
   const inpTimeframe = document.getElementById("btTimeframe");
   const inpLimit = document.getElementById("btLimit");
   const inpSpread = document.getElementById("btSpread");
+  const inpSlMode = document.getElementById("btSlMode");
   const inpBudget = document.getElementById("btBudget");
 
   // Legend elements
@@ -352,6 +353,9 @@
         } else if (t.exitType === "TP1+SL_BE") {
           badgeClass = "badge-tp-be";
           badgeLabel = "TP1 + SL Breakeven";
+        } else if (t.exitType === "RATCHET_SL") {
+          badgeClass = "badge-ratchet-sl";
+          badgeLabel = "🛡️ Ratchet SL";
         }
 
         return `
@@ -413,15 +417,16 @@
     const limit = Number(inpLimit.value) || 1000;
     const spreadThreshold = inpSpread.value === "auto" ? "auto" : Number(inpSpread.value);
     const budget = Number(inpBudget.value) || 200;
+    const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
 
     loadingOverlay.style.display = "flex";
-    loadingText.textContent = `กำลังดึง ${limit} แท่งเทียนของ ${symbol} และรันจำลอง MA Fan Sniper...`;
+    loadingText.textContent = `กำลังดึง ${limit} แท่งเทียนของ ${symbol} และรันจำลอง MA Fan Sniper (${useRatchetSl ? "Ratchet SL" : "Fixed SL"})...`;
 
     try {
       const resp = await fetch("/api/backtest/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, timeframe, limit, spreadThreshold, budget }),
+        body: JSON.stringify({ symbol, timeframe, limit, spreadThreshold, budget, useRatchetSl }),
       });
 
       const data = await resp.json();
@@ -515,6 +520,9 @@
       inpSymbol.value = data.record.symbol || "BNBFDUSD";
       inpTimeframe.value = data.record.timeframe || "5m";
       inpSpread.value = String(data.record.spreadThreshold || "0.25");
+      if (inpSlMode && data.record.useRatchetSl !== undefined) {
+        inpSlMode.value = data.record.useRatchetSl ? "ratchet" : "fixed";
+      }
 
       displayRecord(data.record);
     } catch (err) {

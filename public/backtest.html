@@ -64,6 +64,14 @@
         </div>
 
         <div class="bt-input-group">
+          <label>โหมด Stop Loss</label>
+          <select id="btSlMode" title="เลือกรูปแบบการตัดขาดทุน">
+            <option value="ratchet" selected>🛡️ Ratchet SL (ยกตามฐาน)</option>
+            <option value="fixed">⚓ Fixed SL (ก้นเหวเดิม)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
           <label>เงินทุน ($)</label>
           <input type="number" id="btBudget" value="200" min="10" step="10" />
         </div>
@@ -123,7 +131,8 @@
           <span class="legend-badge leg-buy">🟢 BUY (Sniper)</span>
           <span class="legend-badge leg-tp1">🔵 TP1 (EMA 25)</span>
           <span class="legend-badge leg-tp2">🟣 TP2 (EMA 75/200)</span>
-          <span class="legend-badge leg-sl">🔴 SL (Swing Low)</span>
+          <span class="legend-badge leg-ratchet">🟠 RATCHET SL (ยกฐาน)</span>
+          <span class="legend-badge leg-sl">🔴 SL (ก้นเหวเดิม)</span>
         </div>
       </div>
 

@@ -708,6 +708,7 @@ export class DashboardServer {
           const spreadThreshold = parsed.spreadThreshold === "auto" ? "auto" : (Number(parsed.spreadThreshold) || 0.25);
           const budget = Number(parsed.budget) || 200;
           const slBufferPct = Number(parsed.slBufferPct) || 0.25;
+          const useRatchetSl = parsed.useRatchetSl !== false;
 
           const candles = await BacktestService.fetchBinanceCandles(symbol, timeframe, limit);
           const result = BacktestService.runMaFanSimulation(candles, {
@@ -716,6 +717,7 @@ export class DashboardServer {
             spreadThreshold,
             initialCapital: budget,
             slBufferPct,
+            useRatchetSl,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

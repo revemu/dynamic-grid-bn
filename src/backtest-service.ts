@@ -25,7 +25,7 @@ export interface BacktestTrade {
   slPnlPct?: number;
   exitTime: number;
   exitPrice: number;
-  exitType: "TP1+TP2" | "TP1+SL_BE" | "SL";
+  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL";
   pnlQuote: number;
   pnlPct: number;
   holdingBars: number;
@@ -63,6 +63,7 @@ export interface BacktestRecord {
   timeframe: string;
   candleCount: number;
   spreadThreshold: number;
+  useRatchetSl?: boolean;
   summary: BacktestSummary;
   trades: BacktestTrade[];
   markers: BacktestMarker[];
@@ -76,6 +77,7 @@ export interface BacktestHistoryItem {
   timeframe: string;
   candleCount: number;
   spreadThreshold: number;
+  useRatchetSl?: boolean;
   summary: BacktestSummary;
   tradeCount: number;
 }
@@ -143,12 +145,14 @@ export class BacktestService {
       spreadThreshold?: number | "auto";
       initialCapital?: number;
       slBufferPct?: number;
+      useRatchetSl?: boolean;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
     const timeframe = opts.timeframe || "5m";
     const initialCapital = opts.initialCapital ?? 200;
     const slBufferPct = opts.slBufferPct ?? 0.25;
+    const useRatchetSl = opts.useRatchetSl !== false;
 
     // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
@@ -162,6 +166,7 @@ export class BacktestService {
     let heldQty = 0;
     let entryPrice = 0;
     let entryIdx = 0;
+    let initialSlPrice = 0;
     let stopLossPrice = 0;
     let tp1Filled = false;
     let tp1Price = 0;
@@ -193,6 +198,16 @@ export class BacktestService {
       // ─── POSITION EXITS ──────────────────────────────────────────────
       if (heldQty > 0) {
         if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
+        const barsHeld = i - entryIdx;
+
+        // Dynamic Ratchet SL: After entry, if price forms higher local base before TP1, lift SL
+        if (useRatchetSl && !tp1Filled && barsHeld >= 3) {
+          const recent3Lows = candles.slice(Math.max(0, i - 4), i + 1).map((x) => x.low);
+          const localLow = Math.min(...recent3Lows) * (1 - slBufferPct / 100);
+          if (localLow > stopLossPrice && localLow < c.close) {
+            stopLossPrice = localLow;
+          }
+        }
 
         // 1. Stop Loss check
         if (c.low <= stopLossPrice) {
@@ -200,7 +215,8 @@ export class BacktestService {
           const pnl = (exitP - entryPrice) * heldQty;
           cash += heldQty * exitP;
 
-          const exitType: BacktestTrade["exitType"] = tp1Filled ? "TP1+SL_BE" : "SL";
+          const isRatchet = !tp1Filled && stopLossPrice > initialSlPrice;
+          const exitType: BacktestTrade["exitType"] = tp1Filled ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
           const totalPnlQuote = pnl + (tp1Filled ? (tp1Price - entryPrice) * (heldQty) : 0);
           const totalInvest = initialCapital * 0.98;
           const tradePnlPct = (totalPnlQuote / totalInvest) * 100;
@@ -230,18 +246,23 @@ export class BacktestService {
             exitType,
             pnlQuote: totalPnlQuote,
             pnlPct: tradePnlPct,
-            holdingBars: i - entryIdx,
+            holdingBars: barsHeld,
           });
 
           // SL Marker
+          const markerColor = exitType === "TP1+SL_BE" ? "#f59e0b" : exitType === "RATCHET_SL" ? "#f97316" : "#ef4444";
+          const markerText = exitType === "TP1+SL_BE"
+            ? `🟡 SL BE #${activeTradeId} @ $${exitP.toFixed(2)}`
+            : exitType === "RATCHET_SL"
+            ? `🟠 RATCHET SL #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`
+            : `🔴 SL #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`;
+
           markers.push({
             time: c.time,
             position: "belowBar",
-            color: exitType === "TP1+SL_BE" ? "#f59e0b" : "#ef4444",
+            color: markerColor,
             shape: "arrowDown",
-            text: exitType === "TP1+SL_BE"
-              ? `🟡 SL BE #${activeTradeId} @ $${exitP.toFixed(2)}`
-              : `🔴 SL #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
+            text: markerText,
           });
 
           heldQty = 0;
@@ -341,7 +362,8 @@ export class BacktestService {
 
           const recentLows = candles.slice(Math.max(0, i - 10), i + 1).map((x) => x.low);
           const lowestPoint = Math.min(...recentLows);
-          stopLossPrice = lowestPoint * (1 - slBufferPct / 100);
+          initialSlPrice = lowestPoint * (1 - slBufferPct / 100);
+          stopLossPrice = initialSlPrice;
 
           const invest = cash * 0.98;
           heldQty = invest / entryPrice;
@@ -398,6 +420,7 @@ export class BacktestService {
       timeframe,
       candleCount: candles.length,
       spreadThreshold: spread,
+      useRatchetSl,
       summary,
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
@@ -447,6 +470,7 @@ export class BacktestService {
         timeframe: r.timeframe,
         candleCount: r.candleCount,
         spreadThreshold: r.spreadThreshold,
+        useRatchetSl: r.useRatchetSl,
         summary: r.summary,
         tradeCount: r.trades?.length || 0,
       }));

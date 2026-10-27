@@ -277,6 +277,7 @@ body {
 .leg-buy { background: rgba(16, 185, 129, 0.15); color: #34d399; }
 .leg-tp1 { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
 .leg-tp2 { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+.leg-ratchet { background: rgba(249, 115, 22, 0.15); color: #fb923c; }
 .leg-sl { background: rgba(239, 68, 68, 0.15); color: #f87171; }
 
 .bt-chart-legend {
@@ -434,6 +435,7 @@ body {
 
 .badge-tp-full { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
 .badge-tp-be { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+.badge-ratchet-sl { background: rgba(249, 115, 22, 0.2); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.4); }
 .badge-sl-loss { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
 
 .btn-zoom {
