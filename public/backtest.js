@@ -78,6 +78,14 @@
   const badgeDomPool = new Map();
   const candlesMap = new Map();
 
+  // Candle Inspector & Spread State
+  const elBtCandleInspectorCard = document.getElementById("btCandleInspectorCard");
+  const elBtChartPinnedCandleMarker = document.getElementById("btChartPinnedCandleMarker");
+  const elBtLegFanSpreadChip = document.getElementById("btLegFanSpreadChip");
+  const elBtLegFanSpreadVal = document.getElementById("btLegFanSpreadVal");
+  let btMaFanCandleDataMap = new Map();
+  let btPinnedCandleTime = null;
+
   // Colors for EMA ribbons (matching user preferences)
   function getMaColors() {
     try {
@@ -228,7 +236,13 @@
 
     // Crosshair hover inspection
     chart.subscribeCrosshairMove((param) => {
-      if (!param || !param.time || !param.seriesData) return;
+      if (!param || !param.time || !param.seriesData) {
+        if (!btPinnedCandleTime && currentRecord && currentRecord.candles && currentRecord.candles.length > 0) {
+          const lastC = currentRecord.candles[currentRecord.candles.length - 1];
+          updateBtMaLegendForCandle(lastC.time);
+        }
+        return;
+      }
       const cBar = param.seriesData.get(candleSeries);
       if (cBar) {
         legOhlc.textContent = `O: ${fmtPrice(cBar.open)} H: ${fmtPrice(cBar.high)} L: ${fmtPrice(cBar.low)} C: ${fmtPrice(cBar.close)}`;
@@ -239,6 +253,24 @@
       const e25 = param.seriesData.get(ema25Series); if (e25) legValEma25.textContent = fmtPrice(e25.value);
       const e75 = param.seriesData.get(ema75Series); if (e75) legValEma75.textContent = fmtPrice(e75.value);
       const e200 = param.seriesData.get(ema200Series); if (e200) legValEma200.textContent = fmtPrice(e200.value);
+
+      if (param.time) {
+        updateBtMaLegendForCandle(param.time);
+      }
+    });
+
+    // Click to Pin / Inspect Candle & Spread (Clears previous pin if clicking another candle)
+    chart.subscribeClick((param) => {
+      if (!param || !param.time) {
+        closeBtCandleInspector();
+        return;
+      }
+      const clickedTime = param.time;
+      if (btPinnedCandleTime === clickedTime) {
+        closeBtCandleInspector();
+        return;
+      }
+      openBtCandleInspector(clickedTime);
     });
 
     // Auto-resize on window resize
@@ -249,21 +281,30 @@
           height: chartContainer.clientHeight || 520,
         });
         updateOrderBadgesPositions();
+        updateBtCandleInspectorPosition();
       }
     });
 
-    // Synchronize circular order badges with chart scroll, pan, zoom, and drag
+    // Synchronize circular order badges and inspector with chart scroll, pan, zoom, and drag
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
       updateOrderBadgesPositions();
+      updateBtCandleInspectorPosition();
     });
     chart.timeScale().subscribeVisibleTimeRangeChange(() => {
       updateOrderBadgesPositions();
+      updateBtCandleInspectorPosition();
     });
     chartContainer.addEventListener("mousemove", (e) => {
-      if (e.buttons > 0) updateOrderBadgesPositions();
+      if (e.buttons > 0) {
+        updateOrderBadgesPositions();
+        updateBtCandleInspectorPosition();
+      }
     });
     chartContainer.addEventListener("wheel", () => {
-      requestAnimationFrame(updateOrderBadgesPositions);
+      requestAnimationFrame(() => {
+        updateOrderBadgesPositions();
+        updateBtCandleInspectorPosition();
+      });
     }, { passive: true });
     chartContainer.addEventListener("mouseleave", () => {
       hideOrderTooltip();
@@ -271,6 +312,7 @@
     if (window.ResizeObserver && chartContainer) {
       const ro = new ResizeObserver(() => {
         updateOrderBadgesPositions();
+        updateBtCandleInspectorPosition();
       });
       ro.observe(chartContainer);
     }
@@ -306,15 +348,70 @@
       ema75Series.setData(e75);
       ema200Series.setData(e200);
 
+      // Populate btMaFanCandleDataMap for crosshair inspection and click inspector
+      const e4Map = new Map(e4.map((x) => [x.time, x.value]));
+      const e8Map = new Map(e8.map((x) => [x.time, x.value]));
+      const e16Map = new Map(e16.map((x) => [x.time, x.value]));
+      const e25Map = new Map(e25.map((x) => [x.time, x.value]));
+      const e75Map = new Map(e75.map((x) => [x.time, x.value]));
+      const e200Map = new Map(e200.map((x) => [x.time, x.value]));
+
+      btMaFanCandleDataMap.clear();
+      for (let i = 0; i < record.candles.length; i++) {
+        const c = record.candles[i];
+        const v4 = e4Map.get(c.time);
+        const v8 = e8Map.get(c.time);
+        const v16 = e16Map.get(c.time);
+        const v25 = e25Map.get(c.time);
+        const v75 = e75Map.get(c.time);
+        const v200 = e200Map.get(c.time);
+
+        if (v4 !== undefined && v25 !== undefined) {
+          const spreadPct = v25 > 0 ? (Math.abs(v25 - v4) / v25) * 100 : 0;
+          const prevC = i > 0 ? record.candles[i - 1] : null;
+          const prevV4 = prevC ? e4Map.get(prevC.time) : v4;
+          const prevV8 = prevC ? e8Map.get(prevC.time) : v8;
+          const prevV16 = prevC ? e16Map.get(prevC.time) : v16;
+          const prevV25 = prevC ? e25Map.get(prevC.time) : v25;
+
+          const isFanningDown =
+            v8 !== undefined && v16 !== undefined &&
+            ((v4 < v8 && v8 < v16 && v16 < v25) ||
+              (prevV4 !== undefined && prevV4 < prevV8 && prevV8 < prevV16 && prevV16 < prevV25));
+
+          const isHookUp = prevV4 !== undefined && v4 > prevV4;
+
+          const range = c.high - c.low;
+          const bodyBottom = Math.min(c.open, c.close);
+          const lowerWick = bodyBottom - c.low;
+          const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
+          const isOversoldWick = lowerWickPct >= 35 || (c.close > c.open && c.close >= (c.high + c.low) / 2);
+
+          btMaFanCandleDataMap.set(c.time, {
+            time: c.time,
+            candle: c,
+            prevCandle: prevC,
+            ema4: v4,
+            ema8: v8,
+            ema16: v16,
+            ema25: v25,
+            ema75: v75,
+            ema200: v200,
+            spreadPct,
+            isFanningDown,
+            isHookUp,
+            lowerWickPct,
+            isOversoldWick,
+          });
+        }
+      }
+
       // Latest values for legend
       const lastC = record.candles[record.candles.length - 1];
       legOhlc.textContent = `O: ${fmtPrice(lastC.open)} H: ${fmtPrice(lastC.high)} L: ${fmtPrice(lastC.low)} C: ${fmtPrice(lastC.close)}`;
-      if (e4.length > 0) legValEma4.textContent = fmtPrice(e4[e4.length - 1].value);
-      if (e8.length > 0) legValEma8.textContent = fmtPrice(e8[e8.length - 1].value);
-      if (e16.length > 0) legValEma16.textContent = fmtPrice(e16[e16.length - 1].value);
-      if (e25.length > 0) legValEma25.textContent = fmtPrice(e25[e25.length - 1].value);
-      if (e75.length > 0) legValEma75.textContent = fmtPrice(e75[e75.length - 1].value);
-      if (e200.length > 0) legValEma200.textContent = fmtPrice(e200[e200.length - 1].value);
+      const activeTime = btPinnedCandleTime || lastC.time;
+      updateBtMaLegendForCandle(activeTime);
+      if (btPinnedCandleTime) updateBtCandleInspectorPosition();
     }
 
     // 3. Set Badges on Chart (Circular Badges with Hover Tooltips)
@@ -353,6 +450,203 @@
 
     // Refresh history badge count
     loadHistoryList();
+  }
+
+  // Update in-chart legend EMA and Fan Spread chip for a specific candle
+  function updateBtMaLegendForCandle(time) {
+    if (!time || !btMaFanCandleDataMap.has(time)) return;
+    const data = btMaFanCandleDataMap.get(time);
+
+    if (legValEma4) legValEma4.textContent = fmtPrice(data.ema4);
+    if (legValEma8) legValEma8.textContent = fmtPrice(data.ema8);
+    if (legValEma16) legValEma16.textContent = fmtPrice(data.ema16);
+    if (legValEma25) legValEma25.textContent = fmtPrice(data.ema25);
+    if (legValEma75) legValEma75.textContent = fmtPrice(data.ema75);
+    if (legValEma200) legValEma200.textContent = fmtPrice(data.ema200);
+
+    const targetSpread = currentRecord?.spreadThreshold || 0.25;
+    if (elBtLegFanSpreadChip && elBtLegFanSpreadVal) {
+      if (data.spreadPct >= targetSpread) {
+        elBtLegFanSpreadChip.style.background = "rgba(16, 185, 129, 0.2)";
+        elBtLegFanSpreadChip.style.borderColor = "rgba(16, 185, 129, 0.5)";
+        elBtLegFanSpreadChip.style.color = "#34d399";
+        elBtLegFanSpreadVal.textContent = `${data.spreadPct.toFixed(2)}% (กางตึง ✅)`;
+      } else {
+        elBtLegFanSpreadChip.style.background = "rgba(245, 158, 11, 0.15)";
+        elBtLegFanSpreadChip.style.borderColor = "rgba(245, 158, 11, 0.35)";
+        elBtLegFanSpreadChip.style.color = "#fbbf24";
+        elBtLegFanSpreadVal.textContent = `${data.spreadPct.toFixed(2)}% (ยังไม่ตึง ⚠️)`;
+      }
+    }
+  }
+
+  // Open Candle & Spread Inspector Popover for clicked candle in Backtest Studio
+  function openBtCandleInspector(candleTime) {
+    if (!elBtCandleInspectorCard || !chart || !candleSeries) return;
+    const data = btMaFanCandleDataMap.get(candleTime);
+    if (!data) return;
+
+    btPinnedCandleTime = candleTime;
+    const c = data.candle;
+    const d = new Date(c.time * 1000);
+    const dateStr = d.toLocaleDateString([], { month: "short", day: "numeric" });
+    const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const changePct = c.open > 0 ? ((c.close - c.open) / c.open) * 100 : 0;
+    const changeColor = changePct >= 0 ? "#34d399" : "#f87171";
+
+    const targetSpread = currentRecord?.spreadThreshold || 0.25;
+    const isSpreadReady = data.spreadPct >= targetSpread;
+    const spreadDiff = data.spreadPct - targetSpread;
+
+    // 4-point Sniper conditions
+    const condOrder = data.isFanningDown;
+    const condSpread = isSpreadReady;
+    const condHook = data.isHookUp;
+    const condExhaust = data.isOversoldWick;
+
+    const allReady = condOrder && condSpread && condHook && condExhaust;
+
+    let verdictHtml = "";
+    if (allReady) {
+      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 4 ข้อ! (จังหวะเปิดไม้ BUY)</div>`;
+    } else {
+      const missing = [];
+      if (!condSpread) missing.push(`Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
+      if (!condHook) missing.push(`ปลายพัดยังไม่ม้วนตัวขึ้น`);
+      if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
+      if (!condExhaust) missing.push(`แท่งเทียนยังไม่ทิ้งไส้ล่าง`);
+      verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;
+    }
+
+    elBtCandleInspectorCard.innerHTML = `
+      <div class="cic-header">
+        <span class="cic-title">🔬 ตรวจวัดแท่งเทียน (Candle & Spread)</span>
+        <button class="cic-close-btn" onclick="window.closeBtCandleInspector()" title="ปิดหน้าต่าง">✖</button>
+      </div>
+
+      <div class="cic-section">
+        <div class="cic-row">
+          <span class="cic-label">เวลาแท่งเทียน:</span>
+          <span class="cic-val" style="color: #cbd5e1;">${dateStr} ${timeStr}</span>
+        </div>
+        <div class="cic-row">
+          <span class="cic-label">ราคา OHLC:</span>
+          <span class="cic-val">
+            <span style="color:#94a3b8;">O</span> $${fmtPrice(c.open)} 
+            <span style="color:#94a3b8;">H</span> $${fmtPrice(c.high)}<br/>
+            <span style="color:#94a3b8;">L</span> $${fmtPrice(c.low)} 
+            <span style="color:${changeColor};">C $${fmtPrice(c.close)} (${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%)</span>
+          </span>
+        </div>
+        <div class="cic-row">
+          <span class="cic-label">ไส้ล่าง (Lower Wick):</span>
+          <span class="cic-val" style="color: ${data.lowerWickPct >= 35 ? "#34d399" : "#cbd5e1"};">${data.lowerWickPct.toFixed(1)}% ${data.lowerWickPct >= 35 ? "✅ (เด้งดี)" : ""}</span>
+        </div>
+      </div>
+
+      <div class="cic-spread-box">
+        <div class="cic-spread-row">
+          <span class="cic-label" style="font-weight:700; color:#cbd5e1;">ความกว้างพัด (Spread %):</span>
+          <span class="cic-spread-val" style="color: ${isSpreadReady ? "#34d399" : "#fbbf24"};">
+            ${data.spreadPct.toFixed(2)}%
+          </span>
+        </div>
+        <div class="cic-spread-row" style="margin-top: 2px; font-size: 10px;">
+          <span style="color:#94a3b8;">เกณฑ์ขั้นต่ำ: ≥ ${targetSpread.toFixed(2)}%</span>
+          <span style="color:${isSpreadReady ? "#34d399" : "#fbbf24"};">
+            ${isSpreadReady ? `✅ เกินเกณฑ์ (+${spreadDiff.toFixed(2)}%)` : `⚠️ ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`}
+          </span>
+        </div>
+      </div>
+
+      <div class="cic-section">
+        <div class="cic-row">
+          <span class="cic-label">EMA 4 / EMA 8:</span>
+          <span class="cic-val">$${fmtPrice(data.ema4)} / $${fmtPrice(data.ema8)}</span>
+        </div>
+        <div class="cic-row">
+          <span class="cic-label">EMA 16 / EMA 25:</span>
+          <span class="cic-val">$${fmtPrice(data.ema16)} / $${fmtPrice(data.ema25)}</span>
+        </div>
+        <div class="cic-row">
+          <span class="cic-label">EMA 75 / EMA 200:</span>
+          <span class="cic-val">$${fmtPrice(data.ema75)} / $${fmtPrice(data.ema200)}</span>
+        </div>
+      </div>
+
+      <div class="cic-checklist">
+        <div class="cic-check-item">
+          <span>1. พัดเรียงตัวขาลง (EMA 4 < 8 < 16 < 25)</span>
+          <span style="color: ${condOrder ? "#34d399" : "#f87171"}; font-weight:700;">${condOrder ? "✅ ผ่าน" : "❌ ไม่ผ่าน"}</span>
+        </div>
+        <div class="cic-check-item">
+          <span>2. พัดกางตึง (Spread ≥ ${targetSpread.toFixed(2)}%)</span>
+          <span style="color: ${condSpread ? "#34d399" : "#f87171"}; font-weight:700;">${condSpread ? "✅ ผ่าน" : "❌ ไม่ผ่าน"}</span>
+        </div>
+        <div class="cic-check-item">
+          <span>3. ปลายพัดม้วนตัวกลับ (Hook Up)</span>
+          <span style="color: ${condHook ? "#34d399" : "#f87171"}; font-weight:700;">${condHook ? "✅ ผ่าน" : "⏳ ไม่ม้วน"}</span>
+        </div>
+        <div class="cic-check-item">
+          <span>4. แรงซื้อดีดกลับ (Oversold Wick)</span>
+          <span style="color: ${condExhaust ? "#34d399" : "#f87171"}; font-weight:700;">${condExhaust ? "✅ ผ่าน" : "⏳ ไม่มี"}</span>
+        </div>
+      </div>
+
+      ${verdictHtml}
+    `;
+
+    elBtCandleInspectorCard.classList.add("active");
+    if (elBtChartPinnedCandleMarker) elBtChartPinnedCandleMarker.classList.add("active");
+
+    updateBtCandleInspectorPosition();
+    updateBtMaLegendForCandle(candleTime);
+  }
+
+  function closeBtCandleInspector() {
+    btPinnedCandleTime = null;
+    if (elBtCandleInspectorCard) elBtCandleInspectorCard.classList.remove("active");
+    if (elBtChartPinnedCandleMarker) elBtChartPinnedCandleMarker.classList.remove("active");
+    if (currentRecord && currentRecord.candles && currentRecord.candles.length > 0) {
+      const lastC = currentRecord.candles[currentRecord.candles.length - 1];
+      updateBtMaLegendForCandle(lastC.time);
+    }
+  }
+  window.closeBtCandleInspector = closeBtCandleInspector;
+
+  function updateBtCandleInspectorPosition() {
+    if (!btPinnedCandleTime || !elBtCandleInspectorCard || !chart || !chartContainer) return;
+    const x = chart.timeScale().timeToCoordinate(btPinnedCandleTime);
+    if (x === null || x < -50 || x > chartContainer.clientWidth + 50) {
+      elBtCandleInspectorCard.style.display = "none";
+      if (elBtChartPinnedCandleMarker) elBtChartPinnedCandleMarker.style.display = "none";
+      return;
+    }
+
+    elBtCandleInspectorCard.style.display = "block";
+    if (elBtChartPinnedCandleMarker) {
+      elBtChartPinnedCandleMarker.style.display = "block";
+      elBtChartPinnedCandleMarker.style.left = `${Math.round(x)}px`;
+    }
+
+    const cardWidth = elBtCandleInspectorCard.offsetWidth || 300;
+    const cardHeight = elBtCandleInspectorCard.offsetHeight || 340;
+    const chartW = chartContainer.clientWidth;
+    const chartH = chartContainer.clientHeight;
+
+    let left = x + 16;
+    if (left + cardWidth > chartW - 60) {
+      left = x - cardWidth - 16;
+    }
+    if (left < 10) left = 10;
+
+    let top = 60;
+    if (top + cardHeight > chartH - 10) {
+      top = Math.max(10, chartH - cardHeight - 10);
+    }
+
+    elBtCandleInspectorCard.style.left = `${Math.round(left)}px`;
+    elBtCandleInspectorCard.style.top = `${Math.round(top)}px`;
   }
 
   // Build and render circular order badges on chart overlay layer
