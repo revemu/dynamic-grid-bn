@@ -261,6 +261,10 @@ async function main(): Promise<void> {
   });
   await grid.syncOnChainOrders();
 
+  // 🛡️ Safe Boot: Always ensure bot starts in PAUSED mode on startup across all strategies
+  grid.setPaused(true);
+  log("⏸️ [SAFE BOOT] Bot started in PAUSED mode as requested. Resume trading via dashboard or API.");
+
   let wakeSleep: (() => void) | null = null;
   const interruptibleSleep = (ms: number): Promise<void> => {
     return new Promise((resolve) => {

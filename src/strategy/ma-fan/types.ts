@@ -65,6 +65,7 @@ export interface MaFanConfig {
   slBufferPct: number; // e.g. 0.25%
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;
+  startPaused?: boolean;
 }
 
 export interface CalibrationResult {

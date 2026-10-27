@@ -40,7 +40,7 @@ export class MaFanStrategy {
   private lastCalibration?: CalibrationResult;
   private effectiveSpreadThreshold: number = 0.40;
 
-  private isPaused: boolean = false;
+  private isPaused: boolean = true;
   private isProcessing: boolean = false;
   private log: (msg: string) => void;
   private onTrade?: (trade: any) => void;
@@ -57,6 +57,7 @@ export class MaFanStrategy {
     this.symbol = opts.symbol;
     this.config = opts.config;
     this.client = opts.client;
+    this.isPaused = opts.config.startPaused ?? true;
     this.log = opts.onLog ?? ((msg) => console.log(`[ma-fan-strategy] ${msg}`));
     this.onTrade = opts.onTrade;
     this.onStateUpdate = opts.onStateUpdate;

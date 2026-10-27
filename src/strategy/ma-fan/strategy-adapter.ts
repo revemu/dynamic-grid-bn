@@ -60,6 +60,7 @@ export class MaFanTradingStrategy implements IStrategy {
       slBufferPct: this.cfg.maFanSlBufferPct ?? 0.25,
       maxPositionBudgetUsd: this.cfg.maFanMaxBudgetUsd ?? 200,
       isDryRun: this.cfg.dryRun ?? false,
+      startPaused: this.cfg.startPaused ?? true,
     };
 
     this.maFan = new MaFanStrategy({

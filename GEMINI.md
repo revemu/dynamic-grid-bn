@@ -4889,6 +4889,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **แถบตัวเลขสถิติบนหัวชาร์ต (`#legendMaRow` ใน `public/index.html`)**:
    - แสดงค่าราคาตัวเลขของ EMA แต่ละเส้นแบบสดๆ ที่มุมบนซ้ายของกราฟ (`EMA4: $... | EMA8: $... | EMA16: $... | EMA25: $... | EMA75: $... | EMA200: $...`) ให้ผู้ใช้ตรวจสอบระยะการกางของพัดได้ด้วยสายตาทันที
 
+---
+
+## 122. v0.2.122 — Mandatory Safe Boot Enforcement (Always Start Paused across All Strategies)
+
+### วัตถุประสงค์และการปรับปรุง (Safe Boot Enforcement)
+1. **ตามคำสั่งผู้ใช้: "เวลา start bot ให้เริ่มที่ pause นะ"**:
+   - เมื่อสตาร์ทเซิร์ฟเวอร์หรือรีสตาร์ทบอท ผู้ใช้ต้องการให้บอทเริ่มทำงานในสถานะ **PAUSED (หยุดพักชั่วคราว)** เสมอ เพื่อป้องกันไม่ให้บอทเปิดคำสั่งซื้อขายทันทีโดยไม่ได้ตั้งใจก่อนที่ผู้ใช้จะพร้อมหรือตรวจสอบความเรียบร้อย
+2. **การบังคับใช้ Safe Boot ในระดับ Global Entrypoint (`src/index.ts`)**:
+   - หลังจากการสร้างและเชื่อมต่อออบเจกต์กลยุทธ์ `grid = createStrategy(...)` และซิงค์สถานะ On-chain เรียบร้อยแล้ว ระบบจะเรียกคำสั่ง `grid.setPaused(true)` โดยอัตโนมัติครอบคลุมทุกโหมดการเทรด (`ma_fan`, `dynamic_grid`, `swing_trade`)
+   - บันทึกข้อความแจ้งเตือนชัดเจนในคอนโซล: `⏸️ [SAFE BOOT] Bot started in PAUSED mode as requested. Resume trading via dashboard or API.`
+3. **การตั้งค่าเริ่มต้นใน MA Fan Strategy (`src/strategy/ma-fan/`)**:
+   - กำหนดค่าเริ่มต้น `isPaused = true` ใน `MaFanStrategy`
+   - เพิ่มพร็อพเพอร์ตี `startPaused?: boolean` ใน `MaFanConfig` (`src/strategy/ma-fan/types.ts`) และส่งผ่านจาก Adapter (`src/strategy/ma-fan/strategy-adapter.ts`)
+4. **การควบคุมการเทรดจากหน้าเว็บ (Dashboard & API)**:
+   - ผู้ใช้สามารถกดปุ่ม "Resume Trading" บนหน้าแดชบอร์ดหรือยิง API เพื่อปลดบล็อกเริ่มการเทรดได้ทันทีเมื่อพร้อม
+
+
 
 
 
