@@ -21,8 +21,23 @@ const cleanBinanceSymbol = envSymbol.toLowerCase().replace(/[\/\-_:]/g, "");
  */
 export const defaultStrategyConfig = {
   // ── Strategy Selection ──────────────────────────────────────────────────
-  /** Active Trading Strategy: "dynamic_grid" (default) or "swing_trade". */
-  strategyType: "dynamic_grid" as "dynamic_grid" | "swing_trade",
+  /** Active Trading Strategy: "dynamic_grid" (default), "swing_trade", or "ma_fan". */
+  strategyType: "dynamic_grid" as "dynamic_grid" | "swing_trade" | "ma_fan",
+  get strategyMode(): "dynamic_grid" | "swing_trade" | "ma_fan" { return this.strategyType; },
+  set strategyMode(v: "dynamic_grid" | "swing_trade" | "ma_fan") { this.strategyType = v; },
+
+  // ── MA Fan Strategy Parameters ──────────────────────────────────────────
+  maFanExecutionTimeframe: "5m" as "5m" | "15m",
+  maFanSupervisorTimeframe: "15m" as "15m" | "1h",
+  maFanAutoCalibrateSpreadOnSwitch: true,
+  maFanManualSpreadPct: 0.40,
+  maFanUseAtrAdaptiveSpread: true,
+  maFanAtrMultiplier: 1.25,
+  maFanTp1Ratio: 0.50,
+  maFanTrailingPullbackPct: 0.45,
+  maFanBreakevenFeeBufferPct: 0.05,
+  maFanSlBufferPct: 0.25,
+  maFanMaxBudgetUsd: 200,
 
   // ── Core Parameters ────────────────────────────────────────────────────
   symbol: envSymbol,

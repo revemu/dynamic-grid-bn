@@ -174,7 +174,7 @@ export interface IStrategyHost {
   getTotalPortfolioValueQuote(refP: number): number;
 }
 
-export type StrategyType = "dynamic_grid" | "swing_trade";
+export type StrategyType = "dynamic_grid" | "swing_trade" | "ma_fan";
 
 export interface StrategyContext {
   exchange: IExchangeClient;

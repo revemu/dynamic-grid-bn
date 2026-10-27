@@ -197,6 +197,7 @@ async function main(): Promise<void> {
       if (isClosed) {
         htfDowEngine.addCandle(candle);
         dashboard?.addHtfCandle(candle, isClosed);
+        (grid as any).onHtfCandleClosed?.(candle);
       }
     });
 
@@ -446,12 +447,13 @@ async function main(): Promise<void> {
         }
       }
 
-      // 3. Handle Strategy Type switch dynamically (e.g. Dynamic Grid <-> Swing Trade)
-      if (s.strategyType && s.strategyType !== prevConfig.strategyType) {
-        log(`🔄 [STRATEGY SWITCH] Switching active strategy from ${prevConfig.strategyType || "dynamic_grid"} to ${s.strategyType}...`);
+      // 3. Handle Strategy Type switch dynamically (e.g. Dynamic Grid <-> Swing Trade <-> MA Fan)
+      const nextStrat = s.strategyType || s.strategyMode;
+      if (nextStrat && nextStrat !== prevConfig.strategyType) {
+        log(`🔄 [STRATEGY SWITCH] Switching active strategy from ${prevConfig.strategyType || "dynamic_grid"} to ${nextStrat}...`);
         try {
           await grid.cancelAllOrdersUser();
-          const targetStrategyType = s.strategyType;
+          const targetStrategyType = nextStrat;
           const currentConfig = grid.getRuntimeConfig();
           const cleanS = { ...s };
           if (cleanS.binanceApiKey === "******") delete cleanS.binanceApiKey;
@@ -613,6 +615,7 @@ async function main(): Promise<void> {
               if (isClosed) {
                 htfDowEngine.addCandle(candle);
                 dashboard?.addHtfCandle(candle, isClosed);
+                (grid as any).onHtfCandleClosed?.(candle);
               }
             });
             htfFeed.start();

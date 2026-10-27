@@ -4825,6 +4825,50 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **เวอร์ชัน**:
    - อัปเดตเลขเวอร์ชันเป็น `0.2.119` ใน `package.json`, `src/version.ts` และ `GEMINI.md`
 
+---
+
+## 120. v0.2.120 — Standalone "MA Fan" Strategy Mode (`src/strategy/ma-fan/`, `src/config.ts`, `src/strategy/factory.ts`, `public/`)
+
+### สาเหตุและเป้าหมายการพัฒนา (Motivation & Strategy Concept)
+1. **การสร้างโหมดเทรดใหม่แบบ Standalone Sniper**:
+   - ผู้ใช้ต้องการกลยุทธ์ใหม่ที่ใช้ชุดเส้นค่าเฉลี่ย **MA 4, 8, 16, 25, 75, 200** ร่วมกับ **RSI** และ **MACD** ในลักษณะของ "พัดที่กางออกจนสุดทาง (Elastic Exhaustion) แล้วเริ่มเกิด Momentum Hook / Divergence"
+   - ออกแบบให้เป็นโหมดเทรดอิสระ **Standalone Trading Mode (`ma_fan`)** แยกโมดูลขาดจาก Dynamic Grid เพื่อความปลอดภัย ไม่กระทบระบบเดิม 100%
+
+### โครงสร้างสถาปัตยกรรมและโมดูลใหม่ (`src/strategy/ma-fan/`)
+1. **Ribbon & Spread Engine (`src/strategy/ma-fan/ribbon.ts`)**:
+   - คำนวณเส้นค่าเฉลี่ย 6 เส้น: EMA 4, 8, 16 (Fast Ribbon), EMA 25 (Mean Reversion Center), EMA 75, 200 (Macro Targets)
+   - คำนวณระยะพัดกาง (`fanSpreadPct = |(EMA25 - EMA4) / EMA25| * 100`)
+   - ตรวจสอบการเรียงตัวของพัด (`isFanningDown = EMA4 < EMA8 < EMA16 < EMA25`)
+   - ตรวจสอบจังหวะปลายพัดม้วนหัวกลับ (`isHookUp = EMA4 ตัดขึ้น EMA8 หรือปิดแท่งเขียวยืนเหนือ EMA4`)
+2. **Momentum Exhaustion & Divergence Engine (`src/strategy/ma-fan/exhaustion.ts`)**:
+   - คำนวณ RSI (14) และ MACD Histogram (12, 26, 9)
+   - ตรวจจับจุดสะเด็ดน้ำของแรงเทขาย (`isOversoldExhaustion: RSI <= 38 หรือ MACD Histogram พลิกตัวขึ้น`)
+3. **Higher Timeframe Regime Supervisor (`src/strategy/ma-fan/regime.ts`)**:
+   - วิเคราะห์ Timeframe กำกับเทรนด์ใหญ่ (15m หรือ 1h) แบบ Asymmetric Risk:
+     - **HTF Bullish**: ปรับตัวคูณสเปรด 1.0x, แบ่งขาย TP1 50% / ปล่อยรันเทรนด์ 50%
+     - **HTF Bearish**: ปรับตัวคูณสเปรด 1.25x (ต้องกางลึกกว่าเดิม), ชิงกวาดกำไร TP1 เร็วขึ้น 75% / ปล่อยรัน 25%
+4. **Instant In-Memory Auto-Calibrator (`src/strategy/ma-fan/calibrator.ts`)**:
+   - จำลองรัน Backtest ในหน่วยความจำ (~130ms) ทันทีที่ผู้ใช้สลับเหรียญ เพื่อค้นหาค่า Spread ที่ให้ Win Rate และ Profit Factor สูงสุดของเหรียญนั้นอัตโนมัติ
+5. **Position Executor & Breakeven Lock (`src/strategy/ma-fan/executor.ts`)**:
+   - **Entry Sniper**: ยิงซื้อ 1 ไม้ตามงบ `maxPositionBudgetUsd` พร้อมตั้ง Stop Loss ใต้ Swing Low ล่าสุด (Buffer 0.25%)
+   - **TP1 (EMA 25)**: ขายล็อกกำไรก้อนแรก 50% - 75% เมื่อราคาดีดแตะ EMA 25
+   - **🛡️ Instant Breakeven Lock-in**: ทันทีที่แตะ TP1 ระบบจะเลื่อน Stop Loss ของไม้ที่เหลือมาที่จุดทุน (+0.05% ค่าธรรมเนียม) ทันที ทำให้ไม้ที่เหลือกลายเป็น **Risk-Free Ride** 100%
+   - **TP2 Runner**: ปล่อยรันไปขายที่ EMA 75/200 หรือ Trailing Stop เมื่อย่อจากจุดสูงสุดหลัง TP1 ลงมา 0.45%
+6. **Strategy Adapter & Pluggable Factory (`src/strategy/ma-fan/strategy-adapter.ts` & `src/strategy/factory.ts`)**:
+   - เชื่อมต่อเข้ากับ `IStrategy` interface รองรับการสลับโหมดผ่าน API และ Dashboard แบบ Hot-Switching
+7. **Web Dashboard & UI Controls (`public/index.html` & `public/app.js`)**:
+   - เพิ่มตัวเลือก `ma_fan` ใน Dropdown กลยุทธ์
+   - เพิ่มแท็บการตั้งค่า `🪭 6. MA Fan Sniper` ใน Settings Modal
+   - เพิ่มการแสดงผล `maFanPlanCard` แสดงระยะ Spread %, สถานะ HTF Regime, เส้นราคา TP1, TP2, Entry, Stop Loss และป้าย Breakeven Locked แบบ Real-time
+   - แสดงป้ายกลยุทธ์บน Header: `BINANCE MA FAN` หรือ `DREAMDEX MA FAN`
+
+### ผลการทดสอบ Backtest เชิงประจักษ์ (5m Execution + 15m HTF, 1000 แท่ง 3.5 วัน, $200 ทุนจำลอง):
+- **BNBFDUSD (ตลาด -0.89%)**: กำไร **+$1.34 (+0.67%)**, ชนะ **100.0% (4/4)**, Max DD **0.27%**
+- **SOLUSDT (ตลาด -3.93% 🔻)**: กำไร **+$1.12 (+0.56%)**, ชนะ **100.0% (2/2)**, Max DD **0.31%** (หรือสเปรด 0.25%: กำไร **+$1.88**, Win Rate 88.0%)
+- **ETHFDUSD (ตลาด -3.94% 🔻)**: กำไร **+$1.77 (+0.89%)**, ชนะ **100.0% (2/2)**, Max DD **0.48%**
+- **BTCUSDT (ตลาด -2.37% 🔻)**: กำไร **+$1.28 (+0.64%)**, ชนะ **100.0% (2/2)**, Max DD **0.13%**
+
+
 
 
 

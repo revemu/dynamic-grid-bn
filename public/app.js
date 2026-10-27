@@ -662,6 +662,10 @@
   let lineSwingTp2 = null;
   let lineSwingSl = null;
   let lineSwingNextEntry = null;
+  let lineMfEntry = null;
+  let lineMfTp1 = null;
+  let lineMfTp2 = null;
+  let lineMfSl = null;
   let lineHtfCeil = null;
   let lineHtfFloor = null;
   let linePoc = null;
@@ -1377,23 +1381,150 @@
     }
   }
 
+  function updateMaFanPlanUI(data) {
+    const elSignalType = document.getElementById("mfSignalType");
+    const elSignalDesc = document.getElementById("mfSignalDesc");
+    const elReqSpread = document.getElementById("mfReqSpread");
+    const elCurrentSpread = document.getElementById("mfCurrentSpread");
+    const elHtfRegime = document.getElementById("mfHtfRegime");
+    const elPositionStatus = document.getElementById("mfPositionStatus");
+    const elTp2Price = document.getElementById("mfTp2Price");
+    const elTp2TargetDesc = document.getElementById("mfTp2TargetDesc");
+    const elTp1Price = document.getElementById("mfTp1Price");
+    const elTp1Desc = document.getElementById("mfTp1Desc");
+    const elEntryPrice = document.getElementById("mfEntryPrice");
+    const elEntryQty = document.getElementById("mfEntryQty");
+    const elSlPrice = document.getElementById("mfSlPrice");
+    const elSlTitle = document.getElementById("mfSlTitle");
+    const elSlStatus = document.getElementById("mfSlStatus");
+    const elSlBadge = document.getElementById("mfSlBadge");
+    const elWinRate = document.getElementById("mfWinRate");
+    const elCycles = document.getElementById("mfCycles");
+    const elRealizedPnl = document.getElementById("mfRealizedPnl");
+
+    const ribbon = data.ribbon || {};
+    const pos = data.activePosition;
+    const htf = data.htfRegime;
+    const effSpread = data.effectiveSpreadThreshold || 0.40;
+    const metrics = data.metrics || {};
+
+    if (elReqSpread) elReqSpread.textContent = effSpread.toFixed(2);
+    if (elCurrentSpread) {
+      const curSpread = ribbon.fanSpreadPct || 0;
+      elCurrentSpread.textContent = `${curSpread.toFixed(2)}%`;
+      elCurrentSpread.style.color = curSpread >= effSpread ? "#4ade80" : "#38bdf8";
+    }
+
+    if (elHtfRegime) {
+      if (htf) {
+        elHtfRegime.textContent = htf.isBullish ? "🟢 ขาขึ้น (Bullish)" : "🔴 ขาลง (Bearish)";
+        elHtfRegime.style.color = htf.isBullish ? "#4ade80" : "#f87171";
+      } else {
+        elHtfRegime.textContent = "--";
+      }
+    }
+
+    // Targets
+    const curPrice = data.mid || data.refPrice || 0;
+    const tp1Price = pos?.tp1Price || ribbon.ema25 || 0;
+    const tp2Price = Math.max(ribbon.ema75 || 0, ribbon.ema200 || 0);
+
+    if (elTp1Price) elTp1Price.textContent = tp1Price > 0 ? fmtPrice(tp1Price) : "--.------";
+    if (elTp2Price) elTp2Price.textContent = tp2Price > 0 ? fmtPrice(tp2Price) : "--.------";
+
+    if (pos) {
+      // In position
+      if (elPositionStatus) {
+        elPositionStatus.textContent = pos.tp1Filled ? "🎯 แตะ TP1 (ถือไม้รัน)" : "🟢 ถือไม้ (รอแตะ TP1)";
+        elPositionStatus.style.color = "#4ade80";
+      }
+
+      if (elSignalType) elSignalType.textContent = pos.tp1Filled ? "🚀 กำลังรันเทรนด์ไม้ TP2 (Breakeven Locked)" : "🎯 ถือออเดอร์ (รอเด้งแตะ EMA 25)";
+      if (elSignalDesc) {
+        const pnlPct = pos.entryPrice > 0 ? (((curPrice - pos.entryPrice) / pos.entryPrice) * 100).toFixed(2) : "0.00";
+        elSignalDesc.textContent = `เข้าซื้อที่ $${fmtPrice(pos.entryPrice)} | PnL: ${pnlPct >= "0" ? "+" : ""}${pnlPct}%`;
+      }
+
+      if (elEntryPrice) elEntryPrice.textContent = fmtPrice(pos.entryPrice);
+      if (elEntryQty) elEntryQty.textContent = `ถือ ${pos.remainingQty} (${((pos.remainingQty / pos.totalQty) * 100).toFixed(0)}%)`;
+
+      if (elSlPrice) elSlPrice.textContent = fmtPrice(pos.stopLossPrice);
+      if (elSlTitle) elSlTitle.textContent = pos.isBreakevenLocked ? "🛡️ Stop Loss (ล็อกทุน Breakeven)" : "🛡️ Stop Loss (ใต้ Swing Low)";
+      if (elSlStatus) elSlStatus.textContent = pos.isBreakevenLocked ? "Risk-Free Mode (ปลอดภัย 100%)" : `ระยะ SL: ${curPrice > 0 ? (((pos.stopLossPrice - curPrice) / curPrice) * 100).toFixed(2) : 0}%`;
+      if (elSlBadge) elSlBadge.style.background = pos.isBreakevenLocked ? "#3b82f6" : "#ef4444";
+    } else {
+      // No position, waiting for entry
+      if (elPositionStatus) {
+        elPositionStatus.textContent = ribbon.isFanningDown && ribbon.fanSpreadPct >= effSpread ? "⚡ พัดกางตึง! รอม้วนกลับ" : "รอพัดกางตึง";
+        elPositionStatus.style.color = ribbon.isFanningDown && ribbon.fanSpreadPct >= effSpread ? "#facc15" : "var(--text-muted)";
+      }
+
+      if (elSignalType) elSignalType.textContent = "🪭 MA Fan Sniper (กำลังสแกนจังหวะ)";
+      if (elSignalDesc) elSignalDesc.textContent = `พัดปัจจุบัน: ${(ribbon.fanSpreadPct || 0).toFixed(2)}% (ต้องการ ≥ ${effSpread.toFixed(2)}%)`;
+
+      if (elEntryPrice) elEntryPrice.textContent = "--.------";
+      if (elEntryQty) elEntryQty.textContent = "รอจังหวะเข้า";
+      if (elSlPrice) elSlPrice.textContent = "--.------";
+      if (elSlTitle) elSlTitle.textContent = "🛡️ Stop Loss (ใต้ Swing Low)";
+      if (elSlStatus) elSlStatus.textContent = "--";
+      if (elSlBadge) elSlBadge.style.background = "#ef4444";
+    }
+
+    if (elWinRate) elWinRate.textContent = `${(metrics.winRate || 0).toFixed(1)}%`;
+    if (elCycles) elCycles.textContent = String(metrics.totalCycles || 0);
+    if (elRealizedPnl) {
+      const pnl = metrics.realizedPnl || 0;
+      elRealizedPnl.textContent = `${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`;
+      elRealizedPnl.style.color = pnl >= 0 ? "#4ade80" : "#f87171";
+    }
+
+    const elZoneBadge = document.getElementById("ladderZoneBadge");
+    if (elZoneBadge) {
+      if (pos) {
+        if (pos.tp1Filled) {
+          elZoneBadge.textContent = "🚀 TRAILING TP2";
+          elZoneBadge.className = "active-zone-pill badge-trailing";
+        } else {
+          elZoneBadge.textContent = "🎯 TP1 PENDING";
+          elZoneBadge.className = "active-zone-pill badge-inpos";
+        }
+      } else if (ribbon.isFanningDown && ribbon.fanSpreadPct >= effSpread) {
+        elZoneBadge.textContent = "⚡ HOOK READY";
+        elZoneBadge.className = "active-zone-pill badge-ready";
+      } else {
+        elZoneBadge.textContent = "🪭 FAN SCANNING";
+        elZoneBadge.className = "active-zone-pill badge-scanning";
+      }
+    }
+  }
+
   function updateZoneLevelBars(data) {
     latestGridData = data;
 
     const elGridTitle = document.getElementById("gridLadderTitle");
     const elVerticalLadder = document.getElementById("verticalLadderMeter");
     const elSwingPlanCard = document.getElementById("swingTradePlanCard");
+    const elMaFanPlanCard = document.getElementById("maFanPlanCard");
 
     if (data.strategyType === "swing_trade") {
       if (elGridTitle) elGridTitle.textContent = "🏹 แผนและการวิ่งของราคา (Swing Targets)";
       if (elVerticalLadder) elVerticalLadder.style.display = "none";
       if (elSwingPlanCard) elSwingPlanCard.style.display = "flex";
+      if (elMaFanPlanCard) elMaFanPlanCard.style.display = "none";
       updateSwingTradePlanUI(data);
+      return;
+    } else if (data.strategyType === "ma_fan" || data.strategyMode === "ma_fan") {
+      if (elGridTitle) elGridTitle.textContent = "🪭 แผนการเทรด MA Fan Sniper";
+      if (elVerticalLadder) elVerticalLadder.style.display = "none";
+      if (elSwingPlanCard) elSwingPlanCard.style.display = "none";
+      if (elMaFanPlanCard) elMaFanPlanCard.style.display = "flex";
+      updateMaFanPlanUI(data);
       return;
     } else {
       if (elGridTitle) elGridTitle.textContent = "🎯 ระดับกริด & เป้าหมาย (Grid Ladder)";
       if (elVerticalLadder) elVerticalLadder.style.display = "";
       if (elSwingPlanCard) elSwingPlanCard.style.display = "none";
+      if (elMaFanPlanCard) elMaFanPlanCard.style.display = "none";
     }
     const pos = data.positionPct !== undefined ? data.positionPct : 50;
     const floor = data.bottomBound ?? 0;
@@ -2042,7 +2173,12 @@
     const elLogoBadge = document.getElementById("logoBadge");
     if (elLogoBadge) {
       const isDreamdex = (data.exchange || "").toLowerCase() === "dreamdex" || rawSymbol.includes(":") || rawSymbol.includes("USDSO");
-      const stratSuffix = (data.strategyType === "swing_trade" || (data.strategyName && data.strategyName.includes("Swing"))) ? "SWING" : "GRID";
+      let stratSuffix = "GRID";
+      if (data.strategyType === "swing_trade" || (data.strategyName && data.strategyName.includes("Swing"))) {
+        stratSuffix = "SWING";
+      } else if (data.strategyType === "ma_fan" || data.strategyMode === "ma_fan") {
+        stratSuffix = "MA FAN";
+      }
       elLogoBadge.textContent = isDreamdex ? `DREAMDEX ${stratSuffix}` : `BINANCE ${stratSuffix}`;
     }
 
@@ -2768,7 +2904,90 @@
           try { candleSeries.removePriceLine(lineSwingNextEntry); } catch (_) {}
           lineSwingNextEntry = null;
         }
+      } else if (data.strategyType === "ma_fan" || data.strategyMode === "ma_fan") {
+        // Clear grid levels
+        while (gridZoneLevelLines.length > 0) {
+          const l = gridZoneLevelLines.pop();
+          if (l) try { candleSeries.removePriceLine(l); } catch (_) {}
+        }
+        // Clear swing lines
+        if (lineSwingEntry) { try { candleSeries.removePriceLine(lineSwingEntry); } catch (_) {} lineSwingEntry = null; }
+        if (lineSwingTp1) { try { candleSeries.removePriceLine(lineSwingTp1); } catch (_) {} lineSwingTp1 = null; }
+        if (lineSwingTp2) { try { candleSeries.removePriceLine(lineSwingTp2); } catch (_) {} lineSwingTp2 = null; }
+        if (lineSwingSl) { try { candleSeries.removePriceLine(lineSwingSl); } catch (_) {} lineSwingSl = null; }
+        if (lineSwingNextEntry) { try { candleSeries.removePriceLine(lineSwingNextEntry); } catch (_) {} lineSwingNextEntry = null; }
+
+        const ribbon = data.ribbon || {};
+        const pos = data.activePosition;
+        const tp1Price = pos?.tp1Price || ribbon.ema25 || 0;
+        const tp2Price = Math.max(ribbon.ema75 || 0, ribbon.ema200 || 0);
+
+        // MA Fan TP1 Line (EMA 25 - Light Blue)
+        if (tp1Price > 0) {
+          lineMfTp1 = setPriceLine(lineMfTp1, {
+            price: tp1Price,
+            color: "#38bdf8",
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: "🪭 TP1 (EMA 25)",
+          });
+        } else if (lineMfTp1) {
+          try { candleSeries.removePriceLine(lineMfTp1); } catch (_) {}
+          lineMfTp1 = null;
+        }
+
+        // MA Fan TP2 Line (EMA 75/200 - Purple)
+        if (tp2Price > 0) {
+          lineMfTp2 = setPriceLine(lineMfTp2, {
+            price: tp2Price,
+            color: "#c084fc",
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: "🚀 TP2 Runner",
+          });
+        } else if (lineMfTp2) {
+          try { candleSeries.removePriceLine(lineMfTp2); } catch (_) {}
+          lineMfTp2 = null;
+        }
+
+        // MA Fan Entry Line (Green)
+        if (pos && pos.entryPrice > 0) {
+          lineMfEntry = setPriceLine(lineMfEntry, {
+            price: pos.entryPrice,
+            color: "#10b981",
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: "🟢 Entry",
+          });
+        } else if (lineMfEntry) {
+          try { candleSeries.removePriceLine(lineMfEntry); } catch (_) {}
+          lineMfEntry = null;
+        }
+
+        // MA Fan Stop Loss Line (Blue if Breakeven Locked, Red if SL)
+        if (pos && pos.stopLossPrice > 0) {
+          lineMfSl = setPriceLine(lineMfSl, {
+            price: pos.stopLossPrice,
+            color: pos.isBreakevenLocked ? "#3b82f6" : "#ef4444",
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: pos.isBreakevenLocked ? "🛡️ Breakeven" : "🔴 Stop Loss",
+          });
+        } else if (lineMfSl) {
+          try { candleSeries.removePriceLine(lineMfSl); } catch (_) {}
+          lineMfSl = null;
+        }
       } else {
+        // Clear MA Fan lines when in Grid or Swing mode
+        if (lineMfEntry) { try { candleSeries.removePriceLine(lineMfEntry); } catch (_) {} lineMfEntry = null; }
+        if (lineMfTp1) { try { candleSeries.removePriceLine(lineMfTp1); } catch (_) {} lineMfTp1 = null; }
+        if (lineMfTp2) { try { candleSeries.removePriceLine(lineMfTp2); } catch (_) {} lineMfTp2 = null; }
+        if (lineMfSl) { try { candleSeries.removePriceLine(lineMfSl); } catch (_) {} lineMfSl = null; }
+
         // Clear Swing Lines when in Grid mode
         if (lineSwingEntry) {
           try { candleSeries.removePriceLine(lineSwingEntry); } catch (_) {}
@@ -4183,6 +4402,18 @@
         tabBtnSwing.style.color = "";
       }
     }
+    const tabBtnMaFan = document.getElementById("tabBtnMaFan");
+    if (tabBtnMaFan) {
+      if (stratType === "ma_fan") {
+        tabBtnMaFan.textContent = "🪭 6. MA Fan ⭐ (เปิดใช้งาน)";
+        tabBtnMaFan.style.borderColor = "#a855f7";
+        tabBtnMaFan.style.color = "#c084fc";
+      } else {
+        tabBtnMaFan.textContent = "🪭 6. MA Fan Sniper";
+        tabBtnMaFan.style.borderColor = "";
+        tabBtnMaFan.style.color = "";
+      }
+    }
   }
 
   [
@@ -4342,6 +4573,19 @@
       setCheck("cfg_swingEnableSupportRetestEntry", data.swingEnableSupportRetestEntry !== false);
       setCheck("cfg_swingEnableBearishReversalExit", data.swingEnableBearishReversalExit !== false);
       setVal("cfg_swingBearishReversalMinProfitPct", data.swingBearishReversalMinProfitPct ?? 0.35);
+
+      // MA Fan Sniper settings
+      setVal("cfg_maFanExecutionTimeframe", data.maFanExecutionTimeframe || "5m");
+      setVal("cfg_maFanSupervisorTimeframe", data.maFanSupervisorTimeframe || "15m");
+      setVal("cfg_maFanMaxBudgetUsd", data.maFanMaxBudgetUsd ?? 200);
+      setVal("cfg_maFanManualSpreadPct", data.maFanManualSpreadPct ?? 0.40);
+      setVal("cfg_maFanAtrMultiplier", data.maFanAtrMultiplier ?? 1.25);
+      setCheck("cfg_maFanAutoCalibrateSpreadOnSwitch", data.maFanAutoCalibrateSpreadOnSwitch !== false);
+      setCheck("cfg_maFanUseAtrAdaptiveSpread", data.maFanUseAtrAdaptiveSpread !== false);
+      setVal("cfg_maFanTp1Ratio", data.maFanTp1Ratio !== undefined ? String(data.maFanTp1Ratio) : "0.5");
+      setVal("cfg_maFanTrailingPullbackPct", data.maFanTrailingPullbackPct ?? 0.45);
+      setVal("cfg_maFanSlBufferPct", data.maFanSlBufferPct ?? 0.25);
+      setVal("cfg_maFanBreakevenFeeBufferPct", data.maFanBreakevenFeeBufferPct ?? 0.05);
 
       updateGridSimulatorPreview();
       updateSettingsConditionalVisibility();
@@ -4586,6 +4830,19 @@
       swingEnableSupportRetestEntry: document.getElementById("cfg_swingEnableSupportRetestEntry") ? document.getElementById("cfg_swingEnableSupportRetestEntry").checked : true,
       swingEnableBearishReversalExit: document.getElementById("cfg_swingEnableBearishReversalExit") ? document.getElementById("cfg_swingEnableBearishReversalExit").checked : true,
       swingBearishReversalMinProfitPct: parseFloat(document.getElementById("cfg_swingBearishReversalMinProfitPct")?.value) || 0.35,
+
+      // MA Fan Strategy
+      maFanExecutionTimeframe: document.getElementById("cfg_maFanExecutionTimeframe") ? document.getElementById("cfg_maFanExecutionTimeframe").value : "5m",
+      maFanSupervisorTimeframe: document.getElementById("cfg_maFanSupervisorTimeframe") ? document.getElementById("cfg_maFanSupervisorTimeframe").value : "15m",
+      maFanMaxBudgetUsd: parseFloat(document.getElementById("cfg_maFanMaxBudgetUsd")?.value) || 200,
+      maFanManualSpreadPct: parseFloat(document.getElementById("cfg_maFanManualSpreadPct")?.value) || 0.40,
+      maFanAtrMultiplier: parseFloat(document.getElementById("cfg_maFanAtrMultiplier")?.value) || 1.25,
+      maFanAutoCalibrateSpreadOnSwitch: Boolean(document.getElementById("cfg_maFanAutoCalibrateSpreadOnSwitch")?.checked),
+      maFanUseAtrAdaptiveSpread: Boolean(document.getElementById("cfg_maFanUseAtrAdaptiveSpread")?.checked),
+      maFanTp1Ratio: parseFloat(document.getElementById("cfg_maFanTp1Ratio")?.value) || 0.5,
+      maFanTrailingPullbackPct: parseFloat(document.getElementById("cfg_maFanTrailingPullbackPct")?.value) || 0.45,
+      maFanSlBufferPct: parseFloat(document.getElementById("cfg_maFanSlBufferPct")?.value) || 0.25,
+      maFanBreakevenFeeBufferPct: parseFloat(document.getElementById("cfg_maFanBreakevenFeeBufferPct")?.value) || 0.05,
     };
 
     try {

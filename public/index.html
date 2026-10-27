@@ -488,6 +488,88 @@
               </div>
             </div>
           </div>
+
+          <!-- ── MA Fan Setup & Execution Card (Displayed when strategyType === 'ma_fan') ── -->
+          <div class="swing-trade-plan-card" id="maFanPlanCard" style="display:none;">
+            <div class="stp-signal-banner" id="mfSignalBanner" style="background: linear-space; background: rgba(168, 85, 247, 0.15); border-left: 3px solid #a855f7;">
+              <div class="stp-signal-type" id="mfSignalType" style="color: #c084fc;">🪭 MA Fan Sniper (กำลังตรวจจับการยืดตัว)</div>
+              <div class="stp-signal-desc" id="mfSignalDesc">รอพัดกางตึงสุด (Spread ≥ <span id="mfReqSpread">0.40</span>%) + ปลายพัดม้วนหัวกลับ (Hook)</div>
+            </div>
+
+            <!-- MA Fan Live Telemetry Stats -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 10px 0; font-size: 11px;">
+              <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
+                <div style="color:var(--text-muted); font-size:10px;">ความกว้างพัด (Spread)</div>
+                <div id="mfCurrentSpread" style="font-weight:700; font-size:12px; color:#38bdf8;">--%</div>
+              </div>
+              <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
+                <div style="color:var(--text-muted); font-size:10px;">เทรนด์ใหญ่ (HTF)</div>
+                <div id="mfHtfRegime" style="font-weight:700; font-size:12px; color:#a855f7;">--</div>
+              </div>
+              <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
+                <div style="color:var(--text-muted); font-size:10px;">สถานะพอร์ต</div>
+                <div id="mfPositionStatus" style="font-weight:700; font-size:12px; color:#4ade80;">รอเข้าซื้อ</div>
+              </div>
+            </div>
+
+            <div class="stp-levels-container">
+              <!-- TP2 Target -->
+              <div class="stp-level-row stp-tp2">
+                <div class="stp-level-badge" style="background: #a855f7;">TP2</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name">🎯 TP2 Runner (EMA 75/200 หรือ Trailing)</span>
+                  <span class="stp-level-action" id="mfTp2TargetDesc">รันเทรนด์กินคำใหญ่</span>
+                </div>
+                <div class="stp-level-price" id="mfTp2Price">--.------</div>
+              </div>
+
+              <!-- TP1 Target -->
+              <div class="stp-level-row stp-tp1">
+                <div class="stp-level-badge" style="background: #3b82f6;">TP1</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name">🎯 TP1 Mean Reversion (EMA 25)</span>
+                  <span class="stp-level-action" id="mfTp1Desc">ขาย 50% แล้วย้าย SL มา Breakeven</span>
+                </div>
+                <div class="stp-level-price" id="mfTp1Price">--.------</div>
+              </div>
+
+              <!-- Entry Price -->
+              <div class="stp-level-row stp-entry">
+                <div class="stp-level-badge" style="background:#10b981;">IN</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name">🟢 จุดเข้าซื้อ (Entry Price)</span>
+                  <span class="stp-level-action" id="mfEntryQty">--</span>
+                </div>
+                <div class="stp-level-price" id="mfEntryPrice">--.------</div>
+              </div>
+
+              <!-- Stop Loss Target -->
+              <div class="stp-level-row stp-sl">
+                <div class="stp-level-badge" style="background:#ef4444;" id="mfSlBadge">SL</div>
+                <div class="stp-level-info">
+                  <span class="stp-level-name" id="mfSlTitle">🛡️ Stop Loss (ใต้ Swing Low)</span>
+                  <span class="stp-level-action" id="mfSlStatus">--</span>
+                </div>
+                <div class="stp-level-price" id="mfSlPrice">--.------</div>
+              </div>
+            </div>
+
+            <!-- MA Fan Stats Footer -->
+            <div class="stp-footer-stats">
+              <div class="stp-stat-item">
+                <span class="stp-stat-label">WIN RATE</span>
+                <span class="stp-stat-val text-green" id="mfWinRate">--%</span>
+              </div>
+              <div class="stp-stat-item">
+                <span class="stp-stat-label">CYCLES</span>
+                <span class="stp-stat-val" id="mfCycles">0</span>
+              </div>
+              <div class="stp-stat-item">
+                <span class="stp-stat-label">REALIZED PNL</span>
+                <span class="stp-stat-val text-green" id="mfRealizedPnl">$0.00</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- 2. Unified Multi-Tab Portfolio & Activity Dock (Trades / Open Orders / Lots / Log) -->
@@ -608,6 +690,7 @@
           <button class="tab-btn" data-tab="tab-risk">🛡️ 3. ความเสี่ยง &amp; Cut Loss</button>
           <button class="tab-btn" data-tab="tab-api">🔌 4. กระดานเทรด &amp; ระบบ</button>
           <button class="tab-btn" id="tabBtnSwing" data-tab="tab-swing">🏹 5. สวิงเทรด (Swing Trade)</button>
+          <button class="tab-btn" id="tabBtnMaFan" data-tab="tab-ma-fan">🪭 6. MA Fan Sniper</button>
         </div>
 
         <!-- ═══════════════════ TAB 1: กริด & การออกคำสั่ง (Grid & Execution) ═══════════════════ -->
@@ -1337,6 +1420,7 @@
                 </label>
                 <select id="cfg_strategyType" class="form-select">
                   <option value="dynamic_grid">⚙️ Dynamic Grid (เทรดเก็บรอบกริด)</option>
+                  <option value="ma_fan">🪭 MA Fan Sniper (พัดกางสุด ดักสแน็ปกลับค่าเฉลี่ย)</option>
                   <option value="swing_trade">🎯 Swing Trade (สไนเปอร์รอบคลื่น R:R)</option>
                 </select>
               </div>
@@ -1650,6 +1734,158 @@
                 </label>
                 <div class="input-with-unit">
                   <input type="number" id="cfg_swingBearishReversalMinProfitPct" step="0.05" min="0.1" max="5.0" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══════════════════ TAB 6: MA Fan Sniper Strategy ═══════════════════ -->
+        <div class="tab-pane" id="tab-ma-fan">
+          <!-- Section 6.1: Timeframe & งบประมาณ -->
+          <div class="cfg-section-card">
+            <div class="cfg-section-header">
+              <span class="cfg-section-title">🪭 Timeframe &amp; งบประมาณต่อรอบ (Execution &amp; Capital)</span>
+              <span class="cfg-section-desc">กำหนด Timeframe สำหรับออกออเดอร์และคุมความเสี่ยงเทรนด์ใหญ่</span>
+            </div>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="cfg_maFanExecutionTimeframe">
+                  Timeframe ส่งคำสั่งเทรด (Execution TF)
+                  <span class="help-tip" title="แนะนำ 5m สำหรับสายเทรดสั้นจบไว (1-2 ชม.) หรือ 15m สำหรับรอบใหญ่คำโต (4-6 ชม.)">ℹ️</span>
+                </label>
+                <select id="cfg_maFanExecutionTimeframe" class="form-select">
+                  <option value="5m">⚡ 5 นาที (5m - สายซิ่งจบรอบไว)</option>
+                  <option value="15m">📊 15 นาที (15m - แม่นยำรอบใหญ่)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_maFanSupervisorTimeframe">
+                  Timeframe คุมเทรนด์ใหญ่ (Supervisor HTF)
+                  <span class="help-tip" title="ไทม์เฟรมใหญ่สำหรับปรับจูนความเสี่ยง: หากเทรนด์ใหญ่เป็นขาลงจะบวกระยะพัดและขาย TP1 เร็วขึ้น 75%">ℹ️</span>
+                </label>
+                <select id="cfg_maFanSupervisorTimeframe" class="form-select">
+                  <option value="15m">15 นาที (15m - คู่กับ 5m)</option>
+                  <option value="1h">1 ชั่วโมง (1h - คู่กับ 15m)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_maFanMaxBudgetUsd">
+                  งบประมาณเข้าซื้อสูงสุด ($ USD)
+                  <span class="help-tip" title="วงเงินที่ใช้เปิดไม้ Sniper ในแต่ละรอบ">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_maFanMaxBudgetUsd" step="10" min="10" max="10000" />
+                  <span class="unit">$</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 6.2: ความกว้างพัด & Auto-Calibration -->
+          <div class="cfg-section-card">
+            <div class="cfg-section-header">
+              <span class="cfg-section-title">⚡ ความกว้างพัดกาง &amp; การปรับจูนอัตโนมัติ (Fan Spread &amp; Auto-Calibration)</span>
+              <span class="cfg-section-desc">ตั้งเกณฑ์ระยะยืดตัวตึงสุด (Elastic Stretch) และระบบคำนวณสเปรดอัตโนมัติ</span>
+            </div>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="cfg_maFanManualSpreadPct">
+                  ระยะพัดกางขั้นต่ำ (Fan Spread %)
+                  <span class="help-tip" title="ระยะห่างระหว่าง EMA 4 กับ EMA 25 (%) ยิ่งตั้งสูง ยิ่งกรองกราฟหลอกได้ดี (แนะนำ 0.35% - 0.45% สำหรับ 5m, 0.60% สำหรับ 15m)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_maFanManualSpreadPct" step="0.05" min="0.1" max="2.0" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_maFanAtrMultiplier">
+                  ตัวคูณความผันผวน ATR Multiplier
+                  <span class="help-tip" title="ใช้ร่วมกับโหมด ATR Adaptive เพื่อขยายระยะพัดตามความแรงของตลาด (แนะนำ 1.2 - 1.5)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_maFanAtrMultiplier" step="0.05" min="0.5" max="3.0" />
+                  <span class="unit">x</span>
+                </div>
+              </div>
+
+              <div class="form-group switch-group" style="grid-column: 1 / -1;">
+                <div class="switch-label-group">
+                  <span class="switch-title">🧠 Auto-Calibrate Spread เมื่อสลับเหรียญ (In-Memory Backtest)</span>
+                  <span class="switch-desc">จำลองรันแท่งเทียนในหน่วยความจำทันทีที่สลับเหรียญ เพื่อหาค่า Spread ที่ให้ Win Rate และกำไรสูงสุดของเหรียญนั้นอัตโนมัติ</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_maFanAutoCalibrateSpreadOnSwitch" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="form-group switch-group" style="grid-column: 1 / -1;">
+                <div class="switch-label-group">
+                  <span class="switch-title">🌊 Dynamic ATR% Volatility Adaptive Spread</span>
+                  <span class="switch-desc">ปรับยืดหยุ่นเกณฑ์พัดกางตามค่าความผันผวนจริงระหว่างวัน (ตลาดนิ่ง = พัดแคบลง, ตลาดกระชาก = พัดกว้างขึ้น)</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_maFanUseAtrAdaptiveSpread" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 6.3: การปิดทำกำไร & ล็อกทุน Breakeven -->
+          <div class="cfg-section-card">
+            <div class="cfg-section-header">
+              <span class="cfg-section-title">🎯 การทำกำไร 2 จังหวะ &amp; ล็อกทุน (TP1, Breakeven &amp; TP2 Runner)</span>
+              <span class="cfg-section-desc">เก็บกำไรก้อนแรกที่ EMA 25, เลื่อน SL มา Breakeven ล็อกความปลอดภัย และปล่อยไม้ที่เหลือรันเทรนด์</span>
+            </div>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="cfg_maFanTp1Ratio">
+                  สัดส่วนแบ่งขาย TP1 ที่เส้น EMA 25 (%)
+                  <span class="help-tip" title="สัดส่วนที่จะขายล็อกกำไรทันทีที่แตะเส้นค่าเฉลี่ย EMA 25 (แนะนำ 50% หรือ 75% ในสภาวะขาลง)">ℹ️</span>
+                </label>
+                <select id="cfg_maFanTp1Ratio" class="form-select">
+                  <option value="0.5">50% (แบ่งครึ่ง รันครึ่ง)</option>
+                  <option value="0.75">75% (ล็อกกำไรก้อนใหญ่ เน้นความชัวร์)</option>
+                  <option value="1.0">100% (ปิดรอบทันที ไม่รันต่อ)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_maFanTrailingPullbackPct">
+                  ระยะย่อ Trailing Stop สำหรับไม้ TP2 (%)
+                  <span class="help-tip" title="เมื่อราคาขึ้นไปทำจุดสูงสุดใหม่หลัง TP1 แล้วย่อตัวลงมาเกินค่านี้ จะสั่งปิดทำกำไรไม้ที่เหลือทันที (แนะนำ 0.45%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_maFanTrailingPullbackPct" step="0.05" min="0.1" max="2.0" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_maFanSlBufferPct">
+                  ระยะ Stop Loss ใต้ Swing Low เดิม (%)
+                  <span class="help-tip" title="ตั้ง Stop Loss ห้อยต่ำกว่าจุดต่ำสุดของแท่งเทียนก่อนหน้าเล็กน้อย (แนะนำ 0.25% - 0.35%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_maFanSlBufferPct" step="0.05" min="0.1" max="2.0" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_maFanBreakevenFeeBufferPct">
+                  ส่วนเผื่อค่าธรรมเนียมตอนล็อก Breakeven (%)
+                  <span class="help-tip" title="เมื่อแตะ TP1 ระบบจะเลื่อน SL มาที่ทุน + ส่วนเผื่อนี้ เพื่อให้ปิดแล้วไม่มีทางติดลบ (แนะนำ 0.05%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_maFanBreakevenFeeBufferPct" step="0.01" min="0.0" max="0.5" />
                   <span class="unit">%</span>
                 </div>
               </div>
