@@ -463,13 +463,25 @@ export class BinanceClient implements IExchangeClient {
 
     const raw = await this.signedRequest<any>("POST", "/api/v3/order", bodyParams);
 
+    let finalPrice = Number(raw.price || params.price || 0);
+    // For MARKET orders or filled limit orders where raw.price is 0, calculate real execution price
+    if (finalPrice <= 0) {
+      if (raw.cummulativeQuoteQty && raw.executedQty && Number(raw.executedQty) > 0) {
+        finalPrice = Number(raw.cummulativeQuoteQty) / Number(raw.executedQty);
+      } else if (Array.isArray(raw.fills) && raw.fills.length > 0) {
+        const totalCost = raw.fills.reduce((sum: number, f: any) => sum + (Number(f.price) * Number(f.qty)), 0);
+        const totalQty = raw.fills.reduce((sum: number, f: any) => sum + Number(f.qty), 0);
+        if (totalQty > 0) finalPrice = totalCost / totalQty;
+      }
+    }
+
     return {
       symbol: raw.symbol,
       orderId: Number(raw.orderId),
       txHash: String(raw.orderId),
       clientOrderId: raw.clientOrderId,
       transactTime: Number(raw.transactTime),
-      price: Number(raw.price || params.price || 0),
+      price: finalPrice,
       origQty: Number(raw.origQty),
       executedQty: Number(raw.executedQty),
       cummulativeQuoteQty: Number(raw.cummulativeQuoteQty),

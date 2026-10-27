@@ -2357,7 +2357,20 @@
     }
 
     // Timeframe Badge & Subtitle
-    if (data.dowTimeframe && data.tradingTimeframe) {
+    if (data.strategyType === "ma_fan") {
+      const execTf = (data.executionTimeframe || "5m").toUpperCase();
+      const supTf = (data.supervisorTimeframe || data.htfRegime?.timeframe || "15m").toUpperCase();
+      if (elTimeframeBadge) {
+        elTimeframeBadge.textContent = `EXEC: ${execTf} • HTF SUPERVISOR: ${supTf}`;
+      }
+      if (elChartTimeframeSub) {
+        elChartTimeframeSub.textContent = `(${execTf} Execution Candles)`;
+      }
+      const btnTf15m = document.getElementById("btnTf15m");
+      const btnTf4h = document.getElementById("btnTf4h");
+      if (btnTf15m && btnTf15m.textContent !== execTf) btnTf15m.textContent = execTf;
+      if (btnTf4h && btnTf4h.textContent !== `${supTf} (HTF)`) btnTf4h.textContent = `${supTf} (HTF)`;
+    } else if (data.dowTimeframe && data.tradingTimeframe) {
       const macroTf = data.dowTimeframe.toUpperCase();
       const tradeTf = data.tradingTimeframe.toUpperCase();
       if (elTimeframeBadge) {
@@ -2367,6 +2380,10 @@
       if (elChartTimeframeSub) {
         elChartTimeframeSub.textContent = `(${macroTf} Macro Candles)`;
       }
+      const btnTf15m = document.getElementById("btnTf15m");
+      const btnTf4h = document.getElementById("btnTf4h");
+      if (btnTf15m && btnTf15m.textContent !== "15M") btnTf15m.textContent = "15M";
+      if (btnTf4h && btnTf4h.textContent !== "4H (HTF)") btnTf4h.textContent = "4H (HTF)";
     }
 
     // Mid Price & 50% Center

@@ -87,6 +87,13 @@ export class MaFanOrderExecutor {
       return null;
     }
 
+    const minNotional = (this.symbolInfo?.minNotional && this.symbolInfo.minNotional > 0) ? this.symbolInfo.minNotional : 5.0;
+    const notional = qty * entryPrice;
+    if (notional < minNotional) {
+      this.log(`⚠️ Order value $${notional.toFixed(2)} is below minimum allowed ($${minNotional.toFixed(2)}), skipping buy.`);
+      return null;
+    }
+
     // Stop Loss is placed slightly below recent swing low
     const stopLossPrice = this.roundPrice(swingLowPrice * (1 - this.slBufferPct / 100));
 
@@ -95,10 +102,12 @@ export class MaFanOrderExecutor {
     let fillPrice = entryPrice;
     if (!this.dryRun) {
       try {
+        const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
         const res = await this.client.placeOrder({
           symbol,
           side: "BUY",
-          type: "MARKET",
+          type: orderType,
+          price: entryPrice,
           qty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
@@ -147,18 +156,29 @@ export class MaFanOrderExecutor {
     currentPrice: number,
     tp1Ratio: number
   ): Promise<boolean> {
-    const sellQty = this.roundQty(position.totalQty * tp1Ratio);
+    const minNotional = (this.symbolInfo?.minNotional && this.symbolInfo.minNotional > 0) ? this.symbolInfo.minNotional : 5.0;
+    let sellQty = this.roundQty(position.totalQty * tp1Ratio);
     if (sellQty <= 0) return false;
 
-    this.log(`🎯 [TP1_EMA25] ${position.symbol} | Target: $${currentPrice.toFixed(4)} | Selling: ${sellQty} (${(tp1Ratio * 100).toFixed(0)}%) | DryRun: ${this.dryRun}`);
+    // 🛡️ Min Notional Dust Guard: Check if remaining runner would be below minimum exchange size (< $5.10)
+    const remainingQty = this.roundQty(position.remainingQty - sellQty);
+    const remainingValue = remainingQty * currentPrice;
+    if (remainingQty > 0 && remainingValue < minNotional * 1.05) {
+      this.log(`ℹ️ [MIN_NOTIONAL GUARD] Remaining runner ${remainingQty} ($${remainingValue.toFixed(2)}) is below exchange min notional ($${minNotional.toFixed(2)}). Liquidating 100% at TP1 to prevent dust lockup.`);
+      sellQty = position.remainingQty;
+    }
+
+    this.log(`🎯 [TP1_EMA25] ${position.symbol} | Target: $${currentPrice.toFixed(4)} | Selling: ${sellQty} | DryRun: ${this.dryRun}`);
 
     let fillPrice = currentPrice;
     if (!this.dryRun) {
       try {
+        const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
         const res = await this.client.placeOrder({
           symbol: position.symbol,
           side: "SELL",
-          type: "MARKET",
+          type: orderType,
+          price: currentPrice,
           qty: sellQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
@@ -218,10 +238,12 @@ export class MaFanOrderExecutor {
     let fillPrice = currentPrice;
     if (!this.dryRun) {
       try {
+        const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
         const res = await this.client.placeOrder({
           symbol: position.symbol,
           side: "SELL",
-          type: "MARKET",
+          type: orderType,
+          price: currentPrice,
           qty: sellQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
@@ -269,10 +291,12 @@ export class MaFanOrderExecutor {
     let fillPrice = currentPrice;
     if (!this.dryRun) {
       try {
+        const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
         const res = await this.client.placeOrder({
           symbol: position.symbol,
           side: "SELL",
-          type: "MARKET",
+          type: orderType,
+          price: currentPrice,
           qty: sellQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;

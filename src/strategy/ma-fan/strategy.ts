@@ -188,13 +188,21 @@ export class MaFanStrategy {
           await this.executor.executeStopLoss(pos, refPrice);
           this.activePosition = null;
           this.totalCycles++;
+          this.onStateUpdate?.(this.getState());
           return;
         }
 
         // B. Take Profit 1 (Mean Reversion at EMA 25)
         if (!pos.tp1Filled && refPrice >= ribbon.ema25 && ribbon.ema25 > pos.entryPrice * 1.0015) {
           const ratio = htfRegime.recommendedTp1Ratio ?? this.config.tp1Ratio;
-          await this.executor.executeTp1(pos, refPrice, ratio);
+          const ok = await this.executor.executeTp1(pos, refPrice, ratio);
+          if (ok) {
+            if (pos.remainingQty <= 0) {
+              this.activePosition = null;
+              this.totalCycles++;
+            }
+            this.onStateUpdate?.(this.getState());
+          }
           return;
         }
 
@@ -220,6 +228,7 @@ export class MaFanStrategy {
             await this.executor.executeTp2(pos, refPrice, reason);
             this.activePosition = null;
             this.totalCycles++;
+            this.onStateUpdate?.(this.getState());
             return;
           }
         }
@@ -252,6 +261,7 @@ export class MaFanStrategy {
 
           if (newPos) {
             this.activePosition = newPos;
+            this.onStateUpdate?.(this.getState());
           }
         }
       }
@@ -313,6 +323,20 @@ export class MaFanStrategy {
     const soldQty = pos.remainingQty;
     const ok = await this.executor.executeStopLoss(pos, price);
     this.activePosition = null;
+    this.onStateUpdate?.(this.getState());
     return { success: ok, soldQty, price };
+  }
+
+  public restorePosition(pos: MaFanPosition | null): void {
+    if (pos && pos.remainingQty > 0) {
+      this.activePosition = pos;
+      this.log(`📥 [STATE RESTORED] Loaded active position for ${pos.symbol}: ${pos.remainingQty} units @ $${pos.entryPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)}, TP1 Filled: ${pos.tp1Filled}, Breakeven Locked: ${pos.isBreakevenLocked})`);
+    } else {
+      this.activePosition = null;
+    }
+  }
+
+  public getActivePosition(): MaFanPosition | null {
+    return this.activePosition;
   }
 }

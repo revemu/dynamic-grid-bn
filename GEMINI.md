@@ -4927,6 +4927,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ใน `src/index.ts`:
      - เรียก `await grid.refreshWalletBalances()` ทันทีหลังบูตบอทและหลังการสลับกลยุทธ์
 
+---
+
+## 124. v0.2.124 — Production Hardening & Bug Fixes for MA Fan Sniper Mode
+
+### วัตถุประสงค์และการปรับปรุง (Full MA Fan Hardening)
+1. **คำนวณราคา Match จริงของ Binance Market Order (`src/exchange/binance/client.ts`)**:
+   - เมื่อส่งคำสั่ง Market Order บน Binance ค่า `raw.price` คืนกลับมาเป็น 0 ระบบจะคำนวณราคาต้นทุนจริงจาก `raw.cummulativeQuoteQty / raw.executedQty` หรือเฉลี่ยจากอาเรย์ `raw.fills` ทำให้ได้ราคาเฉลี่ยที่จับคู่ได้จริงใน Orderbook แม่นยำ 100%
+2. **ระบบกักเก็บสถานะออเดอร์ข้ามการรีสตาร์ทบอท (Active Position Persistence in `src/db.ts` & `src/strategy/ma-fan/`)**:
+   - เพิ่มฟิลด์ `maFanPosition?: any` ลงใน `StrategyStateRecord`
+   - เมื่อมีการเปิดออเดอร์ (Buy Hook), ขายทำกำไรไม้แรก (TP1), ล็อก Stop Loss ที่ Breakeven หรือขายล้างพอร์ต ระบบจะบันทึกสถานะลง `BotDatabase` ทันที
+   - เมื่อรีสตาร์ทบอทหรือเซิร์ฟเวอร์รีบูต ระบบจะดึง `maFanPosition` จาก `db.getState()` กลับมาคืนค่าอัตโนมัติ ทำให้บอทไม่ลืมไม้ที่ถือและบริหาร SL / TP2 ต่อได้ทันที
+3. **ป้องกันปัญหาเศษเหรียญติดค้างต่ำกว่าเกณฑ์ขั้นต่ำ (Min Notional Dust Guard in `src/strategy/ma-fan/executor.ts`)**:
+   - หากเหรียญส่วนที่เหลือสำหรับถือรันเทรนด์ (TP2 Runner) มีมูลค่าน้อยกว่าเกณฑ์ขั้นต่ำของ Exchange ($5.00 - $5.25) ระบบจะสั่งรวบขายปิดรอบ 100% ที่ TP1 ทันที เพื่อป้องกันไม่ให้เกิดเศษเหรียญ Dust ตกค้างในกระเป๋าซึ่งจะไม่สามารถส่งคำสั่งขายบนกระดานได้
+4. **ความเข้ากันได้กับ DreamDEX On-Chain (`src/strategy/ma-fan/executor.ts`)**:
+   - ปรับให้ส่งราคา `price` เสมอ และสลับประเภทคำสั่งเป็น `type: "IOC"` อัตโนมัติเมื่อเทรดบน DreamDEX ป้องกันปัญหา Smart Contract Revert ด้วย Error `InvalidPriceTick`
+5. **จัด Timeframe ของฟีดข้อมูลและป้ายชาร์ตให้ตรงกับ MA Fan (`src/index.ts` & `public/app.js`)**:
+   - ใน `initFeeds`: หากเป็นโหมด `ma_fan` จะดึงแท่งเทียนหลักตาม `maFanExecutionTimeframe` (5m) และ HTF ตาม `maFanSupervisorTimeframe` (15m)
+   - หน้าชาร์ตแสดงป้าย `(5m Execution Candles)` และปุ่มสลับ Timeframe ปรับเป็น `5M` และ `15M (HTF)` อัตโนมัติ
+
+
 
 
 

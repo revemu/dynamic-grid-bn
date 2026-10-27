@@ -98,6 +98,7 @@ export interface StrategyStateRecord {
     soldStepNums: number[];
   };
   soldSellIndices?: number[];
+  maFanPosition?: any;
   lastUpdated: number;
 }
 

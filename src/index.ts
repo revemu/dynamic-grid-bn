@@ -119,9 +119,13 @@ async function main(): Promise<void> {
     localTrendEngine.clearCandles();
     htfDowEngine.clearCandles();
 
+    const isMaFan = config.strategyType === "ma_fan";
+    const primaryInterval = isMaFan ? ((config.maFanExecutionTimeframe as string) || "5m") : config.dowTimeframe;
+    const htfInterval = isMaFan ? ((config.maFanSupervisorTimeframe as string) || "15m") : config.htfTimeframe;
+
     await macroDowEngine.loadHigherTimeframeCandles(
       binanceCandleSymbol,
-      config.dowTimeframe,
+      primaryInterval,
       config.binanceBaseUrl,
       log,
       config.initialCandleCount ?? 300,
@@ -137,7 +141,7 @@ async function main(): Promise<void> {
     );
     await htfDowEngine.loadHigherTimeframeCandles(
       binanceCandleSymbol,
-      config.htfTimeframe,
+      htfInterval,
       config.binanceBaseUrl,
       log,
       300,
@@ -154,13 +158,13 @@ async function main(): Promise<void> {
     macroFeed = new BinanceAtrFeed(
       {
         symbol: symLower,
-        interval: config.dowTimeframe,
+        interval: primaryInterval,
         wsBase: config.binanceWsBase,
         staleMs: config.binanceStaleMs,
         initialCandleCount: config.initialCandleCount ?? 300,
       },
       config.atrLookback,
-      (msg) => log(`[macro ${config.dowTimeframe}] ${msg}`),
+      (msg) => log(`[macro ${primaryInterval}] ${msg}`),
     );
 
     tradingFeed = new BinanceAtrFeed(
@@ -184,13 +188,13 @@ async function main(): Promise<void> {
     htfFeed = new BinanceAtrFeed(
       {
         symbol: symLower,
-        interval: config.htfTimeframe,
+        interval: htfInterval,
         wsBase: config.binanceWsBase,
         staleMs: config.binanceStaleMs,
         initialCandleCount: 150,
       },
       config.atrLookback,
-      (msg) => log(`[htf ${config.htfTimeframe}] ${msg}`),
+      (msg) => log(`[htf ${htfInterval}] ${msg}`),
     );
 
     htfFeed.onCandle((candle, isClosed) => {
@@ -474,6 +478,12 @@ async function main(): Promise<void> {
             binanceApiSecret: grid.getRealBinanceApiSecret() || config.binanceApiSecret,
             dreamdexPrivateKey: grid.getRealDreamdexPrivateKey() || config.dreamdexPrivateKey,
           };
+          config.strategyType = targetStrategyType;
+          await initFeeds(symbolInfo.symbol);
+          wireFeedsToGrid();
+          dashboard.setInitialCandles(macroDowEngine.getCandles());
+          dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
+
           grid = createStrategy(targetStrategyType, {
             exchange,
             symbolInfo,
@@ -517,8 +527,20 @@ async function main(): Promise<void> {
         (s.initialCandleCount && s.initialCandleCount !== prevInitial) ||
         (s.dowTimeframe && s.dowTimeframe !== prevTf) ||
         (s.tradingTimeframe && s.tradingTimeframe !== prevTradingTf) ||
-        (s.htfTimeframe && s.htfTimeframe !== prevHtfTf)
+        (s.htfTimeframe && s.htfTimeframe !== prevHtfTf) ||
+        (s.maFanExecutionTimeframe && s.maFanExecutionTimeframe !== config.maFanExecutionTimeframe) ||
+        (s.maFanSupervisorTimeframe && s.maFanSupervisorTimeframe !== config.maFanSupervisorTimeframe)
       ) {
+        if (config.strategyType === "ma_fan") {
+          await initFeeds(symbolInfo.symbol);
+          wireFeedsToGrid();
+          dashboard.setInitialCandles(macroDowEngine.getCandles());
+          dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
+          macroFeed?.start();
+          tradingFeed?.start();
+          htfFeed?.start();
+          return res;
+        }
         const fetchLimit = s.initialCandleCount ?? res.initialCandleCount ?? 300;
         const tf = s.dowTimeframe ?? res.dowTimeframe ?? config.dowTimeframe;
         const microTf = s.tradingTimeframe ?? res.tradingTimeframe ?? config.tradingTimeframe ?? "5m";

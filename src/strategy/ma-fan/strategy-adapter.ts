@@ -76,9 +76,20 @@ export class MaFanTradingStrategy implements IStrategy {
       onLog: this.log,
       onTrade: (t) => {
         this.emit({ type: "order", data: t });
+        this.saveState(true);
+        this.emitTelemetryTick();
+      },
+      onStateUpdate: () => {
+        this.saveState(true);
         this.emitTelemetryTick();
       },
     });
+
+    // 💾 Restore persisted active position if exists in database
+    const savedState = this.db.getState();
+    if (savedState?.maFanPosition) {
+      this.maFan.restorePosition(savedState.maFanPosition);
+    }
 
     if (context.macroDowEngine) {
       const candles = context.macroDowEngine.getCandles();
@@ -178,6 +189,8 @@ export class MaFanTradingStrategy implements IStrategy {
       strategyType: "ma_fan",
       strategyMode: "ma_fan",
       symbol: this.symbolInfo.symbol,
+      executionTimeframe: this.cfg.maFanExecutionTimeframe || "5m",
+      supervisorTimeframe: this.cfg.maFanSupervisorTimeframe || "15m",
       baseAsset: this.symbolInfo.baseAsset,
       quoteAsset: this.symbolInfo.quoteAsset,
       mid: this.currentMid,
@@ -329,10 +342,15 @@ export class MaFanTradingStrategy implements IStrategy {
 
   public async resetPosition(): Promise<{ success: boolean; clearedLots: number }> {
     await this.maFan.sellAll();
+    this.saveState(true);
     return { success: true, clearedLots: 1 };
   }
 
   public reloadState(): void {
+    const saved = this.db.getState();
+    if (saved?.maFanPosition) {
+      this.maFan.restorePosition(saved.maFanPosition);
+    }
     this.emitTelemetryTick();
   }
 
@@ -341,7 +359,23 @@ export class MaFanTradingStrategy implements IStrategy {
   }
 
   public saveState(immediate?: boolean): void {
-    // DB state is automatically recorded on trades
+    try {
+      const pos = this.maFan.getActivePosition();
+      this.db.saveState({
+        lots: this.getLots(),
+        openOrders: [],
+        realizedPnl: this.maFan.getState()?.metrics?.realizedPnl ?? 0,
+        walletBaseBalance: this.walletBase,
+        walletQuoteBalance: this.walletQuote,
+        baseAsset: this.symbolInfo.baseAsset,
+        quoteAsset: this.symbolInfo.quoteAsset,
+        isPaused: this.maFan.getIsPaused(),
+        maFanPosition: pos ?? undefined,
+        lastUpdated: Date.now(),
+      });
+    } catch (err: any) {
+      this.log(`⚠️ Failed to persist MA Fan state: ${err.message}`);
+    }
   }
 
   // ── Portfolio & Balances ───────────────────────────────────────────────────
