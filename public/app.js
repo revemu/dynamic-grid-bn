@@ -1460,14 +1460,30 @@
 
   function closeCandleInspector() {
     pinnedCandleTime = null;
-    if (elCandleInspectorCard) elCandleInspectorCard.classList.remove("active");
-    if (elChartPinnedCandleMarker) elChartPinnedCandleMarker.classList.remove("active");
+    if (elCandleInspectorCard) {
+      elCandleInspectorCard.classList.remove("active");
+      elCandleInspectorCard.style.display = "none";
+    }
+    if (elChartPinnedCandleMarker) {
+      elChartPinnedCandleMarker.classList.remove("active");
+      elChartPinnedCandleMarker.style.display = "none";
+    }
     if (latestCandle) updateMaLegendForCandle(latestCandle.time);
   }
   window.closeCandleInspector = closeCandleInspector;
 
   function updateCandleInspectorPosition() {
-    if (!pinnedCandleTime || !elCandleInspectorCard || !chart || !chartContainer) return;
+    if (!pinnedCandleTime || !elCandleInspectorCard || !chart || !chartContainer) {
+      if (elCandleInspectorCard) {
+        elCandleInspectorCard.classList.remove("active");
+        elCandleInspectorCard.style.display = "none";
+      }
+      if (elChartPinnedCandleMarker) {
+        elChartPinnedCandleMarker.classList.remove("active");
+        elChartPinnedCandleMarker.style.display = "none";
+      }
+      return;
+    }
     const x = chart.timeScale().timeToCoordinate(pinnedCandleTime);
     if (x === null || x < -50 || x > chartContainer.clientWidth + 50) {
       elCandleInspectorCard.style.display = "none";

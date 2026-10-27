@@ -5121,6 +5121,16 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - ✏️ **พิมพ์เอง (Custom)...**: แสดงช่อง `<input type="text" id="btSymbolCustom">` เพื่อพิมพ์คู่เหรียญที่ต้องการได้อิสระ
      - รองรับการสลับค่าอัตโนมัติเมื่อกดโหลดประวัติการทดสอบเก่า หรือส่งค่าผ่าน URL Query Param `?symbol=...`
 
+## 133. v0.2.133 — Fix Vertical Dashed Pin Marker Clean-up on Inspector Close
+
+1. **สาเหตุของปัญหาเส้นประแนวตั้งไม่หายไปเมื่อปิดหน้าต่าง**:
+   - เมื่อเปิดกล่อง Inspector ฟังก์ชัน `updateCandleInspectorPosition()` ได้กำหนดสไตล์ Inline `display = "block"` ลงไปใน DOM Element `chartPinnedCandleMarker` โดยตรง
+   - เมื่อกดปุ่มปิด `[✖]` ฟังก์ชัน `closeCandleInspector()` เดิมทำเพียงลบคลาส `.active` ออก (`classList.remove("active")`) แต่ไม่ได้ล้างค่า Inline Style `style.display = "none"` ออกไปด้วย ทำให้คุณสมบัติ `display: block` ยังคงแสดงอยู่บนจอ ส่งผลให้เส้นประแนวตั้งค้างอยู่บนกราฟ
+2. **การแก้ไขและการปรับปรุง**:
+   - ใน `public/app.js` และ `public/backtest.js`:
+     - ปรับฟังก์ชัน `closeCandleInspector()` และ `closeBtCandleInspector()` ให้สั่ง `style.display = "none"` และ `classList.remove("active")` ทั้งบนเส้นประแนวตั้งและตัวกล่อง Inspector โดยตรง
+     - ปรับฟังก์ชัน `updateCandleInspectorPosition()` ให้ตรวจเช็ค `!pinnedCandleTime` หากไม่ได้ปักหมุดแท่งเทียน จะการันตีสั่งซ่อนทั้งเส้นและกล่องออกไป 100%
+
 
 
 

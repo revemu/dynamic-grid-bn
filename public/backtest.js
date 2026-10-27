@@ -646,8 +646,14 @@
 
   function closeBtCandleInspector() {
     btPinnedCandleTime = null;
-    if (elBtCandleInspectorCard) elBtCandleInspectorCard.classList.remove("active");
-    if (elBtChartPinnedCandleMarker) elBtChartPinnedCandleMarker.classList.remove("active");
+    if (elBtCandleInspectorCard) {
+      elBtCandleInspectorCard.classList.remove("active");
+      elBtCandleInspectorCard.style.display = "none";
+    }
+    if (elBtChartPinnedCandleMarker) {
+      elBtChartPinnedCandleMarker.classList.remove("active");
+      elBtChartPinnedCandleMarker.style.display = "none";
+    }
     if (currentRecord && currentRecord.candles && currentRecord.candles.length > 0) {
       const lastC = currentRecord.candles[currentRecord.candles.length - 1];
       updateBtMaLegendForCandle(lastC.time);
@@ -656,7 +662,17 @@
   window.closeBtCandleInspector = closeBtCandleInspector;
 
   function updateBtCandleInspectorPosition() {
-    if (!btPinnedCandleTime || !elBtCandleInspectorCard || !chart || !chartContainer) return;
+    if (!btPinnedCandleTime || !elBtCandleInspectorCard || !chart || !chartContainer) {
+      if (elBtCandleInspectorCard) {
+        elBtCandleInspectorCard.classList.remove("active");
+        elBtCandleInspectorCard.style.display = "none";
+      }
+      if (elBtChartPinnedCandleMarker) {
+        elBtChartPinnedCandleMarker.classList.remove("active");
+        elBtChartPinnedCandleMarker.style.display = "none";
+      }
+      return;
+    }
     const x = chart.timeScale().timeToCoordinate(btPinnedCandleTime);
     if (x === null || x < -50 || x > chartContainer.clientWidth + 50) {
       elBtCandleInspectorCard.style.display = "none";
