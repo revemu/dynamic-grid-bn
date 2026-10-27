@@ -37,6 +37,12 @@ export class MaFanTradingStrategy implements IStrategy {
 
   private walletBase: number = 0;
   private walletQuote: number = 0;
+  private walletBaseLocked: number = 0;
+  private walletQuoteLocked: number = 0;
+  private walletBaseTotal: number = 0;
+  private walletQuoteTotal: number = 0;
+  private currentMid: number = 0;
+  private lastBalanceSyncTs: number = 0;
 
   constructor(context: StrategyContext) {
     this.exchange = context.exchange;
@@ -78,6 +84,8 @@ export class MaFanTradingStrategy implements IStrategy {
       const candles = context.macroDowEngine.getCandles();
       if (candles && candles.length > 0) {
         this.maFan.setInitialCandles(candles);
+        const lastC = candles[candles.length - 1];
+        if (lastC && lastC.close > 0) this.currentMid = lastC.close;
       }
     }
     if (context.htfDowEngine) {
@@ -88,6 +96,9 @@ export class MaFanTradingStrategy implements IStrategy {
     }
 
     this.maFan.init().catch((err) => this.log(`⚠️ MaFan init error: ${err.message}`));
+    this.refreshWalletBalances().catch((err) => {
+      this.log(`⚠️ Initial balance query failed: ${err?.message || err}`);
+    });
   }
 
   // ── Lifecycle & Execution ──────────────────────────────────────────────────
@@ -95,10 +106,19 @@ export class MaFanTradingStrategy implements IStrategy {
   public async tick(): Promise<void> {
     if (this.isSwitchingSymbol) return;
 
+    const now = Date.now();
+    // Auto-sync balance periodically: every 15s, or every 3s if balances are still zero
+    const syncInterval = (this.walletBase === 0 && this.walletQuote === 0) ? 3000 : 15000;
+    if (now - this.lastBalanceSyncTs >= syncInterval) {
+      this.lastBalanceSyncTs = now;
+      this.refreshWalletBalances().catch(() => {});
+    }
+
     try {
       const top = await this.exchange.getTopOfBook(this.symbolInfo.symbol);
       const refPrice = top.mid > 0 ? top.mid : (top.bestAsk + top.bestBid) / 2;
       if (refPrice > 0) {
+        this.currentMid = refPrice;
         await this.maFan.step(refPrice);
       }
     } catch (err: any) {
@@ -106,6 +126,7 @@ export class MaFanTradingStrategy implements IStrategy {
       const candles = (this.maFan as any).candles;
       if (candles && candles.length > 0) {
         const lastP = candles[candles.length - 1].close;
+        this.currentMid = lastP;
         await this.maFan.step(lastP);
       }
     }
@@ -120,6 +141,7 @@ export class MaFanTradingStrategy implements IStrategy {
   // ── Real-time Feeds & Events ──────────────────────────────────────────────
 
   public onCandleClosed(candle: Candle): void {
+    if (candle && candle.close > 0) this.currentMid = candle.close;
     this.maFan.onCandle(candle, true);
     this.emitTelemetryTick();
   }
@@ -145,6 +167,12 @@ export class MaFanTradingStrategy implements IStrategy {
 
   public emitTelemetryTick(): void {
     const state = this.maFan.getState();
+    const lots = this.getLots();
+    const baseHeld = this.baseHeld();
+    const totalBaseBal = this.walletBaseTotal > 0 ? this.walletBaseTotal : this.walletBase;
+    const totalQuoteBal = this.walletQuoteTotal > 0 ? this.walletQuoteTotal : this.walletQuote;
+    const totalWalletValQuote = (totalBaseBal * (this.currentMid || 0)) + totalQuoteBal;
+
     const tickData = {
       ...state,
       strategyType: "ma_fan",
@@ -152,8 +180,21 @@ export class MaFanTradingStrategy implements IStrategy {
       symbol: this.symbolInfo.symbol,
       baseAsset: this.symbolInfo.baseAsset,
       quoteAsset: this.symbolInfo.quoteAsset,
+      mid: this.currentMid,
+      valuationPrice: this.currentMid,
       walletBaseBalance: this.walletBase,
       walletQuoteBalance: this.walletQuote,
+      walletBaseLocked: this.walletBaseLocked,
+      walletQuoteLocked: this.walletQuoteLocked,
+      walletBaseTotal: totalBaseBal,
+      walletQuoteTotal: totalQuoteBal,
+      walletTotalValueQuote: totalWalletValQuote,
+      walletSomiBalance: this.walletBase,
+      walletUsdsoBalance: this.walletQuote,
+      maxInventoryQuote: this.cfg.maFanMaxBudgetUsd ?? this.cfg.maxInventoryQuote ?? 200,
+      lots,
+      baseHeld,
+      inventoryUsdso: baseHeld * (this.currentMid || 0),
       dryRun: this.cfg.dryRun,
       time: Date.now(),
     };
@@ -165,6 +206,7 @@ export class MaFanTradingStrategy implements IStrategy {
     if (b && b.bestBid && b.bestAsk) {
       const mid = (parseFloat(b.bestBid) + parseFloat(b.bestAsk)) / 2;
       if (mid > 0) {
+        this.currentMid = mid;
         this.maFan.step(mid).catch((err) => this.log(`⚠️ step error: ${err.message}`));
       }
     }
@@ -172,14 +214,50 @@ export class MaFanTradingStrategy implements IStrategy {
 
   public handleWsExecutionReport(rep: any): void {
     this.log(`📥 WS execution report received in MA Fan adapter: ${rep?.s} ${rep?.S} ${rep?.X}`);
+    if (rep?.X === "FILLED" || rep?.X === "PARTIALLY_FILLED" || rep?.X === "CANCELED") {
+      this.refreshWalletBalances().catch(() => {});
+    }
   }
 
   public handleWsAccountUpdate(acc: any): void {
-    if (acc && acc.B) {
-      for (const b of acc.B) {
-        if (b.a === this.symbolInfo.baseAsset) this.walletBase = parseFloat(b.f);
-        if (b.a === this.symbolInfo.quoteAsset) this.walletQuote = parseFloat(b.f);
+    if (!acc) return;
+    const baseAsset = (this.symbolInfo?.baseAsset || "").toUpperCase();
+    const quoteAsset = (this.symbolInfo?.quoteAsset || "").toUpperCase();
+    let updated = false;
+
+    if (acc.balances && Array.isArray(acc.balances)) {
+      for (const b of acc.balances) {
+        const asset = (b.asset || "").toUpperCase();
+        if (asset === baseAsset) {
+          this.walletBase = Number(b.free);
+          this.walletBaseLocked = Number(b.locked || 0);
+          this.walletBaseTotal = this.walletBase + this.walletBaseLocked;
+          updated = true;
+        } else if (asset === quoteAsset) {
+          this.walletQuote = Number(b.free);
+          this.walletQuoteLocked = Number(b.locked || 0);
+          this.walletQuoteTotal = this.walletQuote + this.walletQuoteLocked;
+          updated = true;
+        }
       }
+    } else if (acc.B && Array.isArray(acc.B)) {
+      for (const b of acc.B) {
+        const asset = (b.a || "").toUpperCase();
+        if (asset === baseAsset) {
+          this.walletBase = parseFloat(b.f);
+          this.walletBaseLocked = parseFloat(b.l || 0);
+          this.walletBaseTotal = this.walletBase + this.walletBaseLocked;
+          updated = true;
+        } else if (asset === quoteAsset) {
+          this.walletQuote = parseFloat(b.f);
+          this.walletQuoteLocked = parseFloat(b.l || 0);
+          this.walletQuoteTotal = this.walletQuote + this.walletQuoteLocked;
+          updated = true;
+        }
+      }
+    }
+
+    if (updated) {
       this.emitTelemetryTick();
     }
   }
@@ -286,10 +364,26 @@ export class MaFanTradingStrategy implements IStrategy {
   public async refreshWalletBalances(): Promise<any> {
     try {
       const b = await this.exchange.getAccountBalances(this.symbolInfo.symbol);
-      this.walletBase = b.baseFree;
-      this.walletQuote = b.quoteFree;
-      return { base: b.baseFree, quote: b.quoteFree, somi: b.baseFree, usdso: b.quoteFree, address: "" };
-    } catch {
+      this.walletBase = b.baseFree ?? 0;
+      this.walletBaseLocked = b.baseLocked ?? 0;
+      this.walletBaseTotal = b.baseTotal ?? (this.walletBase + this.walletBaseLocked);
+      this.walletQuote = b.quoteFree ?? 0;
+      this.walletQuoteLocked = b.quoteLocked ?? 0;
+      this.walletQuoteTotal = b.quoteTotal ?? (this.walletQuote + this.walletQuoteLocked);
+      this.lastBalanceSyncTs = Date.now();
+      return {
+        base: this.walletBase,
+        quote: this.walletQuote,
+        baseLocked: this.walletBaseLocked,
+        baseTotal: this.walletBaseTotal,
+        quoteLocked: this.walletQuoteLocked,
+        quoteTotal: this.walletQuoteTotal,
+        somi: this.walletBase,
+        usdso: this.walletQuote,
+        address: "Binance Spot",
+      };
+    } catch (err: any) {
+      this.log(`⚠️ [BALANCE QUERY] Failed to fetch balances for ${this.symbolInfo.symbol}: ${err?.message || err}`);
       return { base: this.walletBase, quote: this.walletQuote, somi: 0, usdso: 0, address: "" };
     }
   }

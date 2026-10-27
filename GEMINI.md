@@ -4905,6 +4905,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **การควบคุมการเทรดจากหน้าเว็บ (Dashboard & API)**:
    - ผู้ใช้สามารถกดปุ่ม "Resume Trading" บนหน้าแดชบอร์ดหรือยิง API เพื่อปลดบล็อกเริ่มการเทรดได้ทันทีเมื่อพร้อม
 
+---
+
+## 123. v0.2.123 — Live Binance Wallet & Valuation Sync in MA Fan Sniper Mode (`src/strategy/ma-fan/strategy-adapter.ts`, `src/index.ts`)
+
+### วัตถุประสงค์และการปรับปรุง (Binance Wallet Balance & Valuation Sync)
+1. **ปัญหาที่พบ (Issue)**:
+   - ผู้ใช้แจ้งว่าหน้า Dashboard ในโหมด **BINANCE MA FAN** ไม่แสดงยอดเงินในกระเป๋า (`$0.00 FDUSD`, `0.0000 BNB`, `Total: $0.00`)
+2. **สาเหตุของปัญหา (Root Causes)**:
+   - ฟังก์ชัน `refreshWalletBalances()` ใน `MaFanTradingStrategy` ไม่เคยถูกเรียกใช้งานเลยใน Constructor, `init()` หรือลูป `tick()` ทำให้ยอดเงินค้างที่ค่าเริ่มต้น `0`
+   - ใน `handleWsAccountUpdate(acc)` รองรับเฉพาะ `acc.B` (Raw Binance Format) แต่ `BinanceUserDataFeed` ส่งข้อมูลมาในรูป `acc.balances: Array<{ asset, free, locked }>` ทำให้ตรวจไม่พบข้อมูลยอดเงินจาก WebSocket
+   - ข้อมูล Telemetry `emitTelemetryTick()` ไม่ได้ส่งค่าราคาปัจจุบัน `mid` ทำให้สูตรคำนวณมูลค่าพอร์ตในหน้าเว็บ (`somiBal * data.mid`) ได้ผลลัพธ์เป็น 0 และไม่ได้ส่ง `maxInventoryQuote` คืองบประมาณกลยุทธ์
+   - ใน `src/index.ts` ไม่ได้เรียก `await grid.refreshWalletBalances()` ทันทีหลังบูตเครื่องและหลังสลับโหมดกลยุทธ์
+3. **การแก้ไขและสถาปัตยกรรมใหม่**:
+   - ใน `src/strategy/ma-fan/strategy-adapter.ts`:
+     - เรียก `this.refreshWalletBalances()` ทันทีใน constructor
+     - เพิ่มระบบ Auto-Sync ใน `tick()` ทุก 15 วินาที (และทุก 3 วินาทีหากยอดเงินยังเป็น 0)
+     - ปรับปรุง `handleWsAccountUpdate` ให้รองรับทั้ง `acc.balances` และ `acc.B` อย่างสมบูรณ์
+     - เมื่อได้รับ Event `executionReport` (FILLED / PARTIALLY_FILLED / CANCELED) จะสั่งดึงยอดเงินใหม่ใน Background ทันที
+     - อัปเดต `emitTelemetryTick()` ให้ส่ง `mid`, `valuationPrice`, `walletBaseBalance`, `walletQuoteBalance`, `walletBaseLocked`, `walletQuoteLocked`, `walletBaseTotal`, `walletQuoteTotal`, `walletTotalValueQuote`, `maxInventoryQuote`, `lots`, และ `baseHeld` ครบถ้วน
+   - ใน `src/index.ts`:
+     - เรียก `await grid.refreshWalletBalances()` ทันทีหลังบูตบอทและหลังการสลับกลยุทธ์
+
+
 
 
 

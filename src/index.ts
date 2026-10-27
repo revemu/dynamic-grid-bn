@@ -260,6 +260,7 @@ async function main(): Promise<void> {
     htfDowEngine,
   });
   await grid.syncOnChainOrders();
+  await grid.refreshWalletBalances();
 
   // 🛡️ Safe Boot: Always ensure bot starts in PAUSED mode on startup across all strategies
   grid.setPaused(true);
@@ -390,6 +391,7 @@ async function main(): Promise<void> {
           wireFeedsToGrid();
           await grid.refreshWalletBalances();
           await grid.syncOnChainOrders();
+          await grid.refreshWalletBalances();
           dashboard.resetState({ clearTrades: false });
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
@@ -425,6 +427,7 @@ async function main(): Promise<void> {
           // Immediately refresh unlocked wallet balances & open orders before the first tick on the new pair
           await grid.refreshWalletBalances();
           await grid.syncOnChainOrders();
+          await grid.refreshWalletBalances();
           dashboard.resetState({ clearTrades: false });
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
@@ -493,6 +496,7 @@ async function main(): Promise<void> {
             }
           });
           await grid.syncOnChainOrders();
+          await grid.refreshWalletBalances();
           dashboard.setInitialOrders(grid.getRecentOrders());
           grid.emitTelemetryTick();
           log(`✅ [STRATEGY SWITCH] Active strategy is now: ${grid.name} (${grid.strategyType})`);
