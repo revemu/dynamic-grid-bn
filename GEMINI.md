@@ -5548,3 +5548,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - เพิ่มฟังก์ชัน `aggregateCandles` รวมแท่งเทียน 5m เป็น 15m อัตโนมัติใน Backtest Service
    - เชื่อมต่อ `RegimeSupervisor.evaluateHtfRegime` เข้าสู่ลูปจำลอง `runMaFanSimulation` เพื่อคิดคำนวณตัวคูณ `spreadMultiplier` และ `recommendedTp1Ratio` จากภาพใหญ่ 15m ให้ตรงกับบอทจริง 100%
 
+
+---
+
+## 155. v0.2.155 — Dynamic Strategy Log Prefix & Proactive Periodic Binance Time Sync with RTT & Safety Buffer (`src/index.ts`, `src/exchange/binance/client.ts`, `src/exchange/binance/feed.ts`, `src/exchange/types.ts`, `package.json`, `src/version.ts`)
+
+1. **ปรับ Log Prefix ให้ตรงกับกลยุทธ์ที่กำลังทำงานอยู่แบบไดนามิก (`src/index.ts`)**:
+   - **ปัญหาเดิม**: บอทแสดง Log Prefix ฮาร์ดโค้ดเป็น `[dynamic-grid ...]` เสมอ แม้ว่าระบบจะเปลี่ยนมาใช้กลยุทธ์ MA-FOLD-FAN หรือ Swing Trade
+   - **การแก้ไข**:
+     - เพิ่มฟังก์ชัน `getStrategyLogTag()` ตรวจสอบ `config.strategyType`:
+       - `ma_fan` -> แสดงแท็ก `[ma-fold-fan 2026-xx-xx ...]`
+       - `swing_trade` -> แสดงแท็ก `[swing-trade 2026-xx-xx ...]`
+       - อื่นๆ -> แสดงแท็ก `[dynamic-grid 2026-xx-xx ...]`
+     - ครอบคลุมทั้ง Regular Logs และ Fatal Error Logging ให้แสดงชื่อกลยุทธ์ที่ตรงกับความเป็นจริง
+
+2. **ระบบ Time Synchronization อัตโนมัติและแก้ปัญหา Timestamp Error (-1021) อย่างถาวร (`src/exchange/binance/client.ts`, `src/exchange/binance/feed.ts`, `src/exchange/types.ts`)**:
+   - **สาเหตุของปัญหา Error -1021 (Timestamp was 1000ms ahead of server time)**:
+     - แม้ว่า VPS จะเปิดใช้งาน `chrony` กับ NTP Server สาธารณะ (`pool.ntp.org`) แต่นาฬิกาของ Binance Server (AWS) มักมี Clock Drift เบี่ยงเบนไปข้างหน้า/หลัง 20-60ms เมื่อเทียบกับ Standard NTP
+     - ใน Log ผู้ใช้: `offset=-48ms` หมายถึงเครื่อง VPS เดินเร็วกว่า Binance Server อยู่ 48ms ทำให้ Binance ตีความว่าคำขอนั้นส่งมาจาก "อนาคต" และปฏิเสธด้วย Error -1021
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - **Proactive Periodic Background Sync**: เพิ่ม Background Timer ใน `BinanceClient` คอย Re-sync เวลากับ Binance Server อัตโนมัติทุกๆ 15 นาที พร้อมเรียก `.unref()` เพื่อไม่ให้บล็อกการปิด Process
+     - **RTT & Network Latency Compensation**: ปรับการคำนวณ `syncTime()` ให้จับเวลา Round-Trip Time (`t1 - t0`) และบวกชดเชย One-way Latency `(t1 - t0) / 2` เพื่อให้ค่า `timeOffset` แม่นยำระดับเสี้ยววินาที (`offset=${timeOffset}ms (rtt=${rtt}ms)`)
+     - **-50ms Safety Timestamp Buffer**: ใน `rawRequest()` และ `BinanceUserDataFeed.ws.on("open")` ให้หักลบ Safety Buffer 50ms เสมอ (`Date.now() + this.timeOffset - 50`) เพื่อรับประกันว่า Timestamp ของคำขอจะไม่มีวันเดินล้ำหน้า Binance Server แม้แต่มิลลิวินาทีเดียว
+     - **ขยาย `recvWindow` เป็น 10,000ms**: ปรับค่าเริ่มต้นของ `recvWindow` จาก 5000ms เป็น 10000ms (Binance อนุญาตสูงสุด 60,000ms) รองรับความผันผวนของเครือข่ายระหว่างประเทศได้อย่างปลอดภัย
+     - **เปิดเผยเมธอด `getTimeOffset()` และ `destroy()`**: เพิ่มใน `IExchangeClient` และ `BinanceClient` พร้อมผูก `getTimeOffset()` เข้ากับ WebSocket User Data Stream เพื่อให้ลายเซ็นการ Subscribe สดใช้ Offset ที่ตรงกัน
+
+

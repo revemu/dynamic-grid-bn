@@ -411,9 +411,9 @@ export class BinanceUserDataFeed {
       this.reconnectDelayMs = 1_000;
       this.log(`Binance User Data Stream connected: ${url}`);
 
-      // Subscribe to user data stream using HMAC-SHA256 signature (with time offset compensation)
+      // Subscribe to user data stream using HMAC-SHA256 signature (with time offset compensation & 50ms safety buffer)
       const timeOffset = this.client.getTimeOffset?.() ?? 0;
-      const timestamp = Date.now() + timeOffset;
+      const timestamp = Date.now() + timeOffset - 50;
       const query = `apiKey=${creds.apiKey}&timestamp=${timestamp}`;
       const signature = crypto.createHmac("sha256", creds.apiSecret).update(query).digest("hex");
 

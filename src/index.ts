@@ -35,6 +35,12 @@ function formatTimestamp(d = new Date()): string {
   }
 }
 
+function getStrategyLogTag(): string {
+  if (config.strategyType === "ma_fan") return "ma-fold-fan";
+  if (config.strategyType === "swing_trade") return "swing-trade";
+  return "dynamic-grid";
+}
+
 function log(msg: string, extra?: unknown): void {
   let cleanMsg = msg;
   if (
@@ -47,7 +53,7 @@ function log(msg: string, extra?: unknown): void {
   ) {
     cleanMsg = sanitizeHttpErrorBody("LOG", msg);
   }
-  const line = `[dynamic-grid ${formatTimestamp()}] ${cleanMsg}`;
+  const line = `[${getStrategyLogTag()} ${formatTimestamp()}] ${cleanMsg}`;
   if (extra !== undefined) console.log(line, extra);
   else console.log(line);
 }
@@ -398,6 +404,7 @@ async function main(): Promise<void> {
             ? s.binanceApiKey
             : grid.getRealBinanceApiKey();
 
+          exchange.destroy?.();
           const newExchange = createExchangeClient({
             exchange: targetExchangeName,
             apiKey: realApiKey,
@@ -775,10 +782,11 @@ async function main(): Promise<void> {
   tradingFeed?.stop();
   bookTickerFeed?.stop();
   userDataFeed?.stop();
+  exchange.destroy?.();
   process.exit(0);
 }
 
 main().catch((err) => {
-  console.error("[dynamic-grid] fatal:", err);
+  console.error(`[${getStrategyLogTag()}] fatal:`, err);
   process.exit(1);
 });

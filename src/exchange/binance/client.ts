@@ -175,6 +175,7 @@ export class BinanceClient implements IExchangeClient {
   private readonly log: (msg: string) => void;
   private timeOffset = 0;
   private symbolInfoCache = new Map<string, BinanceSymbolInfo>();
+  private timeSyncInterval?: NodeJS.Timeout;
 
   constructor(opts: BinanceClientOptions = {}) {
     const rawKey = opts.apiKey?.trim();
@@ -182,8 +183,27 @@ export class BinanceClient implements IExchangeClient {
     const rawSecret = opts.apiSecret?.trim();
     this.apiSecret = (rawSecret && rawSecret !== "******") ? rawSecret : (process.env.BINANCE_API_SECRET || "");
     this.baseUrl = (opts.baseUrl || process.env.BINANCE_BASE_URL || "https://api.binance.com").replace(/\/+$/, "");
-    this.recvWindow = opts.recvWindow ?? 5000;
+    this.recvWindow = opts.recvWindow ?? 10000;
     this.log = opts.log ?? ((msg: string) => console.log(`[binance-client] ${msg}`));
+
+    // Start proactive background periodic time sync every 15 minutes to prevent clock drift
+    this.timeSyncInterval = setInterval(() => {
+      this.syncTime().catch(() => {});
+    }, 15 * 60 * 1000);
+    if (this.timeSyncInterval?.unref) {
+      this.timeSyncInterval.unref();
+    }
+  }
+
+  public destroy(): void {
+    if (this.timeSyncInterval) {
+      clearInterval(this.timeSyncInterval);
+      this.timeSyncInterval = undefined;
+    }
+  }
+
+  public getTimeOffset(): number {
+    return this.timeOffset;
   }
 
   public updateCredentials(apiKey?: string, apiSecret?: string, baseUrl?: string): void {
@@ -214,13 +234,17 @@ export class BinanceClient implements IExchangeClient {
 
   /**
    * Synchronize clock with Binance server to avoid recvWindow errors.
+   * Measures network Round-Trip Time (RTT) and compensates for one-way latency.
    */
   public async syncTime(): Promise<number> {
     try {
+      const t0 = Date.now();
       const res = await this.publicRequest<{ serverTime: number }>("GET", "/api/v3/time");
+      const t1 = Date.now();
       if (res && res.serverTime) {
-        this.timeOffset = res.serverTime - Date.now();
-        this.log(`🕒 Server time synchronized: offset=${this.timeOffset}ms`);
+        const latency = Math.max(0, Math.round((t1 - t0) / 2));
+        this.timeOffset = res.serverTime + latency - t1;
+        this.log(`🕒 Server time synchronized: offset=${this.timeOffset}ms (rtt=${t1 - t0}ms)`);
       }
     } catch (err) {
       this.log(`⚠️ Time synchronization warning: ${(err as Error).message}`);
@@ -670,7 +694,9 @@ export class BinanceClient implements IExchangeClient {
           `Binance API Key and Secret are required for signed endpoint: ${path}. Please configure BINANCE_API_KEY and BINANCE_API_SECRET in .env`,
         );
       }
-      cleanParams.timestamp = String(Date.now() + this.timeOffset);
+      // Apply -50ms safety buffer so request timestamp is never ahead of Binance server clock
+      // Binance strictly rejects any request where timestamp > serverTime as Error -1021.
+      cleanParams.timestamp = String(Date.now() + this.timeOffset - 50);
       cleanParams.recvWindow = String(this.recvWindow);
 
       const queryString = new URLSearchParams(cleanParams).toString();

@@ -117,6 +117,8 @@ export interface IExchangeClient {
   onGasSpent?: (fee: number, label: string, txHash?: string) => void;
   hasCredentials(): boolean;
   syncTime(): Promise<number>;
+  getTimeOffset?(): number;
+  destroy?(): void;
   getExchangeInfo(symbol: string): Promise<ExchangeSymbolInfo>;
   getAccountBalances(symbol: string): Promise<ExchangeAccountBalances>;
   getOpenOrders(symbol?: string): Promise<ExchangeOpenOrder[]>;
