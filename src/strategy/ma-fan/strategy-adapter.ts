@@ -21,7 +21,7 @@ import { MaFanStrategy } from "./strategy.js";
 import { MaFanConfig } from "./types.js";
 
 export class MaFanTradingStrategy implements IStrategy {
-  public readonly name = "MA Fan Elastic Reversion Trader";
+  public readonly name = "MA-FOLD-FAN Reversion Trader";
   public readonly strategyType: StrategyType = "ma_fan";
 
   public atrSource: AtrSource;
@@ -211,7 +211,7 @@ export class MaFanTradingStrategy implements IStrategy {
     }
 
     let botAction = {
-      title: "🪭 MA Fan Scanning",
+      title: "🪭 MA-FOLD-FAN Scanning",
       reason: `กำลังสแกนพัด (ปัจจุบัน: ${curSpread.toFixed(2)}% / ต้องการ ≥ ${reqSpread.toFixed(2)}%)`,
       nextTrigger: "รอพัดกางตึงสุด + ปลายพัดม้วนกลับ (Hook)",
       severity: "info",

@@ -5288,6 +5288,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - การันตีว่าผลการเทรดจริงบน Live Server, การทดสอบย้อนหลังใน Backtest Studio, และการจำลองหา Sweet Spot ของ Auto-Calibrator จะตัดสินใจด้วยเกณฑ์เดียวกันทุกประการ
    - หากมีการปรับปรุงสูตรหรือเงื่อนไขในอนาคต จะแก้ที่ `MaFanCoreRules` เพียงจุดเดียว โดยไม่มีปัญหาเรื่องโค้ดเหลื่อมล้ำกันอีกต่อไป
 
+---
+
+## 143. v0.2.143 — Strategy Rebranding to MA-FOLD-FAN
+1. **ปรับชื่อเรียกแผนการเทรดและกลยุทธ์เป็น "MA-FOLD-FAN" ทั่วทั้งระบบ**:
+   - **Web Dashboard (`public/index.html`)**:
+     - อัปเดตหัวข้อการ์ดแผนการเทรดเป็น `🪭 MA-FOLD-FAN (กำลังตรวจจับการยืดตัว)`
+     - อัปเดตปุ่มแท็บตั้งค่าเป็น `🪭 6. MA-FOLD-FAN`
+     - อัปเดตรายการตัวเลือกในดรอปดาวน์เป็น `🪭 MA-FOLD-FAN (พัดกางสุด ดักสแน็ปกลับค่าเฉลี่ย)`
+   - **Web Frontend (`public/app.js`)**:
+     - อัปเดตหัวข้อแผนการเทรดด้านขวาเป็น `🪭 แผนการเทรด MA-FOLD-FAN`
+     - อัปเดตป้ายชื่อย่อบนแถบหัวตารางของบอทเป็น `stratSuffix = "MA-FOLD-FAN"`
+     - อัปเดตข้อความสถานะระหว่างรอจังหวะเป็น `🪭 MA-FOLD-FAN (กำลังสแกนจังหวะ)`
+   - **Backtest Studio (`public/backtest.html`)**:
+     - อัปเดต Title และ Header Badge เป็น `MA-FOLD-FAN`
+     - อัปเดตหัวข้อและคำอธิบาย Market Scanner เป็น `🪭 MA-FOLD-FAN Market Scanner`
+   - **Strategy Adapter & Telemetry (`src/strategy/ma-fan/strategy-adapter.ts`)**:
+     - อัปเดตชื่อ Adapter เป็น `MA-FOLD-FAN Reversion Trader`
+     - อัปเดต Action Title ใน Telemetry State เป็น `🪭 MA-FOLD-FAN Scanning`
+
 
 
 

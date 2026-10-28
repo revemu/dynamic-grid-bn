@@ -1960,7 +1960,7 @@
         elPositionStatus.style.color = ribbon.isFanningDown && ribbon.fanSpreadPct >= effSpread ? "#facc15" : "var(--text-muted)";
       }
 
-      if (elSignalType) elSignalType.textContent = "🪭 MA Fan Sniper (กำลังสแกนจังหวะ)";
+      if (elSignalType) elSignalType.textContent = "🪭 MA-FOLD-FAN (กำลังสแกนจังหวะ)";
       if (elSignalDesc) elSignalDesc.textContent = `พัดปัจจุบัน: ${(ribbon.fanSpreadPct || 0).toFixed(2)}% (ต้องการ ≥ ${effSpread.toFixed(2)}%)`;
 
       if (elEntryPrice) elEntryPrice.textContent = "--.------";
@@ -2015,7 +2015,7 @@
       updateSwingTradePlanUI(data);
       return;
     } else if (data.strategyType === "ma_fan" || data.strategyMode === "ma_fan") {
-      if (elGridTitle) elGridTitle.textContent = "🪭 แผนการเทรด MA Fan Sniper";
+      if (elGridTitle) elGridTitle.textContent = "🪭 แผนการเทรด MA-FOLD-FAN";
       if (elVerticalLadder) elVerticalLadder.style.display = "none";
       if (elSwingPlanCard) elSwingPlanCard.style.display = "none";
       if (elMaFanPlanCard) elMaFanPlanCard.style.display = "flex";
@@ -2681,7 +2681,7 @@
       if (data.strategyType === "swing_trade" || (data.strategyName && data.strategyName.includes("Swing"))) {
         stratSuffix = "SWING";
       } else if (data.strategyType === "ma_fan" || data.strategyMode === "ma_fan") {
-        stratSuffix = "MA FAN";
+        stratSuffix = "MA-FOLD-FAN";
       }
       elLogoBadge.textContent = isDreamdex ? `DREAMDEX ${stratSuffix}` : `BINANCE ${stratSuffix}`;
     }

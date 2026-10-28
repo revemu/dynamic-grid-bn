@@ -515,7 +515,7 @@
           <!-- ── MA Fan Setup & Execution Card (Displayed when strategyType === 'ma_fan') ── -->
           <div class="swing-trade-plan-card" id="maFanPlanCard" style="display:none;">
             <div class="stp-signal-banner" id="mfSignalBanner" style="background: linear-space; background: rgba(168, 85, 247, 0.15); border-left: 3px solid #a855f7;">
-              <div class="stp-signal-type" id="mfSignalType" style="color: #c084fc;">🪭 MA Fan Sniper (กำลังตรวจจับการยืดตัว)</div>
+              <div class="stp-signal-type" id="mfSignalType" style="color: #c084fc;">🪭 MA-FOLD-FAN (กำลังตรวจจับการยืดตัว)</div>
               <div class="stp-signal-desc" id="mfSignalDesc">รอพัดกางตึงสุด (Spread ≥ <span id="mfReqSpread">0.40</span>%) + ปลายพัดม้วนหัวกลับ (Hook)</div>
             </div>
 
@@ -713,7 +713,7 @@
           <button class="tab-btn" data-tab="tab-risk">🛡️ 3. ความเสี่ยง &amp; Cut Loss</button>
           <button class="tab-btn" data-tab="tab-api">🔌 4. กระดานเทรด &amp; ระบบ</button>
           <button class="tab-btn" id="tabBtnSwing" data-tab="tab-swing">🏹 5. สวิงเทรด (Swing Trade)</button>
-          <button class="tab-btn" id="tabBtnMaFan" data-tab="tab-ma-fan">🪭 6. MA Fan Sniper</button>
+          <button class="tab-btn" id="tabBtnMaFan" data-tab="tab-ma-fan">🪭 6. MA-FOLD-FAN</button>
         </div>
 
         <!-- ═══════════════════ TAB 1: กริด & การออกคำสั่ง (Grid & Execution) ═══════════════════ -->
@@ -1443,7 +1443,7 @@
                 </label>
                 <select id="cfg_strategyType" class="form-select">
                   <option value="dynamic_grid">⚙️ Dynamic Grid (เทรดเก็บรอบกริด)</option>
-                  <option value="ma_fan">🪭 MA Fan Sniper (พัดกางสุด ดักสแน็ปกลับค่าเฉลี่ย)</option>
+                  <option value="ma_fan">🪭 MA-FOLD-FAN (พัดกางสุด ดักสแน็ปกลับค่าเฉลี่ย)</option>
                   <option value="swing_trade">🎯 Swing Trade (สไนเปอร์รอบคลื่น R:R)</option>
                 </select>
               </div>
@@ -1765,7 +1765,7 @@
           </div>
         </div>
 
-        <!-- ═══════════════════ TAB 6: MA Fan Sniper Strategy ═══════════════════ -->
+        <!-- ═══════════════════ TAB 6: MA-FOLD-FAN Strategy ═══════════════════ -->
         <div class="tab-pane" id="tab-ma-fan">
           <!-- Section 6.1: Timeframe & งบประมาณ -->
           <div class="cfg-section-card">
