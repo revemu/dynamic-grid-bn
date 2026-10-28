@@ -4282,17 +4282,17 @@
     div.className = "activity-item";
 
     let badgeClass = "act-neutral";
-    let badgeText = order.action || "ORDER";
+    let badgeText = order.action || order.type || "ORDER";
     const isIocOrder = Boolean(order.isIoc || order.maker === false || order.levelDesc?.includes("IOC") || order.reason?.includes("IOC"));
-    if (order.action === "BUY" || order.action === "BUY_FILL" || order.action === "SNIPE_BUY") {
+    if (order.action === "BUY" || order.action === "BUY_FILL" || order.action === "SNIPE_BUY" || order.type === "BUY_HOOK") {
       badgeClass = "act-buy";
-      badgeText = isIocOrder ? "IOC BUY" : "BUY FILL";
-    } else if (order.action === "SELL" || order.action === "SELL_FILL" || order.action === "TAKE_PROFIT" || order.action === "SNIPE_SELL") {
+      badgeText = isIocOrder ? "IOC BUY" : (order.action === "SNIPE_BUY" || order.type === "BUY_HOOK" ? "SNIPE BUY" : "BUY FILL");
+    } else if (order.action === "SELL" || order.action === "SELL_FILL" || order.action === "TAKE_PROFIT" || order.action === "SNIPE_SELL" || order.type === "TP1_EMA25" || order.type === "TP2_RUNNER") {
       badgeClass = "act-sell";
-      badgeText = isIocOrder ? (order.action === "TAKE_PROFIT" ? "IOC TP" : "IOC SELL") : "SELL FILL";
-    } else if (order.action === "CUT") {
+      badgeText = isIocOrder ? (order.action === "TAKE_PROFIT" ? "IOC TP" : "IOC SELL") : (order.type === "TP1_EMA25" ? "TP1 (EMA25)" : order.type === "TP2_RUNNER" ? "TP2 (RUNNER)" : "SELL FILL");
+    } else if (order.action === "CUT" || order.type === "STOP_LOSS") {
       badgeClass = "act-cut";
-      badgeText = isIocOrder ? "IOC CUT" : "CUT LOSS";
+      badgeText = isIocOrder ? "IOC CUT" : "STOP LOSS";
     } else if (order.action === "EXIT") {
       badgeClass = "act-buy";
       badgeText = isIocOrder ? "IOC EXIT" : "FULL EXIT";
@@ -4310,7 +4310,7 @@
       badgeText = "CANCEL SELL";
     }
 
-    const isSellAction = ["SELL", "SELL_FILL", "TAKE_PROFIT", "CUT", "EXIT", "SNIPE_SELL"].includes(order.action) || order.side === "SELL";
+    const isSellAction = ["SELL", "SELL_FILL", "TAKE_PROFIT", "CUT", "EXIT", "SNIPE_SELL", "TP1_EMA25", "TP2_RUNNER", "STOP_LOSS"].includes(order.action || order.type) || order.side === "SELL";
     let pnlVal = order.pnl !== undefined ? order.pnl : order.pnlUsdso;
     if (isSellAction && (pnlVal === undefined || pnlVal === null) && Array.isArray(rawOrders) && rawOrders.length > 0) {
       const priorBuys = rawOrders.filter(
@@ -4411,7 +4411,7 @@
 
   function addOrderActivity(order, isLiveUpdate = false) {
     if (!order) return;
-    const isTradeFill = order.status === "FILLED" || (order.status !== "CANCELLED" && order.status !== "OPEN" && ["BUY", "SELL", "BUY_FILL", "SELL_FILL", "CUT", "EXIT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(order.action));
+    const isTradeFill = order.status === "FILLED" || (order.status !== "CANCELLED" && order.status !== "OPEN" && ["BUY", "SELL", "BUY_FILL", "SELL_FILL", "CUT", "EXIT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(order.action)) || ["BUY_HOOK", "TP1_EMA25", "TP2_RUNNER", "STOP_LOSS"].includes(order.type);
     const isOnChainAction = order.status === "OPEN" || order.status === "CANCELLED" || ["CREATE_BUY", "CREATE_SELL", "CANCEL_BUY", "CANCEL_SELL"].includes(order.action);
 
     // Track trade executions on chart
@@ -6214,18 +6214,18 @@
     const filter = elTmFilterAction ? elTmFilterAction.value : "ALL";
 
     const filtered = tmTrades.filter((order) => {
-      if (filter === "BUY_FILL" && !(order.action === "BUY_FILL" || order.action === "BUY")) return false;
-      if (filter === "SELL_FILL" && !(order.action === "SELL_FILL" || order.action === "SELL")) return false;
-      if (filter === "TAKE_PROFIT" && order.action !== "TAKE_PROFIT") return false;
-      if (filter === "CUT" && !(order.action === "CUT" || order.action === "CUT_LOSS")) return false;
+      if (filter === "BUY_FILL" && !(order.action === "BUY_FILL" || order.action === "BUY" || order.action === "SNIPE_BUY" || order.type === "BUY_HOOK")) return false;
+      if (filter === "SELL_FILL" && !(order.action === "SELL_FILL" || order.action === "SELL" || order.action === "SNIPE_SELL" || order.type === "TP1_EMA25" || order.type === "TP2_RUNNER")) return false;
+      if (filter === "TAKE_PROFIT" && order.action !== "TAKE_PROFIT" && order.type !== "TP1_EMA25" && order.type !== "TP2_RUNNER") return false;
+      if (filter === "CUT" && !(order.action === "CUT" || order.action === "CUT_LOSS" || order.type === "STOP_LOSS")) return false;
       if (filter === "CANCEL_BUY") {
         const isCanc = order.status === "CANCELLED" || order.action?.startsWith("CANCEL_");
-        const isBuy = order.side === "BUY" || order.action === "CANCEL_BUY" || order.action === "BUY_FILL" || order.action === "BUY" || order.action === "CREATE_BUY";
+        const isBuy = order.side === "BUY" || order.action === "CANCEL_BUY" || order.action === "BUY_FILL" || order.action === "BUY" || order.action === "CREATE_BUY" || order.action === "SNIPE_BUY" || order.type === "BUY_HOOK";
         if (!isCanc || !isBuy) return false;
       }
       if (filter === "CANCEL_SELL") {
         const isCanc = order.status === "CANCELLED" || order.action?.startsWith("CANCEL_");
-        const isBuy = order.side === "BUY" || order.action === "CANCEL_BUY" || order.action === "BUY_FILL" || order.action === "BUY" || order.action === "CREATE_BUY";
+        const isBuy = order.side === "BUY" || order.action === "CANCEL_BUY" || order.action === "BUY_FILL" || order.action === "BUY" || order.action === "CREATE_BUY" || order.action === "SNIPE_BUY" || order.type === "BUY_HOOK";
         if (!isCanc || isBuy) return false;
       }
       if (filter === "CANCELLED" && order.status !== "CANCELLED" && !order.action?.startsWith("CANCEL_")) return false;
@@ -6241,8 +6241,8 @@
     });
 
     const totalCount = filtered.length;
-    const buyCount = filtered.filter((o) => (o.action?.includes("BUY") || o.side === "BUY") && o.status === "FILLED").length;
-    const sellCount = filtered.filter((o) => (o.action?.includes("SELL") || o.side === "SELL" || o.action === "TAKE_PROFIT" || o.action === "CUT") && o.status === "FILLED").length;
+    const buyCount = filtered.filter((o) => (o.action?.includes("BUY") || o.side === "BUY" || o.type === "BUY_HOOK") && (o.status === "FILLED" || !o.status)).length;
+    const sellCount = filtered.filter((o) => (o.action?.includes("SELL") || o.side === "SELL" || o.action === "TAKE_PROFIT" || o.action === "CUT" || ["TP1_EMA25", "TP2_RUNNER", "STOP_LOSS"].includes(o.type)) && (o.status === "FILLED" || !o.status)).length;
     const cancelCount = filtered.filter((o) => o.status === "CANCELLED" || o.action?.startsWith("CANCEL_")).length;
 
     if (elTmSummaryTotal) elTmSummaryTotal.textContent = totalCount;
@@ -6257,12 +6257,12 @@
 
     elTmTradesTbody.innerHTML = filtered
       .map((o) => {
-        const isFilled = o.status === "FILLED";
+        const isFilled = o.status === "FILLED" || !o.status;
         const isCancelled = o.status === "CANCELLED" || o.action?.startsWith("CANCEL_");
-        const isBuy = o.side === "BUY" || o.action === "CANCEL_BUY" || o.action === "BUY_FILL" || o.action === "BUY" || o.action === "CREATE_BUY";
+        const isBuy = o.side === "BUY" || o.action === "CANCEL_BUY" || o.action === "BUY_FILL" || o.action === "BUY" || o.action === "CREATE_BUY" || o.action === "SNIPE_BUY" || o.type === "BUY_HOOK";
 
         let badgeClass = "tm-badge-buy";
-        let actionLabel = o.action || "BUY_FILL";
+        let actionLabel = o.action || o.type || "BUY_FILL";
         if (isCancelled) {
           if (isBuy) {
             badgeClass = "tm-badge-cancel-buy";
@@ -6271,16 +6271,16 @@
             badgeClass = "tm-badge-cancel-sell";
             actionLabel = "⚪ CANCEL SELL";
           }
-        } else if (o.action === "SELL_FILL" || o.action === "SELL") {
+        } else if (o.action === "SELL_FILL" || o.action === "SELL" || o.action === "SNIPE_SELL" || o.type === "TP2_RUNNER") {
           badgeClass = "tm-badge-sell";
-          actionLabel = "🔴 SELL";
-        } else if (o.action === "BUY_FILL" || o.action === "BUY") {
+          actionLabel = o.action === "SNIPE_SELL" || o.type === "TP2_RUNNER" ? "🟣 TP2 (RUNNER)" : "🔴 SELL";
+        } else if (o.action === "BUY_FILL" || o.action === "BUY" || o.action === "SNIPE_BUY" || o.type === "BUY_HOOK") {
           badgeClass = "tm-badge-buy";
-          actionLabel = "🟢 BUY";
-        } else if (o.action === "TAKE_PROFIT") {
+          actionLabel = o.action === "SNIPE_BUY" || o.type === "BUY_HOOK" ? "🟢 SNIPE BUY" : "🟢 BUY";
+        } else if (o.action === "TAKE_PROFIT" || o.type === "TP1_EMA25") {
           badgeClass = "tm-badge-tp";
-          actionLabel = "🎯 TAKE PROFIT";
-        } else if (o.action === "CUT" || o.action === "CUT_LOSS") {
+          actionLabel = o.type === "TP1_EMA25" ? "🔵 TP1 (EMA25)" : "🎯 TAKE PROFIT";
+        } else if (o.action === "CUT" || o.action === "CUT_LOSS" || o.type === "STOP_LOSS") {
           badgeClass = "tm-badge-cut";
           actionLabel = "✂️ CUT LOSS";
         }

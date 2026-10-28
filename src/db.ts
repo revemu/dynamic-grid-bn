@@ -482,6 +482,38 @@ export class BotDatabase {
 
     // 1. Repair existing Swing records in db.orders
     for (const o of this.data.orders) {
+      // Auto-heal baseAsset and quoteAsset if mismatched with symbol (e.g. symbol is HAEDALUSDT but baseAsset is BNB)
+      if (o.symbol) {
+        const sym = o.symbol.toUpperCase();
+        let expectedBase: string | undefined;
+        let expectedQuote: string | undefined;
+        if (sym.includes(":")) {
+          const parts = sym.split(":");
+          expectedBase = parts[0];
+          expectedQuote = parts[1];
+        } else if (sym.endsWith("USDT")) {
+          expectedBase = sym.slice(0, -4);
+          expectedQuote = "USDT";
+        } else if (sym.endsWith("FDUSD")) {
+          expectedBase = sym.slice(0, -5);
+          expectedQuote = "FDUSD";
+        } else if (sym.endsWith("USDSO")) {
+          expectedBase = sym.slice(0, -5);
+          expectedQuote = "USDSO";
+        } else if (sym.endsWith("USDC")) {
+          expectedBase = sym.slice(0, -4);
+          expectedQuote = "USDC";
+        }
+        if (expectedBase && o.baseAsset !== expectedBase) {
+          o.baseAsset = expectedBase;
+          modified = true;
+        }
+        if (expectedQuote && o.quoteAsset !== expectedQuote) {
+          o.quoteAsset = expectedQuote;
+          modified = true;
+        }
+      }
+
       if (o.orderId && o.orderId.startsWith("0x") && o.orderId.length >= 64 && !o.txHash) {
         o.txHash = o.orderId;
         o.explorerUrl = formatExplorerUrl(o.txHash);
@@ -1491,11 +1523,36 @@ export class BotDatabase {
 
     const isBinance = this.data.settings?.exchange === "binance";
     const targetSymbol = eventData.symbol || this.data.settings?.symbol;
-    const targetBase = eventData.baseAsset || this.data.state?.baseAsset;
+    let targetBase = eventData.baseAsset;
+    if (!targetBase && targetSymbol) {
+      const clean = targetSymbol.toUpperCase();
+      if (clean.includes(":")) {
+        targetBase = clean.split(":")[0];
+      } else {
+        targetBase = clean.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "");
+      }
+    }
+    if (!targetBase) targetBase = this.data.state?.baseAsset;
+
     const defaultQuote = isBinance
       ? (targetSymbol?.includes("FDUSD") ? "FDUSD" : targetSymbol?.includes("USDT") ? "USDT" : "USDSO")
       : "USDSO";
-    const targetQuote = eventData.quoteAsset || this.data.state?.quoteAsset || defaultQuote;
+    let targetQuote = eventData.quoteAsset;
+    if (!targetQuote && targetSymbol) {
+      const clean = targetSymbol.toUpperCase();
+      if (clean.includes(":")) {
+        targetQuote = clean.split(":")[1] || defaultQuote;
+      } else if (clean.endsWith("USDT")) {
+        targetQuote = "USDT";
+      } else if (clean.endsWith("FDUSD")) {
+        targetQuote = "FDUSD";
+      } else if (clean.endsWith("USDSO")) {
+        targetQuote = "USDSO";
+      } else if (clean.endsWith("USDC")) {
+        targetQuote = "USDC";
+      }
+    }
+    if (!targetQuote) targetQuote = this.data.state?.quoteAsset || defaultQuote;
 
     const isIoc = Boolean(
       eventData.isIoc ||

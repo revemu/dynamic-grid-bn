@@ -68,14 +68,17 @@ export class MaFanStrategy {
       dryRun: this.config.isDryRun ?? false,
       breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
       slBufferPct: this.config.slBufferPct,
-      onTrade: (t) => {
-        if (t.type === "TP1_EMA25" || t.type === "TP2_RUNNER") {
+      onTrade: (t: any) => {
+        const isTp = t.type === "TP1_EMA25" || t.type === "TP2_RUNNER" || t.action === "TAKE_PROFIT" || t.action === "SNIPE_SELL";
+        const isSl = t.type === "STOP_LOSS" || t.action === "CUT";
+        const pnl = Number(t.pnlQuote ?? t.pnl ?? 0);
+        if (isTp) {
           this.winCount++;
-          if (t.pnl) this.realizedPnl += t.pnl;
-        } else if (t.type === "STOP_LOSS") {
-          if (t.pnl && t.pnl >= 0) this.winCount++;
+          if (pnl) this.realizedPnl += pnl;
+        } else if (isSl) {
+          if (pnl >= 0) this.winCount++;
           else this.lossCount++;
-          if (t.pnl) this.realizedPnl += t.pnl;
+          if (pnl) this.realizedPnl += pnl;
         }
         this.onTrade?.(t);
       },

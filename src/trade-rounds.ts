@@ -119,11 +119,11 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     : undefined;
 
   const inferOrderBase = (o: UnifiedOrderRecord): string | undefined => {
-    if (o.baseAsset) return o.baseAsset.toUpperCase();
     if (o.symbol) {
       const symBase = o.symbol.toUpperCase().split(/[:\/\-_]/)[0]?.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "");
       if (symBase) return symBase;
     }
+    if (o.baseAsset) return o.baseAsset.toUpperCase();
     const p = Number(o.fillPrice || o.price || 0);
     const isSomnia = Boolean(
       o.explorerUrl?.includes("somnia") ||

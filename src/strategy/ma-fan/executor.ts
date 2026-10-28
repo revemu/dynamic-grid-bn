@@ -5,7 +5,7 @@
  */
 
 import { IExchangeClient, ExchangeSymbolInfo } from "../../exchange/types.js";
-import { getDatabase } from "../../db.js";
+import { getDatabase, type UnifiedOrderRecord } from "../../db.js";
 import { MaFanPosition, MaFanTradeLog, HtfRegime } from "./types.js";
 
 export interface ExecutorOptions {
@@ -13,7 +13,7 @@ export interface ExecutorOptions {
   dryRun?: boolean;
   breakevenFeeBufferPct?: number;
   slBufferPct?: number;
-  onTrade?: (trade: MaFanTradeLog) => void;
+  onTrade?: (trade: UnifiedOrderRecord | MaFanTradeLog) => void;
   onLog?: (msg: string) => void;
 }
 
@@ -22,7 +22,7 @@ export class MaFanOrderExecutor {
   private dryRun: boolean;
   private breakevenFeeBufferPct: number;
   private slBufferPct: number;
-  private onTrade?: (trade: MaFanTradeLog) => void;
+  private onTrade?: (trade: UnifiedOrderRecord | MaFanTradeLog) => void;
   private log: (msg: string) => void;
   private db = getDatabase();
   private symbolInfo?: ExchangeSymbolInfo;
@@ -150,8 +150,8 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    this.recordDbOrder(trade, "BUY", fillPrice, qty);
-    this.onTrade?.(trade);
+    const orderRecord = this.recordDbOrder(trade, "BUY", fillPrice, qty);
+    this.onTrade?.(orderRecord || trade);
 
     return position;
   }
@@ -225,8 +225,8 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
-    this.onTrade?.(trade);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
+    this.onTrade?.(orderRecord || trade);
 
     return true;
   }
@@ -279,8 +279,8 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
-    this.onTrade?.(trade);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
+    this.onTrade?.(orderRecord || trade);
 
     return true;
   }
@@ -332,8 +332,8 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
-    this.onTrade?.(trade);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
+    this.onTrade?.(orderRecord || trade);
 
     return true;
   }
@@ -344,12 +344,34 @@ export class MaFanOrderExecutor {
     price: number,
     qty: number,
     pnl?: number
-  ): void {
+  ): UnifiedOrderRecord | undefined {
     try {
-      this.db.recordEvent({
+      const sym = (trade.symbol || "").toUpperCase();
+      let baseAsset: string | undefined;
+      let quoteAsset = "USDT";
+      if (sym.includes(":")) {
+        const parts = sym.split(":");
+        baseAsset = parts[0];
+        quoteAsset = parts[1] || "USDT";
+      } else if (sym.endsWith("USDT")) {
+        baseAsset = sym.slice(0, -4);
+        quoteAsset = "USDT";
+      } else if (sym.endsWith("FDUSD")) {
+        baseAsset = sym.slice(0, -5);
+        quoteAsset = "FDUSD";
+      } else if (sym.endsWith("USDSO")) {
+        baseAsset = sym.slice(0, -5);
+        quoteAsset = "USDSO";
+      } else if (sym.endsWith("USDC")) {
+        baseAsset = sym.slice(0, -4);
+        quoteAsset = "USDC";
+      }
+      return this.db.recordEvent({
         id: trade.id,
         orderId: trade.id,
         symbol: trade.symbol,
+        baseAsset,
+        quoteAsset,
         side,
         price,
         qty,
@@ -368,6 +390,7 @@ export class MaFanOrderExecutor {
       });
     } catch (err: any) {
       this.log(`⚠️ Failed to record DB order: ${err.message}`);
+      return undefined;
     }
   }
 }

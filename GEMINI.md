@@ -5309,14 +5309,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-## 144. v0.2.144 — Candle Inspector & Engine Alignment (RSI Oversold Sync)
-1. **แก้ปัญหาความขัดแย้งระหว่างหน้าต่างตรวจวัดแท่งเทียน (UI Inspector) กับเครื่องยนต์บอทจริง**:
-   - **สาเหตุ**: หน้าต่าง `🔬 ตรวจวัดแท่งเทียน` ใน `public/backtest.js` และ `public/app.js` เดิมไปเขียนเกณฑ์เองในฝั่งเบราว์เซอร์ว่า `lowerWickPct >= 30` (ต้องมีไส้ล่าง ≥ 30%) ซึ่งไม่ตรงกับเครื่องยนต์บอทจริง (`MaFanCoreRules` / `ExhaustionEngine`) ที่ตรวจจับ Oversold ผ่าน **RSI ≤ 45 / MACD Turning Up** ทำให้แท่งเทียนที่มีการเข้าซื้อจริงถูกหน้าต่าง UI แจ้งเตือนผิดพลาดว่า *"แท่งนี้ยังไม่เข้าเกณฑ์: แท่งเทียนยังไม่ทิ้งไส้ล่าง"*
-   - **การแก้ไขใน Backend (`src/backtest-service.ts`)**:
-     - เพิ่ม `evaluations` ส่งตรงจาก `RibbonEngine` และ `ExhaustionEngine` ใน `BacktestRecord` เพื่อให้หน้าบ้านได้รับผลลัพธ์การคำนวณที่แม่นยำ 100% จากเครื่องยนต์เดียวกัน
-   - **การแก้ไขใน Frontend (`public/backtest.js` & `public/app.js`)**:
-     - ปรับข้อ 4 ของกล่อง Inspector จากเดิม `แรงซื้อดีดกลับ (Oversold Wick) ≥ 30%` เป็น `ภาวะหมดแรงเทขาย (Oversold Exhaustion) พร้อมแสดงค่า RSI ปัจจุบัน`
-     - ซิงค์ตรรกะการตรวจสอบทั้ง 4 ข้อให้ตรงกับ `MaFanCoreRules.evaluateEntry` 100% ทำให้แท่งเทียนที่บอทเข้าซื้อจะแสดงผล `🟢 แท่งนี้เข้าเกณฑ์ครบ 4 ข้อ!` ตรงกับหมุด BUY บนกราฟอย่างสมบูรณ์แบบ
+## 145. v0.2.145 — MA-FOLD-FAN Trade Log & Event Pipeline Unification (`src/strategy/ma-fan/executor.ts`, `src/db.ts`, `src/trade-rounds.ts`, `public/app.js`)
+1. **แก้ปัญหาไม้ซื้อ/ขายของระบบ MA-FOLD-FAN ไม่แสดงในหน้าต่าง Trade Log (แถบกิจกรรมเทรด, Trade Manager และ Trade Rounds)**:
+   - **สาเหตุของปัญหา**:
+     - เมื่อ `MaFanOrderExecutor` วางไม้ซื้อ/ขายสำเร็จ ฟังก์ชัน `executeBuy`, `executeTp1`, `executeTp2`, `executeStopLoss` มีการบันทึกลงฐานข้อมูล `this.db.recordEvent` แต่ส่ง Event ไปยัง Dashboard ผ่าน `this.onTrade?.(trade)` ด้วยอ็อบเจกต์ย่อ `MaFanTradeLog` (`{ id, type: 'BUY_HOOK', symbol, price, qty, reason, time }`)
+     - ขาดฟิลด์มาตรฐานของออเดอร์ ได้แก่ `status: "FILLED"`, `action: "SNIPE_BUY"`, `side: "BUY"`, `notionalQuote`
+     - ฝั่งหน้าบ้าน `public/app.js` ฟังก์ชัน `addOrderActivity` และ `createActivityElement` มีเงื่อนไขคัดกรองออเดอร์เฉพาะที่มี `status === "FILLED"` หรืออยู่ในรายการ `action` ที่รู้จัก ทำให้ไม้ของ MA-FOLD-FAN ถูกมองข้าม ไม่แสดงในแถบกิจกรรม "เทรด (Trades Feed)" และตัวเลขนับ `tradesCount` ไม่ขยับ
+     - ใน `src/db.ts` บันทึกออเดอร์โดยไม่ได้ดึง `baseAsset` และ `quoteAsset` จาก Symbol ทำให้เผลอใช้ค่าตกค้างใน State เดิม (`BNB`, `FDUSD`) ส่งผลให้ระบบ Trade Rounds (`src/trade-rounds.ts`) กรองออเดอร์ทิ้งเนื่องจาก `inferOrderBase` อ่านได้เหรียญไม่ตรงกัน
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - **Unified Order Event Transmission (`src/strategy/ma-fan/executor.ts`)**:
+       - ใน `recordDbOrder` ทำการแยก `baseAsset` และ `quoteAsset` จาก `trade.symbol` อัตโนมัติ (เช่น `HAEDALUSDT` -> `baseAsset: "HAEDAL"`, `quoteAsset: "USDT"`)
+       - ส่งคืนและกระจาย `UnifiedOrderRecord` ฉบับเต็มผ่าน `this.onTrade?.(orderRecord || trade)` เข้าสู่ Dashboard ทันที
+       - ใน `executeBuy`, `executeTp1`, `executeTp2`, `executeStopLoss` บรอดแคสต์ออเดอร์ที่มี `status: "FILLED"`, `action: "SNIPE_BUY"` / `"TAKE_PROFIT"` / `"CUT"`, `side: "BUY"` / `"SELL"`, `notionalQuote` อย่างครบถ้วน
+     - **Database Robust Asset Derivation & Self-Healing (`src/db.ts`)**:
+       - ปรับปรุง `recordEvent` ให้แยก `baseAsset` และ `quoteAsset` จาก `targetSymbol` เป็นลำดับแรก ป้องกันการดึงค่าตกค้างจาก State เดิม
+       - เพิ่มระบบ Auto-heal ใน `recoverMissingSwingTrades` ให้ตรวจสอบและแก้ไขออเดอร์ในฐานข้อมูลที่มี Symbol กับ Base/Quote Asset ไม่ตรงกันโดยอัตโนมัติ
+     - **Trade Rounds Symbol Authority (`src/trade-rounds.ts`)**:
+       - ให้ `inferOrderBase` อ่านชื่อ Base Asset จาก `o.symbol` เป็นอันดับแรกก่อน `o.baseAsset`
+     - **Frontend Backwards Compatibility & Filter Support (`public/app.js`)**:
+       - ปรับปรุง `addOrderActivity`, `createActivityElement` และ `renderTmTrades` ให้รองรับทั้ง `SNIPE_BUY`, `SNIPE_SELL`, `BUY_HOOK`, `TP1_EMA25`, `TP2_RUNNER`, `STOP_LOSS` อย่างสมบูรณ์แบบ
 
 
 
