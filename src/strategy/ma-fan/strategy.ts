@@ -215,8 +215,14 @@ export class MaFanStrategy {
           return;
         }
 
-        // B. Take Profit 1 (Mean Reversion at EMA 25)
-        if (!pos.tp1Filled && refPrice >= ribbon.ema25 && ribbon.ema25 > pos.entryPrice * 1.0015) {
+        // B. Take Profit 1 (Mean Reversion at EMA 25 & Trapped Breakeven Rescue)
+        const beFeeBuffer = (this.config.breakevenFeeBufferPct ?? 0.05) / 100;
+        const minProfitPrice = ribbon.ema25 <= pos.entryPrice * 1.0015
+          ? pos.entryPrice * (1 + beFeeBuffer)
+          : pos.entryPrice * 1.0015;
+        const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
+
+        if (!pos.tp1Filled && refPrice >= tp1Target) {
           const ratio = htfRegime.recommendedTp1Ratio ?? this.config.tp1Ratio;
           const ok = await this.executor.executeTp1(pos, refPrice, ratio);
           if (ok) {

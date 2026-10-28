@@ -5258,6 +5258,19 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **ซิงค์ป้ายสถานะพัดมุมซ้ายบนของกราฟ (`#mafanStatusPill`)**:
    - ใน `public/app.js`: ปรับปรุงการดึงค่า Spread และเกณฑ์ขั้นต่ำ (`effectiveSpreadThreshold`) ให้เชื่อมโยงกับ State จริงโดยตรง แก้ปัญหาป้ายแสดง `Spread: --% (เกณฑ์ ≥ 0.30%)` ให้แสดงตัวเลขสดถูกต้องตรงกับแผงแผนการเทรดด้านขวา
 
+---
+
+## 141. v0.2.141 — Trapped Position Breakeven Rescue & Calibrator Universe Alignment
+1. **Universal TP1 & Trapped Position Breakeven Rescue**:
+   - **วิเคราะห์ปัญหาจากเคส BMTUSDT (Trade #19)**: เมื่อราคาซื้อแล้วเกิดการพักตัวหลายแท่ง เส้น `EMA25` จะไหลลงมาอยู่ต่ำกว่าราคาทุน (`ribbon.ema25 <= entryPrice * 1.0015`) โค้ดเดิมบังคับเช็กว่าตัวเส้น `EMA25` ต้องสูงกว่าทุน ทำให้เมื่อแท่งเทียนดีดทะลุ `EMA25` และพ้นทุนแล้ว บอทกลับตาบอด ไม่ยอมขาย TP1 และไม่ยอมล็อกทุน Breakeven จนปล่อยให้ราคาโดนทุบลงไปกิน Stop Loss
+   - **การแก้ไขใน `strategy.ts` และ `backtest-service.ts`**:
+     - เปลี่ยนมาเช็กที่ราคาจริง (`High >= Math.max(EMA25, minProfitPrice)`)
+     - ในกรณีทั่วไปที่ `EMA25` อยู่เหนือทุน: ขาย TP1 ที่ `EMA25` (ต้องมีกำไร `+0.15%`)
+     - ในกรณี `Trapped Position` ที่ `EMA25` ไหลลงมาต่ำกว่าทุน: ทันทีที่ราคาดีดทะลุ `EMA25` กลับขึ้นมาพ้นจุดคุ้มทุนค่าธรรมเนียม (`entryPrice + 0.05%`) ให้ขาย TP1 ทันที และล็อก SL ที่ Breakeven ทันที ป้องกันไม่ให้กลับไปติดลบ
+2. **ขยายช่วงและซิงค์การจำลองใน `AutoCalibrator` (`calibrator.ts`)**:
+   - ขยายชุด Candidate Spreads จากเดิมสูงสุด `0.65%` เพิ่มเป็น `[0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65, 0.80, 1.00, 1.25, 1.50, 1.80]` รองรับเหรียญผันผวนสูงได้อย่างครอบคลุม
+   - ปรับการคิด PnL และ Ratchet SL ภายในการจำลองของ `AutoCalibrator` ให้คิดแบบรอบคำสั่งเดียวตรงกับ Backtest จริง 100%
+
 
 
 

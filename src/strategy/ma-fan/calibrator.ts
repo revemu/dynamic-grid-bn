@@ -12,7 +12,7 @@ export class AutoCalibrator {
   public static calibrate(
     symbol: string,
     candles: Candle[],
-    candidateSpreads: number[] = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65]
+    candidateSpreads: number[] = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65, 0.80, 1.00, 1.25, 1.50, 1.80]
   ): CalibrationResult {
     const candidatesResults: {
       spreadPct: number;
@@ -47,8 +47,11 @@ export class AutoCalibrator {
       let cash = 200;
       let heldQty = 0;
       let entryPrice = 0;
+      let entryIdx = 0;
       let stopLossPrice = 0;
       let tp1Filled = false;
+      let tp1Price = 0;
+      let tp1Qty = 0;
       let highestSinceTp1 = 0;
 
       let grossProfit = 0;
@@ -63,28 +66,45 @@ export class AutoCalibrator {
         // Position Exits
         if (heldQty > 0) {
           if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
+          const barsHeld = i - entryIdx;
+
+          // Dynamic Ratchet SL
+          if (barsHeld >= 3) {
+            const recent3Lows = candles.slice(Math.max(0, i - 4), i + 1).map((x) => x.low);
+            const localMin = Math.min(...recent3Lows);
+            const curAtr = atrs[i] || c.close * 0.003;
+            const localSlDist = Math.max(localMin * 0.0025, curAtr * 1.0);
+            const localLow = localMin - localSlDist;
+            if (localLow > stopLossPrice && localLow < c.close) {
+              stopLossPrice = localLow;
+            }
+          }
 
           // Stop Loss
           if (c.low <= stopLossPrice) {
-            const pnl = (stopLossPrice - entryPrice) * heldQty;
-            cash += heldQty * stopLossPrice;
-            if (pnl >= 0) { grossProfit += pnl; wins++; }
-            else { grossLoss += Math.abs(pnl); losses++; }
+            const exitP = stopLossPrice;
+            const pnl2 = (exitP - entryPrice) * heldQty;
+            cash += heldQty * exitP;
+            const totalPnl = pnl2 + (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0);
+            if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
+            else { grossLoss += Math.abs(totalPnl); losses++; }
             heldQty = 0;
             continue;
           }
 
-          // TP1 at EMA 25
-          if (!tp1Filled && c.high >= ribbon.ema25 && ribbon.ema25 > entryPrice * 1.0015) {
-            const exitP = ribbon.ema25;
-            const sellQty = heldQty * 0.5;
-            const pnl = (exitP - entryPrice) * sellQty;
-            cash += sellQty * exitP;
-            heldQty -= sellQty;
-            if (pnl >= 0) { grossProfit += pnl; wins++; }
-            else { grossLoss += Math.abs(pnl); losses++; }
+          // TP1 at EMA 25 & Trapped Breakeven Rescue
+          const minProfitPrice = ribbon.ema25 <= entryPrice * 1.0015
+            ? entryPrice * 1.0005
+            : entryPrice * 1.0015;
+          const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
+
+          if (!tp1Filled && c.high >= tp1Target) {
+            tp1Price = tp1Target;
+            tp1Qty = heldQty * 0.5;
+            cash += tp1Qty * tp1Price;
+            heldQty -= tp1Qty;
             tp1Filled = true;
-            highestSinceTp1 = exitP;
+            highestSinceTp1 = c.high;
             stopLossPrice = Math.max(stopLossPrice, entryPrice * 1.0005);
           }
 
@@ -96,10 +116,11 @@ export class AutoCalibrator {
 
             if (hitTarget || hitTrailing) {
               const exitP = hitTrailing ? highestSinceTp1 * 0.9955 : Math.min(c.high, Math.max(target, c.close));
-              const pnl = (exitP - entryPrice) * heldQty;
+              const pnl2 = (exitP - entryPrice) * heldQty;
               cash += heldQty * exitP;
-              if (pnl >= 0) { grossProfit += pnl; wins++; }
-              else { grossLoss += Math.abs(pnl); losses++; }
+              const totalPnl = pnl2 + (tp1Price - entryPrice) * tp1Qty;
+              if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
+              else { grossLoss += Math.abs(totalPnl); losses++; }
               heldQty = 0;
               continue;
             }
@@ -114,6 +135,7 @@ export class AutoCalibrator {
           const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
 
           if (ribbon.isFanningDown && isStretched && ribbon.isHookUp && exhaustion.isOversoldExhaustion && isDownside) {
+            entryIdx = i;
             entryPrice = c.close;
             const recentLows = candles.slice(Math.max(0, i - 10), i + 1).map((x) => x.low);
             const lowestPoint = Math.min(...recentLows);

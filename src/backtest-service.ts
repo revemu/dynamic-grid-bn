@@ -390,15 +390,20 @@ export class BacktestService {
           continue;
         }
 
-        // 3. TP1 at EMA 25 (Sell based on configured tp1Ratio)
-        if (!tp1Filled && c.high >= ribbon.ema25 && ribbon.ema25 > entryPrice * 1.0015) {
-          tp1Price = ribbon.ema25;
+        // 3. TP1 at EMA 25 (Sell based on configured tp1Ratio & Trapped Breakeven Rescue)
+        const minProfitPrice = ribbon.ema25 <= entryPrice * 1.0015
+          ? entryPrice * (1 + beFeeBuffer)
+          : entryPrice * 1.0015;
+        const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
+
+        if (!tp1Filled && c.high >= tp1Target) {
+          tp1Price = tp1Target;
           tp1Time = c.time;
           const sellQty = heldQty * tp1Ratio;
           cash += sellQty * tp1Price;
           heldQty -= sellQty;
           tp1Filled = true;
-          highestSinceTp1 = tp1Price;
+          highestSinceTp1 = c.high;
           // Move SL to Breakeven (+fee buffer)
           stopLossPrice = Math.max(stopLossPrice, entryPrice * (1 + beFeeBuffer));
 
