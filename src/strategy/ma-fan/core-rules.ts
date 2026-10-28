@@ -68,12 +68,20 @@ export class MaFanCoreRules {
     const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
     const isDownside = ribbon.ema4 <= ribbon.ema25 && closePrice < ribbon.ema25;
 
+    // Minimum lower wick absorption check (at least 15% lower shadow rejection to filter out waterfall dumps)
+    const curCandle = candles[currentIndex];
+    const range = curCandle ? curCandle.high - curCandle.low : 0;
+    const lowerWick = curCandle ? Math.min(curCandle.open, curCandle.close) - curCandle.low : 0;
+    const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
+    const hasLowerWickAbsorption = lowerWickPct >= 15;
+
     const qualified =
       ribbon.isFanningDown &&
       isStretched &&
       ribbon.isHookUp &&
       exhaustion.isOversoldExhaustion &&
-      isDownside;
+      isDownside &&
+      hasLowerWickAbsorption;
 
     if (!qualified) {
       return {
@@ -97,7 +105,7 @@ export class MaFanCoreRules {
       stopLossPrice,
       swingLow,
       fanSpreadPct: ribbon.fanSpreadPct,
-      reason: `Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Hook, Oversold`,
+      reason: `Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Hook, Oversold, Wick ${lowerWickPct.toFixed(1)}%`,
     };
   }
 

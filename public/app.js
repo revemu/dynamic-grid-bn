@@ -1394,23 +1394,25 @@
     const isSpreadReady = data.spreadPct >= targetSpread;
     const spreadDiff = data.spreadPct - targetSpread;
 
-    // 4-point Sniper conditions (Exact match with MaFanCoreRules)
+    // 5-point Sniper conditions (Exact match with MaFanCoreRules)
     const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
     const condHook = data.isHookUp && c.close < data.ema25;
     const condExhaust = !!data.isOversoldExhaustion;
+    const condAbsorption = (data.lowerWickPct || 0) >= 15;
 
-    const allReady = condOrder && condSpread && condHook && condExhaust;
+    const allReady = condOrder && condSpread && condHook && condExhaust && condAbsorption;
 
     let verdictHtml = "";
     if (allReady) {
-      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 4 ข้อ! (จังหวะเปิดไม้ BUY)</div>`;
+      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 5 ข้อ! (จังหวะเปิดไม้ BUY)</div>`;
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
       if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
       if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 45)`);
+      if (!condAbsorption) missing.push(`ไส้ล่างซึมซับแรงขายต่ำเกินไป (${(data.lowerWickPct || 0).toFixed(1)}% < 15%)`);
       verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;
     }
 
@@ -1436,7 +1438,7 @@
         </div>
         <div class="cic-row">
           <span class="cic-label">ไส้ล่าง (Lower Wick):</span>
-          <span class="cic-val" style="color: ${data.lowerWickPct >= 35 ? "#34d399" : "#cbd5e1"};">${data.lowerWickPct.toFixed(1)}% ${data.lowerWickPct >= 35 ? "✅ (เด้งดี)" : ""}</span>
+          <span class="cic-val" style="color: ${(data.lowerWickPct || 0) >= 15 ? "#34d399" : "#cbd5e1"};">${(data.lowerWickPct || 0).toFixed(1)}% ${(data.lowerWickPct || 0) >= 15 ? "✅ (ซึมซับดี ≥15%)" : "⚠️ (เสี่ยง Waterfall)"}</span>
         </div>
       </div>
 
@@ -1486,6 +1488,10 @@
         <div class="cic-check-item">
           <span>4. ภาวะหมดแรงเทขาย (Oversold Exhaustion)</span>
           <span style="color: ${condExhaust ? "#34d399" : "#f87171"}; font-weight:700;">${condExhaust ? `✅ ผ่าน (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})` : `⏳ รอขายหมด (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})`}</span>
+        </div>
+        <div class="cic-check-item">
+          <span>5. แรงซึมซับไส้ล่าง (Lower Wick ≥ 15%)</span>
+          <span style="color: ${condAbsorption ? "#34d399" : "#f87171"}; font-weight:700;">${condAbsorption ? `✅ ผ่าน (${(data.lowerWickPct || 0).toFixed(1)}%)` : `❌ ไม่ผ่าน (${(data.lowerWickPct || 0).toFixed(1)}%)`}</span>
         </div>
       </div>
 

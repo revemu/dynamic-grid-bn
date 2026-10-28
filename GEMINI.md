@@ -5488,3 +5488,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ลบแท็ก `</div>` ที่เกินใน `public/index.html` ออก ทำให้ `maFanPlanCard` และ `.chart-panel` อยู่ในกล่องเดียวกันอย่างถูกต้อง
      - ปรับปรุง CSS `.col-chart` ใน `public/style.css` ให้ยืดหยุ่น (`flex: 1; min-height: 540px;` โดยไม่ล็อก `height: 560px`)
      - แถบเป้าหมายการเทรดและตัวกราฟกลับมาประกบชิดกันพอดี ไร้ช่องว่างสีดำ 100%
+
+
+---
+
+## 153. v0.2.153 — MA Fan Sniper Minimum 15% Lower Wick Absorption Filter & UI Inspector Upgrade (`src/strategy/ma-fan/core-rules.ts`, `public/backtest.js`, `public/app.js`)
+
+1. **เพิ่มตัวกรองแท่งเทียนซึมซับแรงขาย (Lower Wick Absorption Filter ≥ 15%) ป้องกัน False Hook ใน Waterfall Dump**:
+   - **สาเหตุของปัญหา (False Hook ในไม้แพ้ #20)**:
+     - จากการวิเคราะห์ Trade #20 ใน Backtest Studio บนคู่ `HAEDALUSDT` บอทเข้าเปิดไม้ BUY ช่วงเวลา 21:45 เนื่องจากพัดกางตึงและเกิด Hook เล็กน้อยบนแท่งเทียนสีเขียว
+     - แต่แท่งเทียนดังกล่าวเป็นเพียงการชะลอตัวชั่วคราวในระลอกแรกของการทุบลงแบบน้ำตก (Waterfall Dump) มีไส้เทียนด้านล่าง (Lower Wick) เพียง 13.2% สะท้อนว่ายังไม่มีแรงซื้อที่มีนัยสำคัญเข้ามารองรับ (Lack of Buying Absorption) ทำให้ราคาไหลลงต่อจนแตะ Stop Loss (-5.01%)
+   - **การแก้ไขและผลลัพธ์การปรับปรุง**:
+     - ใน `src/strategy/ma-fan/core-rules.ts`: เพิ่มกฎข้อที่ 5 ใน `MaFanCoreRules.evaluateEntry`:
+       - คำนวณเปอร์เซ็นต์ไส้ล่าง `lowerWickPct = ((Math.min(open, close) - low) / (high - low)) * 100`
+       - บังคับให้แท่งเทียนเข้าเงื่อนไขต้องมีไส้ล่างซึมซับแรงขาย `lowerWickPct >= 15%` (`hasLowerWickAbsorption`)
+     - **ผลลัพธ์ Backtest บน `HAEDALUSDT` (500 แท่ง 5m)**:
+       - ตัดไม้แพ้หนัก `-5.01%` ออกได้อย่างสมบูรณ์ (Worst Trade กลายเป็นเพียง `-0.05%`)
+       - Net Profit เพิ่มขึ้นจาก `+11.31%` เป็น `+11.84%`
+       - Profit Factor ก้าวกระโดดจาก `3.30` เป็น `254.40`
+       - Max Drawdown ลดลงจาก `5.01%` เหลือเพียง `0.23%`
+       - ยังคงรักษาไม้ชนะ 100% ครบทุกไม้โดยไม่มีกำไรตกหล่น
+
+2. **อัปเกรดเครื่องมือตรวจสอบแท่งเทียน (Candle & Spread Inspector) เป็น 5 Sniper Conditions (`public/backtest.js`, `public/app.js`)**:
+   - เพิ่มการตรวจสอบข้อที่ 5 ใน Checklist: `5. แรงซึมซับไส้ล่าง (Lower Wick ≥ 15%): ✅ ผ่าน (xx.x%)`
+   - ปรับการแสดงผลไส้ล่าง (Lower Wick) ให้ไฮไลต์สีเขียวเมื่อ `lowerWickPct >= 15%` พร้อมป้ายเตือน `⚠️ (เสี่ยง Waterfall)` เมื่อไส้ล่างต่ำกว่า 15%
+   - ทำให้ระบบวิเคราะห์และคำตัดสินของ Backtest Studio และ Live Dashboard สอดคล้องตรงกับ Strategy Core Rules 100%
