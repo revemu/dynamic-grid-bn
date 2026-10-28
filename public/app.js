@@ -1196,6 +1196,14 @@
     return data;
   }
 
+  let lastRibbonUpdateTs = 0;
+  function updateMaFanRibbonLinesThrottled(candles, force = false) {
+    const now = Date.now();
+    if (!force && now - lastRibbonUpdateTs < 2500) return;
+    lastRibbonUpdateTs = now;
+    updateMaFanRibbonLines(candles);
+  }
+
   function updateMaFanRibbonLines(candles) {
     if (!ema4Series || !ema8Series || !ema16Series || !ema25Series || !ema75Series || !ema200Series) return;
     const isMaFanMode = latestGridData?.strategyType === "ma_fan" || latestGridData?.strategyMode === "ma_fan" || (document.getElementById("cfg_strategyType")?.value === "ma_fan");
@@ -1588,7 +1596,7 @@
           latestCandleTime = Math.max(latestCandleTime, candle.time);
           updateOrderBadgesPositions();
           updateSwingBadgesPositions();
-          updateMaFanRibbonLines(cachedPrimaryCandles);
+          updateMaFanRibbonLinesThrottled(cachedPrimaryCandles);
         } catch (err) {
           console.warn("Error updating single candle:", err);
         }
@@ -1624,7 +1632,7 @@
           latestCandleTime = Math.max(latestCandleTime, candle.time);
           updateOrderBadgesPositions();
           updateSwingBadgesPositions();
-          updateMaFanRibbonLines(cachedPrimaryCandles);
+          updateMaFanRibbonLinesThrottled(cachedPrimaryCandles);
         } catch (err) {
           console.warn("Error updating single HTF candle:", err);
         }
@@ -2003,9 +2011,6 @@
       if (elSwingPlanCard) elSwingPlanCard.style.display = "none";
       if (elMaFanPlanCard) elMaFanPlanCard.style.display = "flex";
       updateMaFanPlanUI(data);
-      if (cachedPrimaryCandles && cachedPrimaryCandles.length > 0) {
-        updateMaFanRibbonLines(cachedPrimaryCandles);
-      }
       return;
     } else {
       if (elGridTitle) elGridTitle.textContent = "🎯 ระดับกริด & เป้าหมาย (Grid Ladder)";

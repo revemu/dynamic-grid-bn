@@ -141,30 +141,32 @@ async function main(): Promise<void> {
       dashboard?.setMaxCandles?.(1200);
     }
 
-    await macroDowEngine.loadHigherTimeframeCandles(
-      binanceCandleSymbol,
-      primaryInterval,
-      config.binanceBaseUrl,
-      log,
-      initialCandleLimit,
-      true,
-    );
-    await localTrendEngine.loadHigherTimeframeCandles(
-      binanceCandleSymbol,
-      config.tradingTimeframe,
-      config.binanceBaseUrl,
-      log,
-      config.initialCandleCount ?? 300,
-      true,
-    );
-    await htfDowEngine.loadHigherTimeframeCandles(
-      binanceCandleSymbol,
-      htfInterval,
-      config.binanceBaseUrl,
-      log,
-      300,
-      true,
-    );
+    await Promise.all([
+      macroDowEngine.loadHigherTimeframeCandles(
+        binanceCandleSymbol,
+        primaryInterval,
+        config.binanceBaseUrl,
+        log,
+        initialCandleLimit,
+        true,
+      ),
+      localTrendEngine.loadHigherTimeframeCandles(
+        binanceCandleSymbol,
+        config.tradingTimeframe,
+        config.binanceBaseUrl,
+        log,
+        config.initialCandleCount ?? 300,
+        true,
+      ),
+      htfDowEngine.loadHigherTimeframeCandles(
+        binanceCandleSymbol,
+        htfInterval,
+        config.binanceBaseUrl,
+        log,
+        300,
+        true,
+      ),
+    ]);
     dashboard?.setInitialHtfCandles(htfDowEngine.getCandles());
 
     macroFeed?.stop();
@@ -445,6 +447,8 @@ async function main(): Promise<void> {
           symbolInfo = nextInfo;
           await initFeeds(nextInfo.symbol);
           grid.updateSymbolInfo(nextInfo, atrSource!);
+          grid.getDatabase().setSetting("symbol", nextInfo.symbol);
+          grid.getDatabase().setSetting("binanceSymbol", nextInfo.symbol.toLowerCase());
           wireFeedsToGrid();
           // Immediately refresh unlocked wallet balances & open orders before the first tick on the new pair
           await grid.refreshWalletBalances();

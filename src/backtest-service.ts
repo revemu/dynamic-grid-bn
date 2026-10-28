@@ -118,7 +118,14 @@ export interface BacktestHistoryItem {
   tradeCount: number;
 }
 
+export interface MarketScanPersistence {
+  timestamp: number;
+  options: MarketScanOptions;
+  results: MarketScanResultItem[];
+}
+
 const DB_PATH = path.resolve(process.cwd(), "data", "backtest-history.db.json");
+const SCAN_DB_PATH = path.resolve(process.cwd(), "data", "market-scan.db.json");
 
 function ensureDbFile(): void {
   const dir = path.dirname(DB_PATH);
@@ -232,9 +239,15 @@ export class BacktestService {
     let peakEquity = initialCapital;
     let maxDrawdownPct = 0;
 
+    // Precompute indicators in single pass for fast simulation
+    const ribbonStates = RibbonEngine.computeAllRibbonStates(candles);
+    const exhaustionStates = ExhaustionEngine.computeAllExhaustion(candles);
+    const atrs = calcATR(candles, 14);
+
     for (let i = warmup; i < candles.length; i++) {
       const c = candles[i]!;
-      const ribbon = RibbonEngine.computeRibbonState(candles, i);
+      const ribbon = ribbonStates[i]!;
+      const curAtr = atrs[i] ?? (c.close * 0.003);
 
       // Current portfolio equity
       const currentEquity = cash + (heldQty > 0 ? heldQty * c.close : 0);
@@ -251,7 +264,9 @@ export class BacktestService {
         // Works both before TP1 (risk reduction) and after TP1 (profit lock)
         if (useRatchetSl && barsHeld >= 3) {
           const recent3Lows = candles.slice(Math.max(0, i - 4), i + 1).map((x) => x.low);
-          const localLow = Math.min(...recent3Lows) * (1 - slBufferPct / 100);
+          const localMin = Math.min(...recent3Lows);
+          const localSlDist = Math.max(localMin * (slBufferPct / 100), curAtr * 1.0);
+          const localLow = localMin - localSlDist;
           if (localLow > stopLossPrice && localLow < c.close) {
             stopLossPrice = localLow;
           }
@@ -403,13 +418,11 @@ export class BacktestService {
         // Compute dynamic spread threshold matching live strategy (if enabled)
         let currentSpread = spread;
         if (useAtrAdaptive) {
-          const atrs = calcATR(candles.slice(0, i + 1), 14);
-          const curAtr = atrs[atrs.length - 1] ?? 0;
           const atrPct = (curAtr / c.close) * 100;
           currentSpread = Math.max(0.20, Math.max(spread, atrPct * atrMultiplier));
         }
 
-        const exhaustion = ExhaustionEngine.evaluate(candles, i);
+        const exhaustion = exhaustionStates[i]!;
         const isStretched = ribbon.fanSpreadPct >= currentSpread;
 
         const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
@@ -422,7 +435,8 @@ export class BacktestService {
 
           const recentLows = candles.slice(Math.max(0, i - 10), i + 1).map((x) => x.low);
           const lowestPoint = Math.min(...recentLows);
-          initialSlPrice = lowestPoint * (1 - slBufferPct / 100);
+          const slDist = Math.max(lowestPoint * (slBufferPct / 100), curAtr * 1.0);
+          initialSlPrice = lowestPoint - slDist;
           stopLossPrice = initialSlPrice;
 
           const invest = cash * 0.98;
@@ -678,6 +692,35 @@ export class BacktestService {
       item.rank = idx + 1;
     });
 
+    // 4. Persist latest market scan to database
+    this.saveLatestScan({
+      timestamp: Date.now(),
+      options: opts,
+      results,
+    });
+
     return results;
+  }
+
+  public static saveLatestScan(data: MarketScanPersistence): void {
+    try {
+      const dir = path.dirname(SCAN_DB_PATH);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(SCAN_DB_PATH, JSON.stringify(data, null, 2), "utf8");
+    } catch (err: any) {
+      console.error(`[backtest-service] Failed to save market scan: ${err.message}`);
+    }
+  }
+
+  public static getLatestScan(): MarketScanPersistence | null {
+    try {
+      if (!fs.existsSync(SCAN_DB_PATH)) return null;
+      const raw = fs.readFileSync(SCAN_DB_PATH, "utf8");
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 }

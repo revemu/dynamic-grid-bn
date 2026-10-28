@@ -46,8 +46,61 @@ export function calcMACD(candles: Candle[], fast = 12, slow = 26, signal = 9) {
   return { macd: macdLine, signal: signalLine, hist };
 }
 
+export interface ExhaustionState {
+  rsi: number;
+  prevRsi: number;
+  macd: {
+    macd: number;
+    signal: number;
+    hist: number;
+    isTurningUp: boolean;
+    isTurningDown: boolean;
+  };
+  isOversoldExhaustion: boolean;
+  isOverboughtExhaustion: boolean;
+}
+
 export class ExhaustionEngine {
-  public static evaluate(candles: Candle[], targetIdx?: number) {
+  public static computeAllExhaustion(candles: Candle[]): ExhaustionState[] {
+    const n = candles.length;
+    if (n === 0) return [];
+
+    const rsiList = calcRSI(candles, 14);
+    const { macd, signal, hist } = calcMACD(candles, 12, 26, 9);
+    const results: ExhaustionState[] = new Array(n);
+
+    for (let idx = 0; idx < n; idx++) {
+      const prevIdx = Math.max(0, idx - 1);
+      const curRsi = rsiList[idx]!;
+      const prevRsi = rsiList[prevIdx]!;
+      const curHist = hist[idx]!;
+      const prevHist = hist[prevIdx]!;
+
+      const isTurningUp = curHist > prevHist;
+      const isTurningDown = curHist < prevHist;
+
+      const isOversoldExhaustion = (prevRsi <= 45 || curRsi <= 40 || (isTurningUp && prevRsi <= 52)) && curRsi < 65;
+      const isOverboughtExhaustion = curRsi >= 70 || (isTurningDown && curRsi >= 55);
+
+      results[idx] = {
+        rsi: curRsi,
+        prevRsi,
+        macd: {
+          macd: macd[idx]!,
+          signal: signal[idx]!,
+          hist: curHist,
+          isTurningUp,
+          isTurningDown,
+        },
+        isOversoldExhaustion,
+        isOverboughtExhaustion,
+      };
+    }
+
+    return results;
+  }
+
+  public static evaluate(candles: Candle[], targetIdx?: number): ExhaustionState {
     const idx = targetIdx !== undefined ? targetIdx : candles.length - 1;
     const rsiList = calcRSI(candles, 14);
     const { macd, signal, hist } = calcMACD(candles, 12, 26, 9);

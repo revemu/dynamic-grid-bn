@@ -36,6 +36,13 @@ export class MaFanOrderExecutor {
     this.log = opts.onLog ?? ((msg) => console.log(`[ma-fan-executor] ${msg}`));
   }
 
+  public updateOptions(opts: Partial<ExecutorOptions>): void {
+    if (opts.client) this.client = opts.client;
+    if (opts.dryRun !== undefined) this.dryRun = opts.dryRun;
+    if (opts.breakevenFeeBufferPct !== undefined) this.breakevenFeeBufferPct = opts.breakevenFeeBufferPct;
+    if (opts.slBufferPct !== undefined) this.slBufferPct = opts.slBufferPct;
+  }
+
   public async init(symbol: string): Promise<void> {
     try {
       this.symbolInfo = await this.client.getExchangeInfo(symbol);
@@ -77,7 +84,8 @@ export class MaFanOrderExecutor {
     budgetUsd: number,
     swingLowPrice: number,
     htfRegime: HtfRegime,
-    fanSpreadPct: number
+    fanSpreadPct: number,
+    curAtr?: number
   ): Promise<MaFanPosition | null> {
     const rawQty = budgetUsd / entryPrice;
     const qty = this.roundQty(rawQty);
@@ -94,10 +102,11 @@ export class MaFanOrderExecutor {
       return null;
     }
 
-    // Stop Loss is placed slightly below recent swing low
-    const stopLossPrice = this.roundPrice(swingLowPrice * (1 - this.slBufferPct / 100));
+    // Dynamic ATR SL Buffer: protect from extreme wicks below recent swing low
+    const slDist = Math.max(swingLowPrice * (this.slBufferPct / 100), (curAtr ?? 0) * 1.0);
+    const stopLossPrice = this.roundPrice(swingLowPrice - slDist);
 
-    this.log(`🟢 [BUY_SNIPER] ${symbol} | Price: $${entryPrice.toFixed(4)} | Qty: ${qty} | SL: $${stopLossPrice.toFixed(4)} | Spread: ${fanSpreadPct.toFixed(2)}% | DryRun: ${this.dryRun}`);
+    this.log(`🟢 [BUY_SNIPER] ${symbol} | Price: $${entryPrice.toFixed(4)} | Qty: ${qty} | SL: $${stopLossPrice.toFixed(4)} (Buffer: $${slDist.toFixed(4)}) | Spread: ${fanSpreadPct.toFixed(2)}% | DryRun: ${this.dryRun}`);
 
     let fillPrice = entryPrice;
     if (!this.dryRun) {

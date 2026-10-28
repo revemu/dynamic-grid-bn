@@ -136,4 +136,95 @@ export class RibbonEngine {
       isHookDown,
     };
   }
+
+  /**
+   * High-Performance Pre-computation:
+   * Computes all RibbonStates for all candles in O(N) single pass.
+   */
+  public static computeAllRibbonStates(candles: Candle[]): RibbonState[] {
+    const closes = candles.map((c) => c.close);
+    const n = closes.length;
+    if (n === 0) return [];
+
+    const ema4 = calcEMA(closes, 4);
+    const ema8 = calcEMA(closes, 8);
+    const ema16 = calcEMA(closes, 16);
+    const ema25 = calcEMA(closes, 25);
+    const ema75 = calcEMA(closes, 75);
+    const ema200 = calcEMA(closes, 200);
+
+    const states: RibbonState[] = new Array(n);
+    for (let idx = 0; idx < n; idx++) {
+      if (idx < 25) {
+        const p = closes[idx] ?? 0;
+        states[idx] = {
+          ema4: p,
+          ema8: p,
+          ema16: p,
+          ema25: p,
+          ema75: p,
+          ema200: p,
+          fanSpreadPct: 0,
+          isFanningDown: false,
+          isFanningUp: false,
+          isHookUp: false,
+          isHookDown: false,
+        };
+        continue;
+      }
+
+      const prevIdx = Math.max(0, idx - 1);
+      const curEma4 = ema4[idx]!;
+      const curEma8 = ema8[idx]!;
+      const curEma16 = ema16[idx]!;
+      const curEma25 = ema25[idx]!;
+      const curEma75 = ema75[idx]!;
+      const curEma200 = ema200[idx]!;
+
+      const prevEma4 = ema4[prevIdx]!;
+      const prevEma8 = ema8[prevIdx]!;
+      const prevEma16 = ema16[prevIdx]!;
+      const prevEma25 = ema25[prevIdx]!;
+
+      const fanSpreadPct = curEma25 > 0 ? (Math.abs(curEma25 - curEma4) / curEma25) * 100 : 0;
+      const curFanningDown = curEma4 < curEma8 && curEma8 < curEma16 && curEma16 < curEma25;
+      const prevFanningDown = prevEma4 < prevEma8 && prevEma8 < prevEma16 && prevEma16 < prevEma25;
+      const isCurBullish = curEma4 > curEma8 && curEma8 > curEma16 && curEma16 > curEma25;
+
+      const isFanningDown =
+        !isCurBullish &&
+        curEma4 <= curEma25 &&
+        (curFanningDown || (prevFanningDown && curEma4 <= curEma16));
+
+      const isFanningUp =
+        (prevEma4 > prevEma8 && prevEma8 > prevEma16 && prevEma16 > prevEma25) ||
+        isCurBullish;
+
+      const curCandle = candles[idx]!;
+      const isHookUp =
+        curEma4 <= curEma25 * 1.002 &&
+        curCandle.close < curEma25 &&
+        ((curEma4 >= curEma8 && prevEma4 < prevEma8) ||
+          (curCandle.close > curEma4 && curCandle.close > curCandle.open));
+
+      const isHookDown =
+        (curEma4 <= curEma8 && prevEma4 > prevEma8) ||
+        (curCandle.close < curEma4 && curCandle.close < curCandle.open);
+
+      states[idx] = {
+        ema4: curEma4,
+        ema8: curEma8,
+        ema16: curEma16,
+        ema25: curEma25,
+        ema75: curEma75,
+        ema200: curEma200,
+        fanSpreadPct,
+        isFanningDown,
+        isFanningUp,
+        isHookUp,
+        isHookDown,
+      };
+    }
+    return states;
+  }
 }

@@ -24,6 +24,25 @@ export class AutoCalibrator {
 
     const warmup = Math.min(100, Math.floor(candles.length / 3));
 
+    // Precompute Ribbon and Exhaustion arrays once in O(N)
+    const ribbonStates = RibbonEngine.computeAllRibbonStates(candles);
+    const exhaustionStates = ExhaustionEngine.computeAllExhaustion(candles);
+
+    // Precompute 14-period ATR array for Dynamic SL buffer
+    const atrs: number[] = new Array(candles.length).fill(0);
+    let trSum = 0;
+    for (let i = 1; i < candles.length; i++) {
+      const prevC = candles[i - 1]!.close;
+      const c = candles[i]!;
+      const tr = Math.max(c.high - c.low, Math.abs(c.high - prevC), Math.abs(c.low - prevC));
+      if (i <= 14) {
+        trSum += tr;
+        if (i === 14) atrs[i] = trSum / 14;
+      } else {
+        atrs[i] = (atrs[i - 1]! * 13 + tr) / 14;
+      }
+    }
+
     for (const spread of candidateSpreads) {
       let cash = 200;
       let heldQty = 0;
@@ -39,7 +58,7 @@ export class AutoCalibrator {
 
       for (let i = warmup; i < candles.length; i++) {
         const c = candles[i]!;
-        const ribbon = RibbonEngine.computeRibbonState(candles, i);
+        const ribbon = ribbonStates[i]!;
 
         // Position Exits
         if (heldQty > 0) {
@@ -89,7 +108,7 @@ export class AutoCalibrator {
 
         // Position Entry
         if (heldQty === 0 && cash >= 10) {
-          const exhaustion = ExhaustionEngine.evaluate(candles, i);
+          const exhaustion = exhaustionStates[i]!;
           const isStretched = ribbon.fanSpreadPct >= spread;
 
           const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
@@ -98,7 +117,9 @@ export class AutoCalibrator {
             entryPrice = c.close;
             const recentLows = candles.slice(Math.max(0, i - 10), i + 1).map((x) => x.low);
             const lowestPoint = Math.min(...recentLows);
-            stopLossPrice = lowestPoint * 0.9975;
+            const curAtr = atrs[i] || c.close * 0.003;
+            const slDist = Math.max(lowestPoint * 0.0025, curAtr * 1.0);
+            stopLossPrice = lowestPoint - slDist;
 
             const invest = cash * 0.98;
             heldQty = invest / entryPrice;

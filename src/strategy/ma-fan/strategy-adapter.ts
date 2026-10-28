@@ -358,17 +358,58 @@ export class MaFanTradingStrategy implements IStrategy {
 
   public updateRuntimeSettings(s: any): any {
     if (s.strategyType) this.cfg.strategyType = s.strategyType;
+    if (s.symbol) {
+      const clean = String(s.symbol).toUpperCase().replace(/[\/\-_:]/g, "");
+      this.cfg.symbol = clean;
+      this.cfg.binanceSymbol = clean.toLowerCase();
+      this.maFan.symbol = clean;
+    }
+    if (s.exchange) this.cfg.exchange = s.exchange;
+    if (s.dryRun !== undefined) {
+      this.cfg.dryRun = s.dryRun;
+      this.maFan.config.isDryRun = s.dryRun;
+    }
     if (s.maFanManualSpreadPct !== undefined) this.cfg.maFanManualSpreadPct = s.maFanManualSpreadPct;
     if (s.maFanAutoCalibrateSpreadOnSwitch !== undefined) this.cfg.maFanAutoCalibrateSpreadOnSwitch = s.maFanAutoCalibrateSpreadOnSwitch;
     if (s.maFanUseAtrAdaptiveSpread !== undefined) this.cfg.maFanUseAtrAdaptiveSpread = s.maFanUseAtrAdaptiveSpread;
+    if (s.maFanExecutionTimeframe) {
+      this.cfg.maFanExecutionTimeframe = s.maFanExecutionTimeframe;
+      this.maFan.config.executionTimeframe = s.maFanExecutionTimeframe;
+    }
+    if (s.maFanSupervisorTimeframe) {
+      this.cfg.maFanSupervisorTimeframe = s.maFanSupervisorTimeframe;
+      this.maFan.config.supervisorTimeframe = s.maFanSupervisorTimeframe;
+    }
     if (s.maFanTp1Ratio !== undefined) this.cfg.maFanTp1Ratio = s.maFanTp1Ratio;
     if (s.maFanMaxBudgetUsd !== undefined) this.cfg.maFanMaxBudgetUsd = s.maFanMaxBudgetUsd;
+    if (s.maFanSlBufferPct !== undefined) {
+      this.cfg.maFanSlBufferPct = s.maFanSlBufferPct;
+      this.maFan.config.slBufferPct = s.maFanSlBufferPct;
+    }
+    if (s.maFanAtrMultiplier !== undefined) {
+      this.cfg.maFanAtrMultiplier = s.maFanAtrMultiplier;
+      this.maFan.config.atrMultiplier = s.maFanAtrMultiplier;
+    }
+    if (s.maFanTrailingPullbackPct !== undefined) {
+      this.cfg.maFanTrailingPullbackPct = s.maFanTrailingPullbackPct;
+      this.maFan.config.trailingPullbackPct = s.maFanTrailingPullbackPct;
+    }
+    if (s.maFanBreakevenFeeBufferPct !== undefined) {
+      this.cfg.maFanBreakevenFeeBufferPct = s.maFanBreakevenFeeBufferPct;
+      this.maFan.config.breakevenFeeBufferPct = s.maFanBreakevenFeeBufferPct;
+    }
 
     this.maFan.config.manualSpreadPct = this.cfg.maFanManualSpreadPct;
     this.maFan.config.autoCalibrateSpreadOnSwitch = this.cfg.maFanAutoCalibrateSpreadOnSwitch;
     this.maFan.config.useAtrAdaptiveSpread = this.cfg.maFanUseAtrAdaptiveSpread;
     this.maFan.config.tp1Ratio = this.cfg.maFanTp1Ratio;
     this.maFan.config.maxPositionBudgetUsd = this.cfg.maFanMaxBudgetUsd;
+
+    this.maFan.getExecutor().updateOptions({
+      dryRun: this.cfg.dryRun,
+      breakevenFeeBufferPct: this.cfg.maFanBreakevenFeeBufferPct,
+      slBufferPct: this.cfg.maFanSlBufferPct,
+    });
 
     this.db.setSettings(this.cfg);
     this.emitTelemetryTick();
@@ -499,6 +540,11 @@ export class MaFanTradingStrategy implements IStrategy {
     this.atrSource = atrSource;
     this.maFan.client = newExchange;
     this.maFan.symbol = nextInfo.symbol;
+    const clean = nextInfo.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+    this.cfg.symbol = clean;
+    this.cfg.binanceSymbol = clean.toLowerCase();
+    this.cfg.exchange = newExchange.exchangeName;
+    this.db.setSettings(this.cfg);
     this.maFan.executor = new (this.maFan.executor as any).constructor({
       client: newExchange,
       dryRun: this.cfg.dryRun,
@@ -522,6 +568,10 @@ export class MaFanTradingStrategy implements IStrategy {
     this.symbolInfo = nextInfo;
     this.atrSource = atrSource;
     this.maFan.symbol = nextInfo.symbol;
+    const clean = nextInfo.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+    this.cfg.symbol = clean;
+    this.cfg.binanceSymbol = clean.toLowerCase();
+    this.db.setSettings(this.cfg);
     if (this.context.macroDowEngine) {
       const candles = this.context.macroDowEngine.getCandles();
       if (candles.length > 0) {

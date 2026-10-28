@@ -774,6 +774,13 @@ export class DashboardServer {
       return;
     }
 
+    if (pathname === "/api/backtest/scan/latest" && req.method === "GET") {
+      const latest = BacktestService.getLatestScan();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, scan: latest }));
+      return;
+    }
+
     if (pathname === "/api/backtest/history" && req.method === "GET") {
       const history = BacktestService.getHistoryList();
       res.writeHead(200, { "Content-Type": "application/json" });

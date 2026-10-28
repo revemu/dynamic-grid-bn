@@ -252,13 +252,17 @@ export class MaFanStrategy {
           const budget = this.config.maxPositionBudgetUsd;
           this.log(`🎯 Entry criteria met: Fan Spread=${ribbon.fanSpreadPct.toFixed(2)}% (Req: ${requiredSpread.toFixed(2)}%), Hook=${isHook}, Oversold=${exhaustion.isOversoldExhaustion}`);
 
+          const atrs = calcATR(this.candles, 14);
+          const curAtr = atrs[atrs.length - 1] ?? 0;
+
           const newPos = await this.executor.executeBuy(
             this.symbol,
             refPrice,
             budget,
             swingLow,
             htfRegime,
-            ribbon.fanSpreadPct
+            ribbon.fanSpreadPct,
+            curAtr
           );
 
           if (newPos) {
@@ -340,5 +344,9 @@ export class MaFanStrategy {
 
   public getActivePosition(): MaFanPosition | null {
     return this.activePosition;
+  }
+
+  public getExecutor(): MaFanOrderExecutor {
+    return this.executor;
   }
 }

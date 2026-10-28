@@ -1274,9 +1274,12 @@
   const scSpread = document.getElementById("scSpread");
 
   function initScannerEvents() {
+    loadLatestScannerResults();
+
     if (btnOpenScanner && scannerModalBackdrop) {
       btnOpenScanner.addEventListener("click", () => {
         scannerModalBackdrop.style.display = "flex";
+        loadLatestScannerResults();
       });
     }
 
@@ -1320,6 +1323,9 @@
 
           const data = await res.json();
           renderScannerLeaderboard(data.results || []);
+          if (scannerStatusText) {
+            scannerStatusText.textContent = `สแกนตลาดเสร็จสมบูรณ์ (${data.results?.length || 0} คู่เหรียญ)`;
+          }
         } catch (err) {
           alert(`เกิดข้อผิดพลาดในการสแกนตลาด: ${err.message}`);
         } finally {
@@ -1328,6 +1334,26 @@
         }
       });
     }
+  }
+
+  async function loadLatestScannerResults() {
+    try {
+      const res = await fetch("/api/backtest/scan/latest");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.scan && Array.isArray(data.scan.results) && data.scan.results.length > 0) {
+          renderScannerLeaderboard(data.scan.results);
+          if (scannerStatusText) {
+            const dateStr = new Date(data.scan.timestamp).toLocaleString();
+            scannerStatusText.textContent = `ผลสแกนล่าสุดที่บันทึกไว้ (${dateStr})`;
+          }
+          if (data.scan.options) {
+            if (scScope && data.scan.options.scope) scScope.value = data.scan.options.scope;
+            if (scTimeframe && data.scan.options.timeframe) scTimeframe.value = data.scan.options.timeframe;
+          }
+        }
+      }
+    } catch {}
   }
 
   function renderScannerLeaderboard(items) {
