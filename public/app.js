@@ -1571,6 +1571,9 @@
         renderOhlc(latestCandle);
         rebuildOrderMarkers();
         refreshMarkers();
+        if (chart && chartContainer && chartContainer.clientWidth > 0) {
+          chart.applyOptions({ width: chartContainer.clientWidth });
+        }
         chart.timeScale().fitContent();
         chart.timeScale().applyOptions({ rightOffset: 20 });
         updateOrderBadgesPositions();
@@ -3149,8 +3152,41 @@
         elKpiGasSpent.style.display = "none";
       }
     }
-    if (elLotsCount) elLotsCount.textContent = `${lots.length} Open Lots`;
+    if (elLotsCount) elLotsCount.textContent = lots.length > 0 ? `${lots.length} ไม้` : "0 ไม้";
     if (elLotsBadgeCount) elLotsBadgeCount.textContent = `${lots.length}`;
+
+    // Top Studio Live KPI Card Updates (Backtest Style)
+    const elLiveWinRate = document.getElementById("liveWinRate");
+    const elLiveWinLoss = document.getElementById("liveWinLoss");
+    const elLiveTotalTrades = document.getElementById("liveTotalTrades");
+    const elLiveBotStatusText = document.getElementById("liveBotStatusText");
+    const elLiveBotStatusSub = document.getElementById("liveBotStatusSub");
+
+    const metrics = data.metrics || {};
+    const winRate = metrics.winRate !== undefined ? metrics.winRate : (tradeRounds && tradeRounds.length > 0 ? (tradeRounds.filter(r => r.pnl > 0).length / tradeRounds.length * 100) : 100);
+    const wins = metrics.wins !== undefined ? metrics.wins : (tradeRounds && tradeRounds.length > 0 ? tradeRounds.filter(r => r.pnl > 0).length : 0);
+    const losses = metrics.losses !== undefined ? metrics.losses : (tradeRounds && tradeRounds.length > 0 ? tradeRounds.filter(r => r.pnl <= 0).length : 0);
+    const totCycles = metrics.totalCycles !== undefined ? metrics.totalCycles : (tradeRounds && tradeRounds.length > 0 ? tradeRounds.length : (wins + losses));
+
+    if (elLiveWinRate) {
+      elLiveWinRate.textContent = `${winRate.toFixed(1)}%`;
+      elLiveWinRate.style.color = winRate >= 50 ? "#4ade80" : "#f87171";
+    }
+    if (elLiveWinLoss) {
+      elLiveWinLoss.textContent = `${wins} ชนะ / ${losses} แพ้`;
+    }
+    if (elLiveTotalTrades) {
+      elLiveTotalTrades.textContent = `รวม ${totCycles} รอบ`;
+    }
+    if (elLiveBotStatusText) {
+      const isPaused = Boolean(data.isPaused);
+      elLiveBotStatusText.textContent = isPaused ? "⏸️ PAUSED" : "🟢 RUNNING";
+      elLiveBotStatusText.style.color = isPaused ? "#f59e0b" : "#38bdf8";
+    }
+    if (elLiveBotStatusSub) {
+      const mode = data.strategyMode === "ma_fan" ? "MA-FOLD-FAN" : "DYNAMIC GRID";
+      elLiveBotStatusSub.textContent = `${mode} • ${data.executionTimeframe || "5m"}`;
+    }
 
     if (elPosCurrentHold) {
       elPosCurrentHold.textContent = `$${invUsd.toFixed(2)} (${holdPct.toFixed(0)}%)`;

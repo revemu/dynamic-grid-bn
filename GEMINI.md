@@ -5411,3 +5411,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
          4. `📦 ไม้ที่ถือ (Lots)`: แสดงสัดส่วนและราคาทุนของเหรียญที่ถือครองแยกตามไม้
        - **Interactive Row Click**: เมื่อคลิกที่แถวรายการเทรดใดๆ กราฟจะเลื่อน (Scroll) และปรับช่วงเวลาไปยังแท่งเทียนที่เกิดธุรกรรมนั้นทันที แบบเดียวกับ Backtest Studio
        - มีปุ่มทางลัด **"🔄 Reconcile จาก Binance"** และ **"➕ เพิ่ม Trade Fill"** ที่หัวตารางด้านล่างโดยตรง สะดวกต่อการใช้งาน
+
+
+---
+
+## 150. v0.2.150 — Strict TradeId Indexing for Binance Partial Fills Reconciliation, Full 100% Chart Canvas Width & Backtest Studio 6-Card KPI Bar (`src/db.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `public/style.css`, `public/index.html`, `public/app.js`)
+
+1. **แก้ไขบั๊ก Trade Sync เขียนทับ Partial Fills ภายใต้ Order เดียวกัน (`src/db.ts`)**:
+   - **ปัญหาที่พบ**:
+     - เมื่อ Binance ทำการ Partial Fill คำสั่งซื้อขายเป็นหลายรายการย่อยภายใต้ `orderId` เดียวกัน (เช่น Order ID `227403332` มี 2 trades: Trade ID `11903479` จำนวน `584.0` และ Trade ID `11903480` จำนวน `267.6`)
+     - ใน `src/db.ts` ฟังก์ชัน `syncRecentTradesFromBinance` มีตรรกะเดิม `let existing = ordersByTradeId.get(tId) || ordersByOrderId.get(oId);` ทำให้รายการที่ 2 ไปจับคู่เจอ `orderId` เดียวกัน และทำการ **เขียนทับ (Overwrite)** ข้อมูลรายการแรก ทำให้ Trade `584.0` หายไปจากฐานข้อมูล ส่งผลให้ยอดขายขาดไป 584 ตัว และเกิดเหรียญค้างในระบบ `ไม้ที่ถือ (1)`
+   - **การแก้ไข**:
+     - เปลี่ยนมาจับคู่และค้นหาด้วย `tradeId` เป็นหลัก (`ordersByTradeId.get(tId)`) เพราะใน Binance ทุกการจับคู่ย่อย (Trade Execution Fill) จะมี `t.id` (`tradeId`) ที่เป็น Unique Identifier เฉพาะตัวเสมอ
+     - ป้องกันการนำ `orderId` ซ้ำมาเขียนทับ โดยจะจับคู่กับ `orderId` ได้ก็ต่อเมื่อคำสั่งนั้นยังไม่มี `tradeId` ผูกอยู่เท่านั้น หากมี `tradeId` ผูกแล้ว จะทำการสร้าง Record รายการเทรดใหม่ให้แก่แต่ละ fill เสมอ
+     - ใน `recalculateFifoPnlForSymbol`: เพิ่มการกรอง Dust (< $0.50 Notional) และหากปิดหมดทุกไม้ (`remainingLots.length === 0`) จะทำการเคลียร์ `maFanPosition = null` ใน State ทันที พร้อมทั้งเรียก `this.maFan.restorePosition(null)` ใน `strategy-adapter.ts` เพื่อรีเซ็ตสถานะ Position ในเมมโมรีให้ว่างพร้อมเทรดรอบถัดไปทันที
+
+2. **แก้ไขปัญหากราฟไม่ขยายเต็มความกว้างหน้าจอ (มีแถบดำว่างด้านขวา) (`public/style.css`, `public/app.js`)**:
+   - **ปัญหาที่พบ**:
+     - ใน `public/style.css` ด้านล่างสุดมีกฎ CSS `.dashboard-grid { grid-template-columns: 1fr 370px; }` และ `@media (max-width: 1400px) { grid-template-columns: 1fr 320px; }` หลงเหลืออยู่ ทำให้แม้จะซ่อน `.col-sidebar` ไปแล้ว แต่ตัว Grid ยังคงจองพื้นที่คอลัมน์ขวา 370px ว่างไว้ กราฟจึงขยายได้เพียง ~65% ของหน้าจอ
+   - **การแก้ไข**:
+     - แก้ไข `.dashboard-grid` ให้เป็น `grid-template-columns: 1fr; width: 100%;` และลบข้อจำกัด 370px / 320px ออกทั้งหมด
+     - ใน `public/app.js`: บังคับเรียก `chart.applyOptions({ width: chartContainer.clientWidth })` ทันทีที่มีการโหลดและตั้งค่าแท่งเทียน ช่วยให้กราฟ TradingView Lightweight Charts ขยายเต็มพื้นที่ 100% สไตล์ Clean Studio ทันที
+
+3. **ปรับโฉมแถบ Wallet Balance, Position & PnL เป็น 6-Card KPI Bar แบบ Backtest Studio (`public/index.html`, `public/style.css`, `public/app.js`)**:
+   - ปรับแถบ KPI ด้านบนจากกล่องคู่เดิม มาเป็นการ์ดแนวนอน 6 ใบสวยงาม เรียบง่าย สบายตา ตัวเลขคมชัด สไตล์เดียวกับหน้า Backtest Studio:
+     1. 💰 **กำไรสุทธิ (REALIZED PNL)**: สรุปกำไร/ขาดทุนสุทธิรอบที่ปิดแล้ว ($ และ %)
+     2. 📈 **ถือรอขาย (UNREALIZED PNL)**: กำไร/ขาดทุนของเหรียญที่ถืออยู่ พร้อมทุนเฉลี่ย
+     3. 💵 **เงินสดในกระเป๋า (WALLET CASH)**: ยอด USDT ในกระเป๋า และมูลค่ารวมพอร์ต
+     4. 📦 **ของที่ถือครอง (HELD POSITION)**: ปริมาณเหรียญที่ถือ และ % โควตางบลงทุน
+     5. 🎯 **WIN RATE / สถิติรอบ (WIN RATE & TRADES)**: อัตราการชนะ และจำนวนรอบที่เทรด
+     6. ⚙️ **สถานะระบบ (BOT STATUS)**: สถานะการรัน ป้าย MA-FOLD-FAN และ Timeframe

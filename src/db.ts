@@ -1515,10 +1515,21 @@ export class BotDatabase {
         const feeAsset = t.commissionAsset || "";
         const time = Number(t.time);
 
-        // Find existing order by tradeId or orderId or time/price proximity
-        let existing = ordersByTradeId.get(tId) || ordersByOrderId.get(oId);
+        // Find existing order strictly by tradeId first (every execution fill has a unique tradeId)
+        let existing = ordersByTradeId.get(tId);
+
+        // If not found by tradeId, check if an existing order has the same oId BUT has NO tradeId assigned yet
+        if (!existing) {
+          const ord = ordersByOrderId.get(oId);
+          if (ord && !ord.tradeId) {
+            existing = ord;
+          }
+        }
+
+        // Proximity match ONLY if the candidate order has NO tradeId assigned
         if (!existing) {
           existing = this.data.orders.find((o) => {
+            if (o.tradeId) return false;
             if (o.side !== side) return false;
             if (!this.matchesSymbol(o, normSym)) return false;
             const timeDiff = Math.abs((o.fillTime || o.placedTime || o.time) - time);
@@ -1650,13 +1661,20 @@ export class BotDatabase {
       }
     }
 
+    // Filter out un-tradable dust (< $0.50 notional)
     const remainingLots: Lot[] = buyQueue
-      .filter((b) => b.qty > 1e-8)
+      .filter((b) => b.qty > 1e-8 && b.qty * b.price >= 0.5)
       .map((b) => ({ price: b.price, qty: b.qty, time: b.time }));
 
     this.data.state.lots = remainingLots;
     if (this.data.statesBySymbol && this.data.statesBySymbol[normSym]) {
       this.data.statesBySymbol[normSym]!.lots = [...remainingLots];
+    }
+    if (remainingLots.length === 0) {
+      this.data.state.maFanPosition = null;
+      if (this.data.statesBySymbol && this.data.statesBySymbol[normSym]) {
+        (this.data.statesBySymbol[normSym] as any).maFanPosition = null;
+      }
     }
     this.data.state.recentOrders = this.data.orders.slice(0, 100);
 

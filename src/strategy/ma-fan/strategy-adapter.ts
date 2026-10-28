@@ -463,9 +463,7 @@ export class MaFanTradingStrategy implements IStrategy {
 
   public reloadState(): void {
     const saved = this.db.getState();
-    if (saved?.maFanPosition) {
-      this.maFan.restorePosition(saved.maFanPosition);
-    }
+    this.maFan.restorePosition(saved?.maFanPosition || null);
     this.emitTelemetryTick();
   }
 

@@ -79,72 +79,68 @@
       </div>
     </header>
 
-    <!-- ═══════════════════ 2-Card Consolidated KPI Summary Strip ═══════════════════ -->
-    <section class="kpi-summary-bar kpi-two-grid">
-      <!-- Card 1: Merged Wallet Assets & Position Capacity -->
-      <div class="kpi-card kpi-wallet-pos">
-        <div class="kpi-header">
-          <span class="kpi-tag">💼 กระเป๋า &amp; การถือครอง (WALLET &amp; POSITION)</span>
-          <div class="kpi-badge-group">
-            <span class="kpi-badge badge-wallet" id="topWalletAddrBadge">Binance</span>
-            <span class="kpi-badge badge-soft" id="topWalletTotalVal">Total: $0.00</span>
-            <span class="kpi-badge badge-cyan" id="topPosBadge">0.0%</span>
-            <span class="kpi-badge badge-soft" id="topCapPct">0% Load</span>
-            <span class="kpi-badge badge-soft kpi-clickable-badge" id="lotsCount" title="คลิกเพื่อเปิดหน้าจัดการ Lots ที่ถือครอง">0 Open Lots</span>
-          </div>
-        </div>
-        <div class="wallet-pos-dual-grid">
-          <div class="wallet-pos-half wallet-half-cash">
-            <div class="pos-half-top">
-              <span class="pnl-mini-tag text-purple">เงินสดในกระเป๋า (WALLET CASH)</span>
-            </div>
-            <div class="kpi-val highlight-purple" id="topWalletUsdso">$0.00 USDT</div>
-            <div class="kpi-sub-inline" id="topWalletSomi">0.0000 BASE</div>
-          </div>
-          <div class="trigger-divider"></div>
-          <div class="wallet-pos-half wallet-half-inv">
-            <div class="pos-half-top">
-              <span class="pnl-mini-tag text-cyan">ของที่ถือครอง (HELD POSITION)</span>
-              <span class="kpi-val-sub"><span class="kpi-usd" id="topPosUsd">$0.00</span> <span class="kpi-dim">/ งบ $<span id="topMaxInv">80</span></span></span>
-            </div>
-            <div class="kpi-val text-cyan" id="topPosBase">0.0000 BASE</div>
-            <div class="mini-progress-track">
-              <div class="mini-progress-fill" id="inventoryProgress" style="width: 0%;"></div>
-            </div>
-            <span id="inventoryUsd" style="display: none;">$0.00</span>
-          </div>
+    <!-- ═══════════════════ Sleek Studio KPI Summary Bar (Backtest Style) ═══════════════════ -->
+    <section class="studio-kpi-bar" id="kpiBar">
+      <!-- 1. กำไรสุทธิ (REALIZED PNL) -->
+      <div class="studio-kpi-card" id="cardRealizedPnl">
+        <div class="studio-kpi-label">💰 กำไรสุทธิ (REALIZED PNL)</div>
+        <div class="studio-kpi-val pnl-neutral" id="realizedPnl">$0.0000</div>
+        <div class="studio-kpi-sub" id="lossStopInfo">
+          <span id="kpiTradePnl" style="color: #4ade80; font-weight: 600;">Trade: +$0.00</span>
+          <span id="kpiGasSpent" style="color: #fbbf24; font-weight: 600; display: none;"></span>
         </div>
       </div>
 
-      <!-- Card 2: Profit & Loss (Unrealized + Realized) -->
-      <div class="kpi-card kpi-pnl">
-        <div class="kpi-header">
-          <span class="kpi-tag">💰 กำไร / ขาดทุน (PNL &amp; PERFORMANCE)</span>
-          <div class="kpi-badge-group">
-            <span class="kpi-badge badge-neutral" id="topUnrealizedBadge">0.00%</span>
-          </div>
+      <!-- 2. ถือรอขาย (UNREALIZED PNL) -->
+      <div class="studio-kpi-card" id="cardUnrealizedPnl">
+        <div class="studio-kpi-label">📈 ถือรอขาย (UNREALIZED PNL)</div>
+        <div class="studio-kpi-val pnl-neutral" id="posUnrealizedPnl">+$0.00 (0.00%)</div>
+        <div class="studio-kpi-sub">
+          ทุนเฉลี่ย: <span class="kpi-mono" id="posAvgEntry">--.------</span>
+          <span class="kpi-badge badge-neutral" id="topUnrealizedBadge" style="display: none;">0.00%</span>
         </div>
-        <div class="pnl-dual-grid">
-          <div class="pnl-half">
-            <div class="pnl-half-top">
-              <span class="pnl-mini-tag">ถือรอขาย (UNREALIZED)</span>
-            </div>
-            <div class="kpi-val pnl-neutral" id="posUnrealizedPnl">+$0.00</div>
-            <div class="pnl-half-sub">
-              ทุนเฉลี่ย: <span class="kpi-mono" id="posAvgEntry">--.------</span>
-            </div>
-          </div>
-          <div class="trigger-divider"></div>
-          <div class="pnl-half">
-            <div class="pnl-half-top">
-              <span class="pnl-mini-tag">กำไรสุทธิ (REALIZED)</span>
-            </div>
-            <div class="kpi-val pnl-neutral" id="realizedPnl">$0.0000</div>
-            <div class="pnl-half-sub" id="lossStopInfo">
-              <span id="kpiTradePnl" style="color: #4ade80; font-weight: 600;">Trade: +$0.00</span>
-              <span id="kpiGasSpent" style="color: #fbbf24; font-weight: 600; display: none;"></span>
-            </div>
-          </div>
+      </div>
+
+      <!-- 3. เงินสดในกระเป๋า (WALLET CASH) -->
+      <div class="studio-kpi-card" id="cardWalletCash">
+        <div class="studio-kpi-label">💵 เงินสดในกระเป๋า (WALLET CASH)</div>
+        <div class="studio-kpi-val highlight-purple" id="topWalletUsdso">$0.00 USDT</div>
+        <div class="studio-kpi-sub">
+          <span id="topWalletTotalVal">Total: $0.00</span>
+          <span id="topWalletSomi" style="display: none;">0.0000 BASE</span>
+          <span id="topWalletAddrBadge" style="display: none;">Binance</span>
+        </div>
+      </div>
+
+      <!-- 4. ของที่ถือครอง (HELD POSITION) -->
+      <div class="studio-kpi-card" id="cardHeldPos">
+        <div class="studio-kpi-label">📦 ของที่ถือครอง (HELD POSITION)</div>
+        <div class="studio-kpi-val text-cyan" id="topPosBase">0.0000 BASE</div>
+        <div class="studio-kpi-sub">
+          <span class="kpi-usd" id="topPosUsd">$0.00</span> / งบ $<span id="topMaxInv">80</span>
+          <span class="kpi-badge badge-soft" id="topCapPct" style="margin-left: 4px;">0% Load</span>
+          <span class="kpi-badge badge-cyan" id="topPosBadge" style="display: none;">0.0%</span>
+          <span class="kpi-badge badge-soft kpi-clickable-badge" id="lotsCount" style="margin-left: 4px; cursor: pointer;" title="คลิกเพื่อเปิดหน้าจัดการ Lots ที่ถือครอง">0 ไม้</span>
+          <span id="inventoryUsd" style="display: none;">$0.00</span>
+          <div class="mini-progress-fill" id="inventoryProgress" style="display: none;"></div>
+        </div>
+      </div>
+
+      <!-- 5. WIN RATE / สถิติรอบ (WIN RATE & TRADES) -->
+      <div class="studio-kpi-card" id="cardWinRate">
+        <div class="studio-kpi-label">🎯 WIN RATE / ไม้ทั้งหมด</div>
+        <div class="studio-kpi-val" id="liveWinRate" style="color: #4ade80;">100.0%</div>
+        <div class="studio-kpi-sub" id="liveTradesSummary">
+          <span id="liveWinLoss">1 ชนะ / 0 แพ้</span> (<span id="liveTotalTrades">รวม 1 ไม้</span>)
+        </div>
+      </div>
+
+      <!-- 6. สถานะระบบ (BOT STATUS) -->
+      <div class="studio-kpi-card" id="cardBotStatus">
+        <div class="studio-kpi-label">⚙️ สถานะระบบ (BOT STATUS)</div>
+        <div class="studio-kpi-val" id="liveBotStatusText" style="color: #38bdf8; font-size: 16px;">🟢 RUNNING</div>
+        <div class="studio-kpi-sub" id="liveBotStatusSub">
+          MA-FOLD-FAN • <span id="liveActiveTf">5m</span>
         </div>
       </div>
     </section>
