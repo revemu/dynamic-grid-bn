@@ -34,6 +34,7 @@ export class MaFanTradingStrategy implements IStrategy {
   private eventListeners: ((event: StrategyEvent) => void)[] = [];
   private maFan: MaFanStrategy;
   private isSwitchingSymbol: boolean = false;
+  private context: StrategyContext;
 
   private walletBase: number = 0;
   private walletQuote: number = 0;
@@ -47,6 +48,7 @@ export class MaFanTradingStrategy implements IStrategy {
   private lastBalanceSyncTs: number = 0;
 
   constructor(context: StrategyContext) {
+    this.context = context;
     this.exchange = context.exchange;
     this.symbolInfo = context.symbolInfo;
     this.cfg = context.config;
@@ -501,6 +503,18 @@ export class MaFanTradingStrategy implements IStrategy {
       client: newExchange,
       dryRun: this.cfg.dryRun,
     });
+    if (this.context.macroDowEngine) {
+      const candles = this.context.macroDowEngine.getCandles();
+      if (candles.length > 0) {
+        this.maFan.setInitialCandles(candles);
+      }
+    }
+    if (this.context.htfDowEngine) {
+      const htfCandles = this.context.htfDowEngine.getCandles();
+      if (htfCandles.length > 0) {
+        this.maFan.setInitialHtfCandles(htfCandles);
+      }
+    }
     this.isSwitchingSymbol = false;
   }
 
@@ -508,6 +522,18 @@ export class MaFanTradingStrategy implements IStrategy {
     this.symbolInfo = nextInfo;
     this.atrSource = atrSource;
     this.maFan.symbol = nextInfo.symbol;
+    if (this.context.macroDowEngine) {
+      const candles = this.context.macroDowEngine.getCandles();
+      if (candles.length > 0) {
+        this.maFan.setInitialCandles(candles);
+      }
+    }
+    if (this.context.htfDowEngine) {
+      const htfCandles = this.context.htfDowEngine.getCandles();
+      if (htfCandles.length > 0) {
+        this.maFan.setInitialHtfCandles(htfCandles);
+      }
+    }
     this.isSwitchingSymbol = false;
   }
 }

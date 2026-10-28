@@ -12,7 +12,7 @@ export class AutoCalibrator {
   public static calibrate(
     symbol: string,
     candles: Candle[],
-    candidateSpreads: number[] = [0.25, 0.35, 0.45, 0.55, 0.65]
+    candidateSpreads: number[] = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65]
   ): CalibrationResult {
     const candidatesResults: {
       spreadPct: number;

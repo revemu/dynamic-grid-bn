@@ -157,7 +157,7 @@ export class BacktestService {
     // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
     if (opts.spreadThreshold === "auto" || !opts.spreadThreshold) {
-      const cal = AutoCalibrator.calibrate(symbol, candles, [0.25, 0.35, 0.45, 0.55, 0.65]);
+      const cal = AutoCalibrator.calibrate(symbol, candles);
       spread = cal.bestSpreadPct || 0.25;
     }
 

@@ -5131,6 +5131,24 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ปรับฟังก์ชัน `closeCandleInspector()` และ `closeBtCandleInspector()` ให้สั่ง `style.display = "none"` และ `classList.remove("active")` ทั้งบนเส้นประแนวตั้งและตัวกล่อง Inspector โดยตรง
      - ปรับฟังก์ชัน `updateCandleInspectorPosition()` ให้ตรวจเช็ค `!pinnedCandleTime` หากไม่ได้ปักหมุดแท่งเทียน จะการันตีสั่งซ่อนทั้งเส้นและกล่องออกไป 100%
 
+---
+
+## 134. v0.2.134 — Fix MA Fan Auto-Calibration on Symbol Switch & Align Inspector Spread Threshold
+
+1. **สาเหตุของปัญหา Spread ใน Backtest ไม่ตรงกับหน้าเทรดจริง (0.35% vs 0.30%)**:
+   - **Sample Size ต่างกัน (1,000 แท่ง vs 300 แท่ง)**: Backtest ทดสอบ 1,000 แท่ง (~3.5 วัน) ในขณะที่หน้าเทรดจริงดึงเพียง 300 แท่ง (`initialCandleCount: 300`) ซึ่งในรอบ 1,000 แท่ง สเปรด 0.35% ให้กำไรและ Win Rate ดีที่สุด (93.3%) ส่วนใน 300 แท่งล่าสุด กราฟวิ่งแคบกว่า พัดไม่เคยกางถึง 0.35% Sweet Spot จึงเป็น 0.25%
+   - **ATR Adaptive Spread Override**: ในหน้าเทรดจริงเปิดใช้งาน `useAtrAdaptiveSpread: true` ซึ่งมีสูตร $\max(\text{baseSpread}, \text{ATR\%} \times \text{Multiplier})$ ณ เวลาเทรดจริง $\text{ATR\%} \times 1.25 = 0.296\% \approx 0.30\%$ ทำให้หน้าจอแสดง 0.30%
+   - **บั๊กตอนสลับเหรียญ (`updateSymbolInfo`)**: ใน `strategy-adapter.ts` เมื่อผู้ใช้สลับเหรียญ ระบบไม่ได้ส่งแท่งเทียนชุดใหม่เข้า `this.maFan` และไม่ได้สั่ง `calibrateSpread()` ทำให้ `lastCalibration` ในบอทค้างเป็นของเหรียญเดิมก่อนหน้า
+   - **ความไม่สอดคล้องของ Candidate Spreads**: รายการเดิมมี `[0.25, 0.35, 0.45, 0.55, 0.65]` ไม่มี 0.30%
+   - **บั๊กเกณฑ์ในป๊อปอัป Inspector แสดง 0.25% ไม่ตรงกับการ์ดขวา (0.30%)**: ใน `public/app.js` ฟังก์ชัน `openCandleInspector` และ `updateRibbonLegend` ไปเรียก `latestGridData?.fanSpreadThreshold || latestGridData?.minFanSpread || 0.25` ซึ่งฟิลด์เหล่านี้ไม่มีอยู่ใน MA Fan (ฟิลด์จริงคือ `effectiveSpreadThreshold`) จึง fallback เป็น 0.25 ตลอดเวลา
+
+2. **การแก้ไขและการปรับปรุง (`src/strategy/ma-fan/strategy-adapter.ts`, `calibrator.ts`, `backtest-service.ts`, `public/app.js`)**:
+   - ใน `strategy-adapter.ts`: ปรับปรุงทั้ง `updateSymbolInfo` และ `updateExchangeClient` ให้ดึงแท่งเทียนชุดใหม่จาก `macroDowEngine` และ `htfDowEngine` ส่งเข้า `this.maFan.setInitialCandles()` และ `this.maFan.setInitialHtfCandles()` เพื่อให้ระบบรัน `calibrateSpread()` ทันทีที่มีการสลับเหรียญ
+   - ใน `calibrator.ts`: ปรับ `candidateSpreads` ให้มีความละเอียดสเต็ปละ 0.05%: `[0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65]` เพื่อให้ครอบคลุมและยืดหยุ่นยิ่งขึ้น
+   - ใน `backtest-service.ts`: ใช้ default candidateSpreads ชุดใหม่ของ AutoCalibrator
+   - ใน `public/app.js`: ปรับ `openCandleInspector` และ `updateRibbonLegend` ให้อ่านจาก `latestGridData?.effectiveSpreadThreshold` เป็นลำดับแรก ทำให้เกณฑ์ขั้นต่ำในป๊อปอัปและ Legend ตรงกับการ์ด MA Fan ด้านขวาแบบ 100%
+
+
 
 
 

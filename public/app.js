@@ -1319,7 +1319,7 @@
     const el75 = document.getElementById("legEma75"); if (el75) { el75.textContent = fmtPrice(data.ema75); el75.style.color = curColors.c75; }
     const el200 = document.getElementById("legEma200"); if (el200) { el200.textContent = fmtPrice(data.ema200); el200.style.color = curColors.c200; }
 
-    const targetSpread = latestGridData?.fanSpreadThreshold || latestGridData?.minFanSpread || 0.25;
+    const targetSpread = latestGridData?.effectiveSpreadThreshold || latestGridData?.fanSpreadThreshold || latestGridData?.minFanSpread || 0.25;
     if (elLegFanSpreadChip && elLegFanSpreadVal) {
       if (data.spreadPct >= targetSpread) {
         elLegFanSpreadChip.style.background = "rgba(16, 185, 129, 0.2)";
@@ -1349,7 +1349,7 @@
     const changePct = c.open > 0 ? ((c.close - c.open) / c.open) * 100 : 0;
     const changeColor = changePct >= 0 ? "#34d399" : "#f87171";
 
-    const targetSpread = latestGridData?.fanSpreadThreshold || latestGridData?.minFanSpread || 0.25;
+    const targetSpread = latestGridData?.effectiveSpreadThreshold || latestGridData?.fanSpreadThreshold || latestGridData?.minFanSpread || 0.25;
     const isSpreadReady = data.spreadPct >= targetSpread;
     const spreadDiff = data.spreadPct - targetSpread;
 
