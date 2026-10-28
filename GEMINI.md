@@ -5474,3 +5474,17 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ใน `public/app.js`: ปลดตัวแปร `activeSymbol` ให้ว่าง และ `await loadSettings()` ก่อนโหลดประวัติเทรด รวมถึงดักจับเมื่อได้รับ Tick ของเหรียญใหม่ ให้รีเฟรชตารางประวัติเทรดและสรุปรอบเทรดทันที
      - ใน `src/strategy/ma-fan/strategy.ts`: เพิ่ม `restoreMetricsFromDb()` ให้ดึงสรุปประวัติจริงจาก `this.db.getTradeRounds(this.symbol)` มากำหนด `totalCycles`, `winCount`, `lossCount`, และ `realizedPnl` ทันทีเมื่อเปิดบอท
      - ใน `src/server.ts`: ให้ `/api/db/trade-manager` และ `/api/db/rounds` ใช้คู่เหรียญปัจจุบันของบอทเป็นค่าเริ่มต้นเมื่อไม่ได้ระบุ `?symbol=`
+
+
+---
+
+## 152. v0.2.152 — Fix Large Vertical Blank Space Above Chart Canvas (`public/index.html`, `public/style.css`)
+
+1. **แก้ไขช่องว่างสีดำขนาดใหญ่เหนือกราฟ (Eliminate Giant Vertical Blank Space)**:
+   - **สาเหตุที่พบ**:
+     - ใน `public/index.html` มีแท็กปิด `</div>` เกินมา 1 ตัวหลังแถบแผน `maFanPlanCard` ทำให้คอนเทนเนอร์หลัก `.col-chart` ถูกปิดก่อนเวลา (Premature DOM closing)
+     - ส่งผลให้ `.col-chart` ครอบเฉพาะแถบ `maFanPlanCard` แต่ใน `public/style.css` คลาส `.col-chart` มีการกำหนด `min-height: 520px; height: 560px;` ไว้ ทำให้เกิดกล่องว่างขนาดใหญ่ ~500px คั่นกลาง ก่อนที่ `.chart-panel` จะเริ่มแสดงผล
+   - **การแก้ไข**:
+     - ลบแท็ก `</div>` ที่เกินใน `public/index.html` ออก ทำให้ `maFanPlanCard` และ `.chart-panel` อยู่ในกล่องเดียวกันอย่างถูกต้อง
+     - ปรับปรุง CSS `.col-chart` ใน `public/style.css` ให้ยืดหยุ่น (`flex: 1; min-height: 540px;` โดยไม่ล็อก `height: 560px`)
+     - แถบเป้าหมายการเทรดและตัวกราฟกลับมาประกบชิดกันพอดี ไร้ช่องว่างสีดำ 100%

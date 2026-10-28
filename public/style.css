@@ -373,9 +373,8 @@ body {
 .col-chart {
   display: flex;
   flex-direction: column;
-  min-height: 520px;
-  height: 560px;
-  overflow: hidden;
+  flex: 1;
+  min-height: 540px;
   gap: 8px;
   width: 100%;
 }
