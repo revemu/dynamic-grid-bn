@@ -284,6 +284,14 @@ async function main(): Promise<void> {
     htfDowEngine,
   });
   await grid.syncOnChainOrders();
+  if (exchange.exchangeName === "binance" && !config.dryRun && exchange.hasCredentials()) {
+    try {
+      await grid.getDatabase().syncRecentTradesFromBinance(exchange, activeSymbol);
+      grid.reloadState();
+    } catch (err: any) {
+      log(`⚠️ Failed to sync trades from Binance on boot: ${err.message}`);
+    }
+  }
   await grid.refreshWalletBalances();
 
   // 🛡️ Safe Boot: Always ensure bot starts in PAUSED mode on startup across all strategies
@@ -692,6 +700,19 @@ async function main(): Promise<void> {
     onReloadState: () => {
       grid.reloadState();
       grid.emitTelemetryTick();
+    },
+    onSyncExchangeTrades: async () => {
+      const cfg = grid.getRuntimeConfig();
+      const currentSym = cfg.symbol || activeSymbol;
+      let res: { success: boolean; synced: number; purged?: number; error?: string };
+      if (exchange.exchangeName === "binance") {
+        res = await grid.getDatabase().syncRecentTradesFromBinance(exchange, currentSym);
+      } else {
+        res = { success: false, synced: 0, error: `Trade reconciliation not supported for exchange: ${exchange.exchangeName}` };
+      }
+      grid.reloadState();
+      grid.emitTelemetryTick();
+      return res;
     },
   });
 

@@ -5326,6 +5326,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - เพิ่มตรรกะใน `recoverMissingSwingTrades()` และ `backfillMissingSellPnl()` ให้ตรวจสอบออเดอร์ MA Fan (เช่น `orderId` ขึ้นต้นด้วย `mf_` หรือมีข้อความ `Fan Spread` / `EMA 25 Mean Reversion`) และซ่อมแซมคืนค่า `symbol = "HAEDALUSDT"`, `baseAsset = "HAEDAL"`, `quoteAsset = "USDT"` โดยอัตโนมัติ
        - เมื่อรีสตาร์ทบอท ออเดอร์ไม้ซื้อและ TP1 ของ HAEDAL จะปรากฏในหน้าต่างประวัติการเทรดและคำนวณรอบเทรดได้อย่างสมบูรณ์แบบ
 
+---
+
+## 148. v0.2.148 — Binance Trade Synchronization & Order Reconciliation Engine (`syncRecentTradesFromBinance`)
+
+1. **ระบบดึงและกระทบยอดประวัติเทรดจริงจาก Binance REST API (`GET /api/v3/myTrades`)**:
+   - **สาเหตุของปัญหา**:
+     - เมื่อผู้ใช้ทำการขายไม้ที่สอง (TP2/Runner) ด้วยตนเองบนกระดาน Binance หรือเมื่อออเดอร์จับคู่แล้วประวัติในฐานข้อมูลตกหล่น การให้ผู้ใช้กรอกรายการแบบ Manual ผ่านหน้าต่าง Trade Manager เสี่ยงต่อ Human Error สูง (เช่น การพิมพ์ราคา `$0.303` แทนที่จะเป็น `$0.0303` ส่งผลให้มูลค่า Notional พุ่งขึ้นเป็น `$258.03` แทนที่จะเป็น `$25.80`, ขาดฟิลด์ symbol, และฟีดข่าวสารแสดงผลเบิ้ล 3 รายการ)
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - **Exchange Layer (`src/exchange/types.ts` & `src/exchange/binance/client.ts`)**:
+       - ประกาศ Interface มาตรฐาน `ExchangeTrade` และเพิ่มเมธอด `getMyTrades?(symbol: string, limit?: number)` บน `IExchangeClient`
+       - ใช้งาน Binance REST API `GET /api/v3/myTrades` ดึงประวัติการจับคู่คำสั่งซื้อขายจริง (Realized Trades) ที่มีราคาจริง (`price`), จำนวนจริง (`qty`), มูลค่ารวม (`quoteQty`), ค่าธรรมเนียมจริง (`commission`), สกุลเงินค่าธรรมเนียม (`commissionAsset`), และเวลาจริง (`time`)
+     - **Database Layer (`src/db.ts`)**:
+       - เพิ่มเมธอด `syncRecentTradesFromBinance(client, symbol, limit)`:
+         1. ดึงประวัติเทรดล่าสุดจาก Binance
+         2. ล้างข้อมูลเทรด Manual ปลอม/ที่กรอกผิด (`manual_...`) ที่มีราคาเพี้ยนหรือไม่มีสัญลักษณ์คู่เหรียญออกโดยอัตโนมัติ
+         3. จับคู่ออเดอร์จริงเข้ากับระบบ หากเป็นออเดอร์ที่มีอยู่แล้วจะอัปเดตราคาและสถานะเป็น `FILLED` พร้อมบันทึก `tradeId` และค่าธรรมเนียมจริง
+         4. หากเป็นออเดอร์ใหม่ที่ถูกส่งจากภายนอก (เช่น ผู้ใช้เปิดแอป Binance ไปกดขายด้วยตนเอง) ระบบจะสร้างเรคอร์ด `SELL_FILL` หรือ `BUY_FILL` ที่สมบูรณ์ให้อัตโนมัติ
+       - เพิ่มฟังก์ชัน `recalculateFifoPnlForSymbol(symbol)`:
+         - คำนวณกำไร Realized PnL แบบ First-In First-Out (FIFO) เปรียบเทียบต้นทุนไม้ซื้อกับราคาขายจริงของ Binance ทุกไม้ พร้อมหักค่าธรรมเนียมอย่างแม่นยำ
+         - อัปเดต `lots` ให้ตรงกับสถานะจริง (หากขายหมดแล้ว จะเคลียร์ `lots = []` เหลือ 0.0000 เหรียญ)
+         - สรุปยอด `state.tradeRealizedPnl` และ `state.realizedPnl` เข้าสู่หัวเว็บแดชบอร์ดอย่างแม่นยำ
+     - **Server & Strategy Layer (`src/server.ts` & `src/index.ts`)**:
+       - เพิ่ม Endpoint `POST /api/db/trades/sync-exchange` (และ `/api/db/trades/sync-binance`)
+       - สั่งให้บอทรัน `syncRecentTradesFromBinance` โดยอัตโนมัติขณะบูตเครื่อง (Boot Sync)
+     - **Dashboard UI (`public/index.html` & `public/app.js`)**:
+       - เพิ่มปุ่มกด **"🔄 Reconcile จาก Binance"** ในหน้าต่าง Trade Manager ให้กดซิงค์ประวัติจริงได้ในคลิกเดียว
+       - เพิ่มระบบป้องกันในฟอร์ม Manual Add Trade: ตรวจสอบความสมบูรณ์ของ `symbol` และมีระบบ Safety Confirmation เตือนเมื่อราคาที่กรอกห่างจากราคาตลาดปัจจุบันเกิน 50%
+
+
 
 
 

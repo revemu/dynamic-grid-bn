@@ -6113,6 +6113,7 @@
   const elConfirmAddTradeBtn = document.getElementById("confirmAddTradeBtn");
   const elTmBtnOpenAddTrade = document.getElementById("tmBtnOpenAddTrade");
   const elTmBtnReconcilePnl = document.getElementById("tmBtnReconcilePnl");
+  const elTmBtnSyncExchange = document.getElementById("tmBtnSyncExchange");
   const elAddTradeStatus = document.getElementById("addTradeStatus");
 
   const elAtfAction = document.getElementById("atf_action");
@@ -6945,16 +6946,27 @@
         return;
       }
 
+      // Price sanity check against current market price
+      if (typeof latestPrice === "number" && latestPrice > 0) {
+        const diffRatio = Math.abs(price - latestPrice) / latestPrice;
+        if (diffRatio > 0.5) {
+          const proceed = confirm(`⚠️ คำเตือน: ราคาที่กรอก ($${price}) แตกต่างจากราคาตลาดปัจจุบัน ($${latestPrice}) เกิน 50% คุณแน่ใจหรือไม่ว่าใส่จุดทศนิยมถูกต้อง?`);
+          if (!proceed) return;
+        }
+      }
+
       if (elConfirmAddTradeBtn) {
         elConfirmAddTradeBtn.disabled = true;
         elConfirmAddTradeBtn.textContent = "กำลังเพิ่ม...";
       }
 
+      const targetSymbol = activeSymbol || (activeBaseAsset ? `${activeBaseAsset}USDT` : "") || (currentConfig && currentConfig.symbol) || "HAEDALUSDT";
+
       const res = await fetch(`${API_BASE}/api/db/trades/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol: activeSymbol || activeBaseAsset,
+          symbol: targetSymbol,
           price,
           qty,
           action,
@@ -6967,10 +6979,6 @@
 
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Add trade failed");
-
-      if (status === "FILLED" && data.order) {
-        addOrderActivity(data.order, false);
-      }
 
       if (elAddTradeModal) elAddTradeModal.style.display = "none";
       loadTradeManagerData();
@@ -7158,6 +7166,34 @@
       } finally {
         elTmBtnReconcilePnl.disabled = false;
         elTmBtnReconcilePnl.innerHTML = origText;
+      }
+    });
+  }
+
+  if (elTmBtnSyncExchange) {
+    elTmBtnSyncExchange.addEventListener("click", async () => {
+      const origText = elTmBtnSyncExchange.innerHTML;
+      try {
+        elTmBtnSyncExchange.disabled = true;
+        elTmBtnSyncExchange.innerHTML = "<span>🔄 กำลังดึงประวัติจาก Binance...</span>";
+        const res = await fetch(`${API_BASE}/api/db/trades/sync-exchange`, { method: "POST" });
+        const data = await res.json();
+        if (data.success) {
+          await refreshFrontPageState();
+          loadTradeManagerData();
+          showToast({
+            title: "RECONCILED WITH BINANCE",
+            desc: `กระทบยอดสำเร็จ! ซิงค์ ${data.synced || 0} รายการ (ลบรายการ Manual เก่า ${data.purged || 0} รายการ)`,
+            action: "TAKE_PROFIT",
+          });
+        } else {
+          showToast({ title: "SYNC FAILED", desc: data.error || "ไม่สามารถดึงข้อมูลจาก Binance ได้", action: "CUT" });
+        }
+      } catch (err) {
+        showToast({ title: "SYNC ERROR", desc: err.message, action: "CUT" });
+      } finally {
+        elTmBtnSyncExchange.disabled = false;
+        elTmBtnSyncExchange.innerHTML = origText;
       }
     });
   }

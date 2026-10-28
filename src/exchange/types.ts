@@ -94,6 +94,20 @@ export interface PlaceOrderParams {
   expireHours?: number;
 }
 
+export interface ExchangeTrade {
+  symbol: string;
+  id: number | string;
+  orderId: number | string;
+  price: number;
+  qty: number;
+  quoteQty: number;
+  commission: number;
+  commissionAsset: string;
+  time: number;
+  isBuyer: boolean;
+  isMaker?: boolean;
+}
+
 export interface IExchangeClient {
   readonly exchangeName: string;
   readonly isDex: boolean;
@@ -115,6 +129,7 @@ export interface IExchangeClient {
   getCredentials?(): { apiKey: string; apiSecret: string };
   getTransactionFee?(txHash: string): Promise<number | undefined>;
   getRecentOrders?(symbol: string, limit?: number): Promise<ExchangeOpenOrder[]>;
+  getMyTrades?(symbol: string, limit?: number): Promise<ExchangeTrade[]>;
   createUserDataStream?(): Promise<string>;
   keepAliveUserDataStream?(listenKey: string): Promise<void>;
   closeUserDataStream?(listenKey: string): Promise<void>;

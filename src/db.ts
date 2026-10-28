@@ -131,6 +131,10 @@ export interface UnifiedOrderRecord {
 
   // Execution & PnL
   fillPrice?: number;
+  executedQty?: number;
+  fee?: number;
+  feeAsset?: string;
+  tradeId?: number | string;
   pnl?: number;
   pnlQuote?: number;
   pnlUsdso?: number;
@@ -1432,6 +1436,254 @@ export class BotDatabase {
       this.log(`⚠️ [syncRecentOrdersFromIndexer] failed: ${(err as Error).message}`);
       return 0;
     }
+  }
+
+  /**
+   * Reconcile real executed trades directly from Binance REST API (`GET /api/v3/myTrades`).
+   * Matches fills, inserts missing executions (including trades placed on Binance web/app),
+   * purges corrupted manual entries, and recalculates accurate FIFO Realized PnL.
+   */
+  public async syncRecentTradesFromBinance(
+    exchangeClient: any,
+    symbol: string,
+    limit = 100,
+  ): Promise<{ success: boolean; synced: number; purged: number; error?: string }> {
+    if (!exchangeClient) {
+      return { success: false, synced: 0, purged: 0, error: "Exchange client not provided" };
+    }
+    if (typeof exchangeClient.getMyTrades !== "function") {
+      return { success: false, synced: 0, purged: 0, error: "Exchange client does not support getMyTrades" };
+    }
+    if (typeof exchangeClient.hasCredentials === "function" && !exchangeClient.hasCredentials()) {
+      return { success: false, synced: 0, purged: 0, error: "Exchange credentials not configured" };
+    }
+
+    try {
+      const normSym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+      const trades = await exchangeClient.getMyTrades(normSym, limit);
+
+      if (!Array.isArray(trades) || trades.length === 0) {
+        this.log(`ℹ️ [syncRecentTradesFromBinance] No trades returned from Binance for ${normSym}`);
+        return { success: true, synced: 0, purged: 0 };
+      }
+
+      this.log(`📥 [syncRecentTradesFromBinance] Received ${trades.length} trades from Binance for ${normSym}`);
+
+      // Sort trades ascending by time
+      trades.sort((a: any, b: any) => Number(a.time) - Number(b.time));
+
+      let syncedCount = 0;
+      let purgedCount = 0;
+
+      if (!Array.isArray(this.data.orders)) {
+        this.data.orders = [];
+      }
+
+      // 1. Purge corrupted manual records for this symbol (or records with blank symbol)
+      this.data.orders = this.data.orders.filter((o) => {
+        const isManual =
+          (o.id && o.id.startsWith("manual_")) ||
+          (o.orderId && o.orderId.startsWith("ord_manual_")) ||
+          o.reason?.includes("Manual") ||
+          o.levelDesc?.includes("Manual");
+        if (isManual) {
+          if (!o.symbol || this.matchesSymbol(o, normSym)) {
+            purgedCount++;
+            return false;
+          }
+        }
+        return true;
+      });
+
+      // 2. Map existing orders by orderId and tradeId
+      const ordersByOrderId = new Map<string, UnifiedOrderRecord>();
+      const ordersByTradeId = new Map<string, UnifiedOrderRecord>();
+      for (const o of this.data.orders) {
+        if (o.orderId) ordersByOrderId.set(o.orderId.toString(), o);
+        if (o.tradeId) ordersByTradeId.set(o.tradeId.toString(), o);
+      }
+
+      // 3. Reconcile or insert each Binance trade
+      for (const t of trades) {
+        const tId = t.id.toString();
+        const oId = t.orderId.toString();
+        const side: "BUY" | "SELL" = t.isBuyer ? "BUY" : "SELL";
+        const price = Number(t.price);
+        const qty = Number(t.qty);
+        const quoteQty = Number(t.quoteQty || price * qty);
+        const fee = Number(t.commission || 0);
+        const feeAsset = t.commissionAsset || "";
+        const time = Number(t.time);
+
+        // Find existing order by tradeId or orderId or time/price proximity
+        let existing = ordersByTradeId.get(tId) || ordersByOrderId.get(oId);
+        if (!existing) {
+          existing = this.data.orders.find((o) => {
+            if (o.side !== side) return false;
+            if (!this.matchesSymbol(o, normSym)) return false;
+            const timeDiff = Math.abs((o.fillTime || o.placedTime || o.time) - time);
+            const priceDiff = Math.abs(o.price - price) / (price || 1);
+            return timeDiff < 15000 && priceDiff < 0.01;
+          });
+        }
+
+        if (existing) {
+          existing.orderId = oId;
+          existing.tradeId = tId;
+          existing.status = "FILLED";
+          existing.fillPrice = price;
+          existing.fillTime = time;
+          existing.executedQty = qty;
+          existing.qty = qty;
+          existing.notionalQuote = quoteQty;
+          existing.notional = quoteQty;
+          existing.notionalUsdso = quoteQty;
+          existing.fee = fee;
+          existing.feeAsset = feeAsset;
+          if (!existing.action || existing.action === "CREATE_BUY" || existing.action === "CREATE_SELL") {
+            existing.action = side === "BUY" ? "BUY_FILL" : "SELL_FILL";
+          }
+          ordersByTradeId.set(tId, existing);
+          ordersByOrderId.set(oId, existing);
+          syncedCount++;
+        } else {
+          const newOrder: UnifiedOrderRecord = {
+            id: `bin_${time}_${tId}`,
+            orderId: oId,
+            symbol: normSym,
+            baseAsset: normSym.replace(/(USDT|FDUSD|USDC|USDSO|BUSD)$/i, ""),
+            quoteAsset: normSym.endsWith("USDT") ? "USDT" : normSym.endsWith("FDUSD") ? "FDUSD" : "USDC",
+            side,
+            price,
+            qty,
+            executedQty: qty,
+            notionalQuote: quoteQty,
+            notional: quoteQty,
+            notionalUsdso: quoteQty,
+            status: "FILLED",
+            action: side === "BUY" ? "BUY_FILL" : "SELL_FILL",
+            placedTime: time,
+            fillTime: time,
+            time,
+            fillPrice: price,
+            reason: side === "BUY" ? "Binance Account Trade (BUY)" : "Binance Account Trade (SELL)",
+            levelDesc: side === "BUY" ? "Reconciled Buy Fill" : "Reconciled Sell Fill",
+            maker: t.isMaker,
+            tradeId: tId,
+            fee,
+            feeAsset,
+          };
+          this.data.orders.unshift(newOrder);
+          ordersByTradeId.set(tId, newOrder);
+          ordersByOrderId.set(oId, newOrder);
+          syncedCount++;
+        }
+      }
+
+      // Sort all orders descending by time so newest orders appear at top
+      this.data.orders.sort((a, b) => (b.fillTime || b.placedTime || b.time) - (a.fillTime || a.placedTime || a.time));
+
+      // 4. Recalculate FIFO PnL
+      this.recalculateFifoPnlForSymbol(normSym);
+
+      this.log(
+        `✅ [syncRecentTradesFromBinance] Reconciled ${syncedCount} trade(s) from Binance, purged ${purgedCount} invalid manual record(s)`,
+      );
+      this.isDirty = true;
+      this.flushSync();
+      return { success: true, synced: syncedCount, purged: purgedCount };
+    } catch (err: any) {
+      this.log(`❌ [syncRecentTradesFromBinance] failed: ${err.message}`);
+      return { success: false, synced: 0, purged: 0, error: err.message };
+    }
+  }
+
+  public recalculateFifoPnlForSymbol(normSym: string): { totalRealizedPnl: number; remainingLots: Lot[] } {
+    if (!this.data || !this.data.orders) return { totalRealizedPnl: 0, remainingLots: [] };
+    if (!this.data.state) this.data.state = this.getDefaultState();
+
+    // Get all filled trades for this symbol in chronological order (oldest to newest)
+    const filledTrades = this.data.orders
+      .filter((o) => (o.status === "FILLED" || o.fillTime !== undefined) && this.matchesSymbol(o, normSym))
+      .sort((a, b) => (a.fillTime || a.placedTime || a.time) - (b.fillTime || b.placedTime || b.time));
+
+    const buyQueue: Array<{ price: number; qty: number; time: number; fee: number }> = [];
+    let symPnl = 0;
+
+    for (const trade of filledTrades) {
+      const price = Number(trade.fillPrice || trade.price || 0);
+      const qty = Number(trade.executedQty || trade.qty || 0);
+      const time = Number(trade.fillTime || trade.placedTime || trade.time || Date.now());
+      const fee = Number(trade.fee || 0);
+      const feeAsset = trade.feeAsset || "";
+
+      if (trade.side === "BUY") {
+        buyQueue.push({ price, qty, time, fee });
+        trade.pnlQuote = undefined;
+        trade.pnl = undefined;
+        trade.pnlUsdso = undefined;
+      } else if (trade.side === "SELL") {
+        let remainingSellQty = qty;
+        let totalCost = 0;
+        let matchedQty = 0;
+
+        while (remainingSellQty > 1e-8 && buyQueue.length > 0) {
+          const top = buyQueue[0];
+          const match = Math.min(top.qty, remainingSellQty);
+          totalCost += match * top.price;
+          matchedQty += match;
+          top.qty -= match;
+          remainingSellQty -= match;
+          if (top.qty <= 1e-8) {
+            buyQueue.shift();
+          }
+        }
+
+        const proceeds = matchedQty * price;
+        const feeQuote = (feeAsset === "USDT" || feeAsset === "FDUSD" || feeAsset === "USDSO") ? fee : 0;
+        const pnl = matchedQty > 0 ? (proceeds - totalCost - feeQuote) : 0;
+
+        trade.pnlQuote = pnl;
+        trade.pnl = pnl;
+        trade.pnlUsdso = pnl;
+        symPnl += pnl;
+      }
+    }
+
+    const remainingLots: Lot[] = buyQueue
+      .filter((b) => b.qty > 1e-8)
+      .map((b) => ({ price: b.price, qty: b.qty, time: b.time }));
+
+    this.data.state.lots = remainingLots;
+    if (this.data.statesBySymbol && this.data.statesBySymbol[normSym]) {
+      this.data.statesBySymbol[normSym]!.lots = [...remainingLots];
+    }
+    this.data.state.recentOrders = this.data.orders.slice(0, 100);
+
+    this.recalculateAllRealizedPnl();
+
+    return { totalRealizedPnl: symPnl, remainingLots };
+  }
+
+  public recalculateAllRealizedPnl(): void {
+    if (!this.data || !this.data.state) return;
+    let totalTradePnl = 0;
+    for (const o of this.data.orders) {
+      if (o.status === "FILLED" && o.side === "SELL") {
+        const p = Number(
+          o.pnlQuote !== undefined
+            ? o.pnlQuote
+            : o.pnlUsdso !== undefined
+            ? o.pnlUsdso
+            : (o.pnl || 0),
+        );
+        if (Number.isFinite(p)) totalTradePnl += p;
+      }
+    }
+    const totalGasQuote = this.data.state.totalGasDeductedQuote ?? this.data.state.totalGasDeductedUsdso ?? 0;
+    this.data.state.tradeRealizedPnl = totalTradePnl;
+    this.data.state.realizedPnl = totalTradePnl - totalGasQuote;
+    this.data.state.lastUpdated = Date.now();
   }
 
   // ── Strategy State CRUD ───────────────────────────────────────────────────

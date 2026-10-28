@@ -29,6 +29,7 @@ export interface DashboardServerOptions {
   onResetBot?: (opts?: { resetPnl?: boolean; clearTrades?: boolean }) => Promise<{ success: boolean }>;
   onResetPosition?: () => Promise<{ success: boolean; clearedLots: number }>;
   onReloadState?: () => void;
+  onSyncExchangeTrades?: () => Promise<{ success: boolean; synced: number; purged?: number; error?: string }>;
   maxCandles?: number;
 }
 
@@ -453,6 +454,37 @@ export class DashboardServer {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ success: false, error: (e as Error).message }));
       }
+      return;
+    }
+
+    // Trade Manager: Reconcile / Sync trades directly from Binance / Exchange
+    if (
+      (pathname === "/api/db/trades/sync-exchange" || pathname === "/api/db/trades/sync-binance") &&
+      (req.method === "POST" || req.method === "GET")
+    ) {
+      (async () => {
+        try {
+          let result: { success: boolean; synced: number; purged?: number; error?: string };
+          if (this.opts.onSyncExchangeTrades) {
+            result = await this.opts.onSyncExchangeTrades();
+          } else {
+            result = { success: false, synced: 0, error: "Exchange trade sync callback not registered" };
+          }
+          this.opts.onReloadState?.();
+          const state = this.db.getState();
+          res.writeHead(result.success ? 200 : 400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ...result,
+              tradeRealizedPnl: state.tradeRealizedPnl,
+              realizedPnl: state.realizedPnl,
+            }),
+          );
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        }
+      })();
       return;
     }
 
