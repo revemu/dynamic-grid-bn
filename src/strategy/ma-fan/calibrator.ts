@@ -7,6 +7,7 @@
 import { Candle, CalibrationResult } from "./types.js";
 import { RibbonEngine } from "./ribbon.js";
 import { ExhaustionEngine } from "./exhaustion.js";
+import { MaFanCoreRules } from "./core-rules.js";
 
 export class AutoCalibrator {
   public static calibrate(
@@ -67,22 +68,50 @@ export class AutoCalibrator {
         if (heldQty > 0) {
           if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
           const barsHeld = i - entryIdx;
+          const curAtr = atrs[i] || c.close * 0.003;
 
-          // Dynamic Ratchet SL
-          if (barsHeld >= 3) {
-            const recent3Lows = candles.slice(Math.max(0, i - 4), i + 1).map((x) => x.low);
-            const localMin = Math.min(...recent3Lows);
-            const curAtr = atrs[i] || c.close * 0.003;
-            const localSlDist = Math.max(localMin * 0.0025, curAtr * 1.0);
-            const localLow = localMin - localSlDist;
-            if (localLow > stopLossPrice && localLow < c.close) {
-              stopLossPrice = localLow;
-            }
+          // Dynamic Ratchet SL via Universal MaFanCoreRules
+          const liftedSl = MaFanCoreRules.evaluateRatchetSl({
+            candles,
+            currentIndex: i,
+            barsHeld,
+            currentSlPrice: stopLossPrice,
+            currentPrice: c.close,
+            curAtr,
+            slBufferPct: 0.25,
+            useRatchetSl: true,
+          });
+          if (liftedSl !== null && liftedSl > stopLossPrice) {
+            stopLossPrice = liftedSl;
           }
 
-          // Stop Loss
-          if (c.low <= stopLossPrice) {
-            const exitP = stopLossPrice;
+          // Evaluate Exits (Priority: TP2 -> SL -> TP1) via Universal MaFanCoreRules
+          const exitDecision = MaFanCoreRules.evaluateExits({
+            highPrice: c.high,
+            lowPrice: c.low,
+            closePrice: c.close,
+            entryPrice,
+            stopLossPrice,
+            tp1Filled,
+            highestPriceSinceTp1: highestSinceTp1,
+            ribbon,
+            trailingPullbackPct: 0.45,
+            breakevenFeeBufferPct: 0.05,
+          });
+
+          if (exitDecision.action === "TP2") {
+            const exitP = exitDecision.exitPrice;
+            const pnl2 = (exitP - entryPrice) * heldQty;
+            cash += heldQty * exitP;
+            const totalPnl = pnl2 + (tp1Price - entryPrice) * tp1Qty;
+            if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
+            else { grossLoss += Math.abs(totalPnl); losses++; }
+            heldQty = 0;
+            continue;
+          }
+
+          if (exitDecision.action === "SL") {
+            const exitP = exitDecision.exitPrice;
             const pnl2 = (exitP - entryPrice) * heldQty;
             cash += heldQty * exitP;
             const totalPnl = pnl2 + (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0);
@@ -92,37 +121,15 @@ export class AutoCalibrator {
             continue;
           }
 
-          // TP1 at EMA 25 & Trapped Breakeven Rescue
-          const minProfitPrice = ribbon.ema25 <= entryPrice * 1.0015
-            ? entryPrice * 1.0005
-            : entryPrice * 1.0015;
-          const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
-
-          if (!tp1Filled && c.high >= tp1Target) {
-            tp1Price = tp1Target;
+          if (exitDecision.action === "TP1") {
+            tp1Price = exitDecision.exitPrice;
             tp1Qty = heldQty * 0.5;
             cash += tp1Qty * tp1Price;
             heldQty -= tp1Qty;
             tp1Filled = true;
             highestSinceTp1 = c.high;
-            stopLossPrice = Math.max(stopLossPrice, entryPrice * 1.0005);
-          }
-
-          // TP2 at EMA 75/200 or Trailing
-          if (tp1Filled && heldQty > 0) {
-            const target = Math.max(ribbon.ema75, ribbon.ema200);
-            const hitTarget = c.high >= target && target > entryPrice * 1.004;
-            const hitTrailing = highestSinceTp1 > entryPrice * 1.005 && c.low <= highestSinceTp1 * 0.9955;
-
-            if (hitTarget || hitTrailing) {
-              const exitP = hitTrailing ? highestSinceTp1 * 0.9955 : Math.min(c.high, Math.max(target, c.close));
-              const pnl2 = (exitP - entryPrice) * heldQty;
-              cash += heldQty * exitP;
-              const totalPnl = pnl2 + (tp1Price - entryPrice) * tp1Qty;
-              if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
-              else { grossLoss += Math.abs(totalPnl); losses++; }
-              heldQty = 0;
-              continue;
+            if (exitDecision.newStopLossPrice) {
+              stopLossPrice = Math.max(stopLossPrice, exitDecision.newStopLossPrice);
             }
           }
         }
@@ -130,21 +137,27 @@ export class AutoCalibrator {
         // Position Entry
         if (heldQty === 0 && cash >= 10) {
           const exhaustion = exhaustionStates[i]!;
-          const isStretched = ribbon.fanSpreadPct >= spread;
+          const curAtr = atrs[i] || c.close * 0.003;
 
-          const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
+          const entryDecision = MaFanCoreRules.evaluateEntry({
+            candles,
+            currentIndex: i,
+            closePrice: c.close,
+            ribbon,
+            exhaustion,
+            requiredSpreadPct: spread,
+            curAtr,
+            slBufferPct: 0.25,
+          });
 
-          if (ribbon.isFanningDown && isStretched && ribbon.isHookUp && exhaustion.isOversoldExhaustion && isDownside) {
+          if (entryDecision.shouldEnter) {
             entryIdx = i;
-            entryPrice = c.close;
-            const recentLows = candles.slice(Math.max(0, i - 10), i + 1).map((x) => x.low);
-            const lowestPoint = Math.min(...recentLows);
-            const curAtr = atrs[i] || c.close * 0.003;
-            const slDist = Math.max(lowestPoint * 0.0025, curAtr * 1.0);
-            stopLossPrice = lowestPoint - slDist;
+            entryPrice = entryDecision.entryPrice;
+            stopLossPrice = entryDecision.stopLossPrice;
 
             const invest = cash * 0.98;
             heldQty = invest / entryPrice;
+            tp1Qty = 0;
             cash -= invest;
             tp1Filled = false;
             highestSinceTp1 = entryPrice;

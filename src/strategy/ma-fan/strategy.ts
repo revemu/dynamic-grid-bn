@@ -16,6 +16,7 @@ import { ExhaustionEngine } from "./exhaustion.js";
 import { RegimeSupervisor } from "./regime.js";
 import { AutoCalibrator } from "./calibrator.js";
 import { MaFanOrderExecutor } from "./executor.js";
+import { MaFanCoreRules } from "./core-rules.js";
 
 export interface MaFanStrategyOptions {
   symbol: string;
@@ -140,21 +141,19 @@ export class MaFanStrategy {
     if (this.candles.length < 25) return;
     this.currentRibbon = RibbonEngine.computeRibbonState(this.candles);
 
-    // Compute dynamic spread if ATR adaptive is enabled
-    if (this.config.useAtrAdaptiveSpread) {
-      if (this.config.autoCalibrateSpreadOnSwitch && this.lastCalibration) {
-        // When Auto-Calibrate is active, respect the calibrated sweet spot
-        this.effectiveSpreadThreshold = this.lastCalibration.bestSpreadPct;
-      } else {
-        const atrs = calcATR(this.candles, 14);
-        const curAtr = atrs[atrs.length - 1] ?? 0;
-        const lastClose = this.candles[this.candles.length - 1]?.close ?? 1;
-        const atrPct = (curAtr / lastClose) * 100;
-        // Ribbon spread is ~1/4 of single candle high-low range, capped at 0.85% to avoid locking out trades
-        const rawAdaptive = Math.max(this.config.manualSpreadPct, (atrPct * 0.25) * this.config.atrMultiplier);
-        this.effectiveSpreadThreshold = Math.min(0.85, Math.max(0.20, rawAdaptive));
-      }
-    }
+    // Compute dynamic spread threshold via Universal MaFanCoreRules
+    const atrs = calcATR(this.candles, 14);
+    const curAtr = atrs[atrs.length - 1] ?? 0;
+    const lastClose = this.candles[this.candles.length - 1]?.close ?? 1;
+
+    this.effectiveSpreadThreshold = MaFanCoreRules.computeEffectiveSpread({
+      baseSpread: this.lastCalibration?.bestSpreadPct ?? this.config.manualSpreadPct,
+      useAtrAdaptiveSpread: this.config.useAtrAdaptiveSpread,
+      isAutoCalibrated: !!(this.config.autoCalibrateSpreadOnSwitch && this.lastCalibration),
+      curAtr,
+      closePrice: lastClose,
+      atrMultiplier: this.config.atrMultiplier,
+    });
   }
 
   /**
@@ -185,28 +184,59 @@ export class MaFanStrategy {
           pos.highestPriceSinceTp1 = refPrice;
         }
 
-        // Dynamic Ratchet SL: After entry, if price forms higher local base, lift SL
-        // Works both before TP1 (risk reduction) and after TP1 (profit lock)
         const entryTimeSec = Math.floor(pos.entryTime / 1000);
         const entryIdx = this.candles.findIndex((c) => c.time >= entryTimeSec);
         const barsHeld = entryIdx >= 0 ? this.candles.length - 1 - entryIdx : 3;
+        const atrs = calcATR(this.candles, 14);
+        const curAtr = atrs[atrs.length - 1] ?? (refPrice * 0.003);
 
-        if (barsHeld >= 3) {
-          const recent3Lows = this.candles.slice(Math.max(0, this.candles.length - 4)).map((x) => x.low);
-          const localMin = Math.min(...recent3Lows);
-          const atrs = calcATR(this.candles, 14);
-          const curAtr = atrs[atrs.length - 1] ?? (refPrice * 0.003);
-          const localSlDist = Math.max(localMin * (this.config.slBufferPct / 100), curAtr * 1.0);
-          const localLow = this.executor.roundPrice(localMin - localSlDist);
-          if (localLow > pos.stopLossPrice && localLow < refPrice) {
-            this.log(`🛡️ [RATCHET_SL] Lifting SL for ${this.symbol} from $${pos.stopLossPrice.toFixed(4)} to $${localLow.toFixed(4)}`);
-            pos.stopLossPrice = localLow;
+        // Dynamic Ratchet SL: After entry, if price forms higher local base, lift SL
+        const liftedSl = MaFanCoreRules.evaluateRatchetSl({
+          candles: this.candles,
+          barsHeld,
+          currentSlPrice: pos.stopLossPrice,
+          currentPrice: refPrice,
+          curAtr,
+          slBufferPct: this.config.slBufferPct,
+          useRatchetSl: this.config.useRatchetSl !== false,
+        });
+
+        if (liftedSl !== null) {
+          const roundedSl = this.executor.roundPrice(liftedSl);
+          if (roundedSl > pos.stopLossPrice) {
+            this.log(`🛡️ [RATCHET_SL] Lifting SL for ${this.symbol} from $${pos.stopLossPrice.toFixed(4)} to $${roundedSl.toFixed(4)}`);
+            pos.stopLossPrice = roundedSl;
             this.onStateUpdate?.(this.getState());
           }
         }
 
-        // A. Stop Loss Exit
-        if (refPrice <= pos.stopLossPrice) {
+        // Evaluate Exits (Priority: TP2 -> SL -> TP1 & Trapped Rescue)
+        const exhaustion = ExhaustionEngine.evaluate(this.candles);
+        const exitDecision = MaFanCoreRules.evaluateExits({
+          highPrice: refPrice,
+          lowPrice: refPrice,
+          closePrice: refPrice,
+          entryPrice: pos.entryPrice,
+          stopLossPrice: pos.stopLossPrice,
+          tp1Filled: pos.tp1Filled,
+          highestPriceSinceTp1: pos.highestPriceSinceTp1,
+          ribbon,
+          trailingPullbackPct: this.config.trailingPullbackPct,
+          breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
+          isOverbought: exhaustion.isOverboughtExhaustion,
+        });
+
+        // A. Take Profit 2 (Macro Runner / Trailing Stop)
+        if (exitDecision.action === "TP2") {
+          await this.executor.executeTp2(pos, refPrice, exitDecision.reason || "TP2 Exit");
+          this.activePosition = null;
+          this.totalCycles++;
+          this.onStateUpdate?.(this.getState());
+          return;
+        }
+
+        // B. Stop Loss Exit
+        if (exitDecision.action === "SL") {
           this.log(`⚠️ Stop Loss triggered for ${this.symbol} at $${refPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)})`);
           await this.executor.executeStopLoss(pos, refPrice);
           this.activePosition = null;
@@ -215,17 +245,14 @@ export class MaFanStrategy {
           return;
         }
 
-        // B. Take Profit 1 (Mean Reversion at EMA 25 & Trapped Breakeven Rescue)
-        const beFeeBuffer = (this.config.breakevenFeeBufferPct ?? 0.05) / 100;
-        const minProfitPrice = ribbon.ema25 <= pos.entryPrice * 1.0015
-          ? pos.entryPrice * (1 + beFeeBuffer)
-          : pos.entryPrice * 1.0015;
-        const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
-
-        if (!pos.tp1Filled && refPrice >= tp1Target) {
+        // C. Take Profit 1 (Mean Reversion at EMA 25 & Trapped Breakeven Rescue)
+        if (exitDecision.action === "TP1") {
           const ratio = htfRegime.recommendedTp1Ratio ?? this.config.tp1Ratio;
           const ok = await this.executor.executeTp1(pos, refPrice, ratio);
           if (ok) {
+            if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > pos.stopLossPrice) {
+              pos.stopLossPrice = this.executor.roundPrice(exitDecision.newStopLossPrice);
+            }
             if (pos.remainingQty <= 0) {
               this.activePosition = null;
               this.totalCycles++;
@@ -235,62 +262,37 @@ export class MaFanStrategy {
           return;
         }
 
-        // C. Take Profit 2 (Macro Runner / Trailing Stop)
-        if (pos.tp1Filled && pos.remainingQty > 0) {
-          const macroTarget = Math.max(ribbon.ema75, ribbon.ema200);
-          const hitMacro = refPrice >= macroTarget && refPrice > pos.entryPrice * 1.0035;
-
-          const trailingHit =
-            pos.highestPriceSinceTp1 > pos.entryPrice * (1 + (this.config.trailingPullbackPct * 1.5) / 100) &&
-            refPrice <= pos.highestPriceSinceTp1 * (1 - this.config.trailingPullbackPct / 100);
-
-          const exhaustion = ExhaustionEngine.evaluate(this.candles);
-          const hitOverbought = exhaustion.isOverboughtExhaustion && refPrice > pos.entryPrice * 1.008;
-
-          if (hitMacro || trailingHit || hitOverbought) {
-            const reason = trailingHit
-              ? `Trailing Pullback (${this.config.trailingPullbackPct}%) from peak $${pos.highestPriceSinceTp1.toFixed(4)}`
-              : hitMacro
-              ? `EMA Macro Target Reached ($${macroTarget.toFixed(4)})`
-              : "Overbought Exhaustion Exit";
-
-            await this.executor.executeTp2(pos, refPrice, reason);
-            this.activePosition = null;
-            this.totalCycles++;
-            this.onStateUpdate?.(this.getState());
-            return;
-          }
-        }
         return;
       }
 
       // ── 2. SCAN FOR ENTRY (ELASTIC HOOK BUY) ──────────────────────────────────
       if (!this.activePosition) {
         const requiredSpread = this.effectiveSpreadThreshold * htfRegime.spreadMultiplier;
-        const isStretched = ribbon.fanSpreadPct >= requiredSpread;
-
         const exhaustion = ExhaustionEngine.evaluate(this.candles);
-        const isHook = ribbon.isHookUp;
+        const atrs = calcATR(this.candles, 14);
+        const curAtr = atrs[atrs.length - 1] ?? 0;
 
-        const isDownside = ribbon.ema4 <= ribbon.ema25 && refPrice < ribbon.ema25;
+        const entryDecision = MaFanCoreRules.evaluateEntry({
+          candles: this.candles,
+          closePrice: refPrice,
+          ribbon,
+          exhaustion,
+          requiredSpreadPct: requiredSpread,
+          curAtr,
+          slBufferPct: this.config.slBufferPct,
+        });
 
-        if (ribbon.isFanningDown && isStretched && isHook && exhaustion.isOversoldExhaustion && isDownside) {
-          const recentCandles = this.candles.slice(Math.max(0, this.candles.length - 12));
-          const swingLow = Math.min(...recentCandles.map((c) => c.low));
-
+        if (entryDecision.shouldEnter) {
           const budget = this.config.maxPositionBudgetUsd;
-          this.log(`🎯 Entry criteria met: Fan Spread=${ribbon.fanSpreadPct.toFixed(2)}% (Req: ${requiredSpread.toFixed(2)}%), Hook=${isHook}, Oversold=${exhaustion.isOversoldExhaustion}`);
-
-          const atrs = calcATR(this.candles, 14);
-          const curAtr = atrs[atrs.length - 1] ?? 0;
+          this.log(`🎯 Entry criteria met: Fan Spread=${entryDecision.fanSpreadPct.toFixed(2)}% (Req: ${requiredSpread.toFixed(2)}%), Hook=${ribbon.isHookUp}, Oversold=${exhaustion.isOversoldExhaustion}`);
 
           const newPos = await this.executor.executeBuy(
             this.symbol,
             refPrice,
             budget,
-            swingLow,
+            entryDecision.swingLow,
             htfRegime,
-            ribbon.fanSpreadPct,
+            entryDecision.fanSpreadPct,
             curAtr
           );
 

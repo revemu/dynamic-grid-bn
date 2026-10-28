@@ -63,6 +63,7 @@ export interface MaFanConfig {
   trailingPullbackPct: number; // e.g. 0.45%
   breakevenFeeBufferPct: number; // e.g. 0.05%
   slBufferPct: number; // e.g. 0.25%
+  useRatchetSl?: boolean; // dynamic ratchet stop loss lift
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;
   startPaused?: boolean;

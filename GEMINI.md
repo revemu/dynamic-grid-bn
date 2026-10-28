@@ -5271,6 +5271,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ขยายชุด Candidate Spreads จากเดิมสูงสุด `0.65%` เพิ่มเป็น `[0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65, 0.80, 1.00, 1.25, 1.50, 1.80]` รองรับเหรียญผันผวนสูงได้อย่างครอบคลุม
    - ปรับการคิด PnL และ Ratchet SL ภายในการจำลองของ `AutoCalibrator` ให้คิดแบบรอบคำสั่งเดียวตรงกับ Backtest จริง 100%
 
+---
+
+## 142. v0.2.142 — Universal MA Fan Decision Engine (Single Source of Truth)
+1. **กำจัดความคลาดเคลื่อน (Divergence) ระหว่างบอทจริง, Backtest Studio และ Auto-Calibrator**:
+   - สร้างสถาปัตยกรรมกลาง `MaFanCoreRules` ใน `src/strategy/ma-fan/core-rules.ts` เพื่อเป็น **Single Source of Truth** จุดเดียวสำหรับตรรกะการตัดสินใจและคณิตศาสตร์ทั้งหมด:
+     - `computeEffectiveSpread(...)`: คำนวณ Spread ที่เหมาะสมทั้งโหมด Auto-Calibrated และ Manual ATR Adaptive
+     - `evaluateEntry(...)`: กรอง 5 เงื่อนไขการเข้าซื้อ (Fanning Down, Stretched Spread, Hook Up, Oversold Exhaustion, Downside Alignment) พร้อมคำนวณ Initial Stop Loss (Lookback 11 แท่ง + Dynamic ATR Buffer)
+     - `evaluateRatchetSl(...)`: คำนวณและปรับยก Stop Loss เมื่อราคาฟอร์มฐานย่อยใหม่สูงขึ้นหลังจากถือครองครบ 3 แท่ง (Lookback 5 แท่ง + Dynamic ATR Buffer)
+     - `evaluateExits(...)`: ลำดับความสำคัญในการตัดสินใจปิดออเดอร์ (Priority: TP2 Macro Runner/Trailing -> Stop Loss -> TP1 Mean Reversion & Trapped Breakeven Rescue)
+2. **Refactor ทุกส่วนให้เรียกใช้ `MaFanCoreRules` 100%**:
+   - **บอทจริง (Live Bot)**: ใน `src/strategy/ma-fan/strategy.ts` เมธอด `recomputeIndicators` และ `step(refPrice)` หันมาเรียกใช้ `MaFanCoreRules` ทั้งหมด ไม่ต้องมีตรรกะคณิตศาสตร์ซ้ำซ้อน
+   - **Backtest Service & Market Scanner**: ใน `src/backtest-service.ts` ฟังก์ชัน `runMaFanSimulation` เรียกใช้ `MaFanCoreRules` ชุดเดียวกัน 100%
+   - **Auto-Calibrator**: ใน `src/strategy/ma-fan/calibrator.ts` ฟังก์ชัน `AutoCalibrator.calibrate` เรียกใช้ `MaFanCoreRules` ชุดเดียวกัน 100%
+3. **ผลลัพธ์และความแม่นยำ**:
+   - การันตีว่าผลการเทรดจริงบน Live Server, การทดสอบย้อนหลังใน Backtest Studio, และการจำลองหา Sweet Spot ของ Auto-Calibrator จะตัดสินใจด้วยเกณฑ์เดียวกันทุกประการ
+   - หากมีการปรับปรุงสูตรหรือเงื่อนไขในอนาคต จะแก้ที่ `MaFanCoreRules` เพียงจุดเดียว โดยไม่มีปัญหาเรื่องโค้ดเหลื่อมล้ำกันอีกต่อไป
+
 
 
 

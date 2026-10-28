@@ -1,0 +1,229 @@
+/**
+ * MA Fan Sniper - Universal Core Decision Rules
+ * Single Source of Truth for Live Trading, Backtest Studio, and Auto-Calibrator.
+ * All mathematical calculations and trade decisions are unified here.
+ */
+
+import { Candle, RibbonState } from "./types.js";
+import { ExhaustionState } from "./exhaustion.js";
+
+export interface EntryDecision {
+  shouldEnter: boolean;
+  entryPrice: number;
+  stopLossPrice: number;
+  swingLow: number;
+  fanSpreadPct: number;
+  reason?: string;
+}
+
+export type ExitActionType = "NONE" | "TP1" | "TP2" | "SL";
+
+export interface ExitDecision {
+  action: ExitActionType;
+  exitPrice: number;
+  newStopLossPrice?: number;
+  reason?: string;
+}
+
+export class MaFanCoreRules {
+  /**
+   * 1. Compute Effective Spread Threshold
+   * Unifies Auto-Calibrated spread and manual ATR adaptive scaling.
+   */
+  public static computeEffectiveSpread(opts: {
+    baseSpread: number;
+    useAtrAdaptiveSpread: boolean;
+    isAutoCalibrated: boolean;
+    curAtr: number;
+    closePrice: number;
+    atrMultiplier: number;
+  }): number {
+    if (!opts.useAtrAdaptiveSpread || opts.isAutoCalibrated) {
+      return Math.max(0.20, opts.baseSpread);
+    }
+    const close = opts.closePrice > 0 ? opts.closePrice : 1;
+    const atrPct = (opts.curAtr / close) * 100;
+    // Ribbon spread is ~1/4 of single candle high-low range, capped at 0.85%
+    const rawAdaptive = Math.max(opts.baseSpread, (atrPct * 0.25) * opts.atrMultiplier);
+    return Math.min(0.85, Math.max(0.20, rawAdaptive));
+  }
+
+  /**
+   * 2. Evaluate Sniper Entry
+   * Unifies all 5 entry qualification checks and initial stop loss calculation.
+   */
+  public static evaluateEntry(opts: {
+    candles: Candle[];
+    currentIndex?: number;
+    closePrice: number;
+    ribbon: RibbonState;
+    exhaustion: ExhaustionState;
+    requiredSpreadPct: number;
+    curAtr: number;
+    slBufferPct: number;
+  }): EntryDecision {
+    const { candles, closePrice, ribbon, exhaustion, requiredSpreadPct, curAtr, slBufferPct } = opts;
+    const currentIndex = opts.currentIndex ?? (candles.length - 1);
+
+    const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
+    const isDownside = ribbon.ema4 <= ribbon.ema25 && closePrice < ribbon.ema25;
+
+    const qualified =
+      ribbon.isFanningDown &&
+      isStretched &&
+      ribbon.isHookUp &&
+      exhaustion.isOversoldExhaustion &&
+      isDownside;
+
+    if (!qualified) {
+      return {
+        shouldEnter: false,
+        entryPrice: 0,
+        stopLossPrice: 0,
+        swingLow: 0,
+        fanSpreadPct: ribbon.fanSpreadPct,
+      };
+    }
+
+    // Dynamic SL: Look back 11 bars (idx - 10 to idx) for lowest point
+    const recentLows = candles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map((x) => x.low);
+    const swingLow = Math.min(...recentLows);
+    const slDist = Math.max(swingLow * (slBufferPct / 100), curAtr * 1.0);
+    const stopLossPrice = swingLow - slDist;
+
+    return {
+      shouldEnter: true,
+      entryPrice: closePrice,
+      stopLossPrice,
+      swingLow,
+      fanSpreadPct: ribbon.fanSpreadPct,
+      reason: `Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Hook, Oversold`,
+    };
+  }
+
+  /**
+   * 3. Evaluate Dynamic Ratchet SL
+   * Lifts Stop Loss when price forms a higher local base after holding for >= 3 bars.
+   */
+  public static evaluateRatchetSl(opts: {
+    candles: Candle[];
+    currentIndex?: number;
+    barsHeld: number;
+    currentSlPrice: number;
+    currentPrice: number;
+    curAtr: number;
+    slBufferPct: number;
+    useRatchetSl?: boolean;
+  }): number | null {
+    const { candles, barsHeld, currentSlPrice, currentPrice, curAtr, slBufferPct } = opts;
+    const useRatchetSl = opts.useRatchetSl !== false;
+    if (!useRatchetSl || barsHeld < 3 || candles.length === 0) return null;
+
+    const currentIndex = opts.currentIndex ?? (candles.length - 1);
+    // Look back 5 bars (idx - 4 to idx) for local base
+    const recentLows = candles.slice(Math.max(0, currentIndex - 4), currentIndex + 1).map((x) => x.low);
+    const localMin = Math.min(...recentLows);
+    const localSlDist = Math.max(localMin * (slBufferPct / 100), curAtr * 1.0);
+    const localLow = localMin - localSlDist;
+
+    if (localLow > currentSlPrice && localLow < currentPrice) {
+      return localLow;
+    }
+    return null;
+  }
+
+  /**
+   * 4. Evaluate Position Exits (Priority: TP2 -> SL -> TP1)
+   * Unifies TP1, Trapped Breakeven Rescue, SL, and TP2 Trailing.
+   */
+  public static evaluateExits(opts: {
+    highPrice: number;
+    lowPrice: number;
+    closePrice: number;
+    entryPrice: number;
+    stopLossPrice: number;
+    tp1Filled: boolean;
+    highestPriceSinceTp1: number;
+    ribbon: RibbonState;
+    trailingPullbackPct: number;
+    breakevenFeeBufferPct?: number;
+    isOverbought?: boolean;
+  }): ExitDecision {
+    const {
+      highPrice,
+      lowPrice,
+      closePrice,
+      entryPrice,
+      stopLossPrice,
+      tp1Filled,
+      highestPriceSinceTp1,
+      ribbon,
+      trailingPullbackPct,
+      breakevenFeeBufferPct,
+      isOverbought,
+    } = opts;
+
+    const beFeeBuffer = (breakevenFeeBufferPct ?? 0.05) / 100;
+
+    // ── Priority 1: TP2 Check (if TP1 was already filled) ───────────────────
+    if (tp1Filled) {
+      const target = Math.max(ribbon.ema75, ribbon.ema200);
+      const hitTarget = highPrice >= target && highPrice > entryPrice * 1.0035;
+      const trailingExitRatio = 1 - trailingPullbackPct / 100;
+      const hitTrailing = highestPriceSinceTp1 > entryPrice * 1.005 && lowPrice <= highestPriceSinceTp1 * trailingExitRatio;
+      const hitOverbought = !!isOverbought && highPrice > entryPrice * 1.008;
+
+      if (hitTarget || hitTrailing || hitOverbought) {
+        const exitPrice = hitTarget
+          ? Math.min(highPrice, Math.max(target, closePrice))
+          : hitTrailing
+          ? highestPriceSinceTp1 * trailingExitRatio
+          : closePrice;
+        return {
+          action: "TP2",
+          exitPrice,
+          reason: hitTrailing
+            ? `Trailing Pullback (${trailingPullbackPct}%) from peak $${highestPriceSinceTp1.toFixed(4)}`
+            : hitTarget
+            ? `EMA Macro Target ($${target.toFixed(4)})`
+            : "Overbought Exhaustion Exit",
+        };
+      }
+    }
+
+    // ── Priority 2: Stop Loss Check ─────────────────────────────────────────
+    if (lowPrice <= stopLossPrice) {
+      return {
+        action: "SL",
+        exitPrice: stopLossPrice,
+        reason: "Stop Loss Triggered",
+      };
+    }
+
+    // ── Priority 3: TP1 at EMA 25 & Trapped Breakeven Rescue ────────────────
+    if (!tp1Filled) {
+      // If EMA25 drifted near/below entry, rescue at Breakeven (+fee buffer); otherwise require +0.15%
+      const minProfitPrice = ribbon.ema25 <= entryPrice * 1.0015
+        ? entryPrice * (1 + beFeeBuffer)
+        : entryPrice * 1.0015;
+      const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
+
+      if (highPrice >= tp1Target) {
+        const newStopLossPrice = Math.max(stopLossPrice, entryPrice * (1 + beFeeBuffer));
+        return {
+          action: "TP1",
+          exitPrice: tp1Target,
+          newStopLossPrice,
+          reason: ribbon.ema25 <= entryPrice * 1.0015
+            ? "Trapped Position Breakeven Rescue"
+            : "TP1 Mean Reversion at EMA 25",
+        };
+      }
+    }
+
+    return {
+      action: "NONE",
+      exitPrice: 0,
+    };
+  }
+}

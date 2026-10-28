@@ -6,7 +6,7 @@
 
 import fs from "fs";
 import path from "path";
-import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator } from "./strategy/ma-fan/index.js";
+import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
 
 export interface BacktestTrade {
@@ -225,6 +225,7 @@ export class BacktestService {
     let tp1Filled = false;
     let tp1Price = 0;
     let tp1Time = 0;
+    let tp1Qty = 0;
     let highestSinceTp1 = 0;
     let activeTradeId = 0;
     let spreadAtEntry = 0;
@@ -260,85 +261,95 @@ export class BacktestService {
         if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
         const barsHeld = i - entryIdx;
 
-        // Dynamic Ratchet SL: After entry, if price forms higher local base, lift SL
-        // Works both before TP1 (risk reduction) and after TP1 (profit lock)
-        if (useRatchetSl && barsHeld >= 3) {
-          const recent3Lows = candles.slice(Math.max(0, i - 4), i + 1).map((x) => x.low);
-          const localMin = Math.min(...recent3Lows);
-          const localSlDist = Math.max(localMin * (slBufferPct / 100), curAtr * 1.0);
-          const localLow = localMin - localSlDist;
-          if (localLow > stopLossPrice && localLow < c.close) {
-            stopLossPrice = localLow;
-          }
+        // Dynamic Ratchet SL via Universal MaFanCoreRules
+        const liftedSl = MaFanCoreRules.evaluateRatchetSl({
+          candles,
+          currentIndex: i,
+          barsHeld,
+          currentSlPrice: stopLossPrice,
+          currentPrice: c.close,
+          curAtr,
+          slBufferPct,
+          useRatchetSl,
+        });
+        if (liftedSl !== null && liftedSl > stopLossPrice) {
+          stopLossPrice = liftedSl;
         }
 
-        // 1. Check TP2 first if TP1 was already filled (Macro Target or Trailing Stop)
-        if (tp1Filled && heldQty > 0) {
-          const target = Math.max(ribbon.ema75, ribbon.ema200);
-          const hitTarget = c.high >= target && c.high > entryPrice * 1.0035;
-          const trailingExitRatio = 1 - (trailingPullbackPct / 100);
-          const hitTrailing = highestSinceTp1 > entryPrice * 1.005 && c.low <= highestSinceTp1 * trailingExitRatio;
+        // Evaluate Exits (Priority: TP2 -> SL -> TP1) via Universal MaFanCoreRules
+        const exitDecision = MaFanCoreRules.evaluateExits({
+          highPrice: c.high,
+          lowPrice: c.low,
+          closePrice: c.close,
+          entryPrice,
+          stopLossPrice,
+          tp1Filled,
+          highestPriceSinceTp1: highestSinceTp1,
+          ribbon,
+          trailingPullbackPct,
+          breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
+        });
 
-          if (hitTarget || hitTrailing) {
-            const exitP = hitTarget ? Math.min(c.high, Math.max(target, c.close)) : highestSinceTp1 * trailingExitRatio;
-            const pnl2 = (exitP - entryPrice) * heldQty;
-            cash += heldQty * exitP;
+        // 1. TP2 Exit (Macro Runner / Trailing Stop)
+        if (exitDecision.action === "TP2") {
+          const exitP = exitDecision.exitPrice;
+          const pnl2 = (exitP - entryPrice) * heldQty;
+          cash += heldQty * exitP;
 
-            const totalPnlQuote = (tp1Price - entryPrice) * heldQty + pnl2;
-            const totalInvest = initialCapital * 0.98;
-            const tradePnlPct = (totalPnlQuote / totalInvest) * 100;
+          const totalPnlQuote = (tp1Price - entryPrice) * tp1Qty + pnl2;
+          const totalInvest = initialCapital * 0.98;
+          const tradePnlPct = (totalPnlQuote / totalInvest) * 100;
 
-            if (totalPnlQuote >= 0) {
-              grossProfit += totalPnlQuote;
-              wins++;
-            } else {
-              grossLoss += Math.abs(totalPnlQuote);
-              losses++;
-            }
-
-            trades.push({
-              id: activeTradeId,
-              entryTime: candles[entryIdx]!.time,
-              entryPrice,
-              stopLossPrice,
-              fanSpreadAtEntry: spreadAtEntry,
-              tp1Time,
-              tp1Price,
-              tp1PnlPct: ((tp1Price - entryPrice) / entryPrice) * 100,
-              tp2Time: c.time,
-              tp2Price: exitP,
-              tp2PnlPct: ((exitP - entryPrice) / entryPrice) * 100,
-              exitTime: c.time,
-              exitPrice: exitP,
-              exitType: "TP1+TP2",
-              pnlQuote: totalPnlQuote,
-              pnlPct: tradePnlPct,
-              holdingBars: barsHeld,
-            });
-
-            // TP2 Marker
-            markers.push({
-              time: c.time,
-              position: "aboveBar",
-              color: "#a855f7",
-              shape: "arrowDown",
-              text: `🟣 TP2 #${activeTradeId} @ $${exitP.toFixed(2)} (+${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
-            });
-
-            heldQty = 0;
-            continue;
+          if (totalPnlQuote >= 0) {
+            grossProfit += totalPnlQuote;
+            wins++;
+          } else {
+            grossLoss += Math.abs(totalPnlQuote);
+            losses++;
           }
+
+          trades.push({
+            id: activeTradeId,
+            entryTime: candles[entryIdx]!.time,
+            entryPrice,
+            stopLossPrice,
+            fanSpreadAtEntry: spreadAtEntry,
+            tp1Time,
+            tp1Price,
+            tp1PnlPct: ((tp1Price - entryPrice) / entryPrice) * 100,
+            tp2Time: c.time,
+            tp2Price: exitP,
+            tp2PnlPct: ((exitP - entryPrice) / entryPrice) * 100,
+            exitTime: c.time,
+            exitPrice: exitP,
+            exitType: "TP1+TP2",
+            pnlQuote: totalPnlQuote,
+            pnlPct: tradePnlPct,
+            holdingBars: barsHeld,
+          });
+
+          // TP2 Marker
+          markers.push({
+            time: c.time,
+            position: "aboveBar",
+            color: "#a855f7",
+            shape: "arrowDown",
+            text: `🟣 TP2 #${activeTradeId} @ $${exitP.toFixed(2)} (+${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
+          });
+
+          heldQty = 0;
+          continue;
         }
 
-        // 2. Stop Loss check
-        if (c.low <= stopLossPrice) {
-          const exitP = stopLossPrice;
+        // 2. Stop Loss Exit
+        if (exitDecision.action === "SL") {
+          const exitP = exitDecision.exitPrice;
           const pnl = (exitP - entryPrice) * heldQty;
           cash += heldQty * exitP;
 
           const isRatchet = !tp1Filled && stopLossPrice > initialSlPrice;
           const exitType: BacktestTrade["exitType"] = tp1Filled ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
-          const totalPnlQuote = pnl + (tp1Filled ? (tp1Price - entryPrice) * (heldQty) : 0);
+          const totalPnlQuote = pnl + (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0);
           const totalInvest = initialCapital * 0.98;
           const tradePnlPct = (totalPnlQuote / totalInvest) * 100;
 
@@ -390,22 +401,18 @@ export class BacktestService {
           continue;
         }
 
-        // 3. TP1 at EMA 25 (Sell based on configured tp1Ratio & Trapped Breakeven Rescue)
-        const minProfitPrice = ribbon.ema25 <= entryPrice * 1.0015
-          ? entryPrice * (1 + beFeeBuffer)
-          : entryPrice * 1.0015;
-        const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
-
-        if (!tp1Filled && c.high >= tp1Target) {
-          tp1Price = tp1Target;
+        // 3. Take Profit 1 (Mean Reversion at EMA 25 & Trapped Breakeven Rescue)
+        if (exitDecision.action === "TP1") {
+          tp1Price = exitDecision.exitPrice;
           tp1Time = c.time;
-          const sellQty = heldQty * tp1Ratio;
-          cash += sellQty * tp1Price;
-          heldQty -= sellQty;
+          tp1Qty = heldQty * tp1Ratio;
+          cash += tp1Qty * tp1Price;
+          heldQty -= tp1Qty;
           tp1Filled = true;
           highestSinceTp1 = c.high;
-          // Move SL to Breakeven (+fee buffer)
-          stopLossPrice = Math.max(stopLossPrice, entryPrice * (1 + beFeeBuffer));
+          if (exitDecision.newStopLossPrice) {
+            stopLossPrice = Math.max(stopLossPrice, exitDecision.newStopLossPrice);
+          }
 
           // TP1 Marker
           markers.push({
@@ -420,37 +427,39 @@ export class BacktestService {
 
       // ─── POSITION ENTRY (SNIPER HOOK) ────────────────────────────────
       if (heldQty === 0 && cash >= 10) {
-        // Compute dynamic spread threshold matching live strategy (if enabled)
-        let currentSpread = spread;
-        if (useAtrAdaptive) {
-          if (opts.spreadThreshold === "auto" || !opts.spreadThreshold) {
-            currentSpread = spread;
-          } else {
-            const atrPct = (curAtr / c.close) * 100;
-            const adaptive = Math.max(spread, (atrPct * 0.25) * atrMultiplier);
-            currentSpread = Math.min(0.85, Math.max(0.20, adaptive));
-          }
-        }
+        const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
+        const currentSpread = MaFanCoreRules.computeEffectiveSpread({
+          baseSpread: spread,
+          useAtrAdaptiveSpread: useAtrAdaptive,
+          isAutoCalibrated: isAuto,
+          curAtr,
+          closePrice: c.close,
+          atrMultiplier,
+        });
 
         const exhaustion = exhaustionStates[i]!;
-        const isStretched = ribbon.fanSpreadPct >= currentSpread;
+        const entryDecision = MaFanCoreRules.evaluateEntry({
+          candles,
+          currentIndex: i,
+          closePrice: c.close,
+          ribbon,
+          exhaustion,
+          requiredSpreadPct: currentSpread,
+          curAtr,
+          slBufferPct,
+        });
 
-        const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
-
-        if (ribbon.isFanningDown && isStretched && ribbon.isHookUp && exhaustion.isOversoldExhaustion && isDownside) {
+        if (entryDecision.shouldEnter) {
           activeTradeId++;
           entryIdx = i;
-          entryPrice = c.close;
-          spreadAtEntry = ribbon.fanSpreadPct;
-
-          const recentLows = candles.slice(Math.max(0, i - 10), i + 1).map((x) => x.low);
-          const lowestPoint = Math.min(...recentLows);
-          const slDist = Math.max(lowestPoint * (slBufferPct / 100), curAtr * 1.0);
-          initialSlPrice = lowestPoint - slDist;
+          entryPrice = entryDecision.entryPrice;
+          spreadAtEntry = entryDecision.fanSpreadPct;
+          initialSlPrice = entryDecision.stopLossPrice;
           stopLossPrice = initialSlPrice;
 
           const invest = cash * 0.98;
           heldQty = invest / entryPrice;
+          tp1Qty = 0;
           cash -= invest;
           tp1Filled = false;
           highestSinceTp1 = entryPrice;
