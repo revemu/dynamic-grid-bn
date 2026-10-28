@@ -1259,23 +1259,25 @@
           const prevV16 = prevC ? e16Map.get(prevC.time) : v16;
           const prevV25 = prevC ? e25Map.get(prevC.time) : v25;
 
+          const isCurBullish = v8 !== undefined && v16 !== undefined && (v4 > v8 && v8 > v16 && v16 > v25);
           const isFanningDown =
+            !isCurBullish &&
+            v4 <= v25 &&
             v8 !== undefined && v16 !== undefined &&
             ((v4 < v8 && v8 < v16 && v16 < v25) ||
-              (prevV4 !== undefined && prevV4 < prevV8 && prevV8 < prevV16 && prevV16 < prevV25));
+              (prevV4 !== undefined && prevV4 < prevV8 && prevV8 < prevV16 && prevV16 < prevV25 && v4 <= v16));
 
           const isFanningUp =
-            v8 !== undefined && v16 !== undefined &&
-            ((v4 > v8 && v8 > v16 && v16 > v25) ||
-              (prevV4 !== undefined && prevV4 > prevV8 && prevV8 > prevV16 && prevV16 > prevV25));
+            (v8 !== undefined && v16 !== undefined && (v4 > v8 && v8 > v16 && v16 > v25)) ||
+            (prevV4 !== undefined && prevV4 > prevV8 && prevV8 > prevV16 && prevV16 > prevV25);
 
-          const isHookUp = prevV4 !== undefined && v4 > prevV4;
+          const isHookUp = prevV4 !== undefined && v4 > prevV4 && v4 <= v25 * 1.002 && c.close < v25;
 
           const range = c.high - c.low;
           const bodyBottom = Math.min(c.open, c.close);
           const lowerWick = bodyBottom - c.low;
           const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
-          const isOversoldWick = lowerWickPct >= 35 || (c.close > c.open && c.close >= (c.high + c.low) / 2);
+          const isOversoldWick = lowerWickPct >= 30;
 
           maFanCandleDataMap.set(c.time, {
             time: c.time,
@@ -1354,9 +1356,9 @@
     const spreadDiff = data.spreadPct - targetSpread;
 
     // 4-point Sniper conditions
-    const condOrder = data.isFanningDown;
-    const condSpread = isSpreadReady;
-    const condHook = data.isHookUp;
+    const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
+    const condSpread = isSpreadReady && data.ema4 <= data.ema25;
+    const condHook = data.isHookUp && c.close < data.ema25;
     const condExhaust = data.isOversoldWick;
 
     const allReady = condOrder && condSpread && condHook && condExhaust;
@@ -1366,8 +1368,8 @@
       verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 4 ข้อ! (จังหวะเปิดไม้ BUY)</div>`;
     } else {
       const missing = [];
-      if (!condSpread) missing.push(`Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
-      if (!condHook) missing.push(`ปลายพัดยังไม่ม้วนตัวขึ้น`);
+      if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
+      if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
       if (!condExhaust) missing.push(`แท่งเทียนยังไม่ทิ้งไส้ล่าง`);
       verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;

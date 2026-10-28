@@ -243,7 +243,9 @@ export class MaFanStrategy {
         const exhaustion = ExhaustionEngine.evaluate(this.candles);
         const isHook = ribbon.isHookUp;
 
-        if (ribbon.isFanningDown && isStretched && isHook && exhaustion.isOversoldExhaustion) {
+        const isDownside = ribbon.ema4 <= ribbon.ema25 && refPrice < ribbon.ema25;
+
+        if (ribbon.isFanningDown && isStretched && isHook && exhaustion.isOversoldExhaustion && isDownside) {
           const recentCandles = this.candles.slice(Math.max(0, this.candles.length - 12));
           const swingLow = Math.min(...recentCandles.map((c) => c.low));
 

@@ -93,21 +93,29 @@ export class RibbonEngine {
     // Fan spread expansion: percentage distance between EMA 4 and EMA 25
     const fanSpreadPct = curEma25 > 0 ? (Math.abs(curEma25 - curEma4) / curEma25) * 100 : 0;
 
-    // Check fan alignment at previous bar or current bar
+    // Strict alignment checks
+    const curFanningDown = curEma4 < curEma8 && curEma8 < curEma16 && curEma16 < curEma25;
+    const prevFanningDown = prevEma4 < prevEma8 && prevEma8 < prevEma16 && prevEma16 < prevEma25;
+    const isCurBullish = curEma4 > curEma8 && curEma8 > curEma16 && curEma16 > curEma25;
+
+    // Check fan alignment: must be below EMA 25 and not actively a bullish ribbon
     const isFanningDown =
-      (prevEma4 < prevEma8 && prevEma8 < prevEma16 && prevEma16 < prevEma25) ||
-      (curEma4 < curEma8 && curEma8 < curEma16 && curEma16 < curEma25);
+      !isCurBullish &&
+      curEma4 <= curEma25 &&
+      (curFanningDown || (prevFanningDown && curEma4 <= curEma16));
 
     const isFanningUp =
       (prevEma4 > prevEma8 && prevEma8 > prevEma16 && prevEma16 > prevEma25) ||
-      (curEma4 > curEma8 && curEma8 > curEma16 && curEma16 > curEma25);
+      isCurBullish;
 
     const curCandle = candles[idx]!;
 
-    // Momentum Hook Up: EMA 4 crosses above EMA 8 OR green candle closes above EMA 4
+    // Momentum Hook Up: EMA 4 crosses above EMA 8 OR green candle closes above EMA 4 (while staying below EMA 25)
     const isHookUp =
-      (curEma4 >= curEma8 && prevEma4 < prevEma8) ||
-      (curCandle.close > curEma4 && curCandle.close > curCandle.open);
+      curEma4 <= curEma25 * 1.002 &&
+      curCandle.close < curEma25 &&
+      ((curEma4 >= curEma8 && prevEma4 < prevEma8) ||
+        (curCandle.close > curEma4 && curCandle.close > curCandle.open));
 
     // Momentum Hook Down (for Bearish exhaustion / Top exit)
     const isHookDown =

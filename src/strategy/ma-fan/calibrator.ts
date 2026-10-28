@@ -92,7 +92,9 @@ export class AutoCalibrator {
           const exhaustion = ExhaustionEngine.evaluate(candles, i);
           const isStretched = ribbon.fanSpreadPct >= spread;
 
-          if (ribbon.isFanningDown && isStretched && ribbon.isHookUp && exhaustion.isOversoldExhaustion) {
+          const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
+
+          if (ribbon.isFanningDown && isStretched && ribbon.isHookUp && exhaustion.isOversoldExhaustion && isDownside) {
             entryPrice = c.close;
             const recentLows = candles.slice(Math.max(0, i - 10), i + 1).map((x) => x.low);
             const lowestPoint = Math.min(...recentLows);

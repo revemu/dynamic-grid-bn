@@ -5148,6 +5148,24 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ใน `backtest-service.ts`: ใช้ default candidateSpreads ชุดใหม่ของ AutoCalibrator
    - ใน `public/app.js`: ปรับ `openCandleInspector` และ `updateRibbonLegend` ให้อ่านจาก `latestGridData?.effectiveSpreadThreshold` เป็นลำดับแรก ทำให้เกณฑ์ขั้นต่ำในป๊อปอัปและ Legend ตรงกับการ์ด MA Fan ด้านขวาแบบ 100%
 
+---
+
+## 135. v0.2.135 — Fix MA Fan Entry Guard: Downside Spread & Headroom Below EMA 25
+
+1. **สาเหตุของปัญหาการเข้าซื้อผิดพลาดบนแท่ง Breakout/Pump (ราคาปิดลอยสูงกว่าเส้น)**:
+   - **Spread คำนวณด้วย `Math.abs` โดยไม่แยกทิศทาง**: เมื่อราคาเกิดแท่งเขียวกระชากตัวอย่างรุนแรง เส้น EMA 4 พุ่งทะลุ EMA 25 ขึ้นไปข้างบน สูตรคำนวณวัดระยะห่างคิดเป็น % สเปรดได้สูงเกินเกณฑ์ แต่เป็นการกางขึ้น (Bullish Expansion) ไม่ใช่การกางลง (Bearish Exhaustion)
+   - **`isFanningDown` ใช้เงื่อนไข `OR (||)` ข้ามแท่ง**: หากแท่งก่อนหน้าเป็นขาลง แม้แท่งปัจจุบันเส้นจะเรียงตัวกลับทิศเป็นขาขึ้นสมบูรณ์แล้ว ระบบก็ยังตัดสินว่าเป็น `isFanningDown = true`
+   - **`isOversoldExhaustion` ทริกเกอร์ง่ายเกินไป**: อาศัยเพียง `MACD Histogram Turning Up` โดยไม่เช็คว่า RSI อยู่ในโซนสูง (Overbought) หรือไม่ ทำให้ในขณะที่ RSI พุ่งแตะ 78.66 ระบบยังประเมินว่าเป็น Oversold
+   - **ขาดเงื่อนไขตรวจราคาเทียบกับเป้าหมาย TP1 (EMA 25)**: กลยุทธ์ MA Fan คือการทำกำไรกลับเข้าสู่ค่าเฉลี่ย (Mean Reversion) ที่ EMA 25 หากราคาเข้าซื้อลอยอยู่เหนือ EMA 25 จะทำให้ไม่มีระยะทำกำไรและโดน Stop Loss เมื่อราคาย่อตัว
+
+2. **การแก้ไขและการปรับปรุง (`ribbon.ts`, `exhaustion.ts`, `strategy.ts`, `calibrator.ts`, `backtest-service.ts`, `app.js`, `backtest.js`)**:
+   - **Strict Downside Ribbon Alignment**: ใน `RibbonEngine` ตรวจสอบว่าพัดแท่งปัจจุบันต้องไม่เป็น Bullish Ribbon (`curEma4 > curEma8 > curEma16 > curEma25`) และเส้น EMA 4 ต้องอยู่ต่ำกว่า EMA 25 จึงจะถือว่าเป็น `isFanningDown`
+   - **Reversion Headroom Guard**: ในทุกจุดที่มีการเข้าซื้อ (`strategy.ts`, `calibrator.ts`, `backtest-service.ts`) เพิ่มการตรวจสอบ `c.close < ribbon.ema25 && ribbon.ema4 <= ribbon.ema25` เพื่อรับประกันว่าราคาเข้าซื้ออยู่ใต้เส้น EMA 25 เสมอ
+   - **Refined Oversold Exhaustion**: ใน `ExhaustionEngine` เพิ่มเงื่อนไขป้องกัน ไม่ยอมรับเป็น Oversold หาก `RSI >= 65` และกำหนดให้การ Turn Up ของ MACD ต้องเกิดขึ้นเมื่อ `RSI <= 52`
+   - **UI & Inspector Synchronization**: ใน `public/app.js` และ `public/backtest.js` ซิงค์การคำนวณในป๊อปอัปให้ตรงกัน โดยตรวจสอบราคาปิดต่ำกว่า EMA 25 และแจ้งเตือนเหตุผลเมื่อราคาหลุดโซนย่อซื้อ
+   - **ผลลัพธ์การทดสอบ (NEARUSDT 1000 แท่ง)**: ไม้ที่เข้าซื้อผิดพลาดบนแท่ง Pump ถูกกรองออก 100% ผลการเทรดเปลี่ยนจาก 4 ไม้ (ชนะ 3 แพ้ 1, ขาดทุน -0.13%) เป็น **3 ไม้ ชนะ 100% กำไรสุทธิ +1.84%** ทันที
+
+
 
 
 

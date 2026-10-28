@@ -61,11 +61,11 @@ export class ExhaustionEngine {
     const isTurningUp = curHist > prevHist;
     const isTurningDown = curHist < prevHist;
 
-    // Oversold exhaustion: RSI was below 38 or MACD histogram stopped expanding downwards
-    const isOversoldExhaustion = prevRsi <= 38 || isTurningUp;
+    // Oversold exhaustion: RSI was low (<= 42) or currently oversold (<= 38), or MACD histogram turning up while RSI is in dip (<= 52). Never oversold if curRsi >= 65.
+    const isOversoldExhaustion = (prevRsi <= 45 || curRsi <= 40 || (isTurningUp && prevRsi <= 52)) && curRsi < 65;
 
     // Overbought exhaustion: RSI was above 70 or MACD histogram turned down
-    const isOverboughtExhaustion = curRsi >= 72 || isTurningDown;
+    const isOverboughtExhaustion = curRsi >= 70 || (isTurningDown && curRsi >= 55);
 
     return {
       rsi: curRsi,

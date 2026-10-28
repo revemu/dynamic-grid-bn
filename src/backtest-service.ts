@@ -355,7 +355,9 @@ export class BacktestService {
         const exhaustion = ExhaustionEngine.evaluate(candles, i);
         const isStretched = ribbon.fanSpreadPct >= spread;
 
-        if (ribbon.isFanningDown && isStretched && ribbon.isHookUp && exhaustion.isOversoldExhaustion) {
+        const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
+
+        if (ribbon.isFanningDown && isStretched && ribbon.isHookUp && exhaustion.isOversoldExhaustion && isDownside) {
           activeTradeId++;
           entryIdx = i;
           entryPrice = c.close;
