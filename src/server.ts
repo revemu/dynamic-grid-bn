@@ -314,7 +314,10 @@ export class DashboardServer {
 
     // Database: Trade Rounds Summary API (Buy Accumulation & Sell Distribution Cycles)
     if (pathname === "/api/db/rounds") {
-      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      let symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      if (!symbolParam && this.opts.getSettings) {
+        symbolParam = this.opts.getSettings().symbol;
+      }
       const roundsData = this.db.getTradeRounds(symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, ...roundsData }));
@@ -323,7 +326,10 @@ export class DashboardServer {
 
     // Database: Trade & Lot Manager Overview API
     if (pathname === "/api/db/trade-manager") {
-      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      let symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      if (!symbolParam && this.opts.getSettings) {
+        symbolParam = this.opts.getSettings().symbol;
+      }
       const trades = this.db.getTrades(5000, symbolParam);
       const allOrders = this.db.getOrders(5000, { symbol: symbolParam });
       const state = this.db.getState(symbolParam);

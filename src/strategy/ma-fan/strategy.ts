@@ -86,6 +86,19 @@ export class MaFanStrategy {
     });
 
     this.effectiveSpreadThreshold = this.config.manualSpreadPct;
+    this.restoreMetricsFromDb();
+  }
+
+  private restoreMetricsFromDb(): void {
+    try {
+      const summary = this.db.getTradeRounds(this.symbol)?.summary;
+      if (summary) {
+        this.totalCycles = summary.closedRounds || 0;
+        this.winCount = summary.winRounds || 0;
+        this.lossCount = summary.lossRounds || 0;
+        this.realizedPnl = Number((summary.totalNetPnlQuote || summary.totalGrossPnlQuote || 0).toFixed(4));
+      }
+    } catch (_) {}
   }
 
   public async init(): Promise<void> {
@@ -372,6 +385,7 @@ export class MaFanStrategy {
   }
 
   public restorePosition(pos: MaFanPosition | null): void {
+    this.restoreMetricsFromDb();
     if (pos && pos.remainingQty > 0) {
       this.activePosition = pos;
       this.log(`📥 [STATE RESTORED] Loaded active position for ${pos.symbol}: ${pos.remainingQty} units @ $${pos.entryPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)}, TP1 Filled: ${pos.tp1Filled}, Breakeven Locked: ${pos.isBreakevenLocked})`);

@@ -145,17 +145,17 @@
       </div>
     </section>
 
-    <!-- ═══════════════════ Bot Live Operational Status & Control Strip ═══════════════════ -->
+    <!-- ═══════════════════ Sleek Minimal Bot Status & Action Strip ═══════════════════ -->
     <section class="bot-status-strip">
       <div class="bot-status-banner banner-info" id="botStatusBanner">
         <div class="banner-left-group">
-          <div class="regime-badge badge-warmup" id="regimeBadge">DOW: WARMUP</div>
+          <div class="regime-badge badge-warmup" id="regimeBadge" style="display: none;">DOW: WARMUP</div>
           <div class="banner-status-pill" id="bannerStatusPill">
             <span class="banner-pulse-dot"></span>
-            <span id="bannerStatusTitle">⏳ Analyzing Market</span>
+            <span id="bannerStatusTitle">⏳ กำลังประมวลผล</span>
           </div>
-          <span class="banner-reason-text" id="bannerReasonText">Synchronizing order book...</span>
-          <span class="banner-trigger-text" id="bannerTriggerText">Evaluating market tick</span>
+          <span class="banner-reason-text" id="bannerReasonText">Synchronizing market data...</span>
+          <span class="banner-trigger-text" id="bannerTriggerText" style="display: none;">Evaluating market tick</span>
         </div>
 
         <div class="banner-controls-group">
@@ -188,7 +188,7 @@
 
       <!-- ──── COLUMN 1: Large Primary Chart ──── -->
       <div class="col-chart">
-        <!-- ── Horizontal MA Fan Plan Strip (Entry, TP1, TP2, SL, Spread, HTF) ── -->
+        <!-- ── Horizontal MA Fan Plan Strip (Entry, TP1, TP2, SL) ── -->
         <div class="ma-fan-plan-strip" id="maFanPlanCard" style="display: none;">
           <div class="mf-strip-brand">
             <span class="mf-strip-badge">🪭 MA-FOLD-FAN</span>
@@ -233,36 +233,16 @@
             </div>
           </div>
 
-          <div class="mf-strip-stats">
-            <div class="mf-stat-box">
-              <span class="mf-stat-label">ความกว้างพัด</span>
-              <span class="mf-stat-val" id="mfCurrentSpread" style="color:#38bdf8;">--%</span>
-            </div>
-            <div class="mf-stat-box">
-              <span class="mf-stat-label">เทรนด์ใหญ่</span>
-              <span class="mf-stat-val" id="mfHtfRegime" style="color:#a855f7;">--</span>
-            </div>
-            <div class="mf-stat-box">
-              <span class="mf-stat-label">สถานะพอร์ต</span>
-              <span class="mf-stat-val" id="mfPositionStatus" style="color:#4ade80;">รอเข้าซื้อ</span>
-            </div>
-            <div class="mf-stat-box">
-              <span class="mf-stat-label">WIN RATE</span>
-              <span class="mf-stat-val text-green" id="mfWinRate">--%</span>
-            </div>
-            <div class="mf-stat-box">
-              <span class="mf-stat-label">CYCLES</span>
-              <span class="mf-stat-val" id="mfCycles">0</span>
-            </div>
-            <div class="mf-stat-box">
-              <span class="mf-stat-label">REALIZED</span>
-              <span class="mf-stat-val text-green" id="mfRealizedPnl">$0.00</span>
-            </div>
-          </div>
-
-          <!-- Compatibility hidden elements -->
+          <!-- Compatibility hidden elements to maintain script updates without visual clutter -->
+          <span id="mfCurrentSpread" style="display:none;"></span>
+          <span id="mfHtfRegime" style="display:none;"></span>
+          <span id="mfPositionStatus" style="display:none;"></span>
+          <span id="mfWinRate" style="display:none;"></span>
+          <span id="mfCycles" style="display:none;"></span>
+          <span id="mfRealizedPnl" style="display:none;"></span>
           <span id="mfSignalBanner" style="display:none;"></span>
           <span id="mfSignalType" style="display:none;"></span>
+        </div>
         </div>
 
         <section class="chart-panel">

@@ -5441,3 +5441,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
      4. 📦 **ของที่ถือครอง (HELD POSITION)**: ปริมาณเหรียญที่ถือ และ % โควตางบลงทุน
      5. 🎯 **WIN RATE / สถิติรอบ (WIN RATE & TRADES)**: อัตราการชนะ และจำนวนรอบที่เทรด
      6. ⚙️ **สถานะระบบ (BOT STATUS)**: สถานะการรัน ป้าย MA-FOLD-FAN และ Timeframe
+
+
+---
+
+## 151. v0.2.151 — Minimal & Cohesive Top Strip, Disable Backtest Auto-Run, Dynamic Symbol Forwarding & Persistent MA Fan Metrics Restoration (`public/backtest.js`, `public/index.html`, `public/style.css`, `public/app.js`, `src/strategy/ma-fan/strategy.ts`, `src/server.ts`)
+
+1. **ปิดระบบ Backtest Auto-Run เมื่อเปิดหน้าเว็บ & ส่งต่อคู่เหรียญปัจจุบันอัตโนมัติ (`public/backtest.js`, `public/index.html`, `public/app.js`)**:
+   - **ปัญหาเดิม**:
+     - ทุกครั้งที่เปิดหน้า `/backtest.html` ระบบจะสั่ง `setTimeout(() => runBacktest(), 400)` ทำการรัน Backtest คู่ `BNBFDUSD` / `BNBUSDT` ทันทีโดยอัตโนมัติ ทำให้เสียเวลาและเปลืองทรัพยากรเซิร์ฟเวอร์
+   - **การแก้ไข**:
+     - ลบคำสั่ง Auto-run ใน `DOMContentLoaded` ของ `public/backtest.js` ออกทั้งหมด ให้เปิดหน้าเว็บมาอย่างรวดเร็วและสะอาดตา รอให้ผู้ใช้กดปุ่ม "▶️ Run Backtest" ด้วยตนเอง
+     - เพิ่มการตรวจสอบ URL Search Params `?symbol=` หากระบุมาให้เลือกคู่นั้นทันที และหากไม่ได้ระบุ จะไปดึงคู่เหรียญปัจจุบันของบอทจริงจาก `/api/config` มากรอกรอไว้ให้อัตโนมัติ (แทนที่การฮาร์ดโค้ดเป็น `BNBFDUSD`)
+     - ใน `public/index.html` และ `public/app.js`: อัปเดตลิงก์ของปุ่ม `🧪 Backtest` ใน Header ให้อ้างอิงคู่เหรียญที่กำลังเทรดอยู่เสมอ (`/backtest.html?symbol=${activeSymbol}`) ทำให้กดไปทดสอบกลยุทธ์ต่อได้ทันทีอย่างราบรื่น
+
+2. **ปรับโฉมแถบด้านบนให้ดู Minimal สะอาดตา และตัดข้อความซ้ำซ้อนออกทั้งหมด (`public/index.html`, `public/style.css`, `public/app.js`)**:
+   - **ปัญหาเดิม**:
+     - มีป้ายสีเหลือง `DOW: WARMUP` ค้างอยู่ในแถบสถานะ ทั้งที่กำลังรันกลยุทธ์ `MA-FOLD-FAN` ทำให้ดูแปลกแยกและขัดตา
+     - ข้อความสถานะพัด (Spread) และคำอธิบายแสดงซ้ำกันถึง 3 บรรทัดติดกัน (ในแถบ Banner, ในแถบ MA Fan Plan, และในหัวกราฟ)
+     - แถบ `.mf-strip-stats` แสดงตัวเลข `WIN RATE 0.0% | CYCLES 0 | REALIZED +$0.00` ซ้ำซ้อนและขัดแย้งกับ 6-Card Studio KPI Bar ด้านบน
+   - **การแก้ไข**:
+     - ซ่อนป้าย `regimeBadge` (`DOW: WARMUP`) เมื่อทำงานในโหมด `ma_fan`
+     - รวมข้อความเหตุผลและคำอธิบายสถานะบอทให้เป็นประโยคเดียวต่อเนื่อง กระชับ สละสลวยในแถบ Action Strip
+     - ตัดแถบสถิติซ้ำซ้อน `.mf-strip-stats` ออกจากแถบแผนการเทรด MA Fan ทำให้เหลือเฉพาะ **4 ชิปราคาเป้าหมายสำคัญ (Entry, TP1, TP2, Stop Loss)** เรียงแถวเดียวเหนือกราฟ สบายตา คลีนระดับสากล
+     - ยกเลิกการแสดงผลของ `bannerTriggerText` ที่แยกเป็นกล่องย่อยซ้ำซ้อน
+
+3. **แก้ไขปัญหาการโหลดข้อมูลผิดเหรียญ (SOMI) บนหน้าเว็บ และการคืนค่าสถิติรอบเทรด (`public/app.js`, `src/strategy/ma-fan/strategy.ts`, `src/server.ts`)**:
+   - **สาเหตุที่เปิดมาแล้วเห็นเหรียญ SOMI และรอบเทรด 0**:
+     - ใน `app.js`: ตัวแปร `activeSymbol` ถูกฮาร์ดโค้ดเป็น `"SOMI:USDso"` ทำให้ตอนบูตหน้าเว็บ ฟังก์ชัน `loadTradeManagerData()` วิ่งไปดึงประวัติของ SOMI มาแสดง และไม่ยอมโหลดใหม่เมื่อเหรียญของบอทเปลี่ยนเป็น `HAEDALUSDT`
+     - ใน `strategy.ts`: ค่า `totalCycles`, `winCount`, และ `realizedPnl` เริ่มต้นที่ 0 ในเมมโมรี ไม่ได้ Restore จากฐานข้อมูล
+   - **การแก้ไข**:
+     - ใน `public/app.js`: ปลดตัวแปร `activeSymbol` ให้ว่าง และ `await loadSettings()` ก่อนโหลดประวัติเทรด รวมถึงดักจับเมื่อได้รับ Tick ของเหรียญใหม่ ให้รีเฟรชตารางประวัติเทรดและสรุปรอบเทรดทันที
+     - ใน `src/strategy/ma-fan/strategy.ts`: เพิ่ม `restoreMetricsFromDb()` ให้ดึงสรุปประวัติจริงจาก `this.db.getTradeRounds(this.symbol)` มากำหนด `totalCycles`, `winCount`, `lossCount`, และ `realizedPnl` ทันทีเมื่อเปิดบอท
+     - ใน `src/server.ts`: ให้ `/api/db/trade-manager` และ `/api/db/rounds` ใช้คู่เหรียญปัจจุบันของบอทเป็นค่าเริ่มต้นเมื่อไม่ได้ระบุ `?symbol=`

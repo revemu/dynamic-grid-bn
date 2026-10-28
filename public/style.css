@@ -4154,11 +4154,16 @@ input:checked + .slider:before { transform: translateX(20px); }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 14px;
+  padding: 6px 14px;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.mf-strip-stats {
+  display: none !important;
 }
 
 .mf-strip-brand {

@@ -1467,11 +1467,18 @@
     // Check if query params exist (e.g. symbol from live bot)
     const urlParams = new URLSearchParams(window.location.search);
     const sym = urlParams.get("symbol");
-    if (sym) setSymbolValue(sym);
+    if (sym) {
+      setSymbolValue(sym);
+    } else {
+      // Pre-fill with active bot symbol from server settings if available
+      fetch("/api/config")
+        .then((r) => r.json())
+        .then((cfg) => {
+          if (cfg && cfg.symbol) setSymbolValue(cfg.symbol);
+        })
+        .catch(() => {});
+    }
 
-    // Automatically trigger initial backtest for immediate gratification!
-    setTimeout(() => {
-      runBacktest();
-    }, 400);
+    // Do NOT automatically run backtest on page load; wait for user to click "Run Backtest"
   });
 })();

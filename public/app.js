@@ -225,7 +225,7 @@
   let structureMarkers = [];
   let pendingCandles = null;
   let pendingTick = null;
-  let activeSymbol = "SOMI:USDso";
+  let activeSymbol = "";
   let activeBaseAsset = "BASE";
   let activeQuoteAsset = "USDT";
   let activePricePrecision = 2;
@@ -2915,8 +2915,9 @@
       const { title, reason, nextTrigger, severity } = data.botAction;
       elBotStatusBanner.className = `bot-status-banner banner-${severity || "info"}`;
       if (elBannerStatusTitle) elBannerStatusTitle.textContent = title || "Analyzing Market";
-      if (elBannerReasonText) elBannerReasonText.textContent = reason || "Monitoring channel parameters";
-      if (elBannerTriggerText) elBannerTriggerText.textContent = nextTrigger || "Evaluating price action";
+      if (elBannerReasonText) {
+        elBannerReasonText.textContent = nextTrigger ? `${reason} — ${nextTrigger}` : (reason || "Monitoring channel parameters");
+      }
     }
 
     if (elTickSpeedText && data.intervalMs !== undefined) {
@@ -3047,7 +3048,18 @@
     }
 
     // 0. Binance Account Balance Updates
-    activeSymbol = data.symbol || data.binanceSymbol || activeSymbol || "SOMI:USDso";
+    const incomingSym = data.symbol || data.binanceSymbol;
+    if (incomingSym && incomingSym !== activeSymbol) {
+      activeSymbol = incomingSym;
+      const elBtnOpenBacktestStudio = document.getElementById("btnOpenBacktestStudio");
+      if (elBtnOpenBacktestStudio) {
+        elBtnOpenBacktestStudio.href = `/backtest.html?symbol=${encodeURIComponent(activeSymbol)}`;
+      }
+      loadTradeManagerData();
+      loadTradeRoundsData();
+    } else if (!activeSymbol && incomingSym) {
+      activeSymbol = incomingSym;
+    }
     activeBaseAsset = data.baseAsset || activeBaseAsset || "BASE";
     activeQuoteAsset = data.quoteAsset || activeQuoteAsset || "USDT";
     const baseSym = activeBaseAsset;
@@ -3198,17 +3210,22 @@
     }
 
     // Dow Regime Badge
-    if (data.regime && elRegimeBadge) {
-      elRegimeBadge.textContent = `DOW: ${data.regime}`;
-      elRegimeBadge.className =
-        "regime-badge " +
-        (data.regime === "RANGE"
-          ? "badge-range"
-          : data.regime === "UPTREND"
-            ? "badge-uptrend"
-            : data.regime === "DOWNTREND"
-              ? "badge-downtrend"
-              : "badge-warmup");
+    if (elRegimeBadge) {
+      if (data.strategyMode === "ma_fan" || data.strategyType === "ma_fan") {
+        elRegimeBadge.style.display = "none";
+      } else if (data.regime) {
+        elRegimeBadge.style.display = "";
+        elRegimeBadge.textContent = `DOW: ${data.regime}`;
+        elRegimeBadge.className =
+          "regime-badge " +
+          (data.regime === "RANGE"
+            ? "badge-range"
+            : data.regime === "UPTREND"
+              ? "badge-uptrend"
+              : data.regime === "DOWNTREND"
+                ? "badge-downtrend"
+                : "badge-warmup");
+      }
     }
 
     // 5. Exchange Orderbook: Best Bid & Ask
@@ -5071,7 +5088,13 @@
 
       const currentExchange = (data.exchange || "binance").toLowerCase();
       const defaultSym = currentExchange === "dreamdex" ? "SOMI:USDSO" : "BTCFDUSD";
-      setVal("cfg_symbol", data.symbol || defaultSym);
+      const resolvedSym = data.symbol || defaultSym;
+      activeSymbol = resolvedSym;
+      const elBtnOpenBacktestStudio = document.getElementById("btnOpenBacktestStudio");
+      if (elBtnOpenBacktestStudio) {
+        elBtnOpenBacktestStudio.href = `/backtest.html?symbol=${encodeURIComponent(activeSymbol)}`;
+      }
+      setVal("cfg_symbol", resolvedSym);
       setVal("cfg_exchange", data.exchange || "binance");
       setVal("cfg_strategyType", data.strategyType || "dynamic_grid");
       renderTopSymbolOptions(currentExchange, data.symbol || defaultSym);
@@ -6213,8 +6236,8 @@
       if (elTmTradesTbody) {
         elTmTradesTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-row">🔄 กำลังโหลดข้อมูลล่าสุดจากฐานข้อมูล...</td></tr>';
       }
-      const symParam = encodeURIComponent(activeSymbol || activeBaseAsset || "");
-      const res = await fetch(`${API_BASE}/api/db/trade-manager?symbol=${symParam}`);
+      const symParam = activeSymbol ? encodeURIComponent(activeSymbol) : "";
+      const res = await fetch(`${API_BASE}/api/db/trade-manager${symParam ? `?symbol=${symParam}` : ""}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
@@ -6467,8 +6490,8 @@
       if (elTmRoundsTbody && (!tmRounds || tmRounds.length === 0)) {
         elTmRoundsTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-row">🔄 กำลังคำนวณและโหลดสรุปรอบการซื้อขาย...</td></tr>';
       }
-      const symParam = encodeURIComponent(activeSymbol || activeBaseAsset || "");
-      const res = await fetch(`${API_BASE}/api/db/rounds?symbol=${symParam}`);
+      const symParam = activeSymbol ? encodeURIComponent(activeSymbol) : "";
+      const res = await fetch(`${API_BASE}/api/db/rounds${symParam ? `?symbol=${symParam}` : ""}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data && data.success) {
@@ -7573,18 +7596,20 @@
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      loadSettings();
+    document.addEventListener("DOMContentLoaded", async () => {
+      await loadSettings();
       initChart();
       connectSSE();
       checkBotPauseStatus();
       loadTradeManagerData();
     });
   } else {
-    loadSettings();
-    initChart();
-    connectSSE();
-    checkBotPauseStatus();
-    loadTradeManagerData();
+    (async () => {
+      await loadSettings();
+      initChart();
+      connectSSE();
+      checkBotPauseStatus();
+      loadTradeManagerData();
+    })();
   }
 })();
