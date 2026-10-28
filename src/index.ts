@@ -134,13 +134,19 @@ async function main(): Promise<void> {
     const isMaFan = config.strategyType === "ma_fan";
     const primaryInterval = isMaFan ? ((config.maFanExecutionTimeframe as string) || "5m") : config.dowTimeframe;
     const htfInterval = isMaFan ? ((config.maFanSupervisorTimeframe as string) || "15m") : config.htfTimeframe;
+    const initialCandleLimit = isMaFan ? 1000 : (config.initialCandleCount ?? 300);
+
+    if (isMaFan) {
+      macroDowEngine.setMaxCandles(1200);
+      dashboard?.setMaxCandles?.(1200);
+    }
 
     await macroDowEngine.loadHigherTimeframeCandles(
       binanceCandleSymbol,
       primaryInterval,
       config.binanceBaseUrl,
       log,
-      config.initialCandleCount ?? 300,
+      initialCandleLimit,
       true,
     );
     await localTrendEngine.loadHigherTimeframeCandles(
@@ -553,7 +559,8 @@ async function main(): Promise<void> {
           htfFeed?.start();
           return res;
         }
-        const fetchLimit = s.initialCandleCount ?? res.initialCandleCount ?? 300;
+        const isMaFanStrategy = (s.strategyType || s.strategyMode || config.strategyType) === "ma_fan";
+        const fetchLimit = isMaFanStrategy ? 1000 : (s.initialCandleCount ?? res.initialCandleCount ?? 300);
         const tf = s.dowTimeframe ?? res.dowTimeframe ?? config.dowTimeframe;
         const microTf = s.tradingTimeframe ?? res.tradingTimeframe ?? config.tradingTimeframe ?? "5m";
         try {

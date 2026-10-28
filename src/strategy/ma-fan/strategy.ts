@@ -109,7 +109,7 @@ export class MaFanStrategy {
     } else {
       this.candles.push(candle);
       this.candles.sort((a, b) => a.time - b.time);
-      if (this.candles.length > 500) this.candles.shift();
+      if (this.candles.length > 1200) this.candles.shift();
     }
     this.recomputeIndicators();
   }

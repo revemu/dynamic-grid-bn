@@ -7,6 +7,7 @@
 import fs from "fs";
 import path from "path";
 import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator } from "./strategy/ma-fan/index.js";
+import { calcATR } from "./strategy/ma-fan/ribbon.js";
 
 export interface BacktestTrade {
   id: number;
@@ -146,6 +147,11 @@ export class BacktestService {
       initialCapital?: number;
       slBufferPct?: number;
       useRatchetSl?: boolean;
+      useAtrAdaptiveSpread?: boolean;
+      atrMultiplier?: number;
+      trailingPullbackPct?: number;
+      tp1Ratio?: number;
+      breakevenFeeBufferPct?: number;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -153,6 +159,11 @@ export class BacktestService {
     const initialCapital = opts.initialCapital ?? 200;
     const slBufferPct = opts.slBufferPct ?? 0.25;
     const useRatchetSl = opts.useRatchetSl !== false;
+    const useAtrAdaptive = opts.useAtrAdaptiveSpread ?? true;
+    const atrMultiplier = opts.atrMultiplier ?? 1.25;
+    const trailingPullbackPct = opts.trailingPullbackPct ?? 0.45;
+    const tp1Ratio = Math.max(0.1, Math.min(0.9, opts.tp1Ratio ?? 0.50));
+    const beFeeBuffer = (opts.breakevenFeeBufferPct ?? 0.05) / 100;
 
     // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
@@ -214,10 +225,11 @@ export class BacktestService {
         if (tp1Filled && heldQty > 0) {
           const target = Math.max(ribbon.ema75, ribbon.ema200);
           const hitTarget = c.high >= target && c.high > entryPrice * 1.0035;
-          const hitTrailing = highestSinceTp1 > entryPrice * 1.005 && c.low <= highestSinceTp1 * 0.9965;
+          const trailingExitRatio = 1 - (trailingPullbackPct / 100);
+          const hitTrailing = highestSinceTp1 > entryPrice * 1.005 && c.low <= highestSinceTp1 * trailingExitRatio;
 
           if (hitTarget || hitTrailing) {
-            const exitP = hitTarget ? Math.min(c.high, Math.max(target, c.close)) : highestSinceTp1 * 0.9965;
+            const exitP = hitTarget ? Math.min(c.high, Math.max(target, c.close)) : highestSinceTp1 * trailingExitRatio;
             const pnl2 = (exitP - entryPrice) * heldQty;
             cash += heldQty * exitP;
 
@@ -327,17 +339,17 @@ export class BacktestService {
           continue;
         }
 
-        // 3. TP1 at EMA 25 (Sell 50%)
+        // 3. TP1 at EMA 25 (Sell based on configured tp1Ratio)
         if (!tp1Filled && c.high >= ribbon.ema25 && ribbon.ema25 > entryPrice * 1.0015) {
           tp1Price = ribbon.ema25;
           tp1Time = c.time;
-          const sellQty = heldQty * 0.5;
+          const sellQty = heldQty * tp1Ratio;
           cash += sellQty * tp1Price;
           heldQty -= sellQty;
           tp1Filled = true;
           highestSinceTp1 = tp1Price;
-          // Move SL to Breakeven (+0.05% fee buffer)
-          stopLossPrice = Math.max(stopLossPrice, entryPrice * 1.0005);
+          // Move SL to Breakeven (+fee buffer)
+          stopLossPrice = Math.max(stopLossPrice, entryPrice * (1 + beFeeBuffer));
 
           // TP1 Marker
           markers.push({
@@ -345,15 +357,24 @@ export class BacktestService {
             position: "aboveBar",
             color: "#38bdf8",
             shape: "circle",
-            text: `🔵 TP1 (50%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
+            text: `🔵 TP1 (${(tp1Ratio * 100).toFixed(0)}%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
           });
         }
       }
 
       // ─── POSITION ENTRY (SNIPER HOOK) ────────────────────────────────
       if (heldQty === 0 && cash >= 10) {
+        // Compute dynamic spread threshold matching live strategy (if enabled)
+        let currentSpread = spread;
+        if (useAtrAdaptive) {
+          const atrs = calcATR(candles.slice(0, i + 1), 14);
+          const curAtr = atrs[atrs.length - 1] ?? 0;
+          const atrPct = (curAtr / c.close) * 100;
+          currentSpread = Math.max(0.20, Math.max(spread, atrPct * atrMultiplier));
+        }
+
         const exhaustion = ExhaustionEngine.evaluate(candles, i);
-        const isStretched = ribbon.fanSpreadPct >= spread;
+        const isStretched = ribbon.fanSpreadPct >= currentSpread;
 
         const isDownside = ribbon.ema4 <= ribbon.ema25 && c.close < ribbon.ema25;
 

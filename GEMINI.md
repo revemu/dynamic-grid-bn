@@ -5165,6 +5165,24 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - **UI & Inspector Synchronization**: ใน `public/app.js` และ `public/backtest.js` ซิงค์การคำนวณในป๊อปอัปให้ตรงกัน โดยตรวจสอบราคาปิดต่ำกว่า EMA 25 และแจ้งเตือนเหตุผลเมื่อราคาหลุดโซนย่อซื้อ
    - **ผลลัพธ์การทดสอบ (NEARUSDT 1000 แท่ง)**: ไม้ที่เข้าซื้อผิดพลาดบนแท่ง Pump ถูกกรองออก 100% ผลการเทรดเปลี่ยนจาก 4 ไม้ (ชนะ 3 แพ้ 1, ขาดทุน -0.13%) เป็น **3 ไม้ ชนะ 100% กำไรสุทธิ +1.84%** ทันที
 
+---
+
+## 136. v0.2.136 — Full Synchronization of MA Fan Config & Sample Size between Live Bot and Backtest Studio
+
+1. **สาเหตุของปัญหาความไม่สอดคล้องระหว่าง Backtest และหน้าเทรดจริง**:
+   - **Sample Size ไม่เท่ากัน**: บอทจริงในโหมด MA Fan เดิมดึงประวัติแท่งเทียนเพียง 300 แท่ง (`initialCandleCount: 300` หรือ ~25 ชม.) ทำให้ช่วงที่กราฟวิ่งขึ้นต่อเนื่อง ระบบหาจุดพัดกางขาลงไม่เจอ (`tradeCount = 0`) และ fallback ไปที่ 0.20% ขณะที่ Backtest Studio ใช้ 1,000 แท่ง (~3.5 วัน) จึง Calibrate ได้ 0.35%
+   - **Backtest ไม่ได้ดึง Config สดของบอทจริง**: Backtest Studio รันด้วยค่า Fixed Spread และไม่ได้นำการตั้งค่าจริง เช่น `useAtrAdaptiveSpread`, `atrMultiplier`, `tp1Ratio`, `trailingPullbackPct`, `breakevenFeeBufferPct` จากฐานข้อมูลบอทมาคำนวณในแต่ละแท่ง
+
+2. **การแก้ไขและการปรับปรุง (`src/index.ts`, `src/strategy/ma-fan/strategy.ts`, `src/server.ts`, `src/backtest-service.ts`)**:
+   - **ขยาย Sample Size ของหน้าเทรดจริงเป็น 1,000 แท่ง**:
+     - ใน `src/index.ts`: กำหนดให้กลยุทธ์ MA Fan โหลดแท่งเทียนเริ่มต้น `1000` แท่ง (`initialCandleLimit = 1000`) และขยาย `macroDowEngine` และ Dashboard ให้เก็บแท่งเทียนสูงสุดถึง 1,200 แท่ง
+     - ใน `src/strategy/ma-fan/strategy.ts`: ขยายแคชแท่งเทียน `this.candles` เป็น 1,200 แท่ง
+     - ทำให้การ Auto-Calibrate บนหน้าเทรดจริงใช้ข้อมูล 1,000 แท่งเท่ากับ Backtest Studio และได้ Base Spread เป็น **0.35%** ตรงกันเป๊ะ
+   - **เชื่อมโยง Config สดเข้า Backtest Studio Simulation**:
+     - ใน `src/server.ts`: Endpoint `/api/backtest/run` ดึง Config จาก `this.opts.getSettings()` หรือ Database โดยตรง แล้วส่งผ่านไปยัง `runMaFanSimulation`
+     - ใน `src/backtest-service.ts`: จำลองระบบ **Dynamic ATR Adaptive Spread** (`useAtrAdaptiveSpread`, `atrMultiplier`) ในแต่ละแท่งเทียน พร้อมนำค่า `trailingPullbackPct`, `tp1Ratio`, และ `breakevenFeeBufferPct` จากบอทจริงมาใช้ในการจำลองการออกออเดอร์ทุกไม้ 100%
+
+
 
 
 
