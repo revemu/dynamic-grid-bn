@@ -92,6 +92,21 @@ export interface BacktestSummary {
   worstTradePct: number;
 }
 
+export interface BacktestEvaluationItem {
+  time: number;
+  fanSpreadPct: number;
+  isFanningDown: boolean;
+  isHookUp: boolean;
+  rsi: number;
+  isOversoldExhaustion: boolean;
+  ema4: number;
+  ema8: number;
+  ema16: number;
+  ema25: number;
+  ema75: number;
+  ema200: number;
+}
+
 export interface BacktestRecord {
   id: string;
   createdAt: string;
@@ -104,6 +119,7 @@ export interface BacktestRecord {
   trades: BacktestTrade[];
   markers: BacktestMarker[];
   candles: Candle[];
+  evaluations?: BacktestEvaluationItem[];
 }
 
 export interface BacktestHistoryItem {
@@ -505,6 +521,25 @@ export class BacktestService {
       worstTradePct: Number(worstTradePct.toFixed(2)),
     };
 
+    const evaluations: BacktestEvaluationItem[] = candles.map((c, idx) => {
+      const rib = ribbonStates[idx]!;
+      const exh = exhaustionStates[idx]!;
+      return {
+        time: c.time,
+        fanSpreadPct: rib.fanSpreadPct,
+        isFanningDown: rib.isFanningDown,
+        isHookUp: rib.isHookUp,
+        rsi: exh.rsi,
+        isOversoldExhaustion: exh.isOversoldExhaustion,
+        ema4: rib.ema4,
+        ema8: rib.ema8,
+        ema16: rib.ema16,
+        ema25: rib.ema25,
+        ema75: rib.ema75,
+        ema200: rib.ema200,
+      };
+    });
+
     const id = `bt_${Date.now()}`;
     const record: BacktestRecord = {
       id,
@@ -518,6 +553,7 @@ export class BacktestService {
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
       candles,
+      evaluations,
     };
 
     // Save to persistent database

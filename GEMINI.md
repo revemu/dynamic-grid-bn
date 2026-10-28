@@ -5307,6 +5307,17 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - อัปเดตชื่อ Adapter เป็น `MA-FOLD-FAN Reversion Trader`
      - อัปเดต Action Title ใน Telemetry State เป็น `🪭 MA-FOLD-FAN Scanning`
 
+---
+
+## 144. v0.2.144 — Candle Inspector & Engine Alignment (RSI Oversold Sync)
+1. **แก้ปัญหาความขัดแย้งระหว่างหน้าต่างตรวจวัดแท่งเทียน (UI Inspector) กับเครื่องยนต์บอทจริง**:
+   - **สาเหตุ**: หน้าต่าง `🔬 ตรวจวัดแท่งเทียน` ใน `public/backtest.js` และ `public/app.js` เดิมไปเขียนเกณฑ์เองในฝั่งเบราว์เซอร์ว่า `lowerWickPct >= 30` (ต้องมีไส้ล่าง ≥ 30%) ซึ่งไม่ตรงกับเครื่องยนต์บอทจริง (`MaFanCoreRules` / `ExhaustionEngine`) ที่ตรวจจับ Oversold ผ่าน **RSI ≤ 45 / MACD Turning Up** ทำให้แท่งเทียนที่มีการเข้าซื้อจริงถูกหน้าต่าง UI แจ้งเตือนผิดพลาดว่า *"แท่งนี้ยังไม่เข้าเกณฑ์: แท่งเทียนยังไม่ทิ้งไส้ล่าง"*
+   - **การแก้ไขใน Backend (`src/backtest-service.ts`)**:
+     - เพิ่ม `evaluations` ส่งตรงจาก `RibbonEngine` และ `ExhaustionEngine` ใน `BacktestRecord` เพื่อให้หน้าบ้านได้รับผลลัพธ์การคำนวณที่แม่นยำ 100% จากเครื่องยนต์เดียวกัน
+   - **การแก้ไขใน Frontend (`public/backtest.js` & `public/app.js`)**:
+     - ปรับข้อ 4 ของกล่อง Inspector จากเดิม `แรงซื้อดีดกลับ (Oversold Wick) ≥ 30%` เป็น `ภาวะหมดแรงเทขาย (Oversold Exhaustion) พร้อมแสดงค่า RSI ปัจจุบัน`
+     - ซิงค์ตรรกะการตรวจสอบทั้ง 4 ข้อให้ตรงกับ `MaFanCoreRules.evaluateEntry` 100% ทำให้แท่งเทียนที่บอทเข้าซื้อจะแสดงผล `🟢 แท่งนี้เข้าเกณฑ์ครบ 4 ข้อ!` ตรงกับหมุด BUY บนกราฟอย่างสมบูรณ์แบบ
+
 
 
 

@@ -410,57 +410,75 @@
       btMaFanCandleDataMap.clear();
       for (let i = 0; i < record.candles.length; i++) {
         const c = record.candles[i];
-        const v4 = e4Map.get(c.time);
-        const v8 = e8Map.get(c.time);
-        const v16 = e16Map.get(c.time);
-        const v25 = e25Map.get(c.time);
-        const v75 = e75Map.get(c.time);
-        const v200 = e200Map.get(c.time);
+        const ev = record.evaluations ? record.evaluations[i] : null;
+        const prevC = i > 0 ? record.candles[i - 1] : null;
 
-        if (v4 !== undefined && v25 !== undefined) {
-          const spreadPct = v25 > 0 ? (Math.abs(v25 - v4) / v25) * 100 : 0;
-          const prevC = i > 0 ? record.candles[i - 1] : null;
-          const prevV4 = prevC ? e4Map.get(prevC.time) : v4;
-          const prevV8 = prevC ? e8Map.get(prevC.time) : v8;
-          const prevV16 = prevC ? e16Map.get(prevC.time) : v16;
-          const prevV25 = prevC ? e25Map.get(prevC.time) : v25;
+        const range = c.high - c.low;
+        const bodyBottom = Math.min(c.open, c.close);
+        const lowerWick = bodyBottom - c.low;
+        const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
 
-          const isCurBullish = v8 !== undefined && v16 !== undefined && (v4 > v8 && v8 > v16 && v16 > v25);
-          const isFanningDown =
-            !isCurBullish &&
-            v4 <= v25 &&
-            v8 !== undefined && v16 !== undefined &&
-            ((v4 < v8 && v8 < v16 && v16 < v25) ||
-              (prevV4 !== undefined && prevV4 < prevV8 && prevV8 < prevV16 && prevV16 < prevV25 && v4 <= v16));
-
-          const isFanningUp =
-            (v8 !== undefined && v16 !== undefined && (v4 > v8 && v8 > v16 && v16 > v25)) ||
-            (prevV4 !== undefined && prevV4 > prevV8 && prevV8 > prevV16 && prevV16 > prevV25);
-
-          const isHookUp = prevV4 !== undefined && v4 > prevV4 && v4 <= v25 * 1.002 && c.close < v25;
-
-          const range = c.high - c.low;
-          const bodyBottom = Math.min(c.open, c.close);
-          const lowerWick = bodyBottom - c.low;
-          const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
-          const isOversoldWick = lowerWickPct >= 30;
-
+        if (ev) {
           btMaFanCandleDataMap.set(c.time, {
             time: c.time,
             candle: c,
             prevCandle: prevC,
-            ema4: v4,
-            ema8: v8,
-            ema16: v16,
-            ema25: v25,
-            ema75: v75,
-            ema200: v200,
-            spreadPct,
-            isFanningDown,
-            isHookUp,
+            ema4: ev.ema4,
+            ema8: ev.ema8,
+            ema16: ev.ema16,
+            ema25: ev.ema25,
+            ema75: ev.ema75,
+            ema200: ev.ema200,
+            spreadPct: ev.fanSpreadPct,
+            isFanningDown: ev.isFanningDown,
+            isHookUp: ev.isHookUp,
+            rsi: ev.rsi,
+            isOversoldExhaustion: ev.isOversoldExhaustion,
             lowerWickPct,
-            isOversoldWick,
           });
+        } else {
+          const v4 = e4Map.get(c.time);
+          const v8 = e8Map.get(c.time);
+          const v16 = e16Map.get(c.time);
+          const v25 = e25Map.get(c.time);
+          const v75 = e75Map.get(c.time);
+          const v200 = e200Map.get(c.time);
+
+          if (v4 !== undefined && v25 !== undefined) {
+            const spreadPct = v25 > 0 ? (Math.abs(v25 - v4) / v25) * 100 : 0;
+            const prevV4 = prevC ? e4Map.get(prevC.time) : v4;
+            const prevV8 = prevC ? e8Map.get(prevC.time) : v8;
+            const prevV16 = prevC ? e16Map.get(prevC.time) : v16;
+            const prevV25 = prevC ? e25Map.get(prevC.time) : v25;
+
+            const curFanningDown = v4 < v8 && v8 < v16 && v16 < v25;
+            const prevFanningDown = prevV4 < prevV8 && prevV8 < prevV16 && prevV16 < prevV25;
+            const isCurBullish = v4 > v8 && v8 > v16 && v16 > v25;
+            const isFanningDown = !isCurBullish && v4 <= v25 && (curFanningDown || (prevFanningDown && v4 <= v16));
+
+            const isHookUp =
+              v4 <= v25 * 1.002 &&
+              c.close < v25 &&
+              ((v4 >= v8 && prevV4 < prevV8) || (c.close > v4 && c.close > c.open));
+
+            btMaFanCandleDataMap.set(c.time, {
+              time: c.time,
+              candle: c,
+              prevCandle: prevC,
+              ema4: v4,
+              ema8: v8,
+              ema16: v16,
+              ema25: v25,
+              ema75: v75,
+              ema200: v200,
+              spreadPct,
+              isFanningDown,
+              isHookUp,
+              rsi: 50,
+              isOversoldExhaustion: true,
+              lowerWickPct,
+            });
+          }
         }
       }
 
@@ -556,11 +574,11 @@
     const isSpreadReady = data.spreadPct >= targetSpread;
     const spreadDiff = data.spreadPct - targetSpread;
 
-    // 4-point Sniper conditions
+    // 4-point Sniper conditions (Exact match with MaFanCoreRules)
     const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
     const condHook = data.isHookUp && c.close < data.ema25;
-    const condExhaust = data.isOversoldWick;
+    const condExhaust = !!data.isOversoldExhaustion;
 
     const allReady = condOrder && condSpread && condHook && condExhaust;
 
@@ -570,9 +588,9 @@
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
-      if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น`);
+      if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
-      if (!condExhaust) missing.push(`แท่งเทียนยังไม่ทิ้งไส้ล่าง`);
+      if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 45)`);
       verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;
     }
 
@@ -646,8 +664,8 @@
           <span style="color: ${condHook ? "#34d399" : "#f87171"}; font-weight:700;">${condHook ? "✅ ผ่าน" : "⏳ ไม่ม้วน"}</span>
         </div>
         <div class="cic-check-item">
-          <span>4. แรงซื้อดีดกลับ (Oversold Wick)</span>
-          <span style="color: ${condExhaust ? "#34d399" : "#f87171"}; font-weight:700;">${condExhaust ? "✅ ผ่าน" : "⏳ ไม่มี"}</span>
+          <span>4. ภาวะหมดแรงเทขาย (Oversold Exhaustion)</span>
+          <span style="color: ${condExhaust ? "#34d399" : "#f87171"}; font-weight:700;">${condExhaust ? `✅ ผ่าน (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})` : `⏳ รอขายหมด (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})`}</span>
         </div>
       </div>
 

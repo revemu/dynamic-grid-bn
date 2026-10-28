@@ -1249,6 +1249,29 @@
       const e75Map = new Map(e75.map((x) => [x.time, x.value]));
       const e200Map = new Map(e200.map((x) => [x.time, x.value]));
 
+      function calcRsiClient(candles, period = 14) {
+        const rsi = new Array(candles.length).fill(50);
+        if (candles.length <= period) return rsi;
+        let gains = 0, losses = 0;
+        for (let i = 1; i <= period; i++) {
+          const diff = candles[i].close - candles[i - 1].close;
+          if (diff >= 0) gains += diff; else losses += Math.abs(diff);
+        }
+        let avgGain = gains / period, avgLoss = losses / period;
+        rsi[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+        for (let i = period + 1; i < candles.length; i++) {
+          const diff = candles[i].close - candles[i - 1].close;
+          const gain = diff >= 0 ? diff : 0;
+          const loss = diff < 0 ? Math.abs(diff) : 0;
+          avgGain = (avgGain * (period - 1) + gain) / period;
+          avgLoss = (avgLoss * (period - 1) + loss) / period;
+          const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+          rsi[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + rs));
+        }
+        return rsi;
+      }
+      const rsiList = calcRsiClient(candles, 14);
+
       maFanCandleDataMap.clear();
       for (let i = 0; i < candles.length; i++) {
         const c = candles[i];
@@ -1279,13 +1302,20 @@
             (v8 !== undefined && v16 !== undefined && (v4 > v8 && v8 > v16 && v16 > v25)) ||
             (prevV4 !== undefined && prevV4 > prevV8 && prevV8 > prevV16 && prevV16 > prevV25);
 
-          const isHookUp = prevV4 !== undefined && v4 > prevV4 && v4 <= v25 * 1.002 && c.close < v25;
+          const isHookUp =
+            v4 <= v25 * 1.002 &&
+            c.close < v25 &&
+            ((v4 >= v8 && prevV4 < prevV8) ||
+              (c.close > v4 && c.close > c.open));
+
+          const curRsi = rsiList[i] ?? 50;
+          const prevRsi = i > 0 ? (rsiList[i - 1] ?? 50) : curRsi;
+          const isOversoldExhaustion = (prevRsi <= 45 || curRsi <= 40 || (curRsi > prevRsi && prevRsi <= 52)) && curRsi < 65;
 
           const range = c.high - c.low;
           const bodyBottom = Math.min(c.open, c.close);
           const lowerWick = bodyBottom - c.low;
           const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
-          const isOversoldWick = lowerWickPct >= 30;
 
           maFanCandleDataMap.set(c.time, {
             time: c.time,
@@ -1301,8 +1331,9 @@
             isFanningDown,
             isFanningUp,
             isHookUp,
+            rsi: curRsi,
+            isOversoldExhaustion,
             lowerWickPct,
-            isOversoldWick,
           });
         }
       }
@@ -1363,11 +1394,11 @@
     const isSpreadReady = data.spreadPct >= targetSpread;
     const spreadDiff = data.spreadPct - targetSpread;
 
-    // 4-point Sniper conditions
+    // 4-point Sniper conditions (Exact match with MaFanCoreRules)
     const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
     const condHook = data.isHookUp && c.close < data.ema25;
-    const condExhaust = data.isOversoldWick;
+    const condExhaust = !!data.isOversoldExhaustion;
 
     const allReady = condOrder && condSpread && condHook && condExhaust;
 
@@ -1377,9 +1408,9 @@
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
-      if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น`);
+      if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
-      if (!condExhaust) missing.push(`แท่งเทียนยังไม่ทิ้งไส้ล่าง`);
+      if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 45)`);
       verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;
     }
 
@@ -1453,8 +1484,8 @@
           <span style="color: ${condHook ? "#34d399" : "#f87171"}; font-weight:700;">${condHook ? "✅ ผ่าน" : "⏳ ไม่ม้วน"}</span>
         </div>
         <div class="cic-check-item">
-          <span>4. แรงซื้อดีดกลับ (Oversold Wick)</span>
-          <span style="color: ${condExhaust ? "#34d399" : "#f87171"}; font-weight:700;">${condExhaust ? "✅ ผ่าน" : "⏳ ไม่มี"}</span>
+          <span>4. ภาวะหมดแรงเทขาย (Oversold Exhaustion)</span>
+          <span style="color: ${condExhaust ? "#34d399" : "#f87171"}; font-weight:700;">${condExhaust ? `✅ ผ่าน (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})` : `⏳ รอขายหมด (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})`}</span>
         </div>
       </div>
 
