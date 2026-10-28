@@ -5209,6 +5209,19 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - การเลือก Timeframe (1m, 5m, 15m, 1h) ส่งค่า interval ไปยัง Binance REST API โดยตรง และคำนวณตามแท่งเทียนของ Timeframe นั้นจริง
    - เมื่อใช้จำนวนแท่ง 1,000 แท่ง: 1m ครอบคลุมเพียง ~16.6 ชั่วโมง (สัญญาณเข้าอาจน้อยในเหรียญที่ผันผวนต่ำ), ขณะที่ 15m ครอบคลุม ~10.4 วัน และ 1h ครอบคลุม ~41.6 วัน ทำให้สัญญาณพัดคลี่กว้างและกำไรสะสมใน Timeframe ใหญ่กว่ามักมีรอบมากกว่าอย่างมีนัยสำคัญ
 
+---
+
+## 138. v0.2.138 — Top Navigation Bar Compaction & Chart Header Alignment for MA Fan Sniper
+1. **การปรับแต่งแถบนำทางด้านบน (Top Navigation Bar Compaction)**:
+   - ซ่อน Select Dropdown แบบเก่าที่ซ้ำซ้อน (`#topSymbolSelect`) ให้แสดงเฉพาะกล่องค้นหาแบบพิมพ์ชื่อเหรียญที่มี Autocomplete Datalist (`#topSymbolSearchInput`) ประหยัดพื้นที่แนวนอนไปกว่า 130px
+   - ลดความยาวของ Badge เวอร์ชันระบบให้แสดงเฉพาะเลขเวอร์ชันสั้นกระชับ `🏷️ v0.2.138` (ส่วนรหัส Git Commit ย้ายไปแสดงใน Tooltip เมื่อวางเมาส์ชี้) ประหยัดพื้นที่ได้อีก 60px
+   - ปรับระยะ Padding และขนาดปุ่มเมนูด้านขวาให้ Compact กระชับ (`padding: 0 9px; height: 28px;`) เปลี่ยนข้อความปุ่มให้สั้นลง (`Backtest ↗`, `ประวัติ / ล็อต`, `ตั้งค่า`)
+   - เพิ่ม `overflow-x: auto;` ใน `.top-nav` เพื่อป้องกันการซ้อนทับหรือชนกัน 100% บนทุกขนาดหน้าจอ
+2. **การปรับแต่งแถบสถานะและเครื่องมือเหนือกราฟ (Chart Header Bar Alignment for MA Fan)**:
+   - **ซ่อนข้อมูล Channel ของ Dynamic Grid ในโหมด MA Fan**: เมื่อรันกลยุทธ์ `ma_fan` ระบบจะซ่อนป้าย `#channelStatusPill` (`Channel: 0.00% (Natural Swing (0.0%))`) ที่ไม่เกี่ยวข้องออกทันที
+   - **แสดงป้ายสถานะ MA Fan Sniper โดยเฉพาะ (`#mafanStatusPill`)**: แสดงค่าพัดคลี่กว้างปัจจุบัน (`🪭 Spread: ...% (เกณฑ์ ≥ ...%) • HTF: ...`) สอดคล้องกับกลยุทธ์ที่กำลังทำงานจริง 100%
+   - **ซ่อนปุ่มเครื่องมือของ Grid สวิงเวฟ**: ซ่อนปุ่ม `🏛️ 4H S/R` (`#btnToggleHtfLines`) และ `🌊 รอบคลื่น` (`#btnToggleWave`) เมื่ออยู่ในโหมด `ma_fan` คงเหลือเฉพาะปุ่มสลับ Timeframe (`5M`, `15M HTF`) และปุ่มจัดกึ่งกลางกราฟ ทำให้แถบเครื่องมือสะอาดตาและตรงกับกลยุทธ์อย่างสมบูรณ์
+
 
 
 

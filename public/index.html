@@ -28,7 +28,7 @@
         <div class="symbol-select-wrap">
           <input type="text" id="topSymbolSearchInput" class="symbol-nav-search-input" list="topSymbolDatalist" placeholder="🔍 พิมพ์หาเหรียญ..." autocomplete="off" title="พิมพ์ค้นหาคู่เหรียญทั้งหมด (เช่น NEAR, SOL, PEPE, DOGE)" />
           <datalist id="topSymbolDatalist"></datalist>
-          <select id="topSymbolSelect" class="symbol-nav-select" title="สลับคู่เหรียญเทรด">
+          <select id="topSymbolSelect" class="symbol-nav-select" title="สลับคู่เหรียญเทรด" style="display: none;">
             <option value="BTCUSDT">BTC/USDT</option>
             <option value="ETHUSDT">ETH/USDT</option>
             <option value="SOLUSDT">SOL/USDT</option>
@@ -62,11 +62,11 @@
       <div class="nav-metrics">
         <a href="/backtest.html" target="_blank" class="top-menu-btn menu-btn-backtest" id="btnOpenBacktestStudio" title="เปิดห้องทดลอง Backtest Studio แยกหน้าต่างใหม่ ปลอดภัย ไม่กระทบการเทรดสด" style="text-decoration: none;">
           <span class="btn-icon">🧪</span>
-          <span>Backtest Studio ↗</span>
+          <span>Backtest ↗</span>
         </a>
         <button class="top-menu-btn menu-btn-trades" id="btnOpenTradeManager" title="เปิดดูประวัติคำสั่งซื้อขาย, จัดการล็อตที่ถือครอง (Lots) และสรุปผลกำไรแต่ละรอบเทรด">
           <span class="btn-icon">📊</span>
-          <span>ประวัติ / ล็อต / สรุปรอบ</span>
+          <span>ประวัติ / ล็อต</span>
         </button>
         <button class="top-menu-btn menu-btn-rounds" id="btnOpenRoundsModal" style="display: none;">
           <span class="btn-icon">📊</span>
@@ -74,7 +74,7 @@
         </button>
         <button class="top-menu-btn menu-btn-config" id="openSettingsBtn" title="ตั้งค่าระบบบอทและกลยุทธ์กริด">
           <span class="btn-icon">⚙️</span>
-          <span>ตั้งค่า (Config)</span>
+          <span>ตั้งค่า</span>
         </button>
       </div>
     </header>
@@ -201,6 +201,10 @@
                 <span class="channel-status-pill" id="channelStatusPill">
                   <span class="channel-pulse-dot"></span>
                   <span id="channelStatusText">Channel: --%</span>
+                </span>
+                <span class="mafan-status-pill" id="mafanStatusPill" style="display: none;">
+                  <span class="mafan-pulse-dot"></span>
+                  <span id="mafanStatusText">🪭 Spread: --%</span>
                 </span>
                 <span class="wave-status-pill" id="waveStatusPill" style="display: none;">
                   <span class="wave-pulse-dot"></span>

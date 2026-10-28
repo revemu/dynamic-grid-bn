@@ -37,11 +37,11 @@
     if (!info || !elBotVersionText) return;
     const vStr = info.version ? `v${info.version}` : "";
     const cStr = info.commit && info.commit !== "unknown" ? ` (${info.commit})` : "";
-    elBotVersionText.textContent = `${vStr}${cStr}`.trim() || "v...";
+    elBotVersionText.textContent = vStr || "v...";
     if (elBotVersionBadge) {
       const fullDate = info.commitDate ? `\nCommit Date: ${info.commitDate}` : "";
       const build = info.buildTime ? `\nBooted: ${new Date(info.buildTime).toLocaleString()}` : "";
-      elBotVersionBadge.title = `Dynamic Grid ${vStr}\nCommit: ${info.commit || "local"}${fullDate}${build}\n(คลิกเพื่อดูรายละเอียด /api/version)`;
+      elBotVersionBadge.title = `Dynamic Grid ${vStr}${cStr}\nCommit: ${info.commit || "local"}${fullDate}${build}\n(คลิกเพื่อดูรายละเอียด /api/version)`;
       elBotVersionBadge.onclick = () => {
         window.open(`${API_BASE}/api/version`, "_blank");
       };
@@ -2789,16 +2789,41 @@
       clampStr = `${gateBadge} • ${clampStr}`;
     }
 
-    if (elChannelStatusPill) {
-      elChannelStatusPill.style.display = data.strategyType === "swing_trade" ? "none" : "";
-    }
-    if (elChannelStatusText) {
-      if (data.canEstablishChannel === false && !data.isChannelLocked) {
-        elChannelStatusText.textContent = `Channel: ⏸️ ${data.gateReason || "ปิดกรอบรอเงื่อนไขเทรนด์"}`;
-      } else if (data.isSwingConfirmed === false && !data.isChannelLocked) {
-        elChannelStatusText.textContent = `Channel: ไม่มีกรอบที่เข้าเกณฑ์ (หยุดรอสวิง)`;
-      } else {
-        elChannelStatusText.textContent = `Channel: ${widthPct.toFixed(2)}% (${clampStr})`;
+    const isMaFan = data.strategyType === "ma_fan" || data.strategyMode === "ma_fan";
+    const elMafanStatusPill = document.getElementById("mafanStatusPill");
+    const elMafanStatusText = document.getElementById("mafanStatusText");
+    const btnToggleHtfLines = document.getElementById("btnToggleHtfLines");
+    const btnToggleWave = document.getElementById("btnToggleWave");
+
+    if (isMaFan) {
+      if (elChannelStatusPill) elChannelStatusPill.style.display = "none";
+      if (elMafanStatusPill) {
+        elMafanStatusPill.style.display = "inline-flex";
+        if (elMafanStatusText) {
+          const sp = data.fanSpreadPct !== undefined ? data.fanSpreadPct.toFixed(2) : (data.spreadPct !== undefined ? data.spreadPct.toFixed(2) : "--");
+          const minSp = data.minSpreadThreshold !== undefined ? data.minSpreadThreshold.toFixed(2) : (data.maFanMinSpreadThreshold ? Number(data.maFanMinSpreadThreshold).toFixed(2) : "0.30");
+          const htf = data.htfRegime?.regime || (data.htfTrend ? data.htfTrend.toUpperCase() : "");
+          const htfBadge = htf ? ` • HTF: ${htf}` : "";
+          elMafanStatusText.textContent = `🪭 Spread: ${sp}% (เกณฑ์ ≥ ${minSp}%)${htfBadge}`;
+        }
+      }
+      if (btnToggleHtfLines) btnToggleHtfLines.style.display = "none";
+      if (btnToggleWave) btnToggleWave.style.display = "none";
+    } else {
+      if (elMafanStatusPill) elMafanStatusPill.style.display = "none";
+      if (elChannelStatusPill) {
+        elChannelStatusPill.style.display = data.strategyType === "swing_trade" ? "none" : "";
+      }
+      if (btnToggleHtfLines) btnToggleHtfLines.style.display = "";
+      if (btnToggleWave) btnToggleWave.style.display = "";
+      if (elChannelStatusText) {
+        if (data.canEstablishChannel === false && !data.isChannelLocked) {
+          elChannelStatusText.textContent = `Channel: ⏸️ ${data.gateReason || "ปิดกรอบรอเงื่อนไขเทรนด์"}`;
+        } else if (data.isSwingConfirmed === false && !data.isChannelLocked) {
+          elChannelStatusText.textContent = `Channel: ไม่มีกรอบที่เข้าเกณฑ์ (หยุดรอสวิง)`;
+        } else {
+          elChannelStatusText.textContent = `Channel: ${widthPct.toFixed(2)}% (${clampStr})`;
+        }
       }
     }
     const elLegendPillBottomText = document.getElementById("legendPillBottomText");

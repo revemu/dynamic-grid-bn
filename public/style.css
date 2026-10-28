@@ -730,6 +730,31 @@ body {
   animation: pulse 1.8s infinite;
 }
 
+.mafan-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.14);
+  border: 1px solid rgba(168, 85, 247, 0.38);
+  padding: 2.5px 8px;
+  border-radius: 6px;
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.15);
+}
+
+.mafan-pulse-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #c084fc;
+  display: inline-block;
+  box-shadow: 0 0 6px #c084fc;
+  animation: pulse 1.8s infinite;
+}
+
 .timeframe-selector-group {
   display: inline-flex;
   align-items: center;
@@ -3066,27 +3091,30 @@ input:checked + .slider:before { transform: translateX(20px); }
 
 /* 1. Top Bar Balanced Single-Line Navigation & Bot Status Strip Controls */
 .top-nav {
-  padding: 6px 14px;
-  min-height: 44px;
-  gap: 12px;
+  padding: 4px 12px;
+  min-height: 38px;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: nowrap;
   min-width: 0;
+  flex-shrink: 1;
 }
 
 .logo-badge {
   white-space: nowrap;
-  height: 30px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
-  padding: 0 11px;
-  font-size: 11.5px;
-  border-radius: 7px;
+  padding: 0 9px;
+  font-size: 11px;
+  border-radius: 6px;
   flex-shrink: 0;
 }
 
@@ -3098,78 +3126,79 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .symbol-nav-search-input {
-  height: 30px;
-  width: 130px;
+  height: 28px;
+  width: 115px;
   background: rgba(15, 23, 42, 0.92);
   border: 1px solid rgba(56, 189, 248, 0.35);
   color: #38bdf8;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 700;
   padding: 0 8px;
-  border-radius: 7px;
+  border-radius: 6px;
   outline: none;
   text-transform: uppercase;
   transition: all 0.2s ease;
 }
 
 .symbol-nav-search-input:focus {
-  width: 160px;
+  width: 140px;
   border-color: #38bdf8;
-  box-shadow: 0 0 12px rgba(56, 189, 248, 0.35);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
 }
 
 .symbol-nav-search-input::placeholder {
   color: rgba(56, 189, 248, 0.45);
   font-family: var(--font-sans);
   font-weight: 400;
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .symbol-nav-select {
-  height: 30px;
+  height: 28px;
   background: rgba(15, 23, 42, 0.92);
   border: 1px solid rgba(56, 189, 248, 0.42);
   color: #38bdf8;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
-  padding: 0 28px 0 10px;
-  border-radius: 7px;
+  padding: 0 24px 0 8px;
+  border-radius: 6px;
   cursor: pointer;
   outline: none;
   white-space: nowrap;
-  box-shadow: 0 0 10px rgba(2, 132, 199, 0.15);
+  box-shadow: 0 0 8px rgba(2, 132, 199, 0.15);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .symbol-nav-select:hover,
 .symbol-nav-select:focus {
   border-color: #38bdf8;
-  box-shadow: 0 0 14px rgba(56, 189, 248, 0.3);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);
 }
 
 .nav-system-pills {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: 2px;
-  padding-left: 10px;
+  padding-left: 8px;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .nav-system-pills .status-pill,
 .nav-system-pills .dry-badge,
 .nav-system-pills .version-pill {
-  height: 28px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: 5px;
+  font-size: 10.5px;
   font-weight: 700;
-  padding: 0 10px;
-  border-radius: 7px;
+  padding: 0 8px;
+  border-radius: 6px;
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -3204,20 +3233,20 @@ input:checked + .slider:before { transform: translateX(20px); }
 .nav-metrics {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: nowrap;
   flex-shrink: 0;
 }
 
 .top-menu-btn {
-  height: 32px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 13px;
-  border-radius: 8px;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: 6px;
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
