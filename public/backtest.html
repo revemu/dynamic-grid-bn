@@ -30,39 +30,18 @@
 
       <!-- Controls Form -->
       <div class="bt-controls">
-        <div class="bt-input-group" style="min-width: 165px;">
-          <label>คู่เหรียญ</label>
-          <select id="btSymbol">
-            <optgroup label="🟡 FDUSD Pairs (Binance Spot)">
-              <option value="BNBFDUSD" selected>BNB / FDUSD</option>
-              <option value="BTCFDUSD">BTC / FDUSD</option>
-              <option value="ETHFDUSD">ETH / FDUSD</option>
-              <option value="SOLFDUSD">SOL / FDUSD</option>
-            </optgroup>
-            <optgroup label="💵 USDT Pairs (High Liquidity)">
-              <option value="BTCUSDT">BTC / USDT</option>
-              <option value="ETHUSDT">ETH / USDT</option>
-              <option value="BNBUSDT">BNB / USDT</option>
-              <option value="SOLUSDT">SOL / USDT</option>
-              <option value="XRPUSDT">XRP / USDT</option>
-              <option value="DOGEUSDT">DOGE / USDT</option>
-              <option value="ADAUSDT">ADA / USDT</option>
-              <option value="AVAXUSDT">AVAX / USDT</option>
-              <option value="LINKUSDT">LINK / USDT</option>
-            </optgroup>
-            <optgroup label="💎 USDC Pairs">
-              <option value="BTCUSDC">BTC / USDC</option>
-              <option value="ETHUSDC">ETH / USDC</option>
-              <option value="SOLUSDC">SOL / USDC</option>
-            </optgroup>
-            <option value="custom">✏️ พิมพ์เอง (Custom)...</option>
-          </select>
-          <input type="text" id="btSymbolCustom" placeholder="เช่น NEARUSDT" style="display: none; margin-top: 4px; text-transform: uppercase;" />
+        <div class="bt-input-group symbol-filter-group" style="min-width: 185px;">
+          <label>คู่เหรียญ (พิมพ์ค้นหาได้)</label>
+          <div class="bt-symbol-input-wrap">
+            <input type="text" id="btSymbol" list="btSymbolDatalist" class="bt-symbol-input" placeholder="🔍 พิมพ์ค้นหา เช่น NEAR, SOL..." autocomplete="off" value="BNBFDUSD" />
+            <datalist id="btSymbolDatalist"></datalist>
+          </div>
         </div>
 
         <div class="bt-input-group">
           <label>Timeframe</label>
           <select id="btTimeframe">
+            <option value="1m">1m (Scalp)</option>
             <option value="5m" selected>5m (Execution)</option>
             <option value="15m">15m (Supervisor)</option>
             <option value="1h">1h (Macro)</option>
@@ -103,6 +82,10 @@
 
         <button id="btnRunBacktest" class="btn-run">
           <span class="btn-run-icon">🚀</span> รัน Backtest
+        </button>
+
+        <button id="btnOpenScanner" class="btn-scanner" title="สแกนคู่เหรียญทั้งหมดเพื่อจัดอันดับกำไร">
+          <span class="btn-run-icon">⚡</span> Market Scanner
         </button>
 
         <button id="btnOpenHistory" class="btn-history" title="ดูประวัติการทดสอบที่บันทึกไว้">
@@ -237,6 +220,94 @@
           <p class="modal-desc">ผลการทดสอบทั้งหมดจะถูกบันทึกเก็บไว้ในระบบโดยอัตโนมัติ ไม่เกี่ยวข้องกับพอร์ตเทรดจริง</p>
           <div class="history-list" id="historyList">
             <!-- Rendered by JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Market Scanner Leaderboard -->
+    <div class="bt-modal-backdrop" id="scannerModalBackdrop" style="display: none;">
+      <div class="bt-modal bt-modal-lg">
+        <div class="bt-modal-header">
+          <div class="modal-title-group">
+            <h3 class="bt-modal-title">⚡ MA Fan Market Scanner (จัดอันดับเหรียญทำกำไรสูงสุด)</h3>
+            <span class="modal-subtitle">สแกนเหรียญที่มีสภาพคล่องสูงสุดบน Binance และทดสอบกลยุทธ์ MA Fan Sniper อัตโนมัติ</span>
+          </div>
+          <button class="bt-modal-close" id="btnCloseScannerModal">✕</button>
+        </div>
+        <div class="bt-modal-body">
+          <!-- Scanner Configuration Bar -->
+          <div class="scanner-controls-bar">
+            <div class="scanner-ctrl-group">
+              <label>ขอบเขตเหรียญ (Scope)</label>
+              <select id="scScope">
+                <option value="top20" selected>🔥 Top 20 USDT (สภาพคล่องสูงสุด)</option>
+                <option value="top50">🚀 Top 50 USDT (เหรียญเทรดเยอะ)</option>
+                <option value="fdusd">🟡 FDUSD Pairs (0% Maker Fee)</option>
+                <option value="top100">🌐 Top 100 USDT Pairs</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Timeframe</label>
+              <select id="scTimeframe">
+                <option value="1m">1m (Scalp)</option>
+                <option value="5m" selected>5m (Execution)</option>
+                <option value="15m">15m (Supervisor)</option>
+                <option value="1h">1h (Macro)</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>จำนวนแท่ง</label>
+              <select id="scLimit">
+                <option value="500" selected>500 แท่ง (~1.7 วัน)</option>
+                <option value="1000">1,000 แท่ง (~3.5 วัน)</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Min Spread</label>
+              <select id="scSpread">
+                <option value="auto" selected>Auto Calibrate</option>
+                <option value="0.25">≥ 0.25%</option>
+                <option value="0.35">≥ 0.35%</option>
+              </select>
+            </div>
+            <button id="btnStartScan" class="btn-run btn-start-scan">
+              <span>🚀 เริ่มสแกนตลาด</span>
+            </button>
+          </div>
+
+          <!-- Scan Progress Bar -->
+          <div id="scannerProgressWrap" class="scanner-progress-wrap" style="display: none;">
+            <div class="scanner-progress-info">
+              <span id="scannerStatusText">กำลังดึงข้อมูลตลาด Binance และคำนวณผลตอบแทน...</span>
+              <span id="scannerCountText">กรุณารอสักครู่ (ใช้เวลา 2-5 วินาที)</span>
+            </div>
+            <div class="scanner-progress-bar"><div class="scanner-progress-fill" id="scannerProgressFill" style="width: 100%;"></div></div>
+          </div>
+
+          <!-- Leaderboard Table -->
+          <div class="scanner-table-wrap">
+            <table class="bt-table scanner-table" id="scannerTable">
+              <thead>
+                <tr>
+                  <th style="width: 50px;">อันดับ</th>
+                  <th>คู่เหรียญ</th>
+                  <th>24h Volume</th>
+                  <th>กำไรสุทธิ (%)</th>
+                  <th>Win Rate</th>
+                  <th>จำนวนไม้</th>
+                  <th>Profit Factor</th>
+                  <th>Max DD</th>
+                  <th>Best Trade</th>
+                  <th>การกระทำ</th>
+                </tr>
+              </thead>
+              <tbody id="scannerTableBody">
+                <tr>
+                  <td colspan="10" class="td-empty">กดปุ่ม '🚀 เริ่มสแกนตลาด' ด้านบนเพื่อค้นหาเหรียญที่ทำกำไรสูงสุดในสภาวะตลาดปัจจุบัน</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

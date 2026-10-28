@@ -26,6 +26,8 @@
         <div class="logo-badge" id="logoBadge">BINANCE GRID</div>
         <div class="symbol-pill" id="navSymbolBadge" style="display: none;">BTC / USDT</div>
         <div class="symbol-select-wrap">
+          <input type="text" id="topSymbolSearchInput" class="symbol-nav-search-input" list="topSymbolDatalist" placeholder="🔍 พิมพ์หาเหรียญ..." autocomplete="off" title="พิมพ์ค้นหาคู่เหรียญทั้งหมด (เช่น NEAR, SOL, PEPE, DOGE)" />
+          <datalist id="topSymbolDatalist"></datalist>
           <select id="topSymbolSelect" class="symbol-nav-select" title="สลับคู่เหรียญเทรด">
             <option value="BTCUSDT">BTC/USDT</option>
             <option value="ETHUSDT">ETH/USDT</option>
@@ -1447,6 +1449,7 @@
                   คู่เหรียญเทรด (Trading Pair)
                   <span class="help-tip" title="เลือกคู่เหรียญจากรายการ หรือกดปุ่มพิมพ์เอง">ℹ️</span>
                 </label>
+                <input type="text" id="cfg_symbol_filter" class="form-input" placeholder="🔍 พิมพ์กรองเหรียญ (เช่น NEAR, SOL, DOGE)..." style="margin-bottom: 6px; font-size: 12px; padding: 6px 10px;" />
                 <div class="symbol-input-group" style="display:flex;gap:6px;align-items:center;">
                   <select id="cfg_symbol" class="form-select" style="flex:1;">
                     <option value="BTCUSDT">BTC/USDT</option>

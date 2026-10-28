@@ -5182,6 +5182,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ใน `src/server.ts`: Endpoint `/api/backtest/run` ดึง Config จาก `this.opts.getSettings()` หรือ Database โดยตรง แล้วส่งผ่านไปยัง `runMaFanSimulation`
      - ใน `src/backtest-service.ts`: จำลองระบบ **Dynamic ATR Adaptive Spread** (`useAtrAdaptiveSpread`, `atrMultiplier`) ในแต่ละแท่งเทียน พร้อมนำค่า `trailingPullbackPct`, `tp1Ratio`, และ `breakevenFeeBufferPct` จากบอทจริงมาใช้ในการจำลองการออกออเดอร์ทุกไม้ 100%
 
+---
+
+## 137. v0.2.137 — Universal Searchable Trading Pair Filter across All Views & High-Speed Market Scanner Leaderboard
+1. **Searchable Trading Pair Filter (พิมพ์ค้นหาคู่เหรียญได้ทันที)**:
+   - **Backtest Studio (`public/backtest.html`, `public/backtest.js`)**:
+     - เปลี่ยนจาก Select เมนูตายตัวเป็น Input Field ที่มี Autocomplete Datalist (`#btSymbol` + `#btSymbolDatalist`)
+     - โหลดคู่เทรด Binance Spot ทั้งหมด (~700+ คู่) จาก `/api/symbols?exchange=binance` อัตโนมัติ โดยจัดหมวดหมู่เหรียญยอดนิยม (⭐ Popular), เหรียญค่าฟีฟรี (🟡 FDUSD 0% Fee), เหรียญ USDT (💵 USDT), และ USDC (💎 USDC)
+     - รองรับการพิมพ์ค้นหาแบบ Real-time (เช่น พิมพ์ "NEAR", "SOL", "PEPE", "DOGE") ระบบจะกรองตัวเลือกให้ทันที
+   - **หน้าหลัก Live Dashboard (`public/index.html`, `public/app.js`, `public/style.css`)**:
+     - เพิ่มกล่องค้นหาแบบพิมพ์คู่เหรียญ (`#topSymbolSearchInput` + `#topSymbolDatalist`) บน Top Navigation Bar ควบคู่กับ Dropdown แบบเดิม โดยซิงค์ค่าระหว่างกันแบบ Two-way Bind 100%
+     - เพิ่มกล่อง Live Filter ค้นหาเหรียญ (`#cfg_symbol_filter`) ในหน้าต่าง Settings Modal เหนือ `#cfg_symbol` พิมพ์แล้วกรองรายการเหรียญแบบทันที ไม่ต้องเลื่อนหาในลิสต์ยาว 700 คู่
+2. **MA Fan Market Scanner & Ranking Leaderboard (`src/backtest-service.ts`, `src/server.ts`, `public/backtest.html`, `public/backtest.js`, `public/backtest.css`)**:
+   - เพิ่มเมธอด `BacktestService.scanMarket(opts)`:
+     - ดึงข้อมูล 24h Ticker จาก Binance API (`/api/v3/ticker/24hr`) ในครั้งเดียว คัดกรองเหรียญ Stablecoin ออกอัตโนมัติ
+     - จัดกลุ่มตามปริมาณโวลุ่มเทรด (Quote Volume 24h) เรียงจากมากไปน้อย: `Top 20 USDT`, `Top 50 USDT`, `FDUSD Pairs (0% Fee)`, `Top 100 USDT`
+     - รัน Backtest แบบขนาน (Concurrent Chunks of 5) ด้วยกลยุทธ์ MA Fan Sniper (ไม่บันทึกลง Database ให้รก)
+     - จัดอันดับ Leaderboard ตามกำไรสุทธิ (Net PnL %) จากมากไปน้อย
+   - เพิ่ม Endpoint `POST /api/backtest/scan` ใน `src/server.ts`
+   - เพิ่มหน้าต่าง **Market Scanner Modal** ใน Backtest Studio พร้อมปุ่ม `⚡ Market Scanner` บน Header:
+     - เลือกระยะ Scope, Timeframe (1m, 5m, 15m, 1h), จำนวนแท่ง, และ Spread Threshold
+     - แสดง Progress Bar แบบ Real-time ขณะประมวลผล (ใช้เวลาเพียง 2-4 วินาทีสำหรับ 20 คู่เหรียญ)
+     - ตาราง Leaderboard แสดงอันดับ (🥇 🥈 🥉), คู่เหรียญ, 24h Volume, Net PnL %, Win Rate %, จำนวนไม้, Profit Factor, Max Drawdown, Best Trade
+     - ปุ่ม Action: `📊 ดูกราฟ` (เปิดกราฟและรัน Backtest เหรียญนั้นทันที) และ `⚡ สลับบอท` (เปลี่ยนคู่เทรดของบอทจริงไปยังเหรียญนั้น 1-Click)
+3. **การทำงานของ Timeframe ใน Backtest**:
+   - การเลือก Timeframe (1m, 5m, 15m, 1h) ส่งค่า interval ไปยัง Binance REST API โดยตรง และคำนวณตามแท่งเทียนของ Timeframe นั้นจริง
+   - เมื่อใช้จำนวนแท่ง 1,000 แท่ง: 1m ครอบคลุมเพียง ~16.6 ชั่วโมง (สัญญาณเข้าอาจน้อยในเหรียญที่ผันผวนต่ำ), ขณะที่ 15m ครอบคลุม ~10.4 วัน และ 1h ครอบคลุม ~41.6 วัน ทำให้สัญญาณพัดคลี่กว้างและกำไรสะสมใน Timeframe ใหญ่กว่ามักมีรอบมากกว่าอย่างมีนัยสำคัญ
+
 
 
 

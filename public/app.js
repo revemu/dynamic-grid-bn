@@ -2917,7 +2917,12 @@
         if (elTopSymbolSelect.value !== cleanSym) {
           elTopSymbolSelect.value = cleanSym;
         }
+        const topSearchInput = document.getElementById("topSymbolSearchInput");
+        if (topSearchInput && document.activeElement !== topSearchInput) {
+          topSearchInput.value = cleanSym;
+        }
       }
+      const topSearchInput = document.getElementById("topSymbolSearchInput");
       if (isHoldingActivePosition || window.__isSwitchingSymbolUI) {
         elTopSymbolSelect.disabled = true;
         elTopSymbolSelect.style.cursor = "not-allowed";
@@ -2925,11 +2930,21 @@
         elTopSymbolSelect.title = isHoldingActivePosition
           ? "🔒 ปิดการเปลี่ยนคู่เทรดชั่วคราวเนื่องจากบอทกำลังถือ Position อยู่ (กรุณา Take Profit หรือ Cut Loss ให้หมดก่อนสลับคู่เหรียญ)"
           : "⏳ กำลังสลับคู่เหรียญและยกเลิกออเดอร์คู่เดิม...";
+        if (topSearchInput) {
+          topSearchInput.disabled = true;
+          topSearchInput.style.opacity = "0.6";
+          topSearchInput.style.cursor = "not-allowed";
+        }
       } else {
         elTopSymbolSelect.disabled = false;
         elTopSymbolSelect.style.cursor = "pointer";
         elTopSymbolSelect.style.opacity = "1";
         elTopSymbolSelect.title = "Change Trading Pair";
+        if (topSearchInput) {
+          topSearchInput.disabled = false;
+          topSearchInput.style.opacity = "1";
+          topSearchInput.style.cursor = "text";
+        }
       }
     }
     if (elCfgSymbol) {
@@ -5492,6 +5507,10 @@
           }
         }
       }
+      const topSearchInput = document.getElementById("topSymbolSearchInput");
+      if (topSearchInput && normCur) {
+        topSearchInput.value = normCur;
+      }
       if (elCfgSymbol) {
         elCfgSymbol.innerHTML = html;
         if (normCur) {
@@ -5561,6 +5580,14 @@
           `;
         }
         applyHtml(fullHtml);
+
+        const elTopDatalist = document.getElementById("topSymbolDatalist");
+        if (elTopDatalist) {
+          const allSyms = isDreamdex
+            ? (Array.isArray(symData.symbols) ? symData.symbols : ["SOMI", "SOMI:USDSO", "USDC.E:USDSO", "WBTC:USDSO", "WETH:USDSO"])
+            : (Array.isArray(symData.symbols) ? symData.symbols : []);
+          elTopDatalist.innerHTML = allSyms.map((s) => `<option value="${s}">${s}</option>`).join("");
+        }
       }
     } catch (err) {
       console.warn("Failed to load dynamic symbols:", err);
@@ -5659,6 +5686,52 @@
       } finally {
         window.__isSwitchingSymbolUI = false;
         elTopSymbolSelect.disabled = isHoldingActivePosition;
+      }
+    });
+  }
+
+  // Top symbol search input listener (typing & datalist)
+  const elTopSymbolSearch = document.getElementById("topSymbolSearchInput");
+  if (elTopSymbolSearch && elTopSymbolSelect) {
+    elTopSymbolSearch.addEventListener("change", (e) => {
+      const val = (e.target.value || "").trim().toUpperCase().replace(/[\/\-_:]/g, "");
+      if (!val) return;
+      let matched = false;
+      for (const opt of elTopSymbolSelect.options) {
+        if (opt.value.toUpperCase().replace(/[\/\-_:]/g, "") === val) {
+          elTopSymbolSelect.value = opt.value;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        const newOpt = document.createElement("option");
+        newOpt.value = val;
+        newOpt.textContent = val;
+        elTopSymbolSelect.appendChild(newOpt);
+        elTopSymbolSelect.value = val;
+      }
+      elTopSymbolSelect.dispatchEvent(new Event("change"));
+    });
+  }
+
+  // Quick live filter for Settings modal cfg_symbol
+  const elCfgSymbolFilter = document.getElementById("cfg_symbol_filter");
+  const elCfgSymbolDropdown = document.getElementById("cfg_symbol");
+  if (elCfgSymbolFilter && elCfgSymbolDropdown) {
+    elCfgSymbolFilter.addEventListener("input", (e) => {
+      const query = (e.target.value || "").trim().toUpperCase();
+      let firstMatch = null;
+      for (const opt of elCfgSymbolDropdown.options) {
+        if (opt.value === "__custom__") continue;
+        const text = (opt.textContent || "").toUpperCase();
+        const val = (opt.value || "").toUpperCase();
+        const matches = !query || val.includes(query) || text.includes(query);
+        opt.style.display = matches ? "" : "none";
+        if (matches && !firstMatch) firstMatch = opt;
+      }
+      if (query && firstMatch) {
+        elCfgSymbolDropdown.value = firstMatch.value;
       }
     });
   }

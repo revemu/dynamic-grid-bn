@@ -32,6 +32,41 @@ export interface BacktestTrade {
   holdingBars: number;
 }
 
+export interface MarketScanResultItem {
+  rank: number;
+  symbol: string;
+  quoteVolume: number;
+  candlesCount: number;
+  timeframe: string;
+  tradesCount: number;
+  winTrades: number;
+  lossTrades: number;
+  winRate: number;
+  netPnlPct: number;
+  netPnlQuote: number;
+  profitFactor: number;
+  maxDrawdownPct: number;
+  avgBarsHeld: number;
+  bestTradePct: number;
+  worstTradePct: number;
+  spreadThreshold: number;
+}
+
+export interface MarketScanOptions {
+  scope?: "top20" | "top30" | "top50" | "top100" | "fdusd" | "usdt" | "all";
+  timeframe?: string;
+  limit?: number;
+  spreadThreshold?: number | "auto";
+  initialCapital?: number;
+  slBufferPct?: number;
+  useRatchetSl?: boolean;
+  useAtrAdaptiveSpread?: boolean;
+  atrMultiplier?: number;
+  trailingPullbackPct?: number;
+  tp1Ratio?: number;
+  breakevenFeeBufferPct?: number;
+}
+
 export interface BacktestMarker {
   time: number;
   position: "aboveBar" | "belowBar";
@@ -152,6 +187,7 @@ export class BacktestService {
       trailingPullbackPct?: number;
       tp1Ratio?: number;
       breakevenFeeBufferPct?: number;
+      saveToHistory?: boolean;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -452,7 +488,9 @@ export class BacktestService {
     };
 
     // Save to persistent database
-    this.saveRecord(record);
+    if (opts.saveToHistory !== false) {
+      this.saveRecord(record);
+    }
 
     return record;
   }
@@ -532,5 +570,114 @@ export class BacktestService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Scan market pairs and rank by performance metrics
+   */
+  public static async scanMarket(opts: MarketScanOptions): Promise<MarketScanResultItem[]> {
+    const scope = opts.scope || "top20";
+    const timeframe = opts.timeframe || "5m";
+    const limit = Math.min(1000, Math.max(100, opts.limit || 500));
+
+    // 1. Fetch 24h ticker to get liquid symbols
+    const tickerRes = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
+      headers: { "User-Agent": "dynamic-grid-bn/scanner" },
+    });
+    if (!tickerRes.ok) {
+      throw new Error(`Failed to fetch 24h market ticker from Binance (HTTP ${tickerRes.status})`);
+    }
+
+    const tickers = (await tickerRes.json()) as Array<{
+      symbol: string;
+      quoteVolume: string;
+      count: number;
+    }>;
+
+    const STABLE_TOKENS = new Set([
+      "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
+    ]);
+
+    let targetTickers = tickers.filter((t) => Number(t.quoteVolume) > 10_000 && Number(t.count) > 100);
+
+    if (scope === "fdusd") {
+      targetTickers = targetTickers.filter((t) => t.symbol.endsWith("FDUSD") && !STABLE_TOKENS.has(t.symbol.slice(0, -5)));
+    } else {
+      // Default or USDT scopes
+      targetTickers = targetTickers.filter((t) => t.symbol.endsWith("USDT") && !STABLE_TOKENS.has(t.symbol.slice(0, -4)));
+    }
+
+    // Sort descending by 24h quote volume
+    targetTickers.sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume));
+
+    let maxPairs = 20;
+    if (scope === "top30") maxPairs = 30;
+    else if (scope === "top50") maxPairs = 50;
+    else if (scope === "top100" || scope === "all" || scope === "usdt") maxPairs = 100;
+    else if (scope === "fdusd") maxPairs = Math.min(50, targetTickers.length);
+
+    const candidates = targetTickers.slice(0, maxPairs);
+
+    // 2. Run simulation in concurrent chunks of 5
+    const results: MarketScanResultItem[] = [];
+    const chunkSize = 5;
+
+    for (let i = 0; i < candidates.length; i += chunkSize) {
+      const chunk = candidates.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (cand) => {
+          try {
+            const sym = cand.symbol;
+            const candles = await this.fetchBinanceCandles(sym, timeframe, limit);
+            if (!candles || candles.length < 50) return;
+
+            const rec = this.runMaFanSimulation(candles, {
+              symbol: sym,
+              timeframe,
+              spreadThreshold: opts.spreadThreshold ?? "auto",
+              initialCapital: opts.initialCapital ?? 200,
+              slBufferPct: opts.slBufferPct ?? 0.25,
+              useRatchetSl: opts.useRatchetSl !== false,
+              useAtrAdaptiveSpread: opts.useAtrAdaptiveSpread ?? true,
+              atrMultiplier: opts.atrMultiplier ?? 1.25,
+              trailingPullbackPct: opts.trailingPullbackPct ?? 0.45,
+              tp1Ratio: opts.tp1Ratio ?? 0.5,
+              breakevenFeeBufferPct: opts.breakevenFeeBufferPct ?? 0.05,
+              saveToHistory: false, // Don't pollute persistent history database
+            });
+
+            results.push({
+              rank: 0,
+              symbol: sym,
+              quoteVolume: Math.round(Number(cand.quoteVolume)),
+              candlesCount: candles.length,
+              timeframe,
+              tradesCount: rec.summary.totalTrades,
+              winTrades: rec.summary.winTrades,
+              lossTrades: rec.summary.lossTrades,
+              winRate: rec.summary.winRate,
+              netPnlPct: rec.summary.netPnlPct,
+              netPnlQuote: rec.summary.netPnlQuote,
+              profitFactor: rec.summary.profitFactor,
+              maxDrawdownPct: rec.summary.maxDrawdownPct,
+              avgBarsHeld: rec.summary.avgBarsHeld,
+              bestTradePct: rec.summary.bestTradePct,
+              worstTradePct: rec.summary.worstTradePct,
+              spreadThreshold: rec.spreadThreshold,
+            });
+          } catch {
+            // Ignore individual pair fetch error during batch scan
+          }
+        })
+      );
+    }
+
+    // 3. Sort by Net PnL % descending, then assign rank
+    results.sort((a, b) => b.netPnlPct - a.netPnlPct);
+    results.forEach((item, idx) => {
+      item.rank = idx + 1;
+    });
+
+    return results;
   }
 }

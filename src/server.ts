@@ -736,6 +736,44 @@ export class DashboardServer {
       return;
     }
 
+    if (pathname === "/api/backtest/scan" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const liveCfg = this.opts.getSettings ? this.opts.getSettings() : this.db.getAllSettings();
+          const parsed = body ? JSON.parse(body) : {};
+          const scope = parsed.scope || "top20";
+          const timeframe = parsed.timeframe || (liveCfg.maFanExecutionTimeframe as string) || "5m";
+          const limit = Number(parsed.limit) || 500;
+          const spreadThreshold = parsed.spreadThreshold === "auto" ? "auto" : (Number(parsed.spreadThreshold) || undefined);
+          const useRatchetSl = parsed.useRatchetSl !== false;
+
+          const results = await BacktestService.scanMarket({
+            scope,
+            timeframe,
+            limit,
+            spreadThreshold,
+            useRatchetSl,
+            initialCapital: Number(parsed.budget) || Number(liveCfg.maFanMaxBudgetUsd) || 200,
+            slBufferPct: Number(parsed.slBufferPct) || Number(liveCfg.maFanSlBufferPct) || 0.25,
+            useAtrAdaptiveSpread: liveCfg.maFanUseAtrAdaptiveSpread ?? true,
+            atrMultiplier: Number(liveCfg.maFanAtrMultiplier) || 1.25,
+            trailingPullbackPct: Number(liveCfg.maFanTrailingPullbackPct) || 0.45,
+            tp1Ratio: Number(liveCfg.maFanTp1Ratio) || 0.5,
+            breakevenFeeBufferPct: Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05,
+          });
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, count: results.length, results }));
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        }
+      });
+      return;
+    }
+
     if (pathname === "/api/backtest/history" && req.method === "GET") {
       const history = BacktestService.getHistoryList();
       res.writeHead(200, { "Content-Type": "application/json" });

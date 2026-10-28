@@ -32,50 +32,60 @@
 
   // Inputs
   const inpSymbol = document.getElementById("btSymbol");
-  const inpSymbolCustom = document.getElementById("btSymbolCustom");
+  const inpSymbolDatalist = document.getElementById("btSymbolDatalist");
   const inpTimeframe = document.getElementById("btTimeframe");
   const inpLimit = document.getElementById("btLimit");
   const inpSpread = document.getElementById("btSpread");
   const inpSlMode = document.getElementById("btSlMode");
   const inpBudget = document.getElementById("btBudget");
 
-  if (inpSymbol && inpSymbolCustom) {
-    inpSymbol.addEventListener("change", () => {
-      if (inpSymbol.value === "custom") {
-        inpSymbolCustom.style.display = "block";
-        inpSymbolCustom.focus();
-      } else {
-        inpSymbolCustom.style.display = "none";
-      }
-    });
-  }
-
   function getSelectedSymbol() {
     if (!inpSymbol) return "BNBFDUSD";
-    if (inpSymbol.value === "custom") {
-      return (inpSymbolCustom?.value || "BNBFDUSD").trim().toUpperCase();
-    }
-    return (inpSymbol.value || "BNBFDUSD").trim().toUpperCase();
+    return (inpSymbol.value || "BNBFDUSD").trim().toUpperCase().replace(/[\/\-_:]/g, "");
   }
 
   function setSymbolValue(sym) {
     if (!sym || !inpSymbol) return;
     const clean = sym.toUpperCase().replace(/[\/\-_:]/g, "");
-    let found = false;
-    for (const opt of inpSymbol.options) {
-      if (opt.value.toUpperCase().replace(/[\/\-_:]/g, "") === clean) {
-        inpSymbol.value = opt.value;
-        if (inpSymbolCustom) inpSymbolCustom.style.display = "none";
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      inpSymbol.value = "custom";
-      if (inpSymbolCustom) {
-        inpSymbolCustom.value = sym.toUpperCase();
-        inpSymbolCustom.style.display = "block";
-      }
+    inpSymbol.value = clean;
+  }
+
+  // Fetch dynamic symbols list from backend and populate datalist
+  async function loadDynamicSymbols() {
+    try {
+      const res = await fetch("/api/symbols?exchange=binance");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!inpSymbolDatalist) return;
+
+      const fdusd = Array.isArray(data.fdusd) ? data.fdusd : [];
+      const popular = Array.isArray(data.popular) ? data.popular : [];
+      const usdt = Array.isArray(data.usdt) ? data.usdt : [];
+      const usdc = Array.isArray(data.usdc) ? data.usdc : [];
+
+      let html = "";
+      popular.forEach((s) => {
+        html += `<option value="${s}">⭐ ${s} (Popular)</option>`;
+      });
+      fdusd.forEach((s) => {
+        if (!popular.includes(s)) {
+          html += `<option value="${s}">🟡 ${s} (FDUSD 0% Fee)</option>`;
+        }
+      });
+      usdt.forEach((s) => {
+        if (!popular.includes(s)) {
+          html += `<option value="${s}">💵 ${s} (USDT)</option>`;
+        }
+      });
+      usdc.forEach((s) => {
+        if (!popular.includes(s)) {
+          html += `<option value="${s}">💎 ${s} (USDC)</option>`;
+        }
+      });
+
+      inpSymbolDatalist.innerHTML = html;
+    } catch (e) {
+      console.warn("Failed to load symbols for datalist:", e);
     }
   }
 
@@ -1244,6 +1254,163 @@
         }
       });
     });
+
+    initScannerEvents();
+  }
+
+  // ─── Scanner Modal & Logic ────────────────────────────────────────────────────────
+  const btnOpenScanner = document.getElementById("btnOpenScanner");
+  const scannerModalBackdrop = document.getElementById("scannerModalBackdrop");
+  const btnCloseScannerModal = document.getElementById("btnCloseScannerModal");
+  const btnStartScan = document.getElementById("btnStartScan");
+  const scannerProgressWrap = document.getElementById("scannerProgressWrap");
+  const scannerStatusText = document.getElementById("scannerStatusText");
+  const scannerCountText = document.getElementById("scannerCountText");
+  const scannerTableBody = document.getElementById("scannerTableBody");
+
+  const scScope = document.getElementById("scScope");
+  const scTimeframe = document.getElementById("scTimeframe");
+  const scLimit = document.getElementById("scLimit");
+  const scSpread = document.getElementById("scSpread");
+
+  function initScannerEvents() {
+    if (btnOpenScanner && scannerModalBackdrop) {
+      btnOpenScanner.addEventListener("click", () => {
+        scannerModalBackdrop.style.display = "flex";
+      });
+    }
+
+    if (btnCloseScannerModal && scannerModalBackdrop) {
+      btnCloseScannerModal.addEventListener("click", () => {
+        scannerModalBackdrop.style.display = "none";
+      });
+    }
+
+    if (scannerModalBackdrop) {
+      scannerModalBackdrop.addEventListener("click", (e) => {
+        if (e.target === scannerModalBackdrop) {
+          scannerModalBackdrop.style.display = "none";
+        }
+      });
+    }
+
+    if (btnStartScan) {
+      btnStartScan.addEventListener("click", async () => {
+        const scope = scScope?.value || "top20";
+        const timeframe = scTimeframe?.value || "5m";
+        const limit = Number(scLimit?.value) || 500;
+        const spread = scSpread?.value || "auto";
+
+        btnStartScan.disabled = true;
+        if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
+        if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scope.toUpperCase()}) บน ${timeframe}...`;
+        if (scannerCountText) scannerCountText.textContent = "ประมวลผลกลยุทธ์ MA Fan Sniper แบบคู่ขนาน...";
+
+        try {
+          const res = await fetch("/api/backtest/scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scope, timeframe, limit, spreadThreshold: spread }),
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+          }
+
+          const data = await res.json();
+          renderScannerLeaderboard(data.results || []);
+        } catch (err) {
+          alert(`เกิดข้อผิดพลาดในการสแกนตลาด: ${err.message}`);
+        } finally {
+          btnStartScan.disabled = false;
+          if (scannerProgressWrap) scannerProgressWrap.style.display = "none";
+        }
+      });
+    }
+  }
+
+  function renderScannerLeaderboard(items) {
+    if (!scannerTableBody) return;
+    if (!items || items.length === 0) {
+      scannerTableBody.innerHTML = `<tr><td colspan="10" class="td-empty">ไม่พบเหรียญที่เข้าเงื่อนไขหรือเกิดข้อผิดพลาดในการดึงข้อมูล</td></tr>`;
+      return;
+    }
+
+    let html = "";
+    items.forEach((item, idx) => {
+      const rank = item.rank || idx + 1;
+      const rankClass = rank === 1 ? "rank-1" : rank === 2 ? "rank-2" : rank === 3 ? "rank-3" : "";
+      const rankBadge = `<span class="rank-badge ${rankClass}">${rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : rank}</span>`;
+
+      const volStr = item.quoteVolume >= 1_000_000
+        ? `$${(item.quoteVolume / 1_000_000).toFixed(1)}M`
+        : `$${(item.quoteVolume / 1_000).toFixed(0)}k`;
+
+      const pnlClass = item.netPnlPct > 0 ? "text-profit" : item.netPnlPct < 0 ? "text-loss" : "";
+      const pnlSign = item.netPnlPct > 0 ? "+" : "";
+
+      html += `
+        <tr>
+          <td style="text-align: center;">${rankBadge}</td>
+          <td><b>${item.symbol}</b></td>
+          <td><span style="font-family: var(--font-mono); color: var(--text-muted);">${volStr}</span></td>
+          <td class="${pnlClass}" style="font-weight: 700; font-family: var(--font-mono);">${pnlSign}${item.netPnlPct.toFixed(2)}%</td>
+          <td style="font-weight: 600;">${item.winRate.toFixed(1)}% <span style="font-size: 10.5px; color: var(--text-muted);">(${item.winTrades}W/${item.lossTrades}L)</span></td>
+          <td>${item.tradesCount} ไม้</td>
+          <td style="font-family: var(--font-mono);">${item.profitFactor.toFixed(2)}</td>
+          <td class="text-loss" style="font-family: var(--font-mono);">${item.maxDrawdownPct.toFixed(2)}%</td>
+          <td class="text-profit" style="font-family: var(--font-mono);">+${item.bestTradePct.toFixed(2)}%</td>
+          <td>
+            <button class="btn-action-view" data-sym="${item.symbol}" title="ดูกราฟและผลเทรดเหรียญนี้ทันที">📊 ดูกราฟ</button>
+            <button class="btn-action-trade" data-sym="${item.symbol}" title="สลับบอทจริงไปเทรดเหรียญนี้">⚡ สลับบอท</button>
+          </td>
+        </tr>
+      `;
+    });
+
+    scannerTableBody.innerHTML = html;
+
+    // Attach row button events
+    scannerTableBody.querySelectorAll(".btn-action-view").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const sym = btn.getAttribute("data-sym");
+        if (sym) {
+          setSymbolValue(sym);
+          if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
+          runBacktest();
+        }
+      });
+    });
+
+    scannerTableBody.querySelectorAll(".btn-action-trade").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const sym = btn.getAttribute("data-sym");
+        if (!sym) return;
+        if (!confirm(`ต้องการสลับคู่เทรดของบอทจริงเป็น ${sym} หรือไม่?`)) return;
+
+        btn.disabled = true;
+        btn.textContent = "⏳ กำลังสลับ...";
+        try {
+          const res = await fetch("/api/db/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ symbol: sym }),
+          });
+          if (res.ok) {
+            alert(`✅ สลับคู่เทรดของบอทจริงเป็น ${sym} เรียบร้อยแล้ว!`);
+          } else {
+            const err = await res.json().catch(() => ({}));
+            alert(`❌ ไม่สามารถสลับคู่เหรียญได้: ${err.error || "เกิดข้อผิดพลาด"}`);
+          }
+        } catch (e) {
+          alert(`❌ เกิดข้อผิดพลาด: ${e.message}`);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "⚡ สลับบอท";
+        }
+      });
+    });
   }
 
   // Bootstrap
@@ -1251,6 +1418,7 @@
     initChart();
     initEvents();
     loadHistoryList();
+    loadDynamicSymbols();
 
     // Check if query params exist (e.g. symbol from live bot)
     const urlParams = new URLSearchParams(window.location.search);
