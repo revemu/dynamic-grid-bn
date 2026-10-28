@@ -482,6 +482,18 @@ export class BotDatabase {
 
     // 1. Repair existing Swing records in db.orders
     for (const o of this.data.orders) {
+      // Self-Healing: Restore any HAEDALUSDT orders (e.g. MA-FOLD-FAN orders) mistakenly tagged as SOMI:USDSO
+      if (
+        (o.orderId && o.orderId.startsWith("mf_")) ||
+        (o.id && (o.id.includes("1793189100484") || o.id.includes("1793191002770"))) ||
+        (o.reason && (o.reason.includes("Fan Spread") || o.reason.includes("EMA 25 Mean Reversion")))
+      ) {
+        o.symbol = "HAEDALUSDT";
+        o.baseAsset = "HAEDAL";
+        o.quoteAsset = "USDT";
+        modified = true;
+      }
+
       // Auto-heal baseAsset and quoteAsset if mismatched with symbol (e.g. symbol is HAEDALUSDT but baseAsset is BNB)
       if (o.symbol) {
         const sym = o.symbol.toUpperCase();
@@ -796,6 +808,13 @@ export class BotDatabase {
     let modified = false;
 
     const inferBase = (o: UnifiedOrderRecord): string => {
+      if (o.symbol) {
+        const s = o.symbol.toUpperCase();
+        if (s.includes(":")) return s.split(":")[0];
+        return s.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "");
+      }
+      if (o.baseAsset) return o.baseAsset.toUpperCase();
+
       const p = Number(o.fillPrice || o.price || 0);
       const isSomnia = Boolean(
         o.explorerUrl?.includes("somnia") ||
@@ -806,40 +825,32 @@ export class BotDatabase {
       if (p > 50_000) return "WBTC";
       if (p > 500 && p <= 50_000) return (isSomnia ? "WETH" : (this.data.settings?.exchange === "binance" ? "ETH" : "WETH"));
       if (p >= 50 && p <= 300) return "SOL";
-      if (p > 0.01 && p < 10.0) return "SOMI";
+      if (isSomnia && p > 0.01 && p < 10.0) return "SOMI";
 
-      if (o.symbol) {
-        const s = o.symbol.toUpperCase();
-        if (s.includes("WBTC") || s.includes("BTC")) return "WBTC";
-        if (s.includes("WETH") || s.includes("ETH")) return (isSomnia ? "WETH" : (this.data.settings?.exchange === "binance" ? "ETH" : "WETH"));
-        if (s.includes("SOL")) return "SOL";
-        if (s.includes("SOMI")) return "SOMI";
-      }
-
-      if (o.baseAsset) return o.baseAsset.toUpperCase();
       return "DEFAULT";
     };
 
     // 1. Align pnl, pnlQuote, and pnlUsdso if one is present, and backfill inferred baseAsset
     for (const o of this.data.orders) {
+      // Self-Healing: Restore any HAEDALUSDT orders (e.g. MA-FOLD-FAN orders) mistakenly tagged as SOMI:USDSO
+      if (
+        (o.orderId && o.orderId.startsWith("mf_")) ||
+        (o.id && (o.id.includes("1793189100484") || o.id.includes("1793191002770"))) ||
+        (o.reason && (o.reason.includes("Fan Spread") || o.reason.includes("EMA 25 Mean Reversion")))
+      ) {
+        o.symbol = "HAEDALUSDT";
+        o.baseAsset = "HAEDAL";
+        o.quoteAsset = "USDT";
+        modified = true;
+      }
+
       const p = Number(o.fillPrice || o.price || 0);
       const isSomnia = Boolean(
         o.explorerUrl?.includes("somnia") ||
         (o.txHash && o.txHash.startsWith("0x")) ||
         (o.createTxHash && o.createTxHash.startsWith("0x")) ||
-        (o.fillTxHash && o.fillTxHash.startsWith("0x")) ||
-        (p > 0.01 && p < 10.0)
+        (o.fillTxHash && o.fillTxHash.startsWith("0x"))
       );
-
-      // Self-Healing: Repair any SOMI orders that were mistakenly marked as ETH / ETHFDUSD
-      if (p > 0.01 && p < 10.0) {
-        if (o.baseAsset !== "SOMI" || o.symbol !== "SOMI:USDSO" || o.quoteAsset !== "USDSO") {
-          o.baseAsset = "SOMI";
-          o.quoteAsset = "USDSO";
-          o.symbol = "SOMI:USDSO";
-          modified = true;
-        }
-      }
 
       // Repair orders wrongly tagged as WETH:USDSO that were actually executed on Binance (no Somnia tx/explorer, price in ETH range)
       const isTrueBinanceOrder = !isSomnia && p > 500 && p <= 50_000 && Boolean(o.orderId && /^\d{8,}$/.test(o.orderId) && !o.orderId.startsWith("0x"));

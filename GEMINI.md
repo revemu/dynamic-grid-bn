@@ -5311,25 +5311,21 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-## 146. v0.2.146 — MA-FOLD-FAN Live Wallet Balance Guard & Fee Deduction Fix (`src/strategy/ma-fan/executor.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`)
-1. **แก้ปัญหาขายไม้สอง (TP2 / Runner) ไม่ได้บน Binance Spot (Error `[-2010] Insufficient balance`)**:
+## 147. v0.2.147 — DB Legacy Price Heuristic Deprecation & HAEDAL Order Recovery (`src/db.ts`, `src/trade-rounds.ts`)
+1. **แก้ปัญหาประวัติการซื้อขายและรอบการเทรดไม่แสดงในหน้าประวัติ (Trade Manager & Trade Rounds ว่างเปล่า)**:
    - **สาเหตุของปัญหา**:
-     - บน Binance Spot เมื่อส่งคำสั่ง Market BUY หากไม่ได้ใช้ BNB จ่ายค่าธรรมเนียม Binance จะหักค่าธรรมเนียม 0.1% จากเหรียญ Base Asset ที่ซื้อได้ เช่น ซื้อ 1,706.7 HAEDAL โดนหักค่าธรรมเนียม 1.7067 HAEDAL เหลือเข้ากระเป๋าจริงเพียง 1,704.9933 HAEDAL
-     - เมื่อไม้ TP1 ขายออกไป 50% ($853.3$) เหรียญในกระเป๋าจะเหลือ $851.6933$ HAEDAL
-     - แต่บอทติดตามยอดทางบัญชีเดิมว่าเหลือ $1,706.7 - 853.3 = 853.4$ HAEDAL เมื่อ TP2 สั่งขาย $853.4$ จึงมากกว่าเหรียญที่มีจริงในกระเป๋า ส่งผลให้ Binance ปฏิเสธคำสั่งทันทีด้วย `Binance Error [-2010]: Account has insufficient balance for requested action.`
-     - ใน `src/strategy/ma-fan/strategy.ts` เมื่อคำสั่งขายของ TP2 หรือ Stop Loss ล้มเหลว โค้ดเดิมกลับข้ามไปรันคำสั่ง `this.activePosition = null` ทันที ทำให้บอทหยุดดูแลไม้ทั้งๆ ที่เหรียญยังค้างอยู่ในกระเป๋าจริง ผู้ใช้จึงต้องเข้าไปกดขายมือเอง
-     - ใน `src/strategy/ma-fan/strategy-adapter.ts` การ Log ข้อความ `WS execution report received` อ่านตัวแปร `rep?.s`, `rep?.S`, `rep?.X` ซึ่งเป็น undefined เนื่องจาก `BinanceExecutionReport` ผ่านการแปลงเป็น CamelCase (`symbol`, `side`, `orderStatus`) มาแล้ว
+     - ใน `src/db.ts` ฟังก์ชัน `backfillMissingSellPnl()` มีโค้ดมรดกเก่าที่เขียนไว้ว่า `if (p > 0.01 && p < 10.0)` ให้ทำการ Overwrite สัญลักษณ์ของออเดอร์เป็น `SOMI:USDSO` (`baseAsset: "SOMI"`, `quoteAsset: "USDSO"`)
+     - เนื่องจากเหรียญ `HAEDALUSDT` มีราคาเทรดอยู่ที่ `$0.029` ซึ่งตกอยู่ในช่วง `$0.01` ถึง `$10.0` พอดี ทำให้ทุกครั้งที่บอทเริ่มทำงานหรืออ่านฐานข้อมูล ออเดอร์ของ HAEDAL ทั้งไม้ซื้อ ($0.02931) และไม้ขาย TP1 ($0.02995) ถูกเปลี่ยนชื่อเป็น `SOMI:USDSO` โดยอัตโนมัติ
+     - เมื่อเปิดหน้าต่างประวัติการเทรด (`/api/db/trade-manager?symbol=HAEDALUSDT`) และรอบการเทรด (`/api/db/rounds?symbol=HAEDALUSDT`) ระบบจึงไม่พบออเดอร์ของ HAEDAL เลยแม้แต่รายการเดียว
    - **การแก้ไขและสถาปัตยกรรมใหม่**:
-     - **Live Balance Guard on Exits (`executeTp1`, `executeTp2`, `executeStopLoss`)**:
-       - เพิ่มเมธอด `getAvailableBaseBalance(symbol)` เพื่อดึงยอดเหรียญที่มีอยู่จริงในกระเป๋า (`baseFree`)
-       - ตรวจสอบยอดเหรียญจริงก่อนส่งคำสั่งขายทุกครั้ง หากยอดในกระเป๋าน้อยกว่าจำนวนทางบัญชี ให้ปรับจำนวนขายเป็น `sellQty = Math.min(position.remainingQty, available)` เสมอ ทำให้คำสั่งขายสำเร็จ 100% ปราศจากปัญหา Insufficient Balance
-       - หากยอดในกระเป๋าเป็น 0 (เหรียญถูกขายออกไปหมดแล้ว) ให้ถือว่าการเทรดปิดรอบเสร็จสมบูรณ์
-     - **Base Asset Fee Deduction on Buy Fill (`executeBuy`)**:
-       - เมื่อคำสั่งซื้อ Market BUY สำเร็จ ให้อ่านอาร์เรย์ `fills` จาก Binance หากมีการหักค่าธรรมเนียมเหรียญ Base Asset ให้นำมาหักลบเป็น `netReceivedQty = qty - baseFee` เพื่อให้ตัวเลขใน Position ตรงกับยอดเหรียญที่ได้รับจริงตั้งแต่ต้น
-     - **Execution Success Verification Before State Clearing (`src/strategy/ma-fan/strategy.ts`)**:
-       - ใน `step()` สำหรับ TP2 และ SL ให้ตรวจสอบผลลัพธ์ `if (ok)` หากคำสั่งขายบน Exchange ล้มเหลว ห้ามเคลียร์ `this.activePosition = null` เพื่อให้บอทยังคงดูแลไม้และส่งคำสั่งขายซ้ำจนสำเร็จ
-     - **Clean WS Execution Report Logging (`src/strategy/ma-fan/strategy-adapter.ts`)**:
-       - อัปเดตให้อ่านฟิลด์ `symbol`, `side`, `orderStatus` อย่างถูกต้อง เพื่อแสดงสถานะออเดอร์จาก WebSocket ชัดเจน
+     - **ลบตรรกะเดาเหรียญจากช่วงราคา (`p > 0.01 && p < 10.0`)**:
+       - ลบเงื่อนไข Overwrite สัญลักษณ์ใน `backfillMissingSellPnl()` ออกทั้งหมด
+       - ใน `inferBase()` ให้ตรวจสอบจาก `o.symbol` และ `o.baseAsset` ดั้งเดิมของคำสั่งซื้อขายจริงเป็นลำดับแรกเสมอ
+       - ใน `src/trade-rounds.ts` ปรับให้การอนุมานเหรียญ SOMI ต้องเกิดขึ้นเฉพาะเมื่อเป็นเครือข่าย Somnia (`isSomnia === true`) เท่านั้น
+     - **ระบบกู้คืนออเดอร์ HAEDALUSDT ย้อนหลัง (Self-Healing)**:
+       - เพิ่มตรรกะใน `recoverMissingSwingTrades()` และ `backfillMissingSellPnl()` ให้ตรวจสอบออเดอร์ MA Fan (เช่น `orderId` ขึ้นต้นด้วย `mf_` หรือมีข้อความ `Fan Spread` / `EMA 25 Mean Reversion`) และซ่อมแซมคืนค่า `symbol = "HAEDALUSDT"`, `baseAsset = "HAEDAL"`, `quoteAsset = "USDT"` โดยอัตโนมัติ
+       - เมื่อรีสตาร์ทบอท ออเดอร์ไม้ซื้อและ TP1 ของ HAEDAL จะปรากฏในหน้าต่างประวัติการเทรดและคำนวณรอบเทรดได้อย่างสมบูรณ์แบบ
+
 
 
 

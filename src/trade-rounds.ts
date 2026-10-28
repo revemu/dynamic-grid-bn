@@ -133,7 +133,7 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     );
     if (p > 50_000) return "WBTC";
     if (p > 500 && p <= 50_000) return (isSomnia ? "WETH" : (o.symbol?.includes("ETHFDUSD") || o.baseAsset === "ETH" ? "ETH" : "WETH"));
-    if (p > 0.01 && p < 10.0) return "SOMI";
+    if (isSomnia && p > 0.01 && p < 10.0) return "SOMI";
     return undefined;
   };
 
