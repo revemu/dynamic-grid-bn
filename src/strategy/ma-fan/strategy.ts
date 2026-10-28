@@ -142,15 +142,18 @@ export class MaFanStrategy {
 
     // Compute dynamic spread if ATR adaptive is enabled
     if (this.config.useAtrAdaptiveSpread) {
-      const atrs = calcATR(this.candles, 14);
-      const curAtr = atrs[atrs.length - 1] ?? 0;
-      const lastClose = this.candles[this.candles.length - 1]?.close ?? 1;
-      const atrPct = (curAtr / lastClose) * 100;
-      const baseSpread = this.config.autoCalibrateSpreadOnSwitch && this.lastCalibration
-        ? this.lastCalibration.bestSpreadPct
-        : this.config.manualSpreadPct;
-
-      this.effectiveSpreadThreshold = Math.max(0.20, Math.max(baseSpread, atrPct * this.config.atrMultiplier));
+      if (this.config.autoCalibrateSpreadOnSwitch && this.lastCalibration) {
+        // When Auto-Calibrate is active, respect the calibrated sweet spot
+        this.effectiveSpreadThreshold = this.lastCalibration.bestSpreadPct;
+      } else {
+        const atrs = calcATR(this.candles, 14);
+        const curAtr = atrs[atrs.length - 1] ?? 0;
+        const lastClose = this.candles[this.candles.length - 1]?.close ?? 1;
+        const atrPct = (curAtr / lastClose) * 100;
+        // Ribbon spread is ~1/4 of single candle high-low range, capped at 0.85% to avoid locking out trades
+        const rawAdaptive = Math.max(this.config.manualSpreadPct, (atrPct * 0.25) * this.config.atrMultiplier);
+        this.effectiveSpreadThreshold = Math.min(0.85, Math.max(0.20, rawAdaptive));
+      }
     }
   }
 
@@ -180,6 +183,26 @@ export class MaFanStrategy {
         const pos = this.activePosition;
         if (refPrice > pos.highestPriceSinceTp1) {
           pos.highestPriceSinceTp1 = refPrice;
+        }
+
+        // Dynamic Ratchet SL: After entry, if price forms higher local base, lift SL
+        // Works both before TP1 (risk reduction) and after TP1 (profit lock)
+        const entryTimeSec = Math.floor(pos.entryTime / 1000);
+        const entryIdx = this.candles.findIndex((c) => c.time >= entryTimeSec);
+        const barsHeld = entryIdx >= 0 ? this.candles.length - 1 - entryIdx : 3;
+
+        if (barsHeld >= 3) {
+          const recent3Lows = this.candles.slice(Math.max(0, this.candles.length - 4)).map((x) => x.low);
+          const localMin = Math.min(...recent3Lows);
+          const atrs = calcATR(this.candles, 14);
+          const curAtr = atrs[atrs.length - 1] ?? (refPrice * 0.003);
+          const localSlDist = Math.max(localMin * (this.config.slBufferPct / 100), curAtr * 1.0);
+          const localLow = this.executor.roundPrice(localMin - localSlDist);
+          if (localLow > pos.stopLossPrice && localLow < refPrice) {
+            this.log(`🛡️ [RATCHET_SL] Lifting SL for ${this.symbol} from $${pos.stopLossPrice.toFixed(4)} to $${localLow.toFixed(4)}`);
+            pos.stopLossPrice = localLow;
+            this.onStateUpdate?.(this.getState());
+          }
         }
 
         // A. Stop Loss Exit

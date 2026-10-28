@@ -1901,10 +1901,19 @@
     const metrics = data.metrics || {};
 
     if (elReqSpread) elReqSpread.textContent = effSpread.toFixed(2);
+    const curSpread = ribbon.fanSpreadPct || 0;
     if (elCurrentSpread) {
-      const curSpread = ribbon.fanSpreadPct || 0;
       elCurrentSpread.textContent = `${curSpread.toFixed(2)}%`;
       elCurrentSpread.style.color = curSpread >= effSpread ? "#4ade80" : "#38bdf8";
+    }
+
+    // Direct sync to top chart status pill
+    const elMafanStatusPill = document.getElementById("mafanStatusPill");
+    const elMafanStatusText = document.getElementById("mafanStatusText");
+    if (elMafanStatusPill && elMafanStatusText) {
+      elMafanStatusPill.style.display = "inline-flex";
+      const htfStr = htf ? ` • HTF: ${htf.timeframe} ${htf.isBullish ? "BULL" : "BEAR"}` : "";
+      elMafanStatusText.textContent = `🪭 Spread: ${curSpread.toFixed(2)}% (เกณฑ์ ≥ ${effSpread.toFixed(2)}%)${htfStr}`;
     }
 
     if (elHtfRegime) {
@@ -2805,9 +2814,12 @@
       if (elMafanStatusPill) {
         elMafanStatusPill.style.display = "inline-flex";
         if (elMafanStatusText) {
-          const sp = data.fanSpreadPct !== undefined ? data.fanSpreadPct.toFixed(2) : (data.spreadPct !== undefined ? data.spreadPct.toFixed(2) : "--");
-          const minSp = data.minSpreadThreshold !== undefined ? data.minSpreadThreshold.toFixed(2) : (data.maFanMinSpreadThreshold ? Number(data.maFanMinSpreadThreshold).toFixed(2) : "0.30");
-          const htf = data.htfRegime?.regime || (data.htfTrend ? data.htfTrend.toUpperCase() : "");
+          const ribbon = data.ribbon || {};
+          const spVal = ribbon.fanSpreadPct !== undefined ? ribbon.fanSpreadPct : (data.fanSpreadPct !== undefined ? data.fanSpreadPct : data.spreadPct);
+          const sp = spVal !== undefined && Number.isFinite(spVal) ? Number(spVal).toFixed(2) : "--";
+          const minSpVal = data.effectiveSpreadThreshold ?? data.minSpreadThreshold ?? data.maFanMinSpreadThreshold ?? 0.25;
+          const minSp = Number(minSpVal).toFixed(2);
+          const htf = data.htfRegime ? `${data.htfRegime.timeframe} ${data.htfRegime.isBullish ? "BULL" : "BEAR"}` : (data.htfTrend ? data.htfTrend.toUpperCase() : "");
           const htfBadge = htf ? ` • HTF: ${htf}` : "";
           elMafanStatusText.textContent = `🪭 Spread: ${sp}% (เกณฑ์ ≥ ${minSp}%)${htfBadge}`;
         }

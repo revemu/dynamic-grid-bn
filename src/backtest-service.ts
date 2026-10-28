@@ -418,8 +418,13 @@ export class BacktestService {
         // Compute dynamic spread threshold matching live strategy (if enabled)
         let currentSpread = spread;
         if (useAtrAdaptive) {
-          const atrPct = (curAtr / c.close) * 100;
-          currentSpread = Math.max(0.20, Math.max(spread, atrPct * atrMultiplier));
+          if (opts.spreadThreshold === "auto" || !opts.spreadThreshold) {
+            currentSpread = spread;
+          } else {
+            const atrPct = (curAtr / c.close) * 100;
+            const adaptive = Math.max(spread, (atrPct * 0.25) * atrMultiplier);
+            currentSpread = Math.min(0.85, Math.max(0.20, adaptive));
+          }
         }
 
         const exhaustion = exhaustionStates[i]!;

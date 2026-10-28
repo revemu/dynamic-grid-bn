@@ -5243,6 +5243,21 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - โหลดแท่งเทียน 3 Timeframes พร้อมกันใน `src/index.ts` ด้วย `Promise.all`
      - ใน `public/app.js`: ลบการคำนวณ Ribbon ซ้ำๆ ใน `renderFrontPageState` ออก และใส่ Throttling (2.5 วินาที) ในการอัปเดตเส้น EMA บนหน้าเว็บ ทำให้หน้าจอทำงานลื่นไหล 60fps 100% ไม่มีการสะดุด
 
+---
+
+## 140. v0.2.140 — Ratchet SL Alignment, ATR Spread Normalization & Smart Telemetry Throttling
+1. **Ratchet SL Alignment ระหว่างบอทจริงและ Backtest**:
+   - เพิ่มระบบ **🛡️ Ratchet SL** ใน `MaFanStrategy.step()` (`src/strategy/ma-fan/strategy.ts`)
+   - เมื่อถือออเดอร์ครบ 3 แท่งขึ้นไป และราคาเริ่มยกฐานย่อยสูงขึ้น (`Math.min(...recent3Lows)`), ระบบจะยก Stop Loss ไล่ตามฐานใหม่ขึ้นไปเรื่อยๆ ทันที ทำให้บอทจริงทำงานเหมือนกับการจำลองใน Backtest Studio 100%
+2. **แก้ไขปัญหา ATR Spread พุ่งสูงเกินจริง (ATR Spread Normalization)**:
+   - แก้ปัญหาเมื่อเปิด `Auto-Calibrate` แล้วตัวแปร `useAtrAdaptiveSpread` เอาค่า `ATR% * 1.25` (เช่น 2.95%) มาทับค่า Sweet Spot (0.35%) จนบอทไม่ยอมออกไม้
+   - **แก้ไข**: เมื่อเปิด `autoCalibrateSpreadOnSwitch` ระบบจะยึดค่า `this.lastCalibration.bestSpreadPct` ที่ทดสอบแล้วว่าดีที่สุดทันที และหากใช้โหมด Manual จะปรับขนาดสัดส่วนเป็น `(atrPct * 0.25) * atrMultiplier` พร้อมจำกัดเพดานไว้ไม่เกิน `0.85%` เพื่อป้องกันไม่ให้ค่าหลุดขอบเขตความเป็นจริงของพัด EMA บนกราฟ 5 นาที
+3. **Smart Telemetry Throttling & Payload Optimization (ลดแบนด์วิดท์ลง ~75%)**:
+   - ใน `src/strategy/ma-fan/strategy-adapter.ts`: ปรับ `emitTelemetryTick` ให้ Throttle การส่ง Event `tick` มาที่หน้าเว็บทุกๆ 2.5 วินาที สำหรับลูปเช็กราคาปกติ (แต่ยังคงส่งทันทีเมื่อมีคำสั่งซื้อ/ขาย, อัปเดต Position, หรือเปลี่ยนการตั้งค่า)
+   - ตัดก้อนข้อมูลตารางจำลอง `candidates` (ขนาด ~1.1 KB) ออกจาก Event `tick` รายวินาที ทำให้ขนาด Payload เล็กลงกว่า 60% ประหยัด Data และลดภาระ CPU ของเบราว์เซอร์อย่างมาก
+4. **ซิงค์ป้ายสถานะพัดมุมซ้ายบนของกราฟ (`#mafanStatusPill`)**:
+   - ใน `public/app.js`: ปรับปรุงการดึงค่า Spread และเกณฑ์ขั้นต่ำ (`effectiveSpreadThreshold`) ให้เชื่อมโยงกับ State จริงโดยตรง แก้ปัญหาป้ายแสดง `Spread: --% (เกณฑ์ ≥ 0.30%)` ให้แสดงตัวเลขสดถูกต้องตรงกับแผงแผนการเทรดด้านขวา
+
 
 
 

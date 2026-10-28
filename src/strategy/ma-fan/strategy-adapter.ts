@@ -46,6 +46,7 @@ export class MaFanTradingStrategy implements IStrategy {
   private bestBid: number = 0;
   private bestAsk: number = 0;
   private lastBalanceSyncTs: number = 0;
+  private lastTelemetryEmitTs: number = 0;
 
   constructor(context: StrategyContext) {
     this.context = context;
@@ -81,11 +82,11 @@ export class MaFanTradingStrategy implements IStrategy {
       onTrade: (t) => {
         this.emit({ type: "order", data: t });
         this.saveState(true);
-        this.emitTelemetryTick();
+        this.emitTelemetryTick(true);
       },
       onStateUpdate: () => {
         this.saveState(true);
-        this.emitTelemetryTick();
+        this.emitTelemetryTick(true);
       },
     });
 
@@ -148,7 +149,7 @@ export class MaFanTradingStrategy implements IStrategy {
       }
     }
 
-    this.emitTelemetryTick();
+    this.emitTelemetryTick(false);
   }
 
   public getIntervalMs(): number {
@@ -160,12 +161,12 @@ export class MaFanTradingStrategy implements IStrategy {
   public onCandleClosed(candle: Candle): void {
     if (candle && candle.close > 0) this.currentMid = candle.close;
     this.maFan.onCandle(candle, true);
-    this.emitTelemetryTick();
+    this.emitTelemetryTick(true);
   }
 
   public onHtfCandleClosed(candle: Candle): void {
     this.maFan.onHtfCandle(candle, true);
-    this.emitTelemetryTick();
+    this.emitTelemetryTick(true);
   }
 
   public onEvent(cb: (event: StrategyEvent) => void): void {
@@ -182,7 +183,14 @@ export class MaFanTradingStrategy implements IStrategy {
     }
   }
 
-  public emitTelemetryTick(): void {
+  public emitTelemetryTick(force = false): void {
+    const now = Date.now();
+    // Throttle SSE tick events to once every 2.5 seconds unless forced (trade/order/position change)
+    if (!force && now - this.lastTelemetryEmitTs < 2500) {
+      return;
+    }
+    this.lastTelemetryEmitTs = now;
+
     const state = this.maFan.getState();
     const lots = this.getLots();
     const baseHeld = this.baseHeld();
@@ -194,6 +202,13 @@ export class MaFanTradingStrategy implements IStrategy {
     const ribbon = state.ribbon;
     const curSpread = ribbon?.fanSpreadPct ?? 0;
     const reqSpread = state.effectiveSpreadThreshold ?? 0.25;
+
+    // Compact lastCalibration for telemetry ticks to save bandwidth (candidates table is 1.1 KB)
+    let compactCalibration = undefined;
+    if (state.lastCalibration) {
+      const { candidates, ...rest } = state.lastCalibration;
+      compactCalibration = rest;
+    }
 
     let botAction = {
       title: "🪭 MA Fan Scanning",
@@ -233,6 +248,7 @@ export class MaFanTradingStrategy implements IStrategy {
 
     const tickData = {
       ...state,
+      lastCalibration: compactCalibration,
       strategyType: "ma_fan",
       strategyMode: "ma_fan",
       symbol: this.symbolInfo.symbol,
