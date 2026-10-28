@@ -55,9 +55,10 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  height: 100vh;
-  padding: 12px 14px;
-  gap: 10px;
+  height: auto;
+  overflow-y: auto;
+  padding: 12px 18px 40px 18px;
+  gap: 12px;
   max-width: 1920px;
   margin: 0 auto;
 }
@@ -363,28 +364,24 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: 1fr;
   gap: var(--gap-md);
   flex: 1;
-  min-height: 0;
-  overflow: hidden;
+  min-height: 520px;
 }
 
 .col-chart {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  height: 100%;
+  min-height: 520px;
+  height: 560px;
   overflow: hidden;
+  gap: 8px;
+  width: 100%;
 }
 
 .col-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-md);
-  min-height: 0;
-  height: 100%;
-  overflow: hidden;
+  display: none !important;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4091,6 +4088,295 @@ input:checked + .slider:before { transform: translateX(20px); }
   background: rgba(148, 163, 184, 0.1);
   border: 1px solid rgba(148, 163, 184, 0.2);
   color: #94a3b8;
+}
+
+/* ═══════════════════ Horizontal MA Fan Plan Strip ═══════════════════ */
+.ma-fan-plan-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.mf-strip-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mf-strip-badge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(168, 85, 247, 0.2);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: #c084fc;
+}
+
+.mf-strip-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mf-strip-levels {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mf-level-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mf-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #fff;
+}
+
+.mf-chip-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.mf-chip-title {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.mf-chip-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.mf-chip-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+.mf-strip-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.mf-stat-box {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mf-stat-label {
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.mf-stat-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ═══════════════════ Interactive Live Trade Log Section (Backtest Studio Style) ═══════════════════ */
+.live-trades-section {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.live-trades-section .trades-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.live-trades-section .trades-title-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.live-trades-section .trades-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.live-trades-section .trades-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.live-trades-section .trades-filter {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.live-trades-section .filter-btn {
+  padding: 5px 12px;
+  background: #0b1120;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.live-trades-section .filter-btn.active,
+.live-trades-section .filter-btn:hover {
+  color: #fff;
+  border-color: #6366f1;
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.live-trades-section .trades-table-wrap {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.live-trades-section .bt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.live-trades-section .bt-table th {
+  position: sticky;
+  top: 0;
+  background: #101726;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.live-trades-section .bt-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+
+.live-trades-section .bt-table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.live-trades-section .bt-table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.live-trades-section .badge-side-buy {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(16, 185, 129, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.live-trades-section .badge-side-sell {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.live-trades-section .badge-act-tp1 {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.live-trades-section .badge-act-tp2 {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.live-trades-section .badge-act-ratchet {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(249, 115, 22, 0.15);
+  color: #fb923c;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+}
+
+.live-trades-section .badge-act-sl {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.live-trades-section .badge-status-filled {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(34, 197, 94, 0.1);
+  color: #4ade80;
 }
 
 

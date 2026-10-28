@@ -187,11 +187,88 @@
       </div>
     </section>
 
-    <!-- ═══════════════════ 2-Column Main Workspace ═══════════════════ -->
+    <!-- ═══════════════════ Full-Width Main Workspace (Clean Studio Style) ═══════════════════ -->
     <div class="dashboard-grid">
 
       <!-- ──── COLUMN 1: Large Primary Chart ──── -->
       <div class="col-chart">
+        <!-- ── Horizontal MA Fan Plan Strip (Entry, TP1, TP2, SL, Spread, HTF) ── -->
+        <div class="ma-fan-plan-strip" id="maFanPlanCard" style="display: none;">
+          <div class="mf-strip-brand">
+            <span class="mf-strip-badge">🪭 MA-FOLD-FAN</span>
+            <span class="mf-strip-desc" id="mfSignalDesc">รอพัดกางตึงสุด (Spread ≥ <span id="mfReqSpread">0.20</span>%) + Hook</span>
+          </div>
+
+          <div class="mf-strip-levels">
+            <div class="mf-level-chip mf-chip-entry">
+              <span class="mf-badge" style="background:#10b981;">IN</span>
+              <div class="mf-chip-body">
+                <span class="mf-chip-title">จุดเข้าซื้อ (Entry)</span>
+                <span class="mf-chip-val" id="mfEntryPrice">--.------</span>
+              </div>
+              <span class="mf-chip-sub" id="mfEntryQty">--</span>
+            </div>
+
+            <div class="mf-level-chip mf-chip-tp1">
+              <span class="mf-badge" style="background:#3b82f6;">TP1</span>
+              <div class="mf-chip-body">
+                <span class="mf-chip-title">TP1 (EMA 25)</span>
+                <span class="mf-chip-val" id="mfTp1Price">--.------</span>
+              </div>
+              <span class="mf-chip-sub" id="mfTp1Desc">ขาย 50%</span>
+            </div>
+
+            <div class="mf-level-chip mf-chip-tp2">
+              <span class="mf-badge" style="background:#a855f7;">TP2</span>
+              <div class="mf-chip-body">
+                <span class="mf-chip-title">TP2 Runner</span>
+                <span class="mf-chip-val" id="mfTp2Price">--.------</span>
+              </div>
+              <span class="mf-chip-sub" id="mfTp2TargetDesc">รันเทรนด์</span>
+            </div>
+
+            <div class="mf-level-chip mf-chip-sl">
+              <span class="mf-badge" style="background:#ef4444;" id="mfSlBadge">SL</span>
+              <div class="mf-chip-body">
+                <span class="mf-chip-title" id="mfSlTitle">Stop Loss</span>
+                <span class="mf-chip-val" id="mfSlPrice">--.------</span>
+              </div>
+              <span class="mf-chip-sub" id="mfSlStatus">--</span>
+            </div>
+          </div>
+
+          <div class="mf-strip-stats">
+            <div class="mf-stat-box">
+              <span class="mf-stat-label">ความกว้างพัด</span>
+              <span class="mf-stat-val" id="mfCurrentSpread" style="color:#38bdf8;">--%</span>
+            </div>
+            <div class="mf-stat-box">
+              <span class="mf-stat-label">เทรนด์ใหญ่</span>
+              <span class="mf-stat-val" id="mfHtfRegime" style="color:#a855f7;">--</span>
+            </div>
+            <div class="mf-stat-box">
+              <span class="mf-stat-label">สถานะพอร์ต</span>
+              <span class="mf-stat-val" id="mfPositionStatus" style="color:#4ade80;">รอเข้าซื้อ</span>
+            </div>
+            <div class="mf-stat-box">
+              <span class="mf-stat-label">WIN RATE</span>
+              <span class="mf-stat-val text-green" id="mfWinRate">--%</span>
+            </div>
+            <div class="mf-stat-box">
+              <span class="mf-stat-label">CYCLES</span>
+              <span class="mf-stat-val" id="mfCycles">0</span>
+            </div>
+            <div class="mf-stat-box">
+              <span class="mf-stat-label">REALIZED</span>
+              <span class="mf-stat-val text-green" id="mfRealizedPnl">$0.00</span>
+            </div>
+          </div>
+
+          <!-- Compatibility hidden elements -->
+          <span id="mfSignalBanner" style="display:none;"></span>
+          <span id="mfSignalType" style="display:none;"></span>
+        </div>
+
         <section class="chart-panel">
           <div class="panel-header">
             <div class="panel-title-group">
@@ -266,8 +343,8 @@
         </section>
       </div>
 
-      <!-- ──── COLUMN 2: Compact Grid Meter + Unified Multi-Tab Portfolio Dock ──── -->
-      <aside class="col-sidebar">
+      <!-- ──── COLUMN 2: Compact Grid Meter + Unified Multi-Tab Portfolio Dock (Hidden in Clean Studio Mode) ──── -->
+      <aside class="col-sidebar" style="display: none !important;">
         <!-- 1. Compact Dynamic Grid Channel Meter (100% Ceiling to 0% Floor) -->
         <div class="hud-card glow-ladder-card" id="gridLadderCard">
           <div class="card-header">
@@ -511,88 +588,6 @@
               </div>
             </div>
           </div>
-
-          <!-- ── MA Fan Setup & Execution Card (Displayed when strategyType === 'ma_fan') ── -->
-          <div class="swing-trade-plan-card" id="maFanPlanCard" style="display:none;">
-            <div class="stp-signal-banner" id="mfSignalBanner" style="background: linear-space; background: rgba(168, 85, 247, 0.15); border-left: 3px solid #a855f7;">
-              <div class="stp-signal-type" id="mfSignalType" style="color: #c084fc;">🪭 MA-FOLD-FAN (กำลังตรวจจับการยืดตัว)</div>
-              <div class="stp-signal-desc" id="mfSignalDesc">รอพัดกางตึงสุด (Spread ≥ <span id="mfReqSpread">0.40</span>%) + ปลายพัดม้วนหัวกลับ (Hook)</div>
-            </div>
-
-            <!-- MA Fan Live Telemetry Stats -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 10px 0; font-size: 11px;">
-              <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
-                <div style="color:var(--text-muted); font-size:10px;">ความกว้างพัด (Spread)</div>
-                <div id="mfCurrentSpread" style="font-weight:700; font-size:12px; color:#38bdf8;">--%</div>
-              </div>
-              <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
-                <div style="color:var(--text-muted); font-size:10px;">เทรนด์ใหญ่ (HTF)</div>
-                <div id="mfHtfRegime" style="font-weight:700; font-size:12px; color:#a855f7;">--</div>
-              </div>
-              <div style="background:rgba(255,255,255,0.04); padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.08);">
-                <div style="color:var(--text-muted); font-size:10px;">สถานะพอร์ต</div>
-                <div id="mfPositionStatus" style="font-weight:700; font-size:12px; color:#4ade80;">รอเข้าซื้อ</div>
-              </div>
-            </div>
-
-            <div class="stp-levels-container">
-              <!-- TP2 Target -->
-              <div class="stp-level-row stp-tp2">
-                <div class="stp-level-badge" style="background: #a855f7;">TP2</div>
-                <div class="stp-level-info">
-                  <span class="stp-level-name">🎯 TP2 Runner (EMA 75/200 หรือ Trailing)</span>
-                  <span class="stp-level-action" id="mfTp2TargetDesc">รันเทรนด์กินคำใหญ่</span>
-                </div>
-                <div class="stp-level-price" id="mfTp2Price">--.------</div>
-              </div>
-
-              <!-- TP1 Target -->
-              <div class="stp-level-row stp-tp1">
-                <div class="stp-level-badge" style="background: #3b82f6;">TP1</div>
-                <div class="stp-level-info">
-                  <span class="stp-level-name">🎯 TP1 Mean Reversion (EMA 25)</span>
-                  <span class="stp-level-action" id="mfTp1Desc">ขาย 50% แล้วย้าย SL มา Breakeven</span>
-                </div>
-                <div class="stp-level-price" id="mfTp1Price">--.------</div>
-              </div>
-
-              <!-- Entry Price -->
-              <div class="stp-level-row stp-entry">
-                <div class="stp-level-badge" style="background:#10b981;">IN</div>
-                <div class="stp-level-info">
-                  <span class="stp-level-name">🟢 จุดเข้าซื้อ (Entry Price)</span>
-                  <span class="stp-level-action" id="mfEntryQty">--</span>
-                </div>
-                <div class="stp-level-price" id="mfEntryPrice">--.------</div>
-              </div>
-
-              <!-- Stop Loss Target -->
-              <div class="stp-level-row stp-sl">
-                <div class="stp-level-badge" style="background:#ef4444;" id="mfSlBadge">SL</div>
-                <div class="stp-level-info">
-                  <span class="stp-level-name" id="mfSlTitle">🛡️ Stop Loss (ใต้ Swing Low)</span>
-                  <span class="stp-level-action" id="mfSlStatus">--</span>
-                </div>
-                <div class="stp-level-price" id="mfSlPrice">--.------</div>
-              </div>
-            </div>
-
-            <!-- MA Fan Stats Footer -->
-            <div class="stp-footer-stats">
-              <div class="stp-stat-item">
-                <span class="stp-stat-label">WIN RATE</span>
-                <span class="stp-stat-val text-green" id="mfWinRate">--%</span>
-              </div>
-              <div class="stp-stat-item">
-                <span class="stp-stat-label">CYCLES</span>
-                <span class="stp-stat-val" id="mfCycles">0</span>
-              </div>
-              <div class="stp-stat-item">
-                <span class="stp-stat-label">REALIZED PNL</span>
-                <span class="stp-stat-val text-green" id="mfRealizedPnl">$0.00</span>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- 2. Unified Multi-Tab Portfolio & Activity Dock (Trades / Open Orders / Lots / Log) -->
@@ -686,6 +681,124 @@
         </div>
       </aside>
     </div>
+
+    <!-- ═══════════════════ Bottom Interactive Live Trade Log Section (Backtest Studio Style) ═══════════════════ -->
+    <section class="bt-trades-section live-trades-section" id="liveTradesSection">
+      <div class="trades-header">
+        <div class="trades-title-wrap">
+          <h2 class="trades-title">📋 ประวัติการซื้อขาย &amp; รอบการเทรด (Live Trade Log)</h2>
+          <span class="trades-hint">💡 คลิกที่แถวไม้เทรดเพื่อเลื่อนกราฟ (Scroll) และดูจุดซื้อ-ขายบนแท่งเทียน</span>
+        </div>
+        <div class="trades-header-controls" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <div class="trades-filter">
+            <button class="filter-btn active" id="btnLtTabFills" data-target="fills">⚡ ประวัติเทรด (<span id="ltCntFills">0</span>)</button>
+            <button class="filter-btn" id="btnLtTabRounds" data-target="rounds">🔄 สรุปรอบเทรด (<span id="ltCntRounds">0</span>)</button>
+            <button class="filter-btn" id="btnLtTabOrders" data-target="orders">📖 ออเดอร์รอ (<span id="ltCntOrders">0</span>)</button>
+            <button class="filter-btn" id="btnLtTabLots" data-target="lots">📦 ไม้ที่ถือ (<span id="ltCntLots">0</span>)</button>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-warning btn-sm" id="btnLtSyncBinance" title="ดึงประวัติการจับคู่คำสั่งจริงจาก Binance REST API มา Reconcile อัตโนมัติ" style="background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24; font-size: 11px; padding: 4px 8px;">
+              <span>🔄 Reconcile จาก Binance</span>
+            </button>
+            <button class="btn btn-primary btn-sm" id="btnLtAddTrade" style="font-size: 11px; padding: 4px 8px;">
+              <span>➕ เพิ่ม Trade Fill</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pane 1: Real Trade Fills Table -->
+      <div class="trades-table-wrap" id="ltPaneFills">
+        <table class="bt-table" id="ltFillsTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>เวลา (Time)</th>
+              <th>ฝั่ง (Side)</th>
+              <th>ราคา (Price)</th>
+              <th>จำนวน (Qty)</th>
+              <th>มูลค่า ($)</th>
+              <th>กำไร Realized PnL ($)</th>
+              <th>ประเภท / Action</th>
+              <th>สถานะ</th>
+            </tr>
+          </thead>
+          <tbody id="ltFillsTbody">
+            <tr>
+              <td colspan="9" class="td-empty">กำลังโหลดประวัติการซื้อขาย...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pane 2: Trade Rounds Summary Table -->
+      <div class="trades-table-wrap" id="ltPaneRounds" style="display: none;">
+        <table class="bt-table" id="ltRoundsTable">
+          <thead>
+            <tr>
+              <th>รอบที่</th>
+              <th>สถานะรอบ</th>
+              <th>เวลาเริ่ม (Entry)</th>
+              <th>เวลาปิด (Exit)</th>
+              <th>ระยะเวลา</th>
+              <th>ต้นทุนเฉลี่ย</th>
+              <th>ราคาขายเฉลี่ย</th>
+              <th>จำนวนรวม</th>
+              <th>กำไรสุทธิ ($)</th>
+              <th>กำไร (%)</th>
+            </tr>
+          </thead>
+          <tbody id="ltRoundsTbody">
+            <tr>
+              <td colspan="10" class="td-empty">ยังไม่มีข้อมูลรอบการเทรด</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pane 3: Open Orders Table -->
+      <div class="trades-table-wrap" id="ltPaneOrders" style="display: none;">
+        <table class="bt-table" id="ltOrdersTable">
+          <thead>
+            <tr>
+              <th>ฝั่ง (Side)</th>
+              <th>ระดับ / ชื่อ</th>
+              <th>ราคา ($)</th>
+              <th>จำนวน</th>
+              <th>มูลค่า ($)</th>
+              <th>สถานะ</th>
+              <th>Order ID</th>
+            </tr>
+          </thead>
+          <tbody id="ltOrdersTbody">
+            <tr>
+              <td colspan="7" class="td-empty">ไม่มีออเดอร์ตั้งรอในตลาด</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pane 4: Holding Lots Table -->
+      <div class="trades-table-wrap" id="ltPaneLots" style="display: none;">
+        <table class="bt-table" id="ltLotsTable">
+          <thead>
+            <tr>
+              <th>ไม้ที่</th>
+              <th>เวลาที่ซื้อ</th>
+              <th>ราคาทุน ($)</th>
+              <th>จำนวน</th>
+              <th>มูลค่า ($)</th>
+              <th>สัดส่วน</th>
+            </tr>
+          </thead>
+          <tbody id="ltLotsTbody">
+            <tr>
+              <td colspan="6" class="td-empty">ไม่มีเหรียญที่ถือครอง (ถือเงินสด 100%)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 
   <!-- Toast Notification System for Order Match & Cut Loss Alerts -->

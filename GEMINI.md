@@ -5388,3 +5388,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 
 
+
+
+---
+
+## 149. v0.2.149 — Full-Width Clean Studio Dashboard UI & Interactive Bottom Trade Log Table (`public/index.html`, `public/style.css`, `public/app.js`)
+
+1. **ปรับโฉมหน้าจอเทรดสดให้ Clean สไตล์ Backtest Studio (Full-Width Layout & Interactive Trade Log)**:
+   - **ความต้องการของผู้ใช้**:
+     - หน้าจอเดิมถูกกรอบข้างขนาด 340px (`col-sidebar`) บีบให้กราฟแคบลง และตารางกิจกรรมด้านข้างดูอึดอัด ผู้ใช้ต้องการให้หน้าจอเทรดจริงดูสะอาดตา โปร่ง สบายตาเหมือนหน้า Backtest Studio โดยถอดกรอบข้างออกทั้งหมด และนำ Trade Log ลงมาเป็นตารางเต็มความกว้างด้านล่างกราฟ
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - **ขยายกราฟเต็มความกว้าง 100% (Full-Width Chart Canvas)**:
+       - ปรับ `.dashboard-grid` ให้เป็นคอลัมน์เดียว (`grid-template-columns: 1fr`) และซ่อนแถบข้าง `col-sidebar` ออกจากหน้าจอหลัก
+       - กราฟ TradingView Lightweight Charts ขยายเต็มหน้าจอ มองเห็นรายละเอียดแท่งเทียน, เส้น EMA Ribbon, และป้ายสัญญาณซื้อ-ขายได้อย่างชัดเจน
+     - **แถบแสดงเป้าหมายกะทัดรัดเหนือขอบกราฟ (`ma-fan-plan-strip`)**:
+       - ย้ายเป้าหมายสำคัญของ MA-FOLD-FAN ได้แก่ `🟢 Entry`, `🔵 TP1 (EMA 25)`, `🟣 TP2 Runner`, `🛡️ Stop Loss`, และข้อมูล Real-time Telemetry (`🪭 Spread`, `HTF Regime`, `Position Status`) มาจัดวางเป็นแถบแนวนอนสวยงามกะทัดรัดเหนือขอบกราฟ
+     - **แผงตารางประวัติการซื้อขาย & รอบเทรดด้านล่างกราฟ (`live-trades-section` สไตล์ Backtest Studio)**:
+       - เพิ่มแผงตารางเต็มความกว้างใต้กราฟ พร้อม Header และแท็บสลับมุมมอง 4 โหมด:
+         1. `⚡ ประวัติเทรด (Fills)`: แสดงรายการแมตช์จริง เวลา, ฝั่ง (BUY/SELL), ราคา, จำนวน, มูลค่า, กำไรสุทธิ PnL, Action (Sniper, TP1, TP2, Ratchet, SL), สถานะ
+         2. `🔄 สรุปรอบเทรด (Trade Rounds)`: สรุปผลกำไรรอบเทรด ต้นทุนเฉลี่ย ราคาขายเฉลี่ย ระยะเวลาถือครอง กำไร ($) และ ROI (%)
+         3. `📖 ออเดอร์รอ (Open Orders)`: แสดง Limit Order ที่ตั้งรออยู่ในตลาดขณะนี้
+         4. `📦 ไม้ที่ถือ (Lots)`: แสดงสัดส่วนและราคาทุนของเหรียญที่ถือครองแยกตามไม้
+       - **Interactive Row Click**: เมื่อคลิกที่แถวรายการเทรดใดๆ กราฟจะเลื่อน (Scroll) และปรับช่วงเวลาไปยังแท่งเทียนที่เกิดธุรกรรมนั้นทันที แบบเดียวกับ Backtest Studio
+       - มีปุ่มทางลัด **"🔄 Reconcile จาก Binance"** และ **"➕ เพิ่ม Trade Fill"** ที่หัวตารางด้านล่างโดยตรง สะดวกต่อการใช้งาน

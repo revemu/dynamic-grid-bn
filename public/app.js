@@ -6333,6 +6333,8 @@
       `;
       })
       .join("");
+
+    renderLiveTradesTable();
   }
 
   function renderTmLots() {
@@ -6397,6 +6399,9 @@
       `;
       })
       .join("");
+
+    renderLiveLotsTable();
+    renderLiveOrdersTable();
   }
 
   // ── Trade Rounds Logic & Rendering ──────────────────────────────────────────
@@ -6699,6 +6704,8 @@
         renderTmRounds();
       });
     });
+
+    renderLiveRoundsTable();
   }
 
   function exportRoundsCsv() {
@@ -7260,17 +7267,288 @@
     }
   });
 
+  // ── Bottom Live Trade Log & Table Component (Backtest Studio Style) ──
+  const elLtCntFills = document.getElementById("ltCntFills");
+  const elLtCntRounds = document.getElementById("ltCntRounds");
+  const elLtCntOrders = document.getElementById("ltCntOrders");
+  const elLtCntLots = document.getElementById("ltCntLots");
+
+  const elBtnLtTabFills = document.getElementById("btnLtTabFills");
+  const elBtnLtTabRounds = document.getElementById("btnLtTabRounds");
+  const elBtnLtTabOrders = document.getElementById("btnLtTabOrders");
+  const elBtnLtTabLots = document.getElementById("btnLtTabLots");
+
+  const elLtPaneFills = document.getElementById("ltPaneFills");
+  const elLtPaneRounds = document.getElementById("ltPaneRounds");
+  const elLtPaneOrders = document.getElementById("ltPaneOrders");
+  const elLtPaneLots = document.getElementById("ltPaneLots");
+
+  const elLtFillsTbody = document.getElementById("ltFillsTbody");
+  const elLtRoundsTbody = document.getElementById("ltRoundsTbody");
+  const elLtOrdersTbody = document.getElementById("ltOrdersTbody");
+  const elLtLotsTbody = document.getElementById("ltLotsTbody");
+
+  const elBtnLtSyncBinance = document.getElementById("btnLtSyncBinance");
+  const elBtnLtAddTrade = document.getElementById("btnLtAddTrade");
+
+  function switchLtTab(target) {
+    const tabs = [
+      { id: "fills", btn: elBtnLtTabFills, pane: elLtPaneFills },
+      { id: "rounds", btn: elBtnLtTabRounds, pane: elLtPaneRounds },
+      { id: "orders", btn: elBtnLtTabOrders, pane: elLtPaneOrders },
+      { id: "lots", btn: elBtnLtTabLots, pane: elLtPaneLots },
+    ];
+    tabs.forEach((t) => {
+      if (t.btn) t.btn.classList.toggle("active", t.id === target);
+      if (t.pane) t.pane.style.display = t.id === target ? "block" : "none";
+    });
+  }
+
+  if (elBtnLtTabFills) elBtnLtTabFills.addEventListener("click", () => switchLtTab("fills"));
+  if (elBtnLtTabRounds) elBtnLtTabRounds.addEventListener("click", () => switchLtTab("rounds"));
+  if (elBtnLtTabOrders) elBtnLtTabOrders.addEventListener("click", () => switchLtTab("orders"));
+  if (elBtnLtTabLots) elBtnLtTabLots.addEventListener("click", () => switchLtTab("lots"));
+
+  if (elBtnLtSyncBinance) {
+    elBtnLtSyncBinance.addEventListener("click", () => {
+      if (elTmBtnSyncExchange) elTmBtnSyncExchange.click();
+    });
+  }
+  if (elBtnLtAddTrade) {
+    elBtnLtAddTrade.addEventListener("click", () => {
+      if (elTmBtnOpenAddTrade) elTmBtnOpenAddTrade.click();
+    });
+  }
+
+  function focusTradeOnChart(timeVal) {
+    if (!chart || !candleSeries || !timeVal) return;
+    try {
+      const t = Math.floor(timeVal > 1e11 ? timeVal / 1000 : timeVal);
+      const span = 3600 * 4;
+      const fromTime = t - span * 0.6;
+      const toTime = t + span * 0.4;
+      chart.timeScale().setVisibleRange({ from: fromTime, to: toTime });
+    } catch (e) {
+      console.warn("Could not set visible range on chart:", e);
+    }
+  }
+
+  function renderLiveTradesTable() {
+    if (!elLtFillsTbody) return;
+    if (elLtCntFills) elLtCntFills.textContent = `${tmTrades ? tmTrades.length : 0}`;
+
+    if (!Array.isArray(tmTrades) || tmTrades.length === 0) {
+      elLtFillsTbody.innerHTML = '<tr><td colspan="9" class="td-empty">ยังไม่มีประวัติการซื้อขายที่บันทึกไว้</td></tr>';
+      return;
+    }
+
+    elLtFillsTbody.innerHTML = tmTrades
+      .map((o, idx) => {
+        const isBuy = o.side === "BUY" || o.action?.includes("BUY") || o.type === "BUY_HOOK";
+        const sideBadge = isBuy
+          ? `<span class="badge-side-buy">🟢 BUY</span>`
+          : `<span class="badge-side-sell">🔴 SELL</span>`;
+
+        let actBadge = `<span class="badge-exit" style="background:rgba(255,255,255,0.08);">${o.action || o.type || "TRADE"}</span>`;
+        if (o.type === "TP1_EMA25" || o.action === "TAKE_PROFIT") {
+          actBadge = `<span class="badge-exit badge-act-tp1">🔵 TP1 (EMA 25)</span>`;
+        } else if (o.type === "TP2_RUNNER" || o.action === "SNIPE_SELL") {
+          actBadge = `<span class="badge-exit badge-act-tp2">🟣 TP2 (Runner)</span>`;
+        } else if (o.type === "BUY_HOOK" || o.action === "SNIPE_BUY") {
+          actBadge = `<span class="badge-exit" style="background:rgba(16,185,129,0.2); color:#4ade80; border:1px solid rgba(16,185,129,0.4);">🎯 Sniper Buy</span>`;
+        } else if (o.reason?.includes("Ratchet")) {
+          actBadge = `<span class="badge-exit badge-act-ratchet">🟠 Ratchet SL</span>`;
+        } else if (o.action === "CUT" || o.action === "CUT_LOSS" || o.type === "STOP_LOSS") {
+          actBadge = `<span class="badge-exit badge-act-sl">🔴 Stop Loss</span>`;
+        } else if (o.reason?.includes("Binance")) {
+          actBadge = `<span class="badge-exit" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4);">⚡ Binance Trade</span>`;
+        }
+
+        const timeVal = o.fillTime || o.time || o.placedTime || o.timestamp || Date.now();
+        const d = new Date(timeVal);
+        const timeStr = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")} ${d.getDate()}/${d.getMonth() + 1}`;
+
+        const baseSym = o.baseAsset || (o.symbol ? o.symbol.split(/[:\-_]/)[0] : activeBaseAsset) || "BASE";
+        const priceNum = Number(o.fillPrice || o.price || 0);
+        const qtyNum = Number(o.executedQty || o.qty || o.quantity || 0);
+        const notionalNum = Number(o.notionalQuote || o.notionalUsdso || priceNum * qtyNum);
+
+        let pnlCell = `<span style="color:#64748b;">--</span>`;
+        const pnlVal = o.pnlQuote !== undefined ? o.pnlQuote : o.pnlUsdso !== undefined ? o.pnlUsdso : o.pnl;
+        if (pnlVal !== undefined && pnlVal !== null) {
+          const p = Number(pnlVal);
+          const pColor = p >= 0 ? "#4ade80" : "#f87171";
+          const pSign = p >= 0 ? "+" : "-";
+          pnlCell = `<span style="color:${pColor}; font-weight:700;">${pSign}$${Math.abs(p).toFixed(2)}</span>`;
+        }
+
+        return `
+          <tr data-time="${timeVal}" class="live-trade-row" title="คลิกเพื่อเลื่อนกราฟไปยังจุดซื้อขายนี้">
+            <td style="color:#94a3b8;">${tmTrades.length - idx}</td>
+            <td style="color:#cbd5e1;">${timeStr}</td>
+            <td>${sideBadge}</td>
+            <td style="font-weight:700;">$${fmtPrice(priceNum)}</td>
+            <td>${qtyNum.toLocaleString(undefined, { maximumFractionDigits: 4 })} <span style="font-size:10px; color:#64748b;">${baseSym}</span></td>
+            <td>$${notionalNum.toFixed(2)}</td>
+            <td>${pnlCell}</td>
+            <td>${actBadge}</td>
+            <td><span class="badge-status-filled">FILLED</span></td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    elLtFillsTbody.querySelectorAll(".live-trade-row").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const t = Number(tr.getAttribute("data-time"));
+        if (t) focusTradeOnChart(t);
+      });
+    });
+  }
+
+  function renderLiveRoundsTable() {
+    if (!elLtRoundsTbody) return;
+    if (elLtCntRounds) elLtCntRounds.textContent = `${tmRounds ? tmRounds.length : 0}`;
+
+    if (!Array.isArray(tmRounds) || tmRounds.length === 0) {
+      elLtRoundsTbody.innerHTML = '<tr><td colspan="10" class="td-empty">ยังไม่มีข้อมูลรอบการเทรดที่ปิดสมบูรณ์</td></tr>';
+      return;
+    }
+
+    elLtRoundsTbody.innerHTML = tmRounds
+      .map((r) => {
+        const isClosed = r.status === "CLOSED";
+        const statusBadge = isClosed
+          ? `<span class="badge-exit" style="background:rgba(34,197,94,0.15); color:#4ade80; border:1px solid rgba(34,197,94,0.3);">CLOSED</span>`
+          : `<span class="badge-exit" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);">HOLDING</span>`;
+
+        const startD = new Date(r.startTime);
+        const startStr = `${String(startD.getHours()).padStart(2, "0")}:${String(startD.getMinutes()).padStart(2, "0")} ${startD.getDate()}/${startD.getMonth() + 1}`;
+        const endD = r.endTime ? new Date(r.endTime) : null;
+        const endStr = endD ? `${String(endD.getHours()).padStart(2, "0")}:${String(endD.getMinutes()).padStart(2, "0")} ${endD.getDate()}/${endD.getMonth() + 1}` : "--";
+
+        const durSec = Math.max(0, Math.floor((r.durationMs || 0) / 1000));
+        const durMin = Math.floor(durSec / 60);
+        const durRemSec = durSec % 60;
+        const durStr = durMin > 0 ? `${durMin}m ${durRemSec}s` : `${durSec}s`;
+
+        const pnl = Number(r.grossPnlQuote || r.grossPnlUsdso || 0);
+        const pnlPct = Number(r.grossPnlPct || 0);
+        const pColor = pnl >= 0 ? "#4ade80" : "#f87171";
+
+        return `
+          <tr data-time="${r.startTime}" class="live-round-row" title="คลิกเพื่อเลื่อนกราฟไปยังรอบเทรดนี้">
+            <td style="font-weight:700;">#${r.roundNumber}</td>
+            <td>${statusBadge}</td>
+            <td>${startStr}</td>
+            <td>${endStr}</td>
+            <td style="color:#94a3b8;">${durStr}</td>
+            <td>$${fmtPrice(r.avgBuyPrice)}</td>
+            <td>${r.avgSellPrice > 0 ? `$${fmtPrice(r.avgSellPrice)}` : "--"}</td>
+            <td>${Number(r.buyQty || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+            <td style="color:${pColor}; font-weight:700;">${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}</td>
+            <td style="color:${pColor}; font-weight:700;">${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    elLtRoundsTbody.querySelectorAll(".live-round-row").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        const t = Number(tr.getAttribute("data-time"));
+        if (t) focusTradeOnChart(t);
+      });
+    });
+  }
+
+  function renderLiveOrdersTable() {
+    if (!elLtOrdersTbody) return;
+    if (elLtCntOrders) elLtCntOrders.textContent = `${tmOpenOrders ? tmOpenOrders.length : 0}`;
+
+    if (!Array.isArray(tmOpenOrders) || tmOpenOrders.length === 0) {
+      elLtOrdersTbody.innerHTML = '<tr><td colspan="7" class="td-empty">ไม่มีออเดอร์ตั้งรอในตลาดขณะนี้</td></tr>';
+      return;
+    }
+
+    elLtOrdersTbody.innerHTML = tmOpenOrders
+      .map((o) => {
+        const isBuy = o.side === "BUY" || o.isBid;
+        const sideBadge = isBuy
+          ? `<span class="badge-side-buy">🟢 BUY</span>`
+          : `<span class="badge-side-sell">🔴 SELL</span>`;
+        const priceNum = Number(o.price || 0);
+        const qtyNum = Number(o.qty || o.origQty || 0);
+        const notional = priceNum * qtyNum;
+
+        return `
+          <tr>
+            <td>${sideBadge}</td>
+            <td style="color:#cbd5e1;">${o.levelDesc || (isBuy ? "Buy Level" : "Sell Target")}</td>
+            <td style="font-weight:700;">$${fmtPrice(priceNum)}</td>
+            <td>${qtyNum.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+            <td>$${notional.toFixed(2)}</td>
+            <td><span class="badge-exit" style="background:rgba(56,189,248,0.15); color:#38bdf8;">${o.status || "OPEN"}</span></td>
+            <td style="font-family:monospace; font-size:10px; color:#64748b;">${o.orderId || o.onChainOrderId || "--"}</td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  function renderLiveLotsTable() {
+    if (!elLtLotsTbody) return;
+    if (elLtCntLots) elLtCntLots.textContent = `${tmLots ? tmLots.length : 0}`;
+
+    if (!Array.isArray(tmLots) || tmLots.length === 0) {
+      elLtLotsTbody.innerHTML = '<tr><td colspan="6" class="td-empty">ไม่มีเหรียญที่ถือครอง (ถือเงินสด 100%)</td></tr>';
+      return;
+    }
+
+    const totalQty = tmLots.reduce((sum, l) => sum + Number(l.qty || 0), 0);
+    elLtLotsTbody.innerHTML = tmLots
+      .map((lot, i) => {
+        const priceNum = Number(lot.price || 0);
+        const qtyNum = Number(lot.qty || 0);
+        const notional = priceNum * qtyNum;
+        const fracPct = totalQty > 0 ? (qtyNum / totalQty) * 100 : 0;
+        const timeVal = lot.time || lot.timestamp || Date.now();
+        const d = new Date(timeVal);
+        const timeStr = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")} ${d.getDate()}/${d.getMonth() + 1}`;
+
+        return `
+          <tr>
+            <td style="font-weight:700;">ไม้ที่ ${i + 1}</td>
+            <td style="color:#94a3b8;">${timeStr}</td>
+            <td style="font-weight:700;">$${fmtPrice(priceNum)}</td>
+            <td>${qtyNum.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+            <td>$${notional.toFixed(2)}</td>
+            <td><span class="badge-exit" style="background:rgba(168,85,247,0.15); color:#c084fc;">${fracPct.toFixed(1)}%</span></td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  function renderLiveBottomSection() {
+    renderLiveTradesTable();
+    renderLiveRoundsTable();
+    renderLiveOrdersTable();
+    renderLiveLotsTable();
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       loadSettings();
       initChart();
       connectSSE();
       checkBotPauseStatus();
+      loadTradeManagerData();
     });
   } else {
     loadSettings();
     initChart();
     connectSSE();
     checkBotPauseStatus();
+    loadTradeManagerData();
   }
 })();
