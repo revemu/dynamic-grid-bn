@@ -72,7 +72,22 @@ export class MaFanOrderExecutor {
       return parseFloat(price.toFixed(precision));
     }
     const prec = this.symbolInfo.pricePrecision ?? 4;
+    const factor = Math.pow(10, prec);
     return parseFloat(price.toFixed(prec));
+  }
+
+  /**
+   * Query actual available free base asset balance in wallet.
+   */
+  public async getAvailableBaseBalance(symbol: string): Promise<number> {
+    if (this.dryRun) return 999999;
+    try {
+      const b = await this.client.getAccountBalances(this.symbolInfo?.symbol || symbol);
+      return b.baseFree ?? 0;
+    } catch (err: any) {
+      this.log(`⚠️ Failed to fetch available base balance for ${symbol}: ${err.message}`);
+      return 0;
+    }
   }
 
   /**
@@ -109,6 +124,8 @@ export class MaFanOrderExecutor {
     this.log(`🟢 [BUY_SNIPER] ${symbol} | Price: $${entryPrice.toFixed(4)} | Qty: ${qty} | SL: $${stopLossPrice.toFixed(4)} (Buffer: $${slDist.toFixed(4)}) | Spread: ${fanSpreadPct.toFixed(2)}% | DryRun: ${this.dryRun}`);
 
     let fillPrice = entryPrice;
+    let netReceivedQty = qty;
+
     if (!this.dryRun) {
       try {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
@@ -120,18 +137,36 @@ export class MaFanOrderExecutor {
           qty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
+
+        // 🛡️ Deduct Trading Fee in Base Asset (Binance Spot fee deduction)
+        if (Array.isArray(res.fills) && res.fills.length > 0) {
+          const sym = symbol.toUpperCase();
+          const baseSym = (this.symbolInfo?.baseAsset || sym.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "")).toUpperCase();
+          let baseFee = 0;
+          for (const f of res.fills) {
+            if ((f.commissionAsset || "").toUpperCase() === baseSym) {
+              baseFee += Number(f.commission || 0);
+            }
+          }
+          if (baseFee > 0) {
+            netReceivedQty = Math.max(0, qty - baseFee);
+            this.log(`ℹ️ [BUY_FEE DEDUCTION] Bought ${qty} ${baseSym} - fee ${baseFee} ${baseSym} = net received ${netReceivedQty} ${baseSym}`);
+          }
+        }
       } catch (err: any) {
         this.log(`❌ Buy order execution failed: ${err.message}`);
         return null;
       }
     }
 
+    const finalHoldingQty = this.roundQty(netReceivedQty);
+
     const position: MaFanPosition = {
       symbol,
       entryPrice: fillPrice,
       entryTime: Date.now(),
-      totalQty: qty,
-      remainingQty: qty,
+      totalQty: finalHoldingQty,
+      remainingQty: finalHoldingQty,
       stopLossPrice,
       isBreakevenLocked: false,
       tp1Filled: false,
@@ -145,12 +180,12 @@ export class MaFanOrderExecutor {
       type: "BUY_HOOK",
       symbol,
       price: fillPrice,
-      qty,
+      qty: finalHoldingQty,
       reason: `Fan Spread ${fanSpreadPct.toFixed(2)}% + Hook`,
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "BUY", fillPrice, qty);
+    const orderRecord = this.recordDbOrder(trade, "BUY", fillPrice, finalHoldingQty);
     this.onTrade?.(orderRecord || trade);
 
     return position;
@@ -168,6 +203,15 @@ export class MaFanOrderExecutor {
     const minNotional = (this.symbolInfo?.minNotional && this.symbolInfo.minNotional > 0) ? this.symbolInfo.minNotional : 5.0;
     let sellQty = this.roundQty(position.totalQty * tp1Ratio);
     if (sellQty <= 0) return false;
+
+    // 🛡️ BALANCE GUARD: Check live wallet free balance before placing TP1
+    if (!this.dryRun) {
+      const available = await this.getAvailableBaseBalance(position.symbol);
+      if (available > 0 && available < sellQty) {
+        this.log(`ℹ️ [TP1 BALANCE GUARD] Available wallet balance ${available} is less than planned sell ${sellQty}. Adjusting sell qty to ${available}`);
+        sellQty = this.roundQty(available);
+      }
+    }
 
     // 🛡️ Min Notional Dust Guard: Check if remaining runner would be below minimum exchange size (< $5.10)
     const remainingQty = this.roundQty(position.remainingQty - sellQty);
@@ -200,7 +244,7 @@ export class MaFanOrderExecutor {
     const pnl = (fillPrice - position.entryPrice) * sellQty;
     const pnlPct = ((fillPrice - position.entryPrice) / position.entryPrice) * 100;
 
-    position.remainingQty = Math.max(0, position.remainingQty - sellQty);
+    position.remainingQty = Math.max(0, this.roundQty(position.remainingQty - sellQty));
     position.tp1Filled = true;
     position.tp1Price = fillPrice;
     position.tp1Time = Date.now();
@@ -239,7 +283,23 @@ export class MaFanOrderExecutor {
     currentPrice: number,
     reason: string
   ): Promise<boolean> {
-    const sellQty = this.roundQty(position.remainingQty);
+    let sellQty = this.roundQty(position.remainingQty);
+    if (sellQty <= 0) return false;
+
+    // 🛡️ BALANCE GUARD: Check actual wallet free balance before placing TP2 (Runner Full Liquidation)
+    if (!this.dryRun) {
+      const available = await this.getAvailableBaseBalance(position.symbol);
+      if (available <= 0) {
+        this.log(`⚠️ [TP2 BALANCE GUARD] Wallet free balance is 0 for ${position.symbol}. Position appears to be already sold or liquidated.`);
+        position.remainingQty = 0;
+        return true;
+      }
+      if (available < sellQty) {
+        this.log(`ℹ️ [TP2 BALANCE GUARD] Adjusting TP2 sell qty from ${sellQty} to available wallet balance ${available} (deducting fees/dust)`);
+        sellQty = this.roundQty(available);
+      }
+    }
+
     if (sellQty <= 0) return false;
 
     this.log(`🚀 [TP2_RUNNER] ${position.symbol} | Price: $${currentPrice.toFixed(4)} | Qty: ${sellQty} | Reason: ${reason} | DryRun: ${this.dryRun}`);
@@ -292,7 +352,23 @@ export class MaFanOrderExecutor {
     position: MaFanPosition,
     currentPrice: number
   ): Promise<boolean> {
-    const sellQty = this.roundQty(position.remainingQty);
+    let sellQty = this.roundQty(position.remainingQty);
+    if (sellQty <= 0) return false;
+
+    // 🛡️ BALANCE GUARD: Check actual wallet free balance before placing SL
+    if (!this.dryRun) {
+      const available = await this.getAvailableBaseBalance(position.symbol);
+      if (available <= 0) {
+        this.log(`⚠️ [SL BALANCE GUARD] Wallet free balance is 0 for ${position.symbol}. Position appears to be already sold or closed.`);
+        position.remainingQty = 0;
+        return true;
+      }
+      if (available < sellQty) {
+        this.log(`ℹ️ [SL BALANCE GUARD] Adjusting SL sell qty from ${sellQty} to available wallet balance ${available}`);
+        sellQty = this.roundQty(available);
+      }
+    }
+
     if (sellQty <= 0) return false;
 
     this.log(`🔴 [STOP_LOSS] ${position.symbol} | Trigger: $${currentPrice.toFixed(4)} | SL Price: $${position.stopLossPrice.toFixed(4)} | Qty: ${sellQty} | Breakeven Locked: ${position.isBreakevenLocked}`);

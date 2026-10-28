@@ -297,8 +297,11 @@ export class MaFanTradingStrategy implements IStrategy {
   }
 
   public handleWsExecutionReport(rep: any): void {
-    this.log(`📥 WS execution report received in MA Fan adapter: ${rep?.s} ${rep?.S} ${rep?.X}`);
-    if (rep?.X === "FILLED" || rep?.X === "PARTIALLY_FILLED" || rep?.X === "CANCELED") {
+    const sym = rep?.symbol || rep?.s || "";
+    const side = rep?.side || rep?.S || "";
+    const status = rep?.orderStatus || rep?.X || "";
+    this.log(`📥 WS execution report received in MA Fan adapter: ${sym} ${side} ${status}`);
+    if (status === "FILLED" || status === "PARTIALLY_FILLED" || status === "CANCELED" || status === "EXPIRED") {
       this.refreshWalletBalances().catch(() => {});
     }
   }

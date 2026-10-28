@@ -231,20 +231,24 @@ export class MaFanStrategy {
 
         // A. Take Profit 2 (Macro Runner / Trailing Stop)
         if (exitDecision.action === "TP2") {
-          await this.executor.executeTp2(pos, refPrice, exitDecision.reason || "TP2 Exit");
-          this.activePosition = null;
-          this.totalCycles++;
-          this.onStateUpdate?.(this.getState());
+          const ok = await this.executor.executeTp2(pos, refPrice, exitDecision.reason || "TP2 Exit");
+          if (ok) {
+            this.activePosition = null;
+            this.totalCycles++;
+            this.onStateUpdate?.(this.getState());
+          }
           return;
         }
 
         // B. Stop Loss Exit
         if (exitDecision.action === "SL") {
           this.log(`⚠️ Stop Loss triggered for ${this.symbol} at $${refPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)})`);
-          await this.executor.executeStopLoss(pos, refPrice);
-          this.activePosition = null;
-          this.totalCycles++;
-          this.onStateUpdate?.(this.getState());
+          const ok = await this.executor.executeStopLoss(pos, refPrice);
+          if (ok) {
+            this.activePosition = null;
+            this.totalCycles++;
+            this.onStateUpdate?.(this.getState());
+          }
           return;
         }
 

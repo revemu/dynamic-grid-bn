@@ -5309,25 +5309,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-## 145. v0.2.145 — MA-FOLD-FAN Trade Log & Event Pipeline Unification (`src/strategy/ma-fan/executor.ts`, `src/db.ts`, `src/trade-rounds.ts`, `public/app.js`)
-1. **แก้ปัญหาไม้ซื้อ/ขายของระบบ MA-FOLD-FAN ไม่แสดงในหน้าต่าง Trade Log (แถบกิจกรรมเทรด, Trade Manager และ Trade Rounds)**:
+---
+
+## 146. v0.2.146 — MA-FOLD-FAN Live Wallet Balance Guard & Fee Deduction Fix (`src/strategy/ma-fan/executor.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`)
+1. **แก้ปัญหาขายไม้สอง (TP2 / Runner) ไม่ได้บน Binance Spot (Error `[-2010] Insufficient balance`)**:
    - **สาเหตุของปัญหา**:
-     - เมื่อ `MaFanOrderExecutor` วางไม้ซื้อ/ขายสำเร็จ ฟังก์ชัน `executeBuy`, `executeTp1`, `executeTp2`, `executeStopLoss` มีการบันทึกลงฐานข้อมูล `this.db.recordEvent` แต่ส่ง Event ไปยัง Dashboard ผ่าน `this.onTrade?.(trade)` ด้วยอ็อบเจกต์ย่อ `MaFanTradeLog` (`{ id, type: 'BUY_HOOK', symbol, price, qty, reason, time }`)
-     - ขาดฟิลด์มาตรฐานของออเดอร์ ได้แก่ `status: "FILLED"`, `action: "SNIPE_BUY"`, `side: "BUY"`, `notionalQuote`
-     - ฝั่งหน้าบ้าน `public/app.js` ฟังก์ชัน `addOrderActivity` และ `createActivityElement` มีเงื่อนไขคัดกรองออเดอร์เฉพาะที่มี `status === "FILLED"` หรืออยู่ในรายการ `action` ที่รู้จัก ทำให้ไม้ของ MA-FOLD-FAN ถูกมองข้าม ไม่แสดงในแถบกิจกรรม "เทรด (Trades Feed)" และตัวเลขนับ `tradesCount` ไม่ขยับ
-     - ใน `src/db.ts` บันทึกออเดอร์โดยไม่ได้ดึง `baseAsset` และ `quoteAsset` จาก Symbol ทำให้เผลอใช้ค่าตกค้างใน State เดิม (`BNB`, `FDUSD`) ส่งผลให้ระบบ Trade Rounds (`src/trade-rounds.ts`) กรองออเดอร์ทิ้งเนื่องจาก `inferOrderBase` อ่านได้เหรียญไม่ตรงกัน
+     - บน Binance Spot เมื่อส่งคำสั่ง Market BUY หากไม่ได้ใช้ BNB จ่ายค่าธรรมเนียม Binance จะหักค่าธรรมเนียม 0.1% จากเหรียญ Base Asset ที่ซื้อได้ เช่น ซื้อ 1,706.7 HAEDAL โดนหักค่าธรรมเนียม 1.7067 HAEDAL เหลือเข้ากระเป๋าจริงเพียง 1,704.9933 HAEDAL
+     - เมื่อไม้ TP1 ขายออกไป 50% ($853.3$) เหรียญในกระเป๋าจะเหลือ $851.6933$ HAEDAL
+     - แต่บอทติดตามยอดทางบัญชีเดิมว่าเหลือ $1,706.7 - 853.3 = 853.4$ HAEDAL เมื่อ TP2 สั่งขาย $853.4$ จึงมากกว่าเหรียญที่มีจริงในกระเป๋า ส่งผลให้ Binance ปฏิเสธคำสั่งทันทีด้วย `Binance Error [-2010]: Account has insufficient balance for requested action.`
+     - ใน `src/strategy/ma-fan/strategy.ts` เมื่อคำสั่งขายของ TP2 หรือ Stop Loss ล้มเหลว โค้ดเดิมกลับข้ามไปรันคำสั่ง `this.activePosition = null` ทันที ทำให้บอทหยุดดูแลไม้ทั้งๆ ที่เหรียญยังค้างอยู่ในกระเป๋าจริง ผู้ใช้จึงต้องเข้าไปกดขายมือเอง
+     - ใน `src/strategy/ma-fan/strategy-adapter.ts` การ Log ข้อความ `WS execution report received` อ่านตัวแปร `rep?.s`, `rep?.S`, `rep?.X` ซึ่งเป็น undefined เนื่องจาก `BinanceExecutionReport` ผ่านการแปลงเป็น CamelCase (`symbol`, `side`, `orderStatus`) มาแล้ว
    - **การแก้ไขและสถาปัตยกรรมใหม่**:
-     - **Unified Order Event Transmission (`src/strategy/ma-fan/executor.ts`)**:
-       - ใน `recordDbOrder` ทำการแยก `baseAsset` และ `quoteAsset` จาก `trade.symbol` อัตโนมัติ (เช่น `HAEDALUSDT` -> `baseAsset: "HAEDAL"`, `quoteAsset: "USDT"`)
-       - ส่งคืนและกระจาย `UnifiedOrderRecord` ฉบับเต็มผ่าน `this.onTrade?.(orderRecord || trade)` เข้าสู่ Dashboard ทันที
-       - ใน `executeBuy`, `executeTp1`, `executeTp2`, `executeStopLoss` บรอดแคสต์ออเดอร์ที่มี `status: "FILLED"`, `action: "SNIPE_BUY"` / `"TAKE_PROFIT"` / `"CUT"`, `side: "BUY"` / `"SELL"`, `notionalQuote` อย่างครบถ้วน
-     - **Database Robust Asset Derivation & Self-Healing (`src/db.ts`)**:
-       - ปรับปรุง `recordEvent` ให้แยก `baseAsset` และ `quoteAsset` จาก `targetSymbol` เป็นลำดับแรก ป้องกันการดึงค่าตกค้างจาก State เดิม
-       - เพิ่มระบบ Auto-heal ใน `recoverMissingSwingTrades` ให้ตรวจสอบและแก้ไขออเดอร์ในฐานข้อมูลที่มี Symbol กับ Base/Quote Asset ไม่ตรงกันโดยอัตโนมัติ
-     - **Trade Rounds Symbol Authority (`src/trade-rounds.ts`)**:
-       - ให้ `inferOrderBase` อ่านชื่อ Base Asset จาก `o.symbol` เป็นอันดับแรกก่อน `o.baseAsset`
-     - **Frontend Backwards Compatibility & Filter Support (`public/app.js`)**:
-       - ปรับปรุง `addOrderActivity`, `createActivityElement` และ `renderTmTrades` ให้รองรับทั้ง `SNIPE_BUY`, `SNIPE_SELL`, `BUY_HOOK`, `TP1_EMA25`, `TP2_RUNNER`, `STOP_LOSS` อย่างสมบูรณ์แบบ
+     - **Live Balance Guard on Exits (`executeTp1`, `executeTp2`, `executeStopLoss`)**:
+       - เพิ่มเมธอด `getAvailableBaseBalance(symbol)` เพื่อดึงยอดเหรียญที่มีอยู่จริงในกระเป๋า (`baseFree`)
+       - ตรวจสอบยอดเหรียญจริงก่อนส่งคำสั่งขายทุกครั้ง หากยอดในกระเป๋าน้อยกว่าจำนวนทางบัญชี ให้ปรับจำนวนขายเป็น `sellQty = Math.min(position.remainingQty, available)` เสมอ ทำให้คำสั่งขายสำเร็จ 100% ปราศจากปัญหา Insufficient Balance
+       - หากยอดในกระเป๋าเป็น 0 (เหรียญถูกขายออกไปหมดแล้ว) ให้ถือว่าการเทรดปิดรอบเสร็จสมบูรณ์
+     - **Base Asset Fee Deduction on Buy Fill (`executeBuy`)**:
+       - เมื่อคำสั่งซื้อ Market BUY สำเร็จ ให้อ่านอาร์เรย์ `fills` จาก Binance หากมีการหักค่าธรรมเนียมเหรียญ Base Asset ให้นำมาหักลบเป็น `netReceivedQty = qty - baseFee` เพื่อให้ตัวเลขใน Position ตรงกับยอดเหรียญที่ได้รับจริงตั้งแต่ต้น
+     - **Execution Success Verification Before State Clearing (`src/strategy/ma-fan/strategy.ts`)**:
+       - ใน `step()` สำหรับ TP2 และ SL ให้ตรวจสอบผลลัพธ์ `if (ok)` หากคำสั่งขายบน Exchange ล้มเหลว ห้ามเคลียร์ `this.activePosition = null` เพื่อให้บอทยังคงดูแลไม้และส่งคำสั่งขายซ้ำจนสำเร็จ
+     - **Clean WS Execution Report Logging (`src/strategy/ma-fan/strategy-adapter.ts`)**:
+       - อัปเดตให้อ่านฟิลด์ `symbol`, `side`, `orderStatus` อย่างถูกต้อง เพื่อแสดงสถานะออเดอร์จาก WebSocket ชัดเจน
+
 
 
 
