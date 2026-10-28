@@ -6,7 +6,7 @@
 
 import fs from "fs";
 import path from "path";
-import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules } from "./strategy/ma-fan/index.js";
+import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
 
 export interface BacktestTrade {
@@ -194,6 +194,27 @@ export class BacktestService {
   }
 
   /**
+   * Aggregates lower timeframe candles (e.g. 5m) into higher timeframe candles (e.g. 15m).
+   */
+  public static aggregateCandles(candles: Candle[], targetMinutes = 15): Candle[] {
+    const targetSeconds = targetMinutes * 60;
+    const groups = new Map<number, Candle>();
+    for (const c of candles) {
+      const bucket = Math.floor(c.time / targetSeconds) * targetSeconds;
+      const existing = groups.get(bucket);
+      if (!existing) {
+        groups.set(bucket, { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 });
+      } else {
+        existing.high = Math.max(existing.high, c.high);
+        existing.low = Math.min(existing.low, c.low);
+        existing.close = c.close;
+        existing.volume = (existing.volume || 0) + (c.volume || 0);
+      }
+    }
+    return Array.from(groups.values()).sort((a, b) => a.time - b.time);
+  }
+
+  /**
    * Run full-fidelity simulation for MA Fan Sniper Strategy
    */
   public static runMaFanSimulation(
@@ -211,6 +232,7 @@ export class BacktestService {
       tp1Ratio?: number;
       breakevenFeeBufferPct?: number;
       saveToHistory?: boolean;
+      candlesHtf?: Candle[];
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -223,6 +245,11 @@ export class BacktestService {
     const trailingPullbackPct = opts.trailingPullbackPct ?? 0.45;
     const tp1Ratio = Math.max(0.1, Math.min(0.9, opts.tp1Ratio ?? 0.50));
     const beFeeBuffer = (opts.breakevenFeeBufferPct ?? 0.05) / 100;
+
+    // HTF 15m candles: use provided or aggregate from 5m candles
+    const candlesHtf = opts.candlesHtf && opts.candlesHtf.length > 0
+      ? opts.candlesHtf
+      : BacktestService.aggregateCandles(candles, 15);
 
     // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
@@ -265,6 +292,10 @@ export class BacktestService {
       const c = candles[i]!;
       const ribbon = ribbonStates[i]!;
       const curAtr = atrs[i] ?? (c.close * 0.003);
+
+      // Evaluate Higher Timeframe (HTF 15m) Regime (aligns with Live Bot)
+      const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, "15m", c.time);
+      const activeTp1Ratio = Math.max(0.1, Math.min(0.9, htfRegime.recommendedTp1Ratio ?? tp1Ratio));
 
       // Current portfolio equity
       const currentEquity = cash + (heldQty > 0 ? heldQty * c.close : 0);
@@ -421,7 +452,7 @@ export class BacktestService {
         if (exitDecision.action === "TP1") {
           tp1Price = exitDecision.exitPrice;
           tp1Time = c.time;
-          tp1Qty = heldQty * tp1Ratio;
+          tp1Qty = heldQty * activeTp1Ratio;
           cash += tp1Qty * tp1Price;
           heldQty -= tp1Qty;
           tp1Filled = true;
@@ -436,7 +467,7 @@ export class BacktestService {
             position: "aboveBar",
             color: "#38bdf8",
             shape: "circle",
-            text: `🔵 TP1 (${(tp1Ratio * 100).toFixed(0)}%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
+            text: `🔵 TP1 (${(activeTp1Ratio * 100).toFixed(0)}%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
           });
         }
       }
@@ -453,6 +484,9 @@ export class BacktestService {
           atrMultiplier,
         });
 
+        // Apply Higher Timeframe (HTF 15m) Spread Multiplier (aligns with Live Bot)
+        const requiredSpread = currentSpread * htfRegime.spreadMultiplier;
+
         const exhaustion = exhaustionStates[i]!;
         const entryDecision = MaFanCoreRules.evaluateEntry({
           candles,
@@ -460,7 +494,7 @@ export class BacktestService {
           closePrice: c.close,
           ribbon,
           exhaustion,
-          requiredSpreadPct: currentSpread,
+          requiredSpreadPct: requiredSpread,
           curAtr,
           slBufferPct,
         });

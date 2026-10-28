@@ -2931,6 +2931,20 @@
       elTickSpeedText.textContent = `⚡ ${sec}s`;
     }
 
+    // Lots & Position Count
+    const lots = data.lots || [];
+    const invUsd = data.inventoryUsdso !== undefined
+      ? data.inventoryUsdso
+      : (data.positionQuote || data.positionUsdso || (data.activePosition && data.mid ? data.activePosition.qty * data.mid : 0));
+    const maxInvUsd = data.maxInventoryQuote || data.maxInventoryUsdso || 90;
+    let totalBase = 0;
+    lots.forEach((lot) => totalBase += (lot.qty || 0));
+    if (totalBase === 0 && data.activePosition?.qty) {
+      totalBase = data.activePosition.qty;
+    }
+    const rawHoldPct = data.currentHoldPct !== undefined ? data.currentHoldPct : (maxInvUsd > 0 ? (invUsd / maxInvUsd) * 100 : 0);
+    const holdPct = Math.min(100, Math.max(0, rawHoldPct));
+
     // Zone Badge & Type
     const targetHoldStr = data.targetHoldingPct !== undefined ? ` • Target: ${data.targetHoldingPct.toFixed(0)}% ($${data.targetInventoryUsdso ? data.targetInventoryUsdso.toFixed(0) : ""})` : "";
 
@@ -2961,20 +2975,6 @@
         elZoneStatusBadge.className = "zone-status-badge badge-breakout";
       }
     }
-
-    // Lots & Position Count
-    const lots = data.lots || [];
-    const invUsd = data.inventoryUsdso !== undefined
-      ? data.inventoryUsdso
-      : (data.positionQuote || data.positionUsdso || (data.activePosition && data.mid ? data.activePosition.qty * data.mid : 0));
-    const maxInvUsd = data.maxInventoryQuote || data.maxInventoryUsdso || 90;
-    let totalBase = 0;
-    lots.forEach((lot) => totalBase += (lot.qty || 0));
-    if (totalBase === 0 && data.activePosition?.qty) {
-      totalBase = data.activePosition.qty;
-    }
-    const rawHoldPct = data.currentHoldPct !== undefined ? data.currentHoldPct : (maxInvUsd > 0 ? (invUsd / maxInvUsd) * 100 : 0);
-    const holdPct = Math.min(100, Math.max(0, rawHoldPct));
 
     // 🔒 Lock Trading Pair & Exchange controls when holding active position
     isHoldingActivePosition = (Array.isArray(lots) && lots.length > 0) ||
@@ -3144,7 +3144,11 @@
     const elKpiTradePnl = document.getElementById("kpiTradePnl");
     const elKpiGasSpent = document.getElementById("kpiGasSpent");
 
-    const tradePnl = data.tradeRealizedPnl !== undefined ? data.tradeRealizedPnl : (data.realizedPnl || 0);
+    const tradePnl = data.tradeRealizedPnl !== undefined
+      ? data.tradeRealizedPnl
+      : (data.realizedPnl !== undefined
+        ? data.realizedPnl
+        : (data.metrics?.realizedPnl !== undefined ? data.metrics.realizedPnl : 0));
     const gasDeductedUsdso = data.totalGasDeductedUsdso || 0;
     const gasDeductedSomi = data.totalGasDeductedSomi || 0;
     const totalGasSpentSomi = data.totalGasSpentSomi || 0;
@@ -3181,10 +3185,26 @@
     const elLiveBotStatusSub = document.getElementById("liveBotStatusSub");
 
     const metrics = data.metrics || {};
-    const winRate = metrics.winRate !== undefined ? metrics.winRate : (tradeRounds && tradeRounds.length > 0 ? (tradeRounds.filter(r => r.pnl > 0).length / tradeRounds.length * 100) : 100);
-    const wins = metrics.wins !== undefined ? metrics.wins : (tradeRounds && tradeRounds.length > 0 ? tradeRounds.filter(r => r.pnl > 0).length : 0);
-    const losses = metrics.losses !== undefined ? metrics.losses : (tradeRounds && tradeRounds.length > 0 ? tradeRounds.filter(r => r.pnl <= 0).length : 0);
-    const totCycles = metrics.totalCycles !== undefined ? metrics.totalCycles : (tradeRounds && tradeRounds.length > 0 ? tradeRounds.length : (wins + losses));
+    const winRate = metrics.winRate !== undefined
+      ? metrics.winRate
+      : (typeof tmRounds !== "undefined" && tmRounds && tmRounds.length > 0
+        ? (tmRounds.filter(r => (r.netPnlQuote ?? r.grossPnlQuote ?? r.pnl ?? 0) > 0).length / tmRounds.length * 100)
+        : 100);
+    const wins = (metrics.winCount !== undefined ? metrics.winCount : metrics.wins) !== undefined
+      ? (metrics.winCount ?? metrics.wins)
+      : (typeof tmRounds !== "undefined" && tmRounds && tmRounds.length > 0
+        ? tmRounds.filter(r => (r.netPnlQuote ?? r.grossPnlQuote ?? r.pnl ?? 0) > 0).length
+        : 0);
+    const losses = (metrics.lossCount !== undefined ? metrics.lossCount : metrics.losses) !== undefined
+      ? (metrics.lossCount ?? metrics.losses)
+      : (typeof tmRounds !== "undefined" && tmRounds && tmRounds.length > 0
+        ? tmRounds.filter(r => (r.netPnlQuote ?? r.grossPnlQuote ?? r.pnl ?? 0) <= 0).length
+        : 0);
+    const totCycles = metrics.totalCycles !== undefined
+      ? metrics.totalCycles
+      : (typeof tmRounds !== "undefined" && tmRounds && tmRounds.length > 0
+        ? tmRounds.length
+        : (wins + losses));
 
     if (elLiveWinRate) {
       elLiveWinRate.textContent = `${winRate.toFixed(1)}%`;
@@ -4870,6 +4890,8 @@
       try {
         const order = JSON.parse(e.data);
         addOrderActivity(order, true);
+        loadTradeManagerData();
+        loadTradeRoundsData();
       } catch (err) {
         console.error("Malformed order event:", err);
       }

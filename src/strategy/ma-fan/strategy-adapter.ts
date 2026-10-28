@@ -69,6 +69,8 @@ export class MaFanTradingStrategy implements IStrategy {
       trailingPullbackPct: this.cfg.maFanTrailingPullbackPct ?? 0.45,
       breakevenFeeBufferPct: this.cfg.maFanBreakevenFeeBufferPct ?? 0.05,
       slBufferPct: this.cfg.maFanSlBufferPct ?? 0.25,
+      useRatchetSl: true,
+      entryOnClosedOnly: this.cfg.maFanEntryOnClosedOnly ?? true,
       maxPositionBudgetUsd: this.cfg.maFanMaxBudgetUsd ?? 200,
       isDryRun: this.cfg.dryRun ?? false,
       startPaused: this.cfg.startPaused ?? true,
@@ -272,6 +274,8 @@ export class MaFanTradingStrategy implements IStrategy {
       walletSomiBalance: this.walletBase,
       walletUsdsoBalance: this.walletQuote,
       maxInventoryQuote: this.cfg.maFanMaxBudgetUsd ?? this.cfg.maxInventoryQuote ?? 200,
+      realizedPnl: state.metrics?.realizedPnl ?? 0,
+      tradeRealizedPnl: state.metrics?.realizedPnl ?? 0,
       lots,
       baseHeld,
       inventoryUsdso: baseHeld * (this.currentMid || 0),
@@ -416,6 +420,10 @@ export class MaFanTradingStrategy implements IStrategy {
     if (s.maFanBreakevenFeeBufferPct !== undefined) {
       this.cfg.maFanBreakevenFeeBufferPct = s.maFanBreakevenFeeBufferPct;
       this.maFan.config.breakevenFeeBufferPct = s.maFanBreakevenFeeBufferPct;
+    }
+    if (s.maFanEntryOnClosedOnly !== undefined) {
+      this.cfg.maFanEntryOnClosedOnly = s.maFanEntryOnClosedOnly;
+      this.maFan.config.entryOnClosedOnly = s.maFanEntryOnClosedOnly;
     }
 
     this.maFan.config.manualSpreadPct = this.cfg.maFanManualSpreadPct;

@@ -64,6 +64,7 @@ export interface MaFanConfig {
   breakevenFeeBufferPct: number; // e.g. 0.05%
   slBufferPct: number; // e.g. 0.25%
   useRatchetSl?: boolean; // dynamic ratchet stop loss lift
+  entryOnClosedOnly?: boolean; // evaluate entries on confirmed closed candles only (aligns with Backtest)
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;
   startPaused?: boolean;

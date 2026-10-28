@@ -40,6 +40,8 @@ export class MaFanStrategy {
   private currentHtfRegime?: HtfRegime;
   private lastCalibration?: CalibrationResult;
   private effectiveSpreadThreshold: number = 0.40;
+  private lastClosedCandle: Candle | null = null;
+  private evaluatedClosedCandleTime: number = 0;
 
   private isPaused: boolean = true;
   private isProcessing: boolean = false;
@@ -69,17 +71,7 @@ export class MaFanStrategy {
       breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
       slBufferPct: this.config.slBufferPct,
       onTrade: (t: any) => {
-        const isTp = t.type === "TP1_EMA25" || t.type === "TP2_RUNNER" || t.action === "TAKE_PROFIT" || t.action === "SNIPE_SELL";
-        const isSl = t.type === "STOP_LOSS" || t.action === "CUT";
-        const pnl = Number(t.pnlQuote ?? t.pnl ?? 0);
-        if (isTp) {
-          this.winCount++;
-          if (pnl) this.realizedPnl += pnl;
-        } else if (isSl) {
-          if (pnl >= 0) this.winCount++;
-          else this.lossCount++;
-          if (pnl) this.realizedPnl += pnl;
-        }
+        this.restoreMetricsFromDb();
         this.onTrade?.(t);
       },
       onLog: this.log,
@@ -108,6 +100,10 @@ export class MaFanStrategy {
 
   public setInitialCandles(candles: Candle[]): void {
     this.candles = [...candles].sort((a, b) => a.time - b.time);
+    if (this.candles.length > 0) {
+      this.lastClosedCandle = this.candles[this.candles.length - 1] ?? null;
+      this.evaluatedClosedCandleTime = this.lastClosedCandle ? this.lastClosedCandle.time : 0;
+    }
     this.recomputeIndicators();
     if (this.config.autoCalibrateSpreadOnSwitch && this.candles.length >= 50) {
       this.calibrateSpread();
@@ -120,6 +116,9 @@ export class MaFanStrategy {
   }
 
   public onCandle(candle: Candle, isClosed: boolean): void {
+    if (isClosed) {
+      this.lastClosedCandle = candle;
+    }
     const idx = this.candles.findIndex((c) => c.time === candle.time);
     if (idx >= 0) {
       this.candles[idx] = candle;
@@ -287,14 +286,25 @@ export class MaFanStrategy {
 
       // ── 2. SCAN FOR ENTRY (ELASTIC HOOK BUY) ──────────────────────────────────
       if (!this.activePosition) {
+        const entryOnClosedOnly = this.config.entryOnClosedOnly !== false;
+
+        // In confirmed candle close mode, evaluate entry strictly on confirmed closed bars (aligns with Backtest)
+        if (entryOnClosedOnly) {
+          if (!this.lastClosedCandle || this.lastClosedCandle.time === this.evaluatedClosedCandleTime) {
+            return;
+          }
+          this.evaluatedClosedCandleTime = this.lastClosedCandle.time;
+        }
+
         const requiredSpread = this.effectiveSpreadThreshold * htfRegime.spreadMultiplier;
         const exhaustion = ExhaustionEngine.evaluate(this.candles);
         const atrs = calcATR(this.candles, 14);
         const curAtr = atrs[atrs.length - 1] ?? 0;
+        const evalPrice = (entryOnClosedOnly && this.lastClosedCandle) ? this.lastClosedCandle.close : refPrice;
 
         const entryDecision = MaFanCoreRules.evaluateEntry({
           candles: this.candles,
-          closePrice: refPrice,
+          closePrice: evalPrice,
           ribbon,
           exhaustion,
           requiredSpreadPct: requiredSpread,

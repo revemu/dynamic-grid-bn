@@ -5513,3 +5513,38 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - เพิ่มการตรวจสอบข้อที่ 5 ใน Checklist: `5. แรงซึมซับไส้ล่าง (Lower Wick ≥ 15%): ✅ ผ่าน (xx.x%)`
    - ปรับการแสดงผลไส้ล่าง (Lower Wick) ให้ไฮไลต์สีเขียวเมื่อ `lowerWickPct >= 15%` พร้อมป้ายเตือน `⚠️ (เสี่ยง Waterfall)` เมื่อไส้ล่างต่ำกว่า 15%
    - ทำให้ระบบวิเคราะห์และคำตัดสินของ Backtest Studio และ Live Dashboard สอดคล้องตรงกับ Strategy Core Rules 100%
+
+
+---
+
+## 154. v0.2.154 — Fix Dashboard Frozen Stats (tradeRounds ReferenceError), Realized PnL, Confirmed Candle Close Entry & HTF 15m Backtest Integration (`public/app.js`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `src/backtest-service.ts`, `src/config.ts`, `src/version.ts`)
+
+1. **แก้ไขสถิติหน้าจอค้างและ Fatal JavaScript Error ใน `public/app.js`**:
+   - **สาเหตุที่สถิติเทรดไม่ขยับ (ค้าง 100.0%, 1 ชนะ / 0 แพ้, +$0.0000)**:
+     - ที่บรรทัด 3184-3187 มีการเรียกใช้ตัวแปร `tradeRounds` ซึ่ง**ไม่ได้ประกาศไว้ในสคริปต์** (ตัวแปรจริงชื่อ `tmRounds`)
+     - แบ็กเอนด์ส่งคีย์ `winCount` และ `lossCount` แต่หน้าเว็บเช็ค `metrics.wins` เมื่อไม่พบคีย์จึงตกไปประเมิน `tradeRounds` ก่อให้เกิด `Uncaught ReferenceError: tradeRounds is not defined`
+     - Error นี้ทำให้ฟังก์ชัน `updateTick` แครชทุกวินาทีที่ได้รับข้อมูล Tick ตัวเลขทั้งหมดจึงค้างอยู่ที่ค่า Default ใน HTML
+     - การ์ดซ้ายบน `elRealizedPnl` ค้าง `+$0.0000` เพราะ `strategy-adapter.ts` ซ่อน `realizedPnl` ไว้ใน `metrics.realizedPnl` โดยไม่ได้แนบออกมาที่ Root Level ของ Tick
+     - ตัวแปร `lots` ถูกเรียกใช้ก่อนประกาศ (Temporal Dead Zone) ที่บรรทัด 2942
+   - **การแก้ไข**:
+     - เปลี่ยน `tradeRounds` เป็น `tmRounds` พร้อมรองรับทั้ง `metrics.winCount` / `metrics.wins`
+     - เพิ่ม Fallback อ่าน `data.metrics?.realizedPnl` ใน `public/app.js` และแนบ `realizedPnl`, `tradeRealizedPnl` ที่ Root Level ของ `tickData` ใน `strategy-adapter.ts`
+     - ย้ายการประกาศ `const lots = data.lots || []` ขึ้นไปไว้ด้านบนสุดของ `updateTick`
+     - ใน SSE Listener `order` ให้เรียก `loadTradeManagerData()` และ `loadTradeRoundsData()` ทันที เพื่อให้อัปเดตตารางประวัติการเทรดสดด้านล่างแบบ Real-time โดยไม่ต้องกด F5
+
+2. **แก้ไขการนับรอบ Win/Loss ให้สอดคล้องกับฐานข้อมูลจริง (`src/strategy/ma-fan/strategy.ts`)**:
+   - ตัดตรรกะที่บวก `winCount++` ซ้ำซ้อนตอน TP1 (50%) และ TP2 (50%) ออก
+   - ปรับให้เรียก `this.restoreMetricsFromDb()` ทุกครั้งที่เกิด Order Fill เพื่อซิงค์สถิติรอบ (Total Cycles, Win, Loss, Realized PnL) ตรงจาก Engine คำนวณรอบ `db.getTradeRounds(this.symbol)` เสมอ
+
+3. **ปรับระบบการเข้าซื้อให้ตรงกับ Backtest ด้วย Confirmed Candle Close Entry (`maFanEntryOnClosedOnly`)**:
+   - **ปัญหาเดิม**: บอทจริงเข้าซื้อแบบ Real-time Tick ทุก 200ms กลางแท่งเทียน ทำให้เวลาเกิดการเด้งสั้นๆ เพียงไม่กี่วินาที (False Hook) บอทจะรีบ Snipe เข้าซื้อทันที แต่หลังจากนั้นราคาทุบต่อจนหลุด Stop Loss (กลายเป็นการรับมีด Knife Catching)
+   - **การแก้ไข**:
+     - เพิ่มออปชัน `maFanEntryOnClosedOnly` (ค่าเริ่มต้น: `true`) ใน `config.ts` และ `MaFanConfig`
+     - ใน `src/strategy/ma-fan/strategy.ts`: ตรวจสอบและตัดสินใจเข้าซื้อ (`evaluateEntry`) เฉพาะเมื่อแท่งเทียน 5m **ปิดสมบูรณ์แล้ว (`onCandleClosed` / `isClosed === true`)** เท่านั้น
+     - ส่วนการขายทำกำไรและคัตลอส (**Exits: TP1, TP2, Stop Loss**) ยังคงทำงานแบบ **Real-time ทุก Tick (200ms)** เสมอ เพื่อล็อกกำไรและคัตลอสได้ทันทีที่ราคาสัมผัสเป้า
+     - ทำให้จุดเข้าซื้อและจังหวะเทรดของบอทจริงตรงกับแท่งเทียนใน Backtest อย่างสมบูรณ์ ขจัดปัญหาเด้งหลอกกลางแท่ง 100%
+
+4. **เชื่อมต่อ Higher Timeframe (HTF 15m) Supervisor เข้า Backtest Studio (`src/backtest-service.ts`)**:
+   - เพิ่มฟังก์ชัน `aggregateCandles` รวมแท่งเทียน 5m เป็น 15m อัตโนมัติใน Backtest Service
+   - เชื่อมต่อ `RegimeSupervisor.evaluateHtfRegime` เข้าสู่ลูปจำลอง `runMaFanSimulation` เพื่อคิดคำนวณตัวคูณ `spreadMultiplier` และ `recommendedTp1Ratio` จากภาพใหญ่ 15m ให้ตรงกับบอทจริง 100%
+

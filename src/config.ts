@@ -38,6 +38,7 @@ export const defaultStrategyConfig = {
   maFanBreakevenFeeBufferPct: 0.05,
   maFanSlBufferPct: 0.25,
   maFanMaxBudgetUsd: 200,
+  maFanEntryOnClosedOnly: true,
 
   // ── Core Parameters ────────────────────────────────────────────────────
   symbol: envSymbol,
