@@ -5287,6 +5287,7 @@
       setVal("cfg_maFanSlBufferPct", data.maFanSlBufferPct ?? 0.25);
       setCheck("cfg_maFanUseRatchetSl", data.maFanUseRatchetSl !== false);
       setCheck("cfg_maFanBullCushion", data.maFanBullCushion === true);
+      setCheck("cfg_maFanWaterfallGuard", data.maFanWaterfallGuard !== false);
       setVal("cfg_maFanBreakevenFeeBufferPct", data.maFanBreakevenFeeBufferPct ?? 0.05);
 
       const maColors = getMaFanColors();
@@ -5554,6 +5555,7 @@
       maFanSlBufferPct: parseFloat(document.getElementById("cfg_maFanSlBufferPct")?.value) || 0.25,
       maFanUseRatchetSl: Boolean(document.getElementById("cfg_maFanUseRatchetSl")?.checked),
       maFanBullCushion: Boolean(document.getElementById("cfg_maFanBullCushion")?.checked),
+      maFanWaterfallGuard: Boolean(document.getElementById("cfg_maFanWaterfallGuard")?.checked),
       maFanBreakevenFeeBufferPct: parseFloat(document.getElementById("cfg_maFanBreakevenFeeBufferPct")?.value) || 0.05,
     };
 

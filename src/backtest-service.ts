@@ -74,6 +74,7 @@ export interface MarketScanOptions {
   breakevenFeeBufferPct?: number;
   supervisorTimeframe?: "15m" | "1h";
   cushionMode?: CushionMode;
+  waterfallGuardMode?: WaterfallGuardMode;
 }
 
 export interface BacktestMarker {
@@ -954,6 +955,7 @@ export class BacktestService {
               candlesHtf: candlesHtf.length > 0 ? candlesHtf : undefined,
               saveToHistory: false, // Don't pollute persistent history database
               cushionMode: opts.cushionMode ?? "off",
+              waterfallGuardMode: opts.waterfallGuardMode ?? "off",
             });
 
             results.push({

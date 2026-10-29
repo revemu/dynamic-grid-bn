@@ -5866,7 +5866,7 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-## 168. v0.2.168 — Phase W0: Waterfall Crash Guard Engine Architecture & Verification Gate (`src/strategy/ma-fan/core-rules.ts`, `src/backtest-service.ts`, `src/research/verify-waterfall-rule.ts`, `package.json`, `src/version.ts`)
+## 168. v0.2.168 — Phase W0–W4: Waterfall Crash Guard Engine Architecture, Verification Gate & 30-Day Empirical Validation (`src/strategy/ma-fan/core-rules.ts`, `src/backtest-service.ts`, `src/research/verify-waterfall-rule.ts`, `src/research/runner-waterfall.ts`, `package.json`, `src/version.ts`)
 
 1. **Waterfall Crash Metrics & Detection Engine (`src/strategy/ma-fan/core-rules.ts`)**:
    - เพิ่ม `MaFanCoreRules.computeWaterfallMetrics({ candles, currentIndex, closePrice, isHtfBull })`:
@@ -5880,8 +5880,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **Verification Suites Passed 100%**:
    - `src/research/verify-waterfall-rule.ts` ผ่านครบ 4/4 เคส
    - Golden Reference Baseline ผ่านครบ 6/6 เหรียญแบบ Bitwise 100%
-4. **ขยับ Version**:
+4. **ผลการทดสอบ Waterfall Guard บนข้อมูล 30 วัน 31 เหรียญ (`data/research-reports/*_waterfall_30d/`)**:
+   - **ข้อสรุปตามเกณฑ์ล่วงหน้า (C1–C6)**: **ผ่านเกณฑ์ล่วงหน้าครบทั้ง 6 ข้ออย่างสมบูรณ์ (All Gates Passed: YES)**
+     - **C1 (Blocked Count ≥ 30)**: **ผ่าน** บล็อก 468 ไม้ (18.8% ของ 2,492 สัญญาณ)
+     - **C2 (Mean Δ > 0 & 90% Cluster CI > 0)**: **ผ่าน** `Mean Δ = +0.0596%`, 90% CI: `[+0.0521%, +0.0676%]` (Sign Test: `+248 / -220`)
+     - **C3 (Pessimistic Mean Δ ≥ 0)**: **ผ่าน** `Mean Δ = +0.0668%`
+     - **C4 (H1 & H2 > 0)**: **ผ่าน** H1: `+0.0785%` (N=214), H2: `+0.0423%` (N=254) เป็นบวกเสถียรทั้งสองช่วงเวลา
+     - **C5 (Full-Path Risk & Net drop ≤ 25%)**: **ผ่าน**
+       - Net PnL ปรับตัวดีขึ้นจาก `-18.12%` ($-\$1,123.73$) สู่ `-15.70%` ($-\$973.47$) ประหยัดเงินทุนได้ถึง **+$150.26**
+       - Profit Factor คงที่ที่ `0.35`
+       - Median Max Drawdown ลดลงอย่างเห็นได้ชัดจาก `20.70%` เหลือ `16.77%` (ลดลง **-3.93%**)
+       - จำนวนไม้เทรดลดลงเพียง `-10.3%` (จาก 2,713 เหลือ 2,433 ไม้) ภายใต้เพดาน 25% ไม่ส่งผลกระทบต่อกิจกรรมการเทรดปกติ
+     - **C6 (Excl 3 Worst > 0)**: **ผ่าน** หลังตัด 3 ไม้ขาดทุนสูงสุดออก ค่าเฉลี่ยผลต่างยังคงเป็นบวก `+0.0549%`
+   - **กรณีศึกษาไม้ HAEDALUSDT ล่าสุด**:
+     - ไม้ HAEDALUSDT ที่ SL (-2.74%) เข้าเงื่อนไข Waterfall Guard ครบ 3 ข้อพร้อมกัน (แดงติดกัน 5 แท่ง, ร่วง -7.9% ในเทรนด์ HTF ขาลง, Volume 6–10x) ทำให้ระบบ W4 บล็อกมีดตกไม้นี้ได้ 100%
+5. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.168` ใน `package.json` และ `src/version.ts`
+
+---
+
+## 169. v0.2.169 — Phase W5: Waterfall Crash Guard Production Integration & Dashboard UI Settings (`src/config.ts`, `src/strategy/ma-fan/types.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `src/strategy/ma-fan/strategy.ts`, `src/server.ts`, `src/backtest-service.ts`, `public/index.html`, `public/app.js`, `package.json`, `src/version.ts`)
+
+1. **Production Strategy & Adapter Integration**:
+   - เพิ่ม `maFanWaterfallGuard: boolean` ใน `src/config.ts` (ค่าเริ่มต้น: `true` ตามผลการทดสอบที่ผ่านเกณฑ์ทั้ง 6 ข้ออย่างสมบูรณ์)
+   - เพิ่ม `waterfallGuardEnabled?: boolean` ใน `MaFanConfig` (`src/strategy/ma-fan/types.ts`)
+   - ใน `src/strategy/ma-fan/strategy.ts`: ส่ง `waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off"` และ `isHtfBull: htfRegime.isBullish` เข้า `MaFanCoreRules.evaluateEntry`
+   - มีระบบบันทึก Log ชัดเจนเมื่อถูกบล็อก: `🛡️ [WATERFALL GUARD] Entry blocked: ...` ปรากฏบนคอนโซลและฟีดทันที
+2. **Backtest Studio & Server API Synchronization**:
+   - ใน `src/server.ts` และ `src/backtest-service.ts`: รองรับ `waterfallGuardMode` ใน `MarketScanOptions` และส่งต่อค่าจาก config ไปยังการรัน backtest จากหน้าเว็บแดชบอร์ดอัตโนมัติ
+3. **Web Dashboard Settings UI**:
+   - ใน `public/index.html`: เพิ่มสวิตช์ toggle `#cfg_maFanWaterfallGuard` ใน Settings Modal ใต้หัวข้อ MA Fan Sniper
+   - ใน `public/app.js`: เชื่อมโยงการอ่านค่าและบันทึกค่า config ผ่าน `/api/config` แบบ Real-time ทันที
+4. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.169` ใน `package.json` และ `src/version.ts`
+
 
 
 

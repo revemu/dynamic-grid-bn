@@ -71,6 +71,7 @@ export class MaFanTradingStrategy implements IStrategy {
       slBufferPct: this.cfg.maFanSlBufferPct ?? 0.25,
       useRatchetSl: this.cfg.maFanUseRatchetSl !== false,
       bullCushionEnabled: this.cfg.maFanBullCushion === true,
+      waterfallGuardEnabled: this.cfg.maFanWaterfallGuard !== false,
       entryOnClosedOnly: this.cfg.maFanEntryOnClosedOnly ?? true,
       maxPositionBudgetUsd: this.cfg.maFanMaxBudgetUsd ?? 200,
       isDryRun: this.cfg.dryRun ?? false,
@@ -417,6 +418,10 @@ export class MaFanTradingStrategy implements IStrategy {
     if (s.maFanBullCushion !== undefined) {
       this.cfg.maFanBullCushion = Boolean(s.maFanBullCushion);
       this.maFan.config.bullCushionEnabled = this.cfg.maFanBullCushion;
+    }
+    if (s.maFanWaterfallGuard !== undefined) {
+      this.cfg.maFanWaterfallGuard = Boolean(s.maFanWaterfallGuard);
+      this.maFan.config.waterfallGuardEnabled = this.cfg.maFanWaterfallGuard;
     }
     if (s.maFanAtrMultiplier !== undefined) {
       this.cfg.maFanAtrMultiplier = s.maFanAtrMultiplier;

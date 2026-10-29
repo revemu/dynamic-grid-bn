@@ -66,6 +66,7 @@ export interface MaFanConfig {
   slBufferPct: number; // e.g. 0.25%
   useRatchetSl?: boolean; // dynamic ratchet stop loss lift
   bullCushionEnabled?: boolean; // lenient breakeven SL when HTF is Bullish
+  waterfallGuardEnabled?: boolean; // blocks entry on sudden vertical crashes (4+ reds, HTF drop >=2%, or vol >=2.5x)
   entryOnClosedOnly?: boolean; // evaluate entries on confirmed closed candles only (aligns with Backtest)
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;

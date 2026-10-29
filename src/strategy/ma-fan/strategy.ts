@@ -404,7 +404,13 @@ export class MaFanStrategy {
           requiredSpreadPct: requiredSpread,
           curAtr,
           slBufferPct: this.config.slBufferPct,
+          waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
+          isHtfBull: htfRegime.isBullish,
         });
+
+        if (entryDecision.blockedBy === "WATERFALL_GUARD") {
+          this.log(`🛡️ [WATERFALL GUARD] Entry blocked: ${entryDecision.reason}`);
+        }
 
         if (entryDecision.shouldEnter) {
           const budget = this.config.maxPositionBudgetUsd;

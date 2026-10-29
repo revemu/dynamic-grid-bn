@@ -770,6 +770,7 @@ export class DashboardServer {
             supervisorTimeframe,
             candlesHtf: candlesHtf.length > 0 ? candlesHtf : undefined,
             cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
+            waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -810,6 +811,7 @@ export class DashboardServer {
             breakevenFeeBufferPct: parsed.breakevenFeeBufferPct !== undefined ? Number(parsed.breakevenFeeBufferPct) : (Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05),
             supervisorTimeframe: (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h",
             cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
+            waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

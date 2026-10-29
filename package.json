@@ -1,6 +1,6 @@
 {
   "name": "dynamic-grid",
-  "version": "0.2.168",
+  "version": "0.2.169",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,6 +15,7 @@
     "research:verify": "tsx src/research/verify-golden.ts",
     "research:run": "tsx src/research/runner.ts",
     "research:rr": "tsx src/research/runner-rr.ts",
+    "research:waterfall": "tsx src/research/runner-waterfall.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
