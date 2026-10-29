@@ -233,10 +233,17 @@ export class AutoCalibrator {
     let best = candidatesResults[0]!;
     let bestScore = -999;
 
+    // Minimum expected trades to prevent overfitting on 1-2 fluke trades during abnormal spikes
+    const minRequiredTrades = Math.max(3, Math.floor(candles.length / 300));
+
     for (const cand of candidatesResults) {
       if (cand.tradeCount === 0) continue;
-      // Score formula: Profit Factor * (Win Rate / 100) + NetPnL%
-      const score = (cand.profitFactor * (cand.winRate / 100)) + (cand.netPnlPct * 0.5);
+      // Cap profit factor to prevent division-by-zero distortion (e.g. 1 win 0 loss = infinite PF)
+      const cappedPF = Math.min(6.0, cand.profitFactor);
+      // Sample size confidence scaling (requires sufficient sample size for high score)
+      const tradeConfidence = Math.min(1.0, cand.tradeCount / minRequiredTrades);
+      // Score formula: (Capped PF * Win Rate * 10 + NetPnL% * 0.5) * confidence
+      const score = ((cappedPF * (cand.winRate / 100) * 10) + (cand.netPnlPct * 0.5)) * tradeConfidence;
       if (score > bestScore) {
         bestScore = score;
         best = cand;

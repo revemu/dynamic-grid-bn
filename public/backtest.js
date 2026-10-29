@@ -406,7 +406,10 @@
     const tf = (record.timeframe || "5m").toUpperCase();
     legSymTf.textContent = `${sym} ${tf}`;
     overlayStatus.textContent = `ผลการทดสอบ: ${sym} (${tf})`;
-    overlayInfo.textContent = `ทดสอบ ${record.candleCount} แท่ง | Spread ≥ ${(record.spreadThreshold || 0.25).toFixed(2)}% | ${record.trades?.length || 0} ไม้`;
+    const spreadLabel = record.isAutoCalibrated
+      ? `Spread เฉลี่ย ~${(record.spreadThreshold || 0.25).toFixed(2)}% (Auto Calibrate ⚡)`
+      : `Spread ≥ ${(record.spreadThreshold || 0.25).toFixed(2)}%`;
+    overlayInfo.textContent = `ทดสอบ ${record.candleCount} แท่ง | ${spreadLabel} | ${record.trades?.length || 0} ไม้`;
 
     // 2. Set Candles and EMA lines
     if (record.candles && record.candles.length > 0) {
@@ -1210,7 +1213,7 @@
             <div class="history-item" data-id="${h.id}">
               <div class="hist-left">
                 <span class="hist-title">${h.symbol} (${(h.timeframe || "5m").toUpperCase()}) — ${h.tradeCount} ไม้</span>
-                <span class="hist-date">${new Date(h.createdAt).toLocaleString("th-TH")} | Spread ≥ ${(h.spreadThreshold || 0.25).toFixed(2)}%</span>
+                <span class="hist-date">${new Date(h.createdAt).toLocaleString("th-TH")} | Spread ${h.isAutoCalibrated ? "เฉลี่ย ~" : "≥ "}${(h.spreadThreshold || 0.25).toFixed(2)}%${h.isAutoCalibrated ? " (Auto ⚡)" : ""}</span>
               </div>
               <div class="hist-stats">
                 <span class="hist-pnl ${isWin ? "text-win" : "text-loss"}">

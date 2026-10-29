@@ -126,6 +126,7 @@ export interface BacktestRecord {
   timeframe: string;
   candleCount: number;
   spreadThreshold: number;
+  isAutoCalibrated?: boolean;
   useRatchetSl?: boolean;
   summary: BacktestSummary;
   trades: BacktestTrade[];
@@ -141,6 +142,7 @@ export interface BacktestHistoryItem {
   timeframe: string;
   candleCount: number;
   spreadThreshold: number;
+  isAutoCalibrated?: boolean;
   useRatchetSl?: boolean;
   summary: BacktestSummary;
   tradeCount: number;
@@ -344,10 +346,17 @@ export class BacktestService {
       ? opts.candlesHtf
       : BacktestService.aggregateCandles(candles, targetMinutes);
 
+    const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
+    const isLongBacktest = candles.length > 1000;
+    const rollingLookback = Math.min(1000, Math.max(300, Math.floor(candles.length / 3)));
+    const rollingCadence = 144; // Re-calibrate every 144 bars (~12 hours on 5m)
+
     // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
-    if (opts.spreadThreshold === "auto" || !opts.spreadThreshold) {
-      const cal = AutoCalibrator.calibrate(symbol, candles, undefined, candlesHtf, {
+    if (isAuto) {
+      const initialWindow = isLongBacktest ? candles.slice(0, Math.max(rollingLookback, 500)) : candles;
+      const initialHtf = candlesHtf.filter((h) => h.time <= initialWindow[initialWindow.length - 1].time);
+      const cal = AutoCalibrator.calibrate(symbol, initialWindow, undefined, initialHtf.length > 0 ? initialHtf : candlesHtf, {
         slBufferPct,
         trailingPullbackPct,
         breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
@@ -359,6 +368,11 @@ export class BacktestService {
       });
       spread = cal.bestSpreadPct || 0.25;
     }
+
+    let currentRollingSpread = spread;
+    let lastRollingCalibratedBar = -999;
+    let rollingSpreadSum = 0;
+    let rollingSpreadCount = 0;
 
     const cm = opts.costModel ?? { feePctPerSide: 0, slippagePctPerFill: 0 };
     const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
@@ -677,15 +691,42 @@ export class BacktestService {
         }
       }
 
+      // Dynamic Rolling Auto-Calibration on multi-day backtests
+      if (isAuto && isLongBacktest && (i - lastRollingCalibratedBar >= rollingCadence)) {
+        const windowCandles = candles.slice(Math.max(0, i - rollingLookback), i);
+        if (windowCandles.length >= 200) {
+          const windowHtf = candlesHtf.filter((h) => h.time <= c.time && h.time >= windowCandles[0].time);
+          const cal = AutoCalibrator.calibrate(symbol, windowCandles, undefined, windowHtf.length > 0 ? windowHtf : undefined, {
+            slBufferPct,
+            trailingPullbackPct,
+            breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
+            tp1Ratio,
+            initialCapital,
+            supervisorTimeframe: supervisorTf,
+            useRatchetSl,
+            cushionMode: opts.cushionMode ?? "off",
+          });
+          if (cal.bestSpreadPct) {
+            currentRollingSpread = cal.bestSpreadPct;
+          }
+        }
+        lastRollingCalibratedBar = i;
+      }
+
+      if (isAuto) {
+        rollingSpreadSum += currentRollingSpread;
+        rollingSpreadCount++;
+      }
+
       // ─── POSITION ENTRY (SNIPER HOOK) ────────────────────────────────
       if (heldQty === 0 && cash >= 10) {
         if (opts.onlyEntryIdx !== undefined && i !== opts.onlyEntryIdx) {
           continue;
         }
 
-        const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
+        const activeBaseSpread = isAuto ? currentRollingSpread : spread;
         const currentSpread = MaFanCoreRules.computeEffectiveSpread({
-          baseSpread: spread,
+          baseSpread: activeBaseSpread,
           useAtrAdaptiveSpread: useAtrAdaptive,
           isAutoCalibrated: isAuto,
           curAtr,
@@ -805,7 +846,6 @@ export class BacktestService {
       worstTradePct: Number(worstTradePct.toFixed(2)),
     };
 
-    const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
     const evaluations: BacktestEvaluationItem[] = opts.onlyEntryIdx !== undefined ? [] : candles.map((c, idx) => {
       const rib = ribbonStates[idx]!;
       const exh = exhaustionStates[idx]!;
@@ -839,6 +879,10 @@ export class BacktestService {
       };
     });
 
+    const finalEffectiveSpread = isAuto && rollingSpreadCount > 0
+      ? Number((rollingSpreadSum / rollingSpreadCount).toFixed(2))
+      : spread;
+
     const id = `bt_${Date.now()}`;
     const record: BacktestRecord = {
       id,
@@ -846,7 +890,8 @@ export class BacktestService {
       symbol,
       timeframe,
       candleCount: candles.length,
-      spreadThreshold: spread,
+      spreadThreshold: finalEffectiveSpread,
+      isAutoCalibrated: isAuto,
       useRatchetSl,
       summary,
       trades,
@@ -900,6 +945,7 @@ export class BacktestService {
         timeframe: r.timeframe,
         candleCount: r.candleCount,
         spreadThreshold: r.spreadThreshold,
+        isAutoCalibrated: r.isAutoCalibrated,
         useRatchetSl: r.useRatchetSl,
         summary: r.summary,
         tradeCount: r.trades?.length || 0,

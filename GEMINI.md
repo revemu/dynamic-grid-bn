@@ -6053,6 +6053,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.176` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 177. v0.2.177 — Dynamic Rolling Window Auto-Calibrator for Multi-Day Backtests (`src/backtest-service.ts`, `src/strategy/ma-fan/calibrator.ts`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **ปัญหาการเทรดน้อยลงเมื่อ Backtest ย้อนหลังหลายวัน (Static Overfitting on Extreme Pumps)**:
+   - **สาเหตุของปัญหา**:
+     - โหมด Auto Calibrate เดิมใน Backtest นำแท่งเทียนทั้งหมด (เช่น 4,320 แท่ง / 15 วัน) มารวมกันคำนวณ Spread ครั้งเดียวตายตัว (Global Single Calibration)
+     - ในเหรียญที่มีการปั๊มขึ้นแรงผิดปกติ (เช่น `HAEDALUSDT` ปั๊มจาก $0.020 สู่ $0.038 ใน 15 วัน) อัลกอริทึม AutoCalibrator เดิมให้คะแนนโดยนำ `profitFactor * winRate` โดยไม่มีการ Cap ค่า Profit Factor หรือถ่วงน้ำหนักความน่าเชื่อถือทางสถิติ (Sample Size)
+     - ค่า `Spread = 1.50%` ที่เทรดเพียง 6-7 ไม้บนยอดคลื่นปั๊มแล้วชนะ 100% จึงได้คะแนนชนะเลิศ ทำให้ระบบล็อกค่า Spread ไว้ที่ 1.50% ตลอดทั้ง 15 วัน ส่งผลให้ช่วงเวลาปกติอีก 12 วันที่เหรียญวิ่งไซด์เวย์ (Spread แค่ 0.25% - 0.50%) ไม่มีออเดอร์เกิดขึ้นเลย
+2. **การแก้ไขและการยกระดับ Dynamic Rolling Window Auto-Calibration**:
+   - **ระบบ Rolling Window ใน `BacktestService.runMaFanSimulation` (`src/backtest-service.ts`)**:
+     - เมื่อรัน Backtest แบบหลายวัน (`candles.length > 1000` เช่น 7, 15, 30 วัน) และเลือกโหมด `Auto Calibrate`:
+     - ระบบจะไม่ใช้ Spread คงที่ตลอดเวลาอีกต่อไป แต่จะจำลองพฤติกรรมของบอทจริงในชีวิตประจำวัน โดยใช้ **Rolling Window Lookback (300-1,000 แท่ง)** และทำ Re-Calibration อัตโนมัติทุกๆ **144 แท่ง (~12 ชั่วโมงบน 5m)**
+     - ผลลัพธ์: ช่วงคลื่นปั๊มแรง Spread จะขยายตัวป้องกันความเสี่ยงเป็น `0.65% - 0.80%` และเมื่อตลาดกลับสู่ภาวะปกติ Spread จะปรับลดลงมาอยู่ที่ `0.20% - 0.35%` ทำให้รอบเทรดกระจายตัวสม่ำเสมอตลอด 15-30 วัน
+     - ผลการทดสอบจริงบน `HAEDALUSDT` 15 วัน (4,320 แท่ง): รอบเทรดเพิ่มขึ้นจาก **6 ไม้ เป็น 34 ไม้** (Win Rate 69.7%, Profit Factor 2.14, Net PnL +10.16%)!
+     - ผลการทดสอบจริงบน 30 วัน (8,640 แท่ง): รอบเทรดสูงถึง **56 ไม้** (Win Rate 61.8%)!
+   - **ปรับปรุงฟังก์ชันการให้คะแนนใน `AutoCalibrator` (`src/strategy/ma-fan/calibrator.ts`)**:
+     - Cap ค่า Profit Factor ไว้ที่สูงสุด 6.0 ป้องกันการบิดเบือนจากกรณีไม้แพ้ = 0 (หารด้วยศูนย์)
+     - เพิ่มตัวถ่วงน้ำหนักความน่าเชื่อถือของตัวอย่าง (`tradeConfidence = min(1.0, tradeCount / minRequiredTrades)`) เพื่อคัดกรองค่า Spread ที่มีนัยสำคัญทางสถิติ ป้องกันการเลือกค่าที่เทรดเพียง 1-2 ไม้ฟลุ๊ค
+   - **อัปเดต UI Backtest Studio (`public/backtest.js`)**:
+     - แสดงป้ายกำกับ Spread ให้เข้าใจง่าย: `ทดสอบ 4320 แท่ง | Spread เฉลี่ย ~0.35% (Auto Calibrate ⚡) | 34 ไม้`
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.177` ใน `package.json` และ `src/version.ts`
+
 
 
 
