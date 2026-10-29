@@ -37,6 +37,7 @@
   const inpLimit = document.getElementById("btLimit");
   const inpSpread = document.getElementById("btSpread");
   const inpSlMode = document.getElementById("btSlMode");
+  const inpFeeTier = document.getElementById("btFeeTier");
   const inpBudget = document.getElementById("btBudget");
 
   function getSelectedSymbol() {
@@ -538,7 +539,8 @@
     kpiNetPnl.className = `kpi-val ${netPnlPct >= 0 ? "text-win" : "text-loss"}`;
 
     const netQuote = sum.netPnlQuote ?? 0;
-    kpiNetPnlQuote.textContent = `${netQuote >= 0 ? "+$" : "-$"}${Math.abs(netQuote).toFixed(2)}`;
+    const feeSub = sum.totalFeesQuote ? ` (หัก Fee -$${sum.totalFeesQuote.toFixed(2)})` : "";
+    kpiNetPnlQuote.textContent = `${netQuote >= 0 ? "+$" : "-$"}${Math.abs(netQuote).toFixed(2)}${feeSub}`;
 
     kpiWinRate.textContent = `${(sum.winRate ?? 0).toFixed(1)}%`;
     kpiWinLoss.textContent = `${sum.winTrades ?? 0} ชนะ / ${sum.lossTrades ?? 0} แพ้`;
@@ -1074,7 +1076,7 @@
     else if (activeFilter === "LOSS") filtered = losses;
 
     if (filtered.length === 0) {
-      tradesTableBody.innerHTML = `<tr><td colspan="9" class="td-empty">ไม่พบรายการไม้เทรดในหมวดนี้</td></tr>`;
+      tradesTableBody.innerHTML = `<tr><td colspan="10" class="td-empty">ไม่พบรายการไม้เทรดในหมวดนี้</td></tr>`;
       return;
     }
 
@@ -1124,6 +1126,9 @@
             <td class="${isWin ? "text-win" : "text-loss"}">
               ${isWin ? "+$" : "-$"}${Math.abs(t.pnlQuote).toFixed(2)}
             </td>
+            <td style="color: #94a3b8; font-size: 11px;">
+              ${t.costQuote ? "-$" + t.costQuote.toFixed(2) : "$0.00"}
+            </td>
             <td>
               <button class="btn-zoom" data-trade-id="${t.id}">🔍 ซูมดูกราฟ</button>
             </td>
@@ -1165,6 +1170,7 @@
     const spreadThreshold = inpSpread.value === "auto" ? "auto" : Number(inpSpread.value);
     const budget = Number(inpBudget.value) || 200;
     const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
+    const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
 
     const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
     loadingOverlay.style.display = "flex";
@@ -1174,7 +1180,7 @@
       const resp = await fetch("/api/backtest/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, timeframe, limit, spreadThreshold, budget, useRatchetSl }),
+        body: JSON.stringify({ symbol, timeframe, limit, spreadThreshold, budget, useRatchetSl, feeTier }),
       });
 
       const data = await resp.json();
@@ -1374,6 +1380,7 @@
         const spread = scSpread?.value || "auto";
         const budget = Number(inpBudget?.value) || 200;
         const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
+        const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
 
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
@@ -1384,7 +1391,7 @@
           const res = await fetch("/api/backtest/scan", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ scope, timeframe, limit, spreadThreshold: spread, budget, useRatchetSl }),
+            body: JSON.stringify({ scope, timeframe, limit, spreadThreshold: spread, budget, useRatchetSl, feeTier }),
           });
 
           if (!res.ok) {

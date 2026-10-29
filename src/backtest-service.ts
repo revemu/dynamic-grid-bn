@@ -75,6 +75,7 @@ export interface MarketScanOptions {
   supervisorTimeframe?: "15m" | "1h";
   cushionMode?: CushionMode;
   waterfallGuardMode?: WaterfallGuardMode;
+  costModel?: { feePctPerSide: number; slippagePctPerFill: number };
 }
 
 export interface BacktestMarker {
@@ -100,6 +101,8 @@ export interface BacktestSummary {
   avgBarsHeld: number;
   bestTradePct: number;
   worstTradePct: number;
+  totalFeesQuote?: number;
+  grossPnlQuote?: number;
 }
 
 export interface BacktestEvaluationItem {
@@ -365,6 +368,7 @@ export class BacktestService {
         supervisorTimeframe: supervisorTf,
         useRatchetSl,
         cushionMode: opts.cushionMode ?? "off",
+        costModel: opts.costModel,
       });
       spread = cal.bestSpreadPct || 0.25;
     }
@@ -742,6 +746,7 @@ export class BacktestService {
             supervisorTimeframe: supervisorTf,
             useRatchetSl,
             cushionMode: opts.cushionMode ?? "off",
+            costModel: opts.costModel,
           });
           if (cal.bestSpreadPct) {
             currentRollingSpread = cal.bestSpreadPct;
@@ -885,6 +890,9 @@ export class BacktestService {
     const bestTradePct = pnlPcts.length > 0 ? Math.max(...pnlPcts) : 0;
     const worstTradePct = pnlPcts.length > 0 ? Math.min(...pnlPcts) : 0;
 
+    const totalFeesQuote = Number(trades.reduce((sum, t) => sum + (t.costQuote || 0), 0).toFixed(2));
+    const grossPnlQuote = Number((netPnlQuote + totalFeesQuote).toFixed(2));
+
     const summary: BacktestSummary = {
       initialCapital,
       finalCapital: Number(finalCapital.toFixed(2)),
@@ -899,6 +907,8 @@ export class BacktestService {
       avgBarsHeld,
       bestTradePct: Number(bestTradePct.toFixed(2)),
       worstTradePct: Number(worstTradePct.toFixed(2)),
+      totalFeesQuote,
+      grossPnlQuote,
     };
 
     const finalEffectiveSpread = isAuto && rollingSpreadCount > 0
@@ -1067,6 +1077,12 @@ export class BacktestService {
             ]);
             if (!candles || candles.length < 50) return;
 
+            const symCostModel = opts.costModel ?? (
+              sym.endsWith("FDUSD")
+                ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
+                : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 }
+            );
+
             const rec = this.runMaFanSimulation(candles, {
               symbol: sym,
               timeframe,
@@ -1084,6 +1100,7 @@ export class BacktestService {
               saveToHistory: false, // Don't pollute persistent history database
               cushionMode: opts.cushionMode ?? "off",
               waterfallGuardMode: opts.waterfallGuardMode ?? "off",
+              costModel: symCostModel,
             });
 
             results.push({

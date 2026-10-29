@@ -6100,6 +6100,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.178` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 179. v0.2.179 — Real-World Fee & Cost Model in Backtest Studio & AutoCalibrator (`src/strategy/ma-fan/calibrator.ts`, `src/backtest-service.ts`, `src/server.ts`, `public/backtest.html`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **ผสานโมเดลค่าธรรมเนียมและ Slippage เข้าสู่ AutoCalibrator (`src/strategy/ma-fan/calibrator.ts`)**:
+   - เพิ่มออปชัน `costModel?: { feePctPerSide?: number; slippagePctPerFill?: number }` ใน `CalibrateOptions`
+   - ในการจำลอง Calibration: คำนวณ `costPerFill` และหักค่าใช้จ่ายในไม้ซื้อ (`heldQty * (1 - costPerFill)`), ไม้ขาย TP1 (`tp1Proceeds = tp1Qty * tp1Price * (1 - costPerFill)`), ไม้รัน TP2 และ SL
+   - คำนวณ Net PnL และ Equity สุทธิหลังหัก Fee ป้องกันไม่ให้ Calibrator เลือกค่า Spread ที่แคบเกินไป (เช่น 0.20%) ซึ่งกำไรบนกระดาษแต่ขาดทุนค่าฟีจริง
+   - เมื่อเปิดโมเดลค่าฟี BNB (0.075% + 0.01% Slip) Calibrator จะขยับ Sweet Spot ขึ้นไปเกาะช่วง Spread ที่กว้างขึ้น (เช่น 0.50% - 1.00%) โดยอัตโนมัติ เพื่อให้ได้ผลตอบแทนคุ้มค่าค่าธรรมเนียมที่สุด
+2. **การส่งต่อ Fee Model ใน Backtest Service & Simulation Engine (`src/backtest-service.ts`)**:
+   - เพิ่ม `totalFeesQuote?: number;` และ `grossPnlQuote?: number;` ใน `BacktestSummary`
+   - ส่งต่อ `costModel: opts.costModel` ไปยัง `AutoCalibrator.calibrate` ทั้งในรอบแรกและรอบ Dynamic Rolling Calibrator
+   - ใน `scanMarket`: คำนวณ `symCostModel` อัตโนมัติ (0% สำหรับคู่ FDUSD, 0.075% สำหรับคู่ USDT/USDC) หรืออ้างอิงจากตัวเลือกที่ผู้ใช้ระบุ
+3. **การเชื่อมต่อ API Server (`src/server.ts`)**:
+   - ใน `/api/backtest/run` และ `/api/backtest/scan`: รองรับ `feeTier` (`"bnb"`, `"standard"`, `"zero"`, `"none"`, หรือกำหนดเอง) พร้อม Slippage 0.01%
+4. **ส่วนควบคุมและแสดงผลบน Web Dashboard (`public/backtest.html` & `public/backtest.js`)**:
+   - เพิ่ม Dropdown เลือกค่าฟี `#btFeeTier`:
+     - ⚡ Binance BNB Fee (0.075% + 0.01% Slip)
+     - 🏛️ Standard Fee (0.10% + 0.01% Slip)
+     - 🎁 Zero Fee (0.00% FDUSD Promo)
+   - เพิ่มคอลัมน์ `ค่าฟี (Cost)` ในตารางไม้เทรด (Trade Rounds) แสดงค่าใช้จ่ายรายไม้ (เช่น `-$0.32`)
+   - แสดงผลรวมค่าธรรมเนียมที่ถูกหักทั้งหมดใน KPI Card กำไรสุทธิ `(หัก Fee -$X.XX)`
+5. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.179` ใน `package.json` และ `src/version.ts`
+
 
 
 

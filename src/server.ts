@@ -756,6 +756,26 @@ export class DashboardServer {
           const htfMinutes = supervisorTimeframe === "1h" ? 60 : 15;
           const htfLimit = Math.max(300, Math.ceil((limit * tfMinutes) / htfMinutes) + 50);
 
+          let feePctPerSide = 0.075;
+          let slippagePctPerFill = 0.01;
+          if (parsed.feeTier === "zero" || (parsed.feeTier === "auto" && symbol.endsWith("FDUSD"))) {
+            feePctPerSide = 0.0;
+            slippagePctPerFill = 0.0;
+          } else if (parsed.feeTier === "standard") {
+            feePctPerSide = 0.10;
+            slippagePctPerFill = 0.01;
+          } else if (parsed.feeTier === "bnb") {
+            feePctPerSide = 0.075;
+            slippagePctPerFill = 0.01;
+          } else if (parsed.feeTier === "none") {
+            feePctPerSide = 0;
+            slippagePctPerFill = 0;
+          } else if (symbol.endsWith("FDUSD")) {
+            feePctPerSide = 0;
+            slippagePctPerFill = 0;
+          }
+          const costModel = { feePctPerSide, slippagePctPerFill };
+
           const [candles, candlesHtf] = await Promise.all([
             BacktestService.fetchBinanceCandles(symbol, timeframe, limit),
             BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, htfLimit).catch(() => []),
@@ -776,6 +796,7 @@ export class DashboardServer {
             candlesHtf: candlesHtf.length > 0 ? candlesHtf : undefined,
             cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
             waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
+            costModel,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -801,6 +822,15 @@ export class DashboardServer {
           const spreadThreshold = parsed.spreadThreshold === "auto" ? "auto" : (Number(parsed.spreadThreshold) || undefined);
           const useRatchetSl = parsed.useRatchetSl !== false;
 
+          let scanCostModel: { feePctPerSide: number; slippagePctPerFill: number } | undefined;
+          if (parsed.feeTier === "zero" || parsed.feeTier === "none") {
+            scanCostModel = { feePctPerSide: 0, slippagePctPerFill: 0 };
+          } else if (parsed.feeTier === "standard") {
+            scanCostModel = { feePctPerSide: 0.10, slippagePctPerFill: 0.01 };
+          } else if (parsed.feeTier === "bnb") {
+            scanCostModel = { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+          }
+
           const results = await BacktestService.scanMarket({
             scope,
             timeframe,
@@ -817,6 +847,7 @@ export class DashboardServer {
             supervisorTimeframe: (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h",
             cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
             waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
+            costModel: scanCostModel,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

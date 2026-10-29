@@ -79,6 +79,15 @@
         </div>
 
         <div class="bt-input-group">
+          <label>ค่าฟี (Fee)</label>
+          <select id="btFeeTier" title="คำนวณกำไรสุทธิหลังหักค่าธรรมเนียมจริงและ Slippage">
+            <option value="bnb" selected>⚡ BNB Fee (0.075% + 0.01% Slip)</option>
+            <option value="standard">🏛️ Standard (0.10% + 0.01% Slip)</option>
+            <option value="zero">🎁 Zero Fee (0.00% FDUSD)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
           <label>เงินทุน ($)</label>
           <input type="number" id="btBudget" value="200" min="10" step="10" />
         </div>
@@ -200,12 +209,13 @@
               <th>ระยะถือครอง</th>
               <th>กำไร/ขาดทุน (%)</th>
               <th>กำไร/ขาดทุน ($)</th>
+              <th>ค่าฟี (Cost)</th>
               <th>การกระทำ</th>
             </tr>
           </thead>
           <tbody id="tradesTableBody">
             <tr>
-              <td colspan="9" class="td-empty">ยังไม่มีข้อมูลการทดสอบ กดปุ่ม '🚀 รัน Backtest' ด้านบนเพื่อเริ่มจำลอง</td>
+              <td colspan="10" class="td-empty">ยังไม่มีข้อมูลการทดสอบ กดปุ่ม '🚀 รัน Backtest' ด้านบนเพื่อเริ่มจำลอง</td>
             </tr>
           </tbody>
         </table>

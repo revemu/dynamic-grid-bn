@@ -37,6 +37,7 @@ export interface CalibrateOptions {
   supervisorTimeframe?: "15m" | "1h";
   useRatchetSl?: boolean;
   cushionMode?: CushionMode;
+  costModel?: { feePctPerSide?: number; slippagePctPerFill?: number };
 }
 
 export class AutoCalibrator {
@@ -54,6 +55,8 @@ export class AutoCalibrator {
     const initialCapital = opts?.initialCapital ?? 200;
     const supervisorTimeframe = opts?.supervisorTimeframe ?? "15m";
     const useRatchetSl = opts?.useRatchetSl !== false;
+    const cm = opts?.costModel;
+    const costPerFill = cm ? ((cm.feePctPerSide ?? 0.075) + (cm.slippagePctPerFill ?? 0.01)) / 100 : 0;
 
     const candidatesResults: {
       spreadPct: number;
@@ -84,6 +87,8 @@ export class AutoCalibrator {
       let tp1Price = 0;
       let tp1Qty = 0;
       let highestSinceTp1 = 0;
+      let tradeInvest = 0;
+      let tradeProceeds = 0;
 
       let grossProfit = 0;
       let grossLoss = 0;
@@ -136,9 +141,10 @@ export class AutoCalibrator {
 
           if (exitDecision.action === "TP2") {
             const exitP = exitDecision.exitPrice;
-            const pnl2 = (exitP - entryPrice) * heldQty;
-            cash += heldQty * exitP;
-            const totalPnl = pnl2 + (tp1Price - entryPrice) * tp1Qty;
+            const proceeds2 = heldQty * exitP * (1 - costPerFill);
+            cash += proceeds2;
+            tradeProceeds += proceeds2;
+            const totalPnl = tradeProceeds - tradeInvest;
             if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
             else { grossLoss += Math.abs(totalPnl); losses++; }
             heldQty = 0;
@@ -147,9 +153,10 @@ export class AutoCalibrator {
 
           if (exitDecision.action === "SL") {
             const exitP = exitDecision.exitPrice;
-            const pnl2 = (exitP - entryPrice) * heldQty;
-            cash += heldQty * exitP;
-            const totalPnl = pnl2 + (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0);
+            const proceeds2 = heldQty * exitP * (1 - costPerFill);
+            cash += proceeds2;
+            tradeProceeds += proceeds2;
+            const totalPnl = tradeProceeds - tradeInvest;
             if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
             else { grossLoss += Math.abs(totalPnl); losses++; }
             heldQty = 0;
@@ -160,7 +167,9 @@ export class AutoCalibrator {
             const activeTp1Ratio = htfRegime.recommendedTp1Ratio ?? tp1Ratio;
             tp1Price = exitDecision.exitPrice;
             tp1Qty = heldQty * activeTp1Ratio;
-            cash += tp1Qty * tp1Price;
+            const proceeds1 = tp1Qty * tp1Price * (1 - costPerFill);
+            cash += proceeds1;
+            tradeProceeds += proceeds1;
             heldQty -= tp1Qty;
             tp1Filled = true;
             highestSinceTp1 = c.high;
@@ -170,9 +179,10 @@ export class AutoCalibrator {
             // Intra-candle Breakeven SL check
             if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > entryPrice && c.close <= stopLossPrice) {
               const exitP = stopLossPrice;
-              const pnl2 = (exitP - entryPrice) * heldQty;
-              cash += heldQty * exitP;
-              const totalPnl = pnl2 + (tp1Price - entryPrice) * tp1Qty;
+              const proceeds2 = heldQty * exitP * (1 - costPerFill);
+              cash += proceeds2;
+              tradeProceeds += proceeds2;
+              const totalPnl = tradeProceeds - tradeInvest;
               if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
               else { grossLoss += Math.abs(totalPnl); losses++; }
               heldQty = 0;
@@ -205,7 +215,9 @@ export class AutoCalibrator {
             stopLossPrice = entryDecision.stopLossPrice;
 
             const invest = cash * 0.98;
-            heldQty = invest / entryPrice;
+            heldQty = (invest / entryPrice) * (1 - costPerFill);
+            tradeInvest = invest;
+            tradeProceeds = 0;
             tp1Qty = 0;
             cash -= invest;
             tp1Filled = false;
@@ -217,7 +229,7 @@ export class AutoCalibrator {
       const totalTrades = wins + losses;
       const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
       const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99.9 : 0;
-      const finalEquity = cash + heldQty * candles[candles.length - 1]!.close;
+      const finalEquity = cash + (heldQty > 0 ? heldQty * candles[candles.length - 1]!.close * (1 - costPerFill) : 0);
       const netPnlPct = ((finalEquity - initialCapital) / initialCapital) * 100;
 
       candidatesResults.push({
