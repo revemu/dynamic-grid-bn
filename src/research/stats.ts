@@ -140,3 +140,115 @@ export function top3ProfitShare(pnls: number[]): number {
   const top3 = gains.slice(0, 3).reduce((a, b) => a + b, 0);
   return Number(((top3 / totalGain) * 100).toFixed(1));
 }
+
+function computeRanks(arr: number[]): number[] {
+  const n = arr.length;
+  const indexed = arr.map((val, idx) => ({ val, idx }));
+  indexed.sort((a, b) => a.val - b.val);
+
+  const ranks = new Array<number>(n);
+  let i = 0;
+  while (i < n) {
+    let j = i;
+    while (j < n - 1 && indexed[j + 1]!.val === indexed[j]!.val) {
+      j++;
+    }
+    const avgRank = (i + 1 + j + 1) / 2;
+    for (let k = i; k <= j; k++) {
+      ranks[indexed[k]!.idx] = avgRank;
+    }
+    i = j + 1;
+  }
+  return ranks;
+}
+
+export function spearman(x: number[], y: number[]): number {
+  const n = x.length;
+  if (n < 3 || y.length !== n) return 0;
+
+  const rx = computeRanks(x);
+  const ry = computeRanks(y);
+
+  const meanRx = (n + 1) / 2;
+  const meanRy = (n + 1) / 2;
+
+  let num = 0;
+  let denX = 0;
+  let denY = 0;
+
+  for (let i = 0; i < n; i++) {
+    const dx = rx[i]! - meanRx;
+    const dy = ry[i]! - meanRy;
+    num += dx * dy;
+    denX += dx * dx;
+    denY += dy * dy;
+  }
+
+  if (denX === 0 || denY === 0) return 0;
+  const corr = num / Math.sqrt(denX * denY);
+  return Number(corr.toFixed(4));
+}
+
+export function clusterBootstrapStat<T>(
+  byCluster: Map<string, T[]>,
+  stat: (all: T[]) => number,
+  B = 10000,
+  level = 0.90,
+  seed = 42
+): { value: number; lower: number; upper: number } {
+  const clusters = Array.from(byCluster.keys());
+  const allItems: T[] = [];
+  for (const items of byCluster.values()) {
+    allItems.push(...items);
+  }
+
+  const sampleVal = stat(allItems);
+  if (clusters.length === 0 || allItems.length === 0) {
+    return { value: sampleVal, lower: 0, upper: 0 };
+  }
+
+  const rng = mulberry32(seed);
+  const nClusters = clusters.length;
+  const bootstrapVals: number[] = new Array(B);
+
+  for (let b = 0; b < B; b++) {
+    const sample: T[] = [];
+    for (let c = 0; c < nClusters; c++) {
+      const randomIdx = Math.floor(rng() * nClusters);
+      const chosenCluster = clusters[randomIdx]!;
+      const clusterItems = byCluster.get(chosenCluster)!;
+      sample.push(...clusterItems);
+    }
+    bootstrapVals[b] = sample.length > 0 ? stat(sample) : 0;
+  }
+
+  bootstrapVals.sort((a, b) => a - b);
+  const alpha = 1 - level;
+  const lowerIdx = Math.floor(B * (alpha / 2));
+  const upperIdx = Math.min(B - 1, Math.floor(B * (1 - alpha / 2)));
+
+  return {
+    value: Number(sampleVal.toFixed(4)),
+    lower: Number((bootstrapVals[lowerIdx] ?? 0).toFixed(4)),
+    upper: Number((bootstrapVals[upperIdx] ?? 0).toFixed(4)),
+  };
+}
+
+export function meanExcludingLargestNegatives(values: number[], k: number): number {
+  if (values.length === 0) return 0;
+  if (k <= 0) return mean(values);
+
+  const sorted = [...values].sort((a, b) => a - b);
+  let removed = 0;
+  const filtered: number[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (removed < k && sorted[i]! < 0) {
+      removed++;
+    } else {
+      filtered.push(sorted[i]!);
+    }
+  }
+
+  return mean(filtered);
+}
+

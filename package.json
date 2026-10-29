@@ -14,6 +14,7 @@
     "research:snapshot": "tsx src/research/fetch-snapshot.ts",
     "research:verify": "tsx src/research/verify-golden.ts",
     "research:run": "tsx src/research/runner.ts",
+    "research:rr": "tsx src/research/runner-rr.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
