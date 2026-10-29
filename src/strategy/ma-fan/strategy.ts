@@ -271,6 +271,7 @@ export class MaFanStrategy {
           breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
           isOverbought: exhaustion.isOverboughtExhaustion,
           barsHeld,
+          isHtfBull: !!htfRegime.isBullish,
         });
 
         // A. Take Profit 2 (Macro Runner / Trailing Stop)

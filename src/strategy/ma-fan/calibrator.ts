@@ -115,6 +115,7 @@ export class AutoCalibrator {
           }
 
           // Evaluate Exits (Priority: TP2 -> SL -> TP1) via Universal MaFanCoreRules
+          const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, supervisorTimeframe, c.time, tp1Ratio);
           const exitDecision = MaFanCoreRules.evaluateExits({
             highPrice: c.high,
             lowPrice: c.low,
@@ -128,6 +129,7 @@ export class AutoCalibrator {
             breakevenFeeBufferPct,
             isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
             barsHeld,
+            isHtfBull: !!htfRegime.isBullish,
           });
 
           if (exitDecision.action === "TP2") {
@@ -153,7 +155,6 @@ export class AutoCalibrator {
           }
 
           if (exitDecision.action === "TP1") {
-            const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, supervisorTimeframe, c.time, tp1Ratio);
             const activeTp1Ratio = htfRegime.recommendedTp1Ratio ?? tp1Ratio;
             tp1Price = exitDecision.exitPrice;
             tp1Qty = heldQty * activeTp1Ratio;
@@ -165,7 +166,7 @@ export class AutoCalibrator {
               stopLossPrice = Math.max(stopLossPrice, exitDecision.newStopLossPrice);
             }
             // Intra-candle Breakeven SL check
-            if (c.close <= stopLossPrice) {
+            if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > entryPrice && c.close <= stopLossPrice) {
               const exitP = stopLossPrice;
               const pnl2 = (exitP - entryPrice) * heldQty;
               cash += heldQty * exitP;

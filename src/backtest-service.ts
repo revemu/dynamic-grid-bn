@@ -354,6 +354,7 @@ export class BacktestService {
           breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
           isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
           barsHeld,
+          isHtfBull: !!htfRegime.isBullish,
         });
 
         // 1. TP2 Exit (Macro Runner / Trailing Stop)
@@ -490,9 +491,9 @@ export class BacktestService {
           });
 
           // Intra-candle Breakeven SL check:
-          // If the candle spiked to EMA 25 for TP1 and subsequently dumped to close at/below the newly raised Breakeven SL,
+          // If Breakeven SL is active and the candle spiked to EMA 25 for TP1 and subsequently dumped to close at/below Breakeven SL,
           // close the remaining half as TP1+SL_BE within the same candle (matching Live Bot behavior)
-          if (c.close <= stopLossPrice) {
+          if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > entryPrice && c.close <= stopLossPrice) {
             const exitP = stopLossPrice;
             const pnl = (exitP - entryPrice) * heldQty;
             cash += heldQty * exitP;

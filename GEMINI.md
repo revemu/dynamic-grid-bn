@@ -5741,6 +5741,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ขยับ Patch Version เป็น `0.2.162`
    - ขยับ `<script src="backtest.js?v=3.47"></script>` และ `<link rel="stylesheet" href="backtest.css?v=1.1" />` ใน `public/backtest.html`
 
+---
+
+## 163. v0.2.163 — Trend-Aware Post-TP1 Breathing Cushion for Breakeven SL (`src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/strategy.ts`, `src/backtest-service.ts`, `src/strategy/ma-fan/calibrator.ts`, `package.json`, `src/version.ts`)
+
+1. **แก้ปัญหาคัทไม้รันไวเกินไปหลังชน TP1 ด้วย Trend-Aware Breathing Cushion (`src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/strategy.ts`)**:
+   - **สาเหตุของปัญหา**: เมื่อราคาแช่นานในกรอบล่างจนเส้น `EMA 25` ไหลลงมาอยู่ใกล้ราคาทุน (เช่น ไม้ `HAEDALUSDT` ที่เข้าซื้อ `$0.027360` และ `EMA 25` ไหลลงมาอยู่ที่ `$0.027410` เหนือทุนเพียง `+0.18%`):
+     - เมื่อราคาดีดตัวขึ้นมาแตะ `EMA 25` บอทจะขาย `TP1 (50%)` และยก Stop Loss ของไม้รัน 50% ที่เหลือมาจ่อไว้ที่ `Breakeven (Entry * 1.0005 = $0.0273755)` ทันที
+     - จุดคัท Breakeven SL อยู่ห่างจากราคา TP1 เพียง `0.12%` (3 ช่องราคา) ส่งผลให้การย่อตัวสร้างฐานปกติหน้าเส้น EMA 25 ภายใน 15 วินาที กระตุกกินจุดคัททิ้งทันที ก่อนที่ราคาจะระเบิดทะลุไปแตะ `EMA 200` ที่ `$0.02810` (`+2.70%`) ทำให้พลาดกำไรรอบใหญ่ไปอย่างน่าเสียดาย
+   - **การแก้ไข (แนวทางที่ 2 — ผ่อนปรนเฉพาะตอน HTF 15m เป็น BULL)**:
+     - เพิ่มพารามิเตอร์ `isHtfBull?: boolean` ใน `MaFanCoreRules.evaluateExits`
+     - **เงื่อนไขอัจฉริยะ**:
+       - หากภาพใหญ่ระดับ 15 นาทีเป็นขาลง (`HTF = BEAR`) หรือราคาขาย TP1 นั้นมีระยะกำไรสูงเกิน `0.35%` ขึ้นไปแล้ว: ให้ **ยก SL ขึ้นมาล็อกที่ Breakeven ทันที 100%** เพื่อคุ้มครองเงินต้นและกำไรในตลาดขาลง ป้องกันการเด้งหลอกชน EMA 25 แล้วทุบกลับลงเหว
+       - แต่หากภาพใหญ่ยืนยันว่าเป็นขาขึ้น (**`HTF = BULL`**) และจุด TP1 อยู่ชิดทุนเกินไป (**`< 0.35%`**): บอทจะยัง **ไม่ดึง SL ขึ้นมาจ่อชิดที่ทุน** แต่จะให้สิทธิ์ไม้รันได้หายใจโดยใช้ **ฐานยกตัว `Dynamic Ratchet SL` (หรือ Stop Loss ก้นเหว)** เพื่อเปิดพื้นที่ให้ราคาได้ย่อตัวทดสอบแนวรับหน้าเส้น EMA 25 โดยไม่โดนไส้เทียนเขย่าออก และสามารถวิ่งตามเทรนด์ใหญ่ไปกินกำไรเต็มรอบที่ `EMA 75 / 200`
+2. **ซิงค์ตรรกะแบบเดียวกันใน Live Bot, Backtest Service และ Calibrator (`src/strategy/ma-fan/strategy.ts`, `src/backtest-service.ts`, `src/strategy/ma-fan/calibrator.ts`)**:
+   - ส่ง `isHtfBull: !!htfRegime.isBullish` เข้า `MaFanCoreRules.evaluateExits` ครบทั้ง 3 ส่วน
+   - ตรวจสอบ `newStopLossPrice > entryPrice` ก่อนตรวจเช็คการคัท Breakeven ในแท่งเดียวกัน
+   - ส่งผลให้ผลการทดสอบ Backtest บน `HAEDALUSDT` ทำกำไรเพิ่มขึ้นจาก **+16.70% เป็น +18.38%** (ไม้ #14 เปลี่ยนจาก `TP1 + SL_BE (+0.05%)` เป็น `TP1 + TP2 (+1.07%)` สมบูรณ์แบบ)
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.163` ใน `package.json` และ `src/version.ts`
+
 
 
 
