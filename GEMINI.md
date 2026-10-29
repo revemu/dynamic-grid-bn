@@ -5689,6 +5689,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ใน `/api/backtest/run` และ `/api/backtest/scan`: ส่งผ่านพารามิเตอร์ครบทุกตัว โดยดึงค่าจาก request body ก่อน หากไม่ได้ระบุจะ fallback ไปดึงค่าสดจาก `liveCfg` (`maFanSupervisorTimeframe`, `maFanMaxBudgetUsd`, `maFanTrailingPullbackPct`, `maFanTp1Ratio`, `maFanBreakevenFeeBufferPct`, `maFanSlBufferPct`, `maFanUseRatchetSl`)
    - ทำให้ผลการทดสอบ Backtest, การสแกนเหรียญ Market Scanner, การ Calibrate และการเทรดจริงบนเซิร์ฟเวอร์รันด้วยตรรกะและคอนฟิกเดียวกัน 100%
 
+---
+
+## 161. v0.2.161 — Fix Manual Spread Override, Ratchet SL Config, Timeframe Reload, and HTF Parity (`src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `src/strategy/ma-fan/regime.ts`, `src/index.ts`, `src/config.ts`, `src/server.ts`, `src/backtest-service.ts`, `public/index.html`, `public/app.js`, `public/backtest.html`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **แก้ไขบั๊ก Manual Spread ไม่ทำงานเมื่อปิด Auto-Calibrate (`src/strategy/ma-fan/strategy.ts`)**:
+   - **ปัญหาเดิม**: ใน `recomputeIndicators()` ใช้ `this.lastCalibration?.bestSpreadPct ?? this.config.manualSpreadPct` หากบอทเคย Calibrate มาก่อนแล้ว (`this.lastCalibration` มีค่า) เมื่อผู้ใช้ปิด `Auto-Calibrate` บอทจะยังดึงค่าเก่ามาใช้และละเลย `manualSpreadPct` และใน `refreshConfig()` มีเงื่อนไข `&& !this.lastCalibration` บล็อกการ Re-calibrate เมื่อบันทึกค่าใหม่
+   - **การแก้ไข**: เช็ค `const isAutoCalibrated = !!(this.config.autoCalibrateSpreadOnSwitch && this.lastCalibration)` อย่างเคร่งครัด หากปิด Auto-Calibrate จะใช้ `manualSpreadPct` ทันที และเมื่อบันทึกการตั้งค่าใหม่จะรัน `calibrateSpread()` ทันที
+
+2. **เพิ่มตัวเลือกเปิด/ปิด `Ratchet SL` ในหน้า Settings ของบอทจริง (`src/config.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `public/index.html`, `public/app.js`)**:
+   - เพิ่มฟิลด์ `maFanUseRatchetSl: true` ใน `defaultStrategyConfig`, `loadConfigFromDatabase()` และ `updateRuntimeSettings()`
+   - เพิ่มสวิตช์ Toggle `🛡️ Dynamic Ratchet Stop Loss (ยกฐาน SL ตามราคา)` ในหน้าต่าง Settings Modal บนเว็บ Dashboard ควบคุมได้ทั้ง Fixed SL และ Ratchet SL ให้ตรงกับ Backtest
+
+3. **แก้ไขการรีโหลดแท่งเทียนเมื่อสลับ Timeframe และความยาวแท่งเทียนบน Dashboard (`src/index.ts`)**:
+   - เมื่อสลับ Timeframe (`5m` ↔ `15m` หรือ `15m` ↔ `1h`) ในโหมด `ma_fan` โค้ดจะส่งแท่งเทียนชุดใหม่เข้า `grid.updateSymbolInfo(symbolInfo, atrSource!)` เพื่อให้ `MaFanStrategy` รีคำนวณ EMA และ Calibrate บน Timeframe ใหม่ทันที
+   - กำหนด `maxCandles: 1200` ให้ `DashboardServer` ตั้งแต่วินาทีแรกที่บูต เพื่อให้กราฟหน้าเว็บแสดงแท่งเทียนครบ 1,000 แท่งเท่ากับหลังบ้าน
+
+4. **ปรับปรุงการคำนวณ `barsHeld` ให้แม่นยำ 100% ต่อให้ออเดอร์ดีเลย์ (`src/strategy/ma-fan/strategy.ts`)**:
+   - คำนวณ `entryBucket = Math.floor(entryTimeSec / tfSec) * tfSec` เพื่อนับแท่งที่ปิดแล้วหลังจากเปิดไม้ กำจัดปัญหาออเดอร์ดีเลย์เกิน 5 วินาทีทำให้การยก Stop Loss หรือ Trapped Rescue คลาดเคลื่อน
+
+5. **ซิงค์แท่งเทียน HTF 300 แท่งจริงจาก Binance ใน Backtest & Scanner (`src/server.ts`, `src/backtest-service.ts`, `src/strategy/ma-fan/regime.ts`)**:
+   - `/api/backtest/run` และ `scanMarket` ดึงแท่งเทียน HTF 300 แท่งตรงจาก Binance คู่ขนานกับแท่งเทียนหลัก ทำให้เส้น EMA200 ของ HTF ใน Backtest มีประวัติยาวเท่ากับบอทจริง 100%
+   - เพิ่ม `WeakMap` Cache สำหรับค่า EMA ของ HTF ใน `RegimeSupervisor.evaluateHtfRegime` เพิ่มความเร็วการสแกนและการ Calibrate ขึ้นกว่า 10 เท่า และรองรับการคำนวณเวลาปิดแท่งตาม Execution Timeframe จริง
+
+6. **ปรับปรุง Market Scanner และการคำนวณกำไร Backtest (`public/backtest.html`, `public/backtest.js`, `src/backtest-service.ts`)**:
+   - ตั้งค่าเริ่มต้นของ Market Scanner เป็น `1,000 แท่ง` ให้สอดคล้องกับ Backtest และบอทจริง
+   - เมื่อกดปุ่ม `📊 ดูกราฟ` จากตาราง Scanner ระบบจะคัดลอก Timeframe, จำนวนแท่ง, และ Spread จาก Scanner ไปที่หน้ากราฟทันที ทำให้ผลตอบแทนและจำนวนไม้ตรงกัน 100%
+   - ปรับสูตร `tradePnlPct` ใน Backtest ให้หารด้วยต้นทุนเงินลงทุนจริงของไม้นั้น (`(heldQty + tp1Qty) * entryPrice`)
+
+
 
 
 

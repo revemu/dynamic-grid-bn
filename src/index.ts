@@ -339,7 +339,7 @@ async function main(): Promise<void> {
     port: config.dashboardPort,
     log,
     db: grid.getDatabase(),
-    maxCandles: config.maxCandleCount ?? 600,
+    maxCandles: config.strategyType === "ma_fan" ? 1200 : (config.maxCandleCount ?? 600),
     getSettings: () => grid.getRuntimeConfig(),
     onUpdateSettings: async (s) => {
       const prevConfig = grid.getRuntimeConfig();
@@ -585,7 +585,12 @@ async function main(): Promise<void> {
         (s.maFanSupervisorTimeframe && s.maFanSupervisorTimeframe !== prevMaFanSupTf)
       ) {
         if (config.strategyType === "ma_fan") {
+          if (s.maFanExecutionTimeframe) config.maFanExecutionTimeframe = s.maFanExecutionTimeframe;
+          if (s.maFanSupervisorTimeframe) config.maFanSupervisorTimeframe = s.maFanSupervisorTimeframe;
           await initFeeds(symbolInfo.symbol);
+          if ((grid as any).updateSymbolInfo) {
+            (grid as any).updateSymbolInfo(symbolInfo, atrSource!);
+          }
           wireFeedsToGrid();
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           dashboard.setInitialHtfCandles(htfDowEngine.getCandles());

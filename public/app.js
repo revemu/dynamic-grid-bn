@@ -5285,6 +5285,7 @@
       setVal("cfg_maFanTp1Ratio", data.maFanTp1Ratio !== undefined ? String(data.maFanTp1Ratio) : "0.5");
       setVal("cfg_maFanTrailingPullbackPct", data.maFanTrailingPullbackPct ?? 0.45);
       setVal("cfg_maFanSlBufferPct", data.maFanSlBufferPct ?? 0.25);
+      setCheck("cfg_maFanUseRatchetSl", data.maFanUseRatchetSl !== false);
       setVal("cfg_maFanBreakevenFeeBufferPct", data.maFanBreakevenFeeBufferPct ?? 0.05);
 
       const maColors = getMaFanColors();
@@ -5550,6 +5551,7 @@
       maFanTp1Ratio: parseFloat(document.getElementById("cfg_maFanTp1Ratio")?.value) || 0.5,
       maFanTrailingPullbackPct: parseFloat(document.getElementById("cfg_maFanTrailingPullbackPct")?.value) || 0.45,
       maFanSlBufferPct: parseFloat(document.getElementById("cfg_maFanSlBufferPct")?.value) || 0.25,
+      maFanUseRatchetSl: Boolean(document.getElementById("cfg_maFanUseRatchetSl")?.checked),
       maFanBreakevenFeeBufferPct: parseFloat(document.getElementById("cfg_maFanBreakevenFeeBufferPct")?.value) || 0.05,
     };
 

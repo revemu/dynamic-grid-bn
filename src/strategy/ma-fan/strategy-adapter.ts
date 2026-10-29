@@ -69,7 +69,7 @@ export class MaFanTradingStrategy implements IStrategy {
       trailingPullbackPct: this.cfg.maFanTrailingPullbackPct ?? 0.45,
       breakevenFeeBufferPct: this.cfg.maFanBreakevenFeeBufferPct ?? 0.05,
       slBufferPct: this.cfg.maFanSlBufferPct ?? 0.25,
-      useRatchetSl: true,
+      useRatchetSl: this.cfg.maFanUseRatchetSl !== false,
       entryOnClosedOnly: this.cfg.maFanEntryOnClosedOnly ?? true,
       maxPositionBudgetUsd: this.cfg.maFanMaxBudgetUsd ?? 200,
       isDryRun: this.cfg.dryRun ?? false,
@@ -408,6 +408,10 @@ export class MaFanTradingStrategy implements IStrategy {
     if (s.maFanSlBufferPct !== undefined) {
       this.cfg.maFanSlBufferPct = s.maFanSlBufferPct;
       this.maFan.config.slBufferPct = s.maFanSlBufferPct;
+    }
+    if (s.maFanUseRatchetSl !== undefined) {
+      this.cfg.maFanUseRatchetSl = Boolean(s.maFanUseRatchetSl);
+      this.maFan.config.useRatchetSl = this.cfg.maFanUseRatchetSl;
     }
     if (s.maFanAtrMultiplier !== undefined) {
       this.cfg.maFanAtrMultiplier = s.maFanAtrMultiplier;

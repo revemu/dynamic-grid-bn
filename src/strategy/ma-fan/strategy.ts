@@ -113,7 +113,7 @@ export class MaFanStrategy {
 
   public setInitialHtfCandles(candles: Candle[]): void {
     this.candlesHtf = candles.filter((c) => c.isClosed !== false).sort((a, b) => a.time - b.time);
-    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio);
+    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio, this.config.executionTimeframe);
   }
 
   public onCandle(candle: Candle, isClosed: boolean): void {
@@ -140,7 +140,7 @@ export class MaFanStrategy {
       this.candlesHtf.sort((a, b) => a.time - b.time);
       if (this.candlesHtf.length > 300) this.candlesHtf.shift();
     }
-    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio);
+    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio, this.config.executionTimeframe);
   }
 
   public calibrateSpread(): CalibrationResult | null {
@@ -163,9 +163,9 @@ export class MaFanStrategy {
 
   public refreshConfig(): void {
     if (this.candlesHtf.length > 0) {
-      this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio);
+      this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio, this.config.executionTimeframe);
     }
-    if (this.config.autoCalibrateSpreadOnSwitch && this.candles.length >= 50 && !this.lastCalibration) {
+    if (this.config.autoCalibrateSpreadOnSwitch && this.candles.length >= 50) {
       this.calibrateSpread();
     } else {
       this.recomputeIndicators();
@@ -182,10 +182,13 @@ export class MaFanStrategy {
     const curAtr = atrs[atrs.length - 1] ?? 0;
     const lastClose = this.candles[this.candles.length - 1]?.close ?? 1;
 
+    const isAutoCalibrated = !!(this.config.autoCalibrateSpreadOnSwitch && this.lastCalibration);
+    const baseSpread = isAutoCalibrated ? this.lastCalibration!.bestSpreadPct : this.config.manualSpreadPct;
+
     this.effectiveSpreadThreshold = MaFanCoreRules.computeEffectiveSpread({
-      baseSpread: this.lastCalibration?.bestSpreadPct ?? this.config.manualSpreadPct,
+      baseSpread,
       useAtrAdaptiveSpread: this.config.useAtrAdaptiveSpread,
-      isAutoCalibrated: !!(this.config.autoCalibrateSpreadOnSwitch && this.lastCalibration),
+      isAutoCalibrated,
       curAtr,
       closePrice: lastClose,
       atrMultiplier: this.config.atrMultiplier,
@@ -221,8 +224,10 @@ export class MaFanStrategy {
         }
 
         const entryTimeSec = Math.floor(pos.entryTime / 1000);
-        // Count confirmed candles in history that closed at or after entryTime
-        const barsHeld = this.candles.filter((c) => c.time >= entryTimeSec - 5).length;
+        const tfSec = this.config.executionTimeframe === "15m" ? 900 : 300;
+        const entryBucket = Math.floor(entryTimeSec / tfSec) * tfSec;
+        // Count confirmed candles that closed at or after entry bucket
+        const barsHeld = this.candles.filter((c) => c.time >= entryBucket).length;
         const atrs = calcATR(this.candles, 14);
         const curAtr = atrs[atrs.length - 1] ?? (refPrice * 0.003);
 

@@ -37,6 +37,7 @@ export const defaultStrategyConfig = {
   maFanTrailingPullbackPct: 0.45,
   maFanBreakevenFeeBufferPct: 0.05,
   maFanSlBufferPct: 0.25,
+  maFanUseRatchetSl: true,
   maFanMaxBudgetUsd: 200,
   maFanEntryOnClosedOnly: true,
 
@@ -377,6 +378,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.dryRun !== undefined) merged.dryRun = Boolean(saved.dryRun);
       if (saved.timezone !== undefined) merged.timezone = String(saved.timezone);
       if (saved.dashboardPort !== undefined) merged.dashboardPort = Number(saved.dashboardPort);
+      if (saved.maFanUseRatchetSl !== undefined) merged.maFanUseRatchetSl = Boolean(saved.maFanUseRatchetSl);
       if (saved.htfTimeframe !== undefined) merged.htfTimeframe = String(saved.htfTimeframe);
       if (saved.vpLookbackBars !== undefined) merged.vpLookbackBars = Number(saved.vpLookbackBars);
       if (saved.enableTrendChannelGating !== undefined) merged.enableTrendChannelGating = Boolean(saved.enableTrendChannelGating);

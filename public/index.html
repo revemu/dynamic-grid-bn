@@ -2001,6 +2001,17 @@
                   <span class="unit">%</span>
                 </div>
               </div>
+
+              <div class="form-group switch-group" style="grid-column: 1 / -1;">
+                <div class="switch-label-group">
+                  <span class="switch-title">🛡️ Dynamic Ratchet Stop Loss (ยกฐาน SL ตามราคา)</span>
+                  <span class="switch-desc">เมื่อราคาดีดตัวและสร้างฐานใหม่ที่สูงขึ้น ระบบจะยก Stop Loss ขึ้นตามอัตโนมัติ (หากปิด จะใช้ Fixed SL ที่จุดตัดขาดทุนเริ่มต้น)</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_maFanUseRatchetSl" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -2514,7 +2525,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=3.45"></script>
+  <script src="app.js?v=3.46"></script>
 </body>
 
 </html>

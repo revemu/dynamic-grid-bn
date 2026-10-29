@@ -363,8 +363,8 @@ export class BacktestService {
           cash += heldQty * exitP;
 
           const totalPnlQuote = (tp1Price - entryPrice) * tp1Qty + pnl2;
-          const totalInvest = initialCapital * 0.98;
-          const tradePnlPct = (totalPnlQuote / totalInvest) * 100;
+          const totalInvest = (heldQty + (tp1Filled ? tp1Qty : 0)) * entryPrice;
+          const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
 
           if (totalPnlQuote >= 0) {
             grossProfit += totalPnlQuote;
@@ -416,8 +416,8 @@ export class BacktestService {
           const isRatchet = !tp1Filled && stopLossPrice > initialSlPrice;
           const exitType: BacktestTrade["exitType"] = tp1Filled ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
           const totalPnlQuote = pnl + (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0);
-          const totalInvest = initialCapital * 0.98;
-          const tradePnlPct = (totalPnlQuote / totalInvest) * 100;
+          const totalInvest = (heldQty + (tp1Filled ? tp1Qty : 0)) * entryPrice;
+          const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
 
           if (totalPnlQuote >= 0) {
             grossProfit += totalPnlQuote;
@@ -765,7 +765,11 @@ export class BacktestService {
         chunk.map(async (cand) => {
           try {
             const sym = cand.symbol;
-            const candles = await this.fetchBinanceCandles(sym, timeframe, limit);
+            const supTf = opts.supervisorTimeframe ?? "15m";
+            const [candles, candlesHtf] = await Promise.all([
+              this.fetchBinanceCandles(sym, timeframe, limit),
+              this.fetchBinanceCandles(sym, supTf, 300).catch(() => []),
+            ]);
             if (!candles || candles.length < 50) return;
 
             const rec = this.runMaFanSimulation(candles, {
@@ -780,7 +784,8 @@ export class BacktestService {
               trailingPullbackPct: opts.trailingPullbackPct ?? 0.45,
               tp1Ratio: opts.tp1Ratio ?? 0.5,
               breakevenFeeBufferPct: opts.breakevenFeeBufferPct ?? 0.05,
-              supervisorTimeframe: opts.supervisorTimeframe ?? "15m",
+              supervisorTimeframe: supTf,
+              candlesHtf: candlesHtf.length > 0 ? candlesHtf : undefined,
               saveToHistory: false, // Don't pollute persistent history database
             });
 

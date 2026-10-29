@@ -541,7 +541,7 @@
     if (legValEma75) legValEma75.textContent = fmtPrice(data.ema75);
     if (legValEma200) legValEma200.textContent = fmtPrice(data.ema200);
 
-    const targetSpread = currentRecord?.spreadThreshold || 0.25;
+    const targetSpread = data.requiredSpreadPct || currentRecord?.spreadThreshold || 0.25;
     if (elBtLegFanSpreadChip && elBtLegFanSpreadVal) {
       if (data.spreadPct >= targetSpread) {
         elBtLegFanSpreadChip.style.background = "rgba(16, 185, 129, 0.2)";
@@ -1326,8 +1326,10 @@
       btnStartScan.addEventListener("click", async () => {
         const scope = scScope?.value || "top20";
         const timeframe = scTimeframe?.value || "5m";
-        const limit = Number(scLimit?.value) || 500;
+        const limit = Number(scLimit?.value) || 1000;
         const spread = scSpread?.value || "auto";
+        const budget = Number(inpBudget?.value) || 200;
+        const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
 
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
@@ -1338,7 +1340,7 @@
           const res = await fetch("/api/backtest/scan", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ scope, timeframe, limit, spreadThreshold: spread }),
+            body: JSON.stringify({ scope, timeframe, limit, spreadThreshold: spread, budget, useRatchetSl }),
           });
 
           if (!res.ok) {
@@ -1428,6 +1430,9 @@
         const sym = btn.getAttribute("data-sym");
         if (sym) {
           setSymbolValue(sym);
+          if (scTimeframe && inpTimeframe) inpTimeframe.value = scTimeframe.value;
+          if (scLimit && inpLimit) inpLimit.value = scLimit.value;
+          if (scSpread && inpSpread) inpSpread.value = scSpread.value;
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
           runBacktest();
         }
