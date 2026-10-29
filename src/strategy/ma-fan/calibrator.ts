@@ -8,12 +8,32 @@ import { Candle, CalibrationResult } from "./types.js";
 import { RibbonEngine } from "./ribbon.js";
 import { ExhaustionEngine } from "./exhaustion.js";
 import { MaFanCoreRules } from "./core-rules.js";
+import { RegimeSupervisor } from "./regime.js";
+
+function aggregateTo15m(candles: Candle[]): Candle[] {
+  const targetSeconds = 15 * 60;
+  const groups = new Map<number, Candle>();
+  for (const c of candles) {
+    const bucket = Math.floor(c.time / targetSeconds) * targetSeconds;
+    const existing = groups.get(bucket);
+    if (!existing) {
+      groups.set(bucket, { time: bucket, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 });
+    } else {
+      existing.high = Math.max(existing.high, c.high);
+      existing.low = Math.min(existing.low, c.low);
+      existing.close = c.close;
+      existing.volume = (existing.volume || 0) + (c.volume || 0);
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => a.time - b.time);
+}
 
 export class AutoCalibrator {
   public static calibrate(
     symbol: string,
     candles: Candle[],
-    candidateSpreads: number[] = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65, 0.80, 1.00, 1.25, 1.50, 1.80]
+    candidateSpreads: number[] = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65, 0.80, 1.00, 1.25, 1.50, 1.80],
+    candlesHtf?: Candle[]
   ): CalibrationResult {
     const candidatesResults: {
       spreadPct: number;
@@ -23,6 +43,7 @@ export class AutoCalibrator {
       profitFactor: number;
     }[] = [];
 
+    const htfList = candlesHtf && candlesHtf.length > 0 ? candlesHtf : aggregateTo15m(candles);
     const warmup = Math.min(100, Math.floor(candles.length / 3));
 
     // Precompute Ribbon and Exhaustion arrays once in O(N)
@@ -97,6 +118,8 @@ export class AutoCalibrator {
             ribbon,
             trailingPullbackPct: 0.45,
             breakevenFeeBufferPct: 0.05,
+            isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
+            barsHeld,
           });
 
           if (exitDecision.action === "TP2") {
@@ -122,8 +145,10 @@ export class AutoCalibrator {
           }
 
           if (exitDecision.action === "TP1") {
+            const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, "15m", c.time);
+            const activeTp1Ratio = htfRegime.recommendedTp1Ratio ?? 0.50;
             tp1Price = exitDecision.exitPrice;
-            tp1Qty = heldQty * 0.5;
+            tp1Qty = heldQty * activeTp1Ratio;
             cash += tp1Qty * tp1Price;
             heldQty -= tp1Qty;
             tp1Filled = true;
@@ -136,6 +161,8 @@ export class AutoCalibrator {
 
         // Position Entry
         if (heldQty === 0 && cash >= 10) {
+          const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, "15m", c.time);
+          const requiredSpread = spread * htfRegime.spreadMultiplier;
           const exhaustion = exhaustionStates[i]!;
           const curAtr = atrs[i] || c.close * 0.003;
 
@@ -145,7 +172,7 @@ export class AutoCalibrator {
             closePrice: c.close,
             ribbon,
             exhaustion,
-            requiredSpreadPct: spread,
+            requiredSpreadPct: requiredSpread,
             curAtr,
             slBufferPct: 0.25,
           });

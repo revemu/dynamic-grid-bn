@@ -66,7 +66,9 @@ export class MaFanCoreRules {
     const currentIndex = opts.currentIndex ?? (candles.length - 1);
 
     const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
-    const isDownside = ribbon.ema4 <= ribbon.ema25 && closePrice < ribbon.ema25;
+    // Require adequate upside room from closePrice to EMA25 (at least 0.20%) to avoid entering when price is already touching EMA25
+    const hasUpsideRoomToEma25 = closePrice <= ribbon.ema25 * (1 - 0.0020);
+    const isDownside = ribbon.ema4 <= ribbon.ema25 && closePrice < ribbon.ema25 && hasUpsideRoomToEma25;
 
     // Minimum lower wick absorption check (at least 15% lower shadow rejection to filter out waterfall dumps)
     const curCandle = candles[currentIndex];
@@ -156,6 +158,7 @@ export class MaFanCoreRules {
     trailingPullbackPct: number;
     breakevenFeeBufferPct?: number;
     isOverbought?: boolean;
+    barsHeld?: number;
   }): ExitDecision {
     const {
       highPrice,
@@ -169,6 +172,7 @@ export class MaFanCoreRules {
       trailingPullbackPct,
       breakevenFeeBufferPct,
       isOverbought,
+      barsHeld,
     } = opts;
 
     const beFeeBuffer = (breakevenFeeBufferPct ?? 0.05) / 100;
@@ -210,10 +214,11 @@ export class MaFanCoreRules {
 
     // ── Priority 3: TP1 at EMA 25 & Trapped Breakeven Rescue ────────────────
     if (!tp1Filled) {
-      // If EMA25 drifted near/below entry, rescue at Breakeven (+fee buffer); otherwise require +0.15%
-      const minProfitPrice = ribbon.ema25 <= entryPrice * 1.0015
+      // Trapped Position Rescue only activates if held for >= 3 bars and EMA25 drifted below entry
+      const isTrapped = (barsHeld !== undefined && barsHeld >= 3) && (ribbon.ema25 <= entryPrice * 1.0015);
+      const minProfitPrice = isTrapped
         ? entryPrice * (1 + beFeeBuffer)
-        : entryPrice * 1.0015;
+        : entryPrice * (1 + Math.max(0.0020, beFeeBuffer));
       const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
 
       if (highPrice >= tp1Target) {
@@ -222,7 +227,7 @@ export class MaFanCoreRules {
           action: "TP1",
           exitPrice: tp1Target,
           newStopLossPrice,
-          reason: ribbon.ema25 <= entryPrice * 1.0015
+          reason: isTrapped
             ? "Trapped Position Breakeven Rescue"
             : "TP1 Mean Reversion at EMA 25",
         };

@@ -5574,3 +5574,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - **เปิดเผยเมธอด `getTimeOffset()` และ `destroy()`**: เพิ่มใน `IExchangeClient` และ `BinanceClient` พร้อมผูก `getTimeOffset()` เข้ากับ WebSocket User Data Stream เพื่อให้ลายเซ็นการ Subscribe สดใช้ Offset ที่ตรงกัน
 
 
+---
+
+## 156. v0.2.156 — Complete Logic Unification across Live Bot, Backtest Studio & Auto-Calibrator (`src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/calibrator.ts`, `src/backtest-service.ts`, `public/app.js`, `package.json`, `src/version.ts`)
+
+1. **ขจัดช่องโหว่ "เข้าแล้วออกทันที (In-and-Out within 71s)" ใน `MaFanCoreRules`**:
+   - **ปัญหาเดิม**:
+     1. ใน `evaluateEntry` เช็คแค่ `closePrice < ribbon.ema25` โดยไม่มีระยะห่างขั้นต่ำ (Minimum Room) เมื่อบอทเข้าซื้อที่ราคา `$0.02788` ซึ่งอยู่ห่างจากเส้น EMA 25 (`$0.027906`) แค่ `+0.09%` (ไม่ถึง 2 ช่อง)
+     2. ใน `evaluateExits` ตรรกะ `Trapped Position Rescue` (`ribbon.ema25 <= entryPrice * 1.0015`) ไม่ได้เช็คจำนวนแท่งที่ถือครอง (`barsHeld`) จึงมองว่าไม้ที่เพิ่งซื้อไป 40 วินาที "ติดดอย" ทันที และสั่งขาย TP1 ที่ `+0.09%` แล้วยก SL มาล็อกทุนที่ `+0.05%` จากนั้นราคาแกว่งลง 2 ช่องก็โดน Cut Loss ทันที
+   - **การแก้ไขใน `MaFanCoreRules`**:
+     - ใน `evaluateEntry`: บังคับเงื่อนไข `hasUpsideRoomToEma25 = closePrice <= ribbon.ema25 * (1 - 0.0020)` ต้องมีระยะห่างถึงเส้น EMA 25 อย่างน้อย `0.20%` ห้ามซื้อตอนราคาแนบชิดเส้น EMA 25
+     - ใน `evaluateExits`: เพิ่มพารามิเตอร์ `barsHeld` โดยเงื่อนไข `Trapped Position Rescue` จะอนุญาตให้ทำงานเฉพาะเมื่อ **`barsHeld >= 3`** (ติดดอยมาแล้วอย่างน้อย 3 แท่ง) เท่านั้น หากเพิ่งเข้าซื้อ เป้า TP1 ขั้นต่ำต้องมีกำไรอย่างน้อย `+0.20%` หรือบวกค่าธรรมเนียมเสมอ
+
+2. **รวมลูปและพารามิเตอร์ใน `AutoCalibrator` ให้ตรงกับบอทจริงและ Backtest 100% (`src/strategy/ma-fan/calibrator.ts`)**:
+   - ปรับให้ `AutoCalibrator.calibrate` รับ HTF 15m Candles (หรือคำนวณ `aggregateTo15m`)
+   - นำ `RegimeSupervisor.evaluateHtfRegime` มาคำนวณตัวคูณ `spreadMultiplier` และสัดส่วน TP1 `recommendedTp1Ratio` ในทุกแท่งเทียนที่จำลอง
+   - ส่ง `isOverbought: exhaustionStates[i]?.isOverboughtExhaustion` และ `barsHeld` เข้า `MaFanCoreRules.evaluateExits` ครบถ้วน เพื่อให้ค่า Best Spread ที่ได้มาสะท้อนกลยุทธ์จริง 100%
+
+3. **ล้างแท่งเทียนที่ยังไม่ปิด (`isClosed: false`) ออกจาก Strategy State และ Backtest (`src/strategy/ma-fan/strategy.ts`, `src/backtest-service.ts`)**:
+   - ใน `MaFanStrategy`: ปรับ `setInitialCandles` และ `setInitialHtfCandles` ให้กรองเฉพาะ `c.isClosed !== false` เท่านั้น และล็อก `evaluatedClosedCandleTime = lastClosedCandle.time` หลังโหลดประวัติเสร็จ ป้องกันบั๊กยิงซื้อกลางแท่งตอนสตาร์ตบอทใหม่
+   - ใน `BacktestService.fetchHistoricalKlines`: กรองแท่งสุดท้ายที่ยังไม่ปิด (`closeTimeMs > Date.now()`) ออก เพื่อให้แท่งเทียนในการจำลองเป็นแท่งปิดสมบูรณ์ 100% เหมือนบอทจริง
+
+4. **แก้ไขป้าย Timeframe และ Watermark บน Dashboard ให้ตรงกับกลยุทธ์จริง (`public/app.js`)**:
+   - ในโหมด MA-FOLD-FAN ปรับให้ป้ายกำกับบนหัวชาร์ต (`elLegendTf`) และลายน้ำพื้นหลัง (`watermark`) ดึง `executionTimeframe` ("5M") มาแสดงผลอย่างถูกต้อง แทนที่จะดึง `dowTimeframe` ("15M") ของระบบเดิม ทำให้ผู้ใช้ตรวจสอบ Timeframe ได้ตรงกับความเป็นจริง
+
+
+

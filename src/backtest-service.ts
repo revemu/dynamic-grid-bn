@@ -176,9 +176,13 @@ export class BacktestService {
       throw new Error(`No historical candles returned for ${cleanSym} on ${interval}`);
     }
 
+    const nowMs = Date.now();
     const candles: Candle[] = [];
     for (const k of raw) {
       const time = Math.floor(Number(k[0]) / 1000);
+      const closeTimeMs = Number(k[6]);
+      // Filter out live forming unclosed bar to ensure backtest evaluates strictly closed bars
+      if (Number.isFinite(closeTimeMs) && closeTimeMs > nowMs) continue;
       const open = Number(k[1]);
       const high = Number(k[2]);
       const low = Number(k[3]);
@@ -186,7 +190,7 @@ export class BacktestService {
       const volume = Number(k[5]) || 0;
 
       if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
-        candles.push({ time, open, high, low, close, volume });
+        candles.push({ time, open, high, low, close, volume, isClosed: true });
       }
     }
 
@@ -254,7 +258,7 @@ export class BacktestService {
     // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
     if (opts.spreadThreshold === "auto" || !opts.spreadThreshold) {
-      const cal = AutoCalibrator.calibrate(symbol, candles);
+      const cal = AutoCalibrator.calibrate(symbol, candles, undefined, candlesHtf);
       spread = cal.bestSpreadPct || 0.25;
     }
 
@@ -335,6 +339,8 @@ export class BacktestService {
           ribbon,
           trailingPullbackPct,
           breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
+          isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
+          barsHeld,
         });
 
         // 1. TP2 Exit (Macro Runner / Trailing Stop)

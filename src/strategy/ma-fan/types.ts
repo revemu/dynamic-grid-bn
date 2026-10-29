@@ -10,6 +10,7 @@ export interface Candle {
   low: number;
   close: number;
   volume?: number;
+  isClosed?: boolean;
 }
 
 export interface RibbonState {

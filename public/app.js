@@ -2704,13 +2704,17 @@
     // Symbol Display
     const rawSymbol = data.symbol || (data.binanceSymbol ? `${data.binanceSymbol.toUpperCase()}` : "SOMI:USDso");
     const displaySymbol = rawSymbol.replace(":", " / ").toUpperCase();
+    const isMaFan = data.strategyType === "ma_fan" || data.strategyMode === "ma_fan";
+    const execTf = (data.executionTimeframe || "5m").toUpperCase();
+    const supTf = (data.supervisorTimeframe || data.htfRegime?.timeframe || "15m").toUpperCase();
     const macroTf = (data.dowTimeframe || "15m").toUpperCase();
     const tradeTf = (data.tradingTimeframe || "15m").toUpperCase();
+    const activeChartTf = isMaFan ? execTf : macroTf;
 
     if (elNavSymbolBadge) elNavSymbolBadge.textContent = displaySymbol;
     if (elChartSymbolBadge) elChartSymbolBadge.textContent = displaySymbol;
     if (elLegendSymbol) elLegendSymbol.textContent = displaySymbol;
-    if (elLegendTf) elLegendTf.textContent = macroTf;
+    if (elLegendTf) elLegendTf.textContent = activeChartTf;
     if (elLegendLivePrice && data.mid !== undefined) elLegendLivePrice.textContent = `$${fmtPrice(data.mid)}`;
 
     // Top Brand Logo Badge (Exchange indicator)
@@ -2747,7 +2751,7 @@
       chart.applyOptions({
         watermark: {
           visible: true,
-          text: `${displaySymbol} • ${macroTf}`,
+          text: `${displaySymbol} • ${activeChartTf}`,
         },
       });
     }

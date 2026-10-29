@@ -99,7 +99,8 @@ export class MaFanStrategy {
   }
 
   public setInitialCandles(candles: Candle[]): void {
-    this.candles = [...candles].sort((a, b) => a.time - b.time);
+    // Only ingest confirmed closed candles so indicators and entry evaluations match closed-bar backtests 1:1
+    this.candles = candles.filter((c) => c.isClosed !== false).sort((a, b) => a.time - b.time);
     if (this.candles.length > 0) {
       this.lastClosedCandle = this.candles[this.candles.length - 1] ?? null;
       this.evaluatedClosedCandleTime = this.lastClosedCandle ? this.lastClosedCandle.time : 0;
@@ -111,14 +112,13 @@ export class MaFanStrategy {
   }
 
   public setInitialHtfCandles(candles: Candle[]): void {
-    this.candlesHtf = [...candles].sort((a, b) => a.time - b.time);
+    this.candlesHtf = candles.filter((c) => c.isClosed !== false).sort((a, b) => a.time - b.time);
     this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe);
   }
 
   public onCandle(candle: Candle, isClosed: boolean): void {
-    if (isClosed) {
-      this.lastClosedCandle = candle;
-    }
+    if (!isClosed) return;
+    this.lastClosedCandle = candle;
     const idx = this.candles.findIndex((c) => c.time === candle.time);
     if (idx >= 0) {
       this.candles[idx] = candle;
@@ -131,6 +131,7 @@ export class MaFanStrategy {
   }
 
   public onHtfCandle(candle: Candle, isClosed: boolean): void {
+    if (!isClosed) return;
     const idx = this.candlesHtf.findIndex((c) => c.time === candle.time);
     if (idx >= 0) {
       this.candlesHtf[idx] = candle;
@@ -145,7 +146,7 @@ export class MaFanStrategy {
   public calibrateSpread(): CalibrationResult | null {
     if (this.candles.length < 50) return null;
     const t0 = Date.now();
-    const res = AutoCalibrator.calibrate(this.symbol, this.candles);
+    const res = AutoCalibrator.calibrate(this.symbol, this.candles, undefined, this.candlesHtf);
     this.lastCalibration = res;
     this.effectiveSpreadThreshold = res.bestSpreadPct;
     this.log(`⚡ [AUTO_CALIBRATED] ${this.symbol} sweet spot spread: ${res.bestSpreadPct}% (Sim WinRate: ${res.winRate.toFixed(1)}%, took ${Date.now() - t0}ms)`);
@@ -239,6 +240,7 @@ export class MaFanStrategy {
           trailingPullbackPct: this.config.trailingPullbackPct,
           breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
           isOverbought: exhaustion.isOverboughtExhaustion,
+          barsHeld,
         });
 
         // A. Take Profit 2 (Macro Runner / Trailing Stop)
