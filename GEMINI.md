@@ -5624,5 +5624,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ใน `src/backtest-service.ts`: บันทึก `requiredSpreadPct` (ที่คำนวณรวม `spreadMultiplier` ของ HTF แล้ว) ลงใน `evaluations` และให้ `public/backtest.js` นำไปเปรียบเทียบใน Candle Inspector ทำให้เกณฑ์ Spread ในการตรวจสอบแท่งเทียนตรงกับบอทจริง 100%
 
 
+---
+
+## 158. v0.2.158 — Fix Initial Candle Load Order, Zero Lookahead Bias in HTF Regime, Precision Resync on Symbol Switch & Live Settings Reactivity (`src/strategy/ma-fan/strategy-adapter.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/regime.ts`, `src/strategy/ma-fan/calibrator.ts`, `src/strategy/ma-fan/executor.ts`, `src/index.ts`, `package.json`, `src/version.ts`)
+
+1. **สลับลำดับการโหลดแท่งเทียนให้ `setInitialHtfCandles` ทำงานก่อน `setInitialCandles` (`src/strategy/ma-fan/strategy-adapter.ts`)**:
+   - **ปัญหาเดิม**: ใน `constructor`, `updateSymbolInfo` (สลับเหรียญ) และ `updateExchangeClient` โค้ดเรียก `setInitialCandles` ก่อน `setInitialHtfCandles` ส่งผลให้ `this.calibrateSpread()` รันทันทีโดยที่ `this.candlesHtf` ว่างเปล่า หรือกรณีสลับเหรียญจะเผลอนำแท่ง 15m ของเหรียญเก่ามาคำนวณ HTF Regime ให้เหรียญใหม่
+   - **การแก้ไข**: สลับลำดับให้โหลด `setInitialHtfCandles(htfCandles)` ก่อน `setInitialCandles(candles)` เสมอในทุกจุด ทำให้การสลับเหรียญได้ผลการ Calibrate ที่อิงตามแท่งเทียนจริงของเหรียญนั้น 100%
+
+2. **กำจัด Lookahead Bias ใน `RegimeSupervisor.evaluateHtfRegime` (`src/strategy/ma-fan/regime.ts`)**:
+   - **ปัญหาเดิม**: Backtest และ Calibrator ส่ง `targetTime = c.time` (เวลาเปิดของแท่ง 5m) แต่โค้ดดึงแท่ง 15m ที่ยังไม่ปิด (เช่น แท่ง 5m เปิด `06:15` ปิด `06:20` แต่โค้ดดึงแท่ง 15m `06:15` ซึ่งปิดตอน `06:30` ไปคำนวณ) ทำให้ Backtest แอบดูอนาคต 5–10 นาทีล่วงหน้า
+   - **การแก้ไข**: ปรับสูตรการค้นหาแท่ง 15m ให้ยืนยันเฉพาะแท่งที่ปิดสมบูรณ์แล้ว ณ เวลาที่แท่ง 5m นั้นปิด (`htf.time + htfSec <= targetTime + 300`) ทำให้ Backtest, Calibrator และบอทจริงประเมินสภาวะ HTF ตรงกัน 100%
+
+3. **อัปเดต `symbolInfo` (`tickSize`, `stepSize`, `minNotional`) ใน `MaFanOrderExecutor` ทุกครั้งที่มีการสลับเหรียญ (`src/strategy/ma-fan/executor.ts`, `src/strategy/ma-fan/strategy-adapter.ts`)**:
+   - **ปัญหาเดิม**: เมื่อสลับเหรียญใน Dashboard หรือคลิก Apply จาก Market Scanner `executor` ไม่ได้รับการอัปเดต `symbolInfo` ทำให้ยังใช้ค่าทศนิยมของเหรียญเก่า
+   - **การแก้ไข**: เพิ่มเมธอด `setSymbolInfo(nextInfo)` ใน `MaFanOrderExecutor` และส่ง `nextInfo` ไปอัปเดตทันทีใน `updateSymbolInfo` และ `updateExchangeClient` ป้องกันปัญหา Binance ปฏิเสธออเดอร์จากการปัดเศษราคา/จำนวนเหรียญผิด
+
+4. **เพิ่มเมธอด `refreshConfig()` ใน `MaFanStrategy` เพื่อรีคำนวณค่าทันทีเมื่อกดบันทึก Settings (`src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`)**:
+   - **ปัญหาเดิม**: การแก้ไขค่าใน Settings Modal ไม่ได้กระตุ้นการคำนวณ `effectiveSpreadThreshold` ใหม่ในทันที ต้องรอจนแท่ง 5m ถัดไปปิด (สูงสุด 5 นาที)
+   - **การแก้ไข**: เรียก `this.maFan.refreshConfig()` ทันทีใน `updateRuntimeSettings` ทำให้ค่าเกณฑ์ Spread และ State อัปเดตทันทีใน 0ms
+
+5. **แก้ไขการตรวจจับการเปลี่ยน Timeframe และการผูก Feed ใน `src/index.ts` (`src/index.ts`)**:
+   - **ปัญหาเดิม**: โค้ดตรวจจับการเปลี่ยน Timeframe หลังตัวแปร `config` ถูกแก้ไขไปแล้ว ทำให้เงื่อนไขไม่ทำงาน และเมื่อสลับกลยุทธ์ไม่ได้ผูก `macroFeed.onCandle` เข้ากับ `grid` ตัวใหม่
+   - **การแก้ไข**: จดจำค่า `prevMaFanExecTf` และ `prevMaFanSupTf` ไว้ก่อนอัปเดต และผูก `macroFeed.onCandle` พร้อมสั่ง `.start()` ครบทุก Feed หลังสลับกลยุทธ์
+
+6. **รวมฟังก์ชัน `calcATR` และระยะ `warmup` ใน `AutoCalibrator` ให้ตรงกับ `BacktestService` (`src/strategy/ma-fan/calibrator.ts`)**:
+   - **การแก้ไข**: นำ `calcATR(candles, 14)` จาก `ribbon.ts` มาใช้แทนลูปคำนวณ ATR แยก และปรับระยะ `warmup` เป็น `candles.length / 4` ให้สอดคล้องกัน 100%
+
+
+
 
 

@@ -98,18 +98,18 @@ export class MaFanTradingStrategy implements IStrategy {
       this.maFan.restorePosition(savedState.maFanPosition);
     }
 
+    if (context.htfDowEngine) {
+      const htfCandles = context.htfDowEngine.getCandles();
+      if (htfCandles && htfCandles.length > 0) {
+        this.maFan.setInitialHtfCandles(htfCandles);
+      }
+    }
     if (context.macroDowEngine) {
       const candles = context.macroDowEngine.getCandles();
       if (candles && candles.length > 0) {
         this.maFan.setInitialCandles(candles);
         const lastC = candles[candles.length - 1];
         if (lastC && lastC.close > 0) this.currentMid = lastC.close;
-      }
-    }
-    if (context.htfDowEngine) {
-      const htfCandles = context.htfDowEngine.getCandles();
-      if (htfCandles && htfCandles.length > 0) {
-        this.maFan.setInitialHtfCandles(htfCandles);
       }
     }
 
@@ -437,6 +437,7 @@ export class MaFanTradingStrategy implements IStrategy {
       breakevenFeeBufferPct: this.cfg.maFanBreakevenFeeBufferPct,
       slBufferPct: this.cfg.maFanSlBufferPct,
     });
+    this.maFan.refreshConfig();
 
     this.db.setSettings(this.cfg);
     this.emitTelemetryTick();
@@ -573,17 +574,26 @@ export class MaFanTradingStrategy implements IStrategy {
     this.maFan.executor = new (this.maFan.executor as any).constructor({
       client: newExchange,
       dryRun: this.cfg.dryRun,
+      breakevenFeeBufferPct: this.cfg.maFanBreakevenFeeBufferPct,
+      slBufferPct: this.cfg.maFanSlBufferPct,
+      onTrade: (t: any) => {
+        this.emit({ type: "order", data: t });
+        this.saveState(true);
+        this.emitTelemetryTick(true);
+      },
+      onLog: this.log,
     });
-    if (this.context.macroDowEngine) {
-      const candles = this.context.macroDowEngine.getCandles();
-      if (candles.length > 0) {
-        this.maFan.setInitialCandles(candles);
-      }
-    }
+    this.maFan.executor.setSymbolInfo(nextInfo);
     if (this.context.htfDowEngine) {
       const htfCandles = this.context.htfDowEngine.getCandles();
       if (htfCandles.length > 0) {
         this.maFan.setInitialHtfCandles(htfCandles);
+      }
+    }
+    if (this.context.macroDowEngine) {
+      const candles = this.context.macroDowEngine.getCandles();
+      if (candles.length > 0) {
+        this.maFan.setInitialCandles(candles);
       }
     }
     this.isSwitchingSymbol = false;
@@ -593,20 +603,21 @@ export class MaFanTradingStrategy implements IStrategy {
     this.symbolInfo = nextInfo;
     this.atrSource = atrSource;
     this.maFan.symbol = nextInfo.symbol;
+    this.maFan.executor.setSymbolInfo(nextInfo);
     const clean = nextInfo.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
     this.cfg.symbol = clean;
     this.cfg.binanceSymbol = clean.toLowerCase();
     this.db.setSettings(this.cfg);
-    if (this.context.macroDowEngine) {
-      const candles = this.context.macroDowEngine.getCandles();
-      if (candles.length > 0) {
-        this.maFan.setInitialCandles(candles);
-      }
-    }
     if (this.context.htfDowEngine) {
       const htfCandles = this.context.htfDowEngine.getCandles();
       if (htfCandles.length > 0) {
         this.maFan.setInitialHtfCandles(htfCandles);
+      }
+    }
+    if (this.context.macroDowEngine) {
+      const candles = this.context.macroDowEngine.getCandles();
+      if (candles.length > 0) {
+        this.maFan.setInitialCandles(candles);
       }
     }
     this.isSwitchingSymbol = false;

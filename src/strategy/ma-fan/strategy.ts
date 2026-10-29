@@ -153,7 +153,19 @@ export class MaFanStrategy {
     return res;
   }
 
-  private recomputeIndicators(): void {
+  public refreshConfig(): void {
+    if (this.candlesHtf.length > 0) {
+      this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe);
+    }
+    if (this.config.autoCalibrateSpreadOnSwitch && this.candles.length >= 50 && !this.lastCalibration) {
+      this.calibrateSpread();
+    } else {
+      this.recomputeIndicators();
+    }
+    this.onStateUpdate?.(this.getState());
+  }
+
+  public recomputeIndicators(): void {
     if (this.candles.length < 25) return;
     this.currentRibbon = RibbonEngine.computeRibbonState(this.candles);
 

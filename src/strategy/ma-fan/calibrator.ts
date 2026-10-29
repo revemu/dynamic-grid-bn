@@ -5,7 +5,7 @@
  */
 
 import { Candle, CalibrationResult } from "./types.js";
-import { RibbonEngine } from "./ribbon.js";
+import { RibbonEngine, calcATR } from "./ribbon.js";
 import { ExhaustionEngine } from "./exhaustion.js";
 import { MaFanCoreRules } from "./core-rules.js";
 import { RegimeSupervisor } from "./regime.js";
@@ -44,26 +44,14 @@ export class AutoCalibrator {
     }[] = [];
 
     const htfList = candlesHtf && candlesHtf.length > 0 ? candlesHtf : aggregateTo15m(candles);
-    const warmup = Math.min(100, Math.floor(candles.length / 3));
+    const warmup = Math.min(100, Math.floor(candles.length / 4));
 
     // Precompute Ribbon and Exhaustion arrays once in O(N)
     const ribbonStates = RibbonEngine.computeAllRibbonStates(candles);
     const exhaustionStates = ExhaustionEngine.computeAllExhaustion(candles);
 
-    // Precompute 14-period ATR array for Dynamic SL buffer
-    const atrs: number[] = new Array(candles.length).fill(0);
-    let trSum = 0;
-    for (let i = 1; i < candles.length; i++) {
-      const prevC = candles[i - 1]!.close;
-      const c = candles[i]!;
-      const tr = Math.max(c.high - c.low, Math.abs(c.high - prevC), Math.abs(c.low - prevC));
-      if (i <= 14) {
-        trSum += tr;
-        if (i === 14) atrs[i] = trSum / 14;
-      } else {
-        atrs[i] = (atrs[i - 1]! * 13 + tr) / 14;
-      }
-    }
+    // Precompute 14-period ATR array via standard calcATR (aligns 100% with BacktestService & Strategy)
+    const atrs = calcATR(candles, 14);
 
     for (const spread of candidateSpreads) {
       let cash = 200;

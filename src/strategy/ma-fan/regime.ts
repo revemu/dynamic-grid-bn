@@ -23,9 +23,13 @@ export class RegimeSupervisor {
       };
     }
 
+    const htfSec = timeframe === "1h" ? 3600 : 900;
     let idx = candlesHtf.length - 1;
     if (targetTime !== undefined) {
-      const found = candlesHtf.findIndex((c) => c.time > targetTime);
+      // targetTime is the 5m candle open time in seconds. That candle closes at targetTime + 300.
+      // An HTF candle is confirmed closed only if: htf.time + htfSec <= targetTime + 300.
+      const maxAllowedHtfOpen = targetTime + 300 - htfSec;
+      const found = candlesHtf.findIndex((c) => c.time > maxAllowedHtfOpen);
       if (found !== -1) {
         idx = Math.max(0, found - 1);
       }

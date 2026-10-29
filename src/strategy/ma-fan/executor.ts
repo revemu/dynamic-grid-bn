@@ -36,11 +36,16 @@ export class MaFanOrderExecutor {
     this.log = opts.onLog ?? ((msg) => console.log(`[ma-fan-executor] ${msg}`));
   }
 
-  public updateOptions(opts: Partial<ExecutorOptions>): void {
+  public updateOptions(opts: Partial<ExecutorOptions> & { symbolInfo?: ExchangeSymbolInfo }): void {
     if (opts.client) this.client = opts.client;
     if (opts.dryRun !== undefined) this.dryRun = opts.dryRun;
     if (opts.breakevenFeeBufferPct !== undefined) this.breakevenFeeBufferPct = opts.breakevenFeeBufferPct;
     if (opts.slBufferPct !== undefined) this.slBufferPct = opts.slBufferPct;
+    if (opts.symbolInfo) this.symbolInfo = opts.symbolInfo;
+  }
+
+  public setSymbolInfo(info: ExchangeSymbolInfo): void {
+    this.symbolInfo = info;
   }
 
   public async init(symbol: string): Promise<void> {

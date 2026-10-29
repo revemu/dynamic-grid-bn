@@ -349,6 +349,8 @@ async function main(): Promise<void> {
       const prevTradingTf = prevConfig.tradingTimeframe;
       const prevHtfTf = prevConfig.htfTimeframe;
       const prevSymbol = prevConfig.symbol;
+      const prevMaFanExecTf = prevConfig.maFanExecutionTimeframe;
+      const prevMaFanSupTf = prevConfig.maFanSupervisorTimeframe;
 
       const targetExchangeName = (s.exchange || prevConfig.exchange || "binance").toLowerCase();
       const exchangeChanged = Boolean(s.exchange && targetExchangeName !== (prevConfig.exchange || "binance").toLowerCase());
@@ -519,7 +521,6 @@ async function main(): Promise<void> {
           };
           config.strategyType = targetStrategyType;
           await initFeeds(symbolInfo.symbol);
-          wireFeedsToGrid();
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
 
@@ -535,6 +536,18 @@ async function main(): Promise<void> {
           });
           grid.updateRuntimeSettings(s);
           grid.getDatabase().setSetting("strategyType", targetStrategyType);
+          wireFeedsToGrid();
+          macroFeed?.onCandle((candle, isClosed) => {
+            macroDowEngine.addCandle(candle);
+            dashboard.addCandle(candle, isClosed);
+            if (isClosed) {
+              grid.onCandleClosed(candle);
+              wakeSleep?.();
+            }
+          });
+          macroFeed?.start();
+          tradingFeed?.start();
+          htfFeed?.start();
           grid.onEvent((event) => {
             if (event.type === "tick") {
               dashboard.updateTick(event.data);
@@ -548,6 +561,7 @@ async function main(): Promise<void> {
           await grid.refreshWalletBalances();
           dashboard.setInitialOrders(grid.getRecentOrders());
           grid.emitTelemetryTick();
+          wakeSleep?.();
           log(`✅ [STRATEGY SWITCH] Active strategy is now: ${grid.name} (${grid.strategyType})`);
         } catch (stratErr) {
           log(`⚠️ Failed to switch strategy dynamically: ${(stratErr as Error).message}`);
@@ -567,17 +581,26 @@ async function main(): Promise<void> {
         (s.dowTimeframe && s.dowTimeframe !== prevTf) ||
         (s.tradingTimeframe && s.tradingTimeframe !== prevTradingTf) ||
         (s.htfTimeframe && s.htfTimeframe !== prevHtfTf) ||
-        (s.maFanExecutionTimeframe && s.maFanExecutionTimeframe !== config.maFanExecutionTimeframe) ||
-        (s.maFanSupervisorTimeframe && s.maFanSupervisorTimeframe !== config.maFanSupervisorTimeframe)
+        (s.maFanExecutionTimeframe && s.maFanExecutionTimeframe !== prevMaFanExecTf) ||
+        (s.maFanSupervisorTimeframe && s.maFanSupervisorTimeframe !== prevMaFanSupTf)
       ) {
         if (config.strategyType === "ma_fan") {
           await initFeeds(symbolInfo.symbol);
           wireFeedsToGrid();
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           dashboard.setInitialHtfCandles(htfDowEngine.getCandles());
+          macroFeed?.onCandle((candle, isClosed) => {
+            macroDowEngine.addCandle(candle);
+            dashboard.addCandle(candle, isClosed);
+            if (isClosed) {
+              grid.onCandleClosed(candle);
+              wakeSleep?.();
+            }
+          });
           macroFeed?.start();
           tradingFeed?.start();
           htfFeed?.start();
+          wakeSleep?.();
           return res;
         }
         const isMaFanStrategy = (s.strategyType || s.strategyMode || config.strategyType) === "ma_fan";
