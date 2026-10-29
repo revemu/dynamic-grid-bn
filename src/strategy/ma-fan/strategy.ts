@@ -201,10 +201,15 @@ export class MaFanStrategy {
         }
 
         const entryTimeSec = Math.floor(pos.entryTime / 1000);
-        const entryIdx = this.candles.findIndex((c) => c.time >= entryTimeSec);
-        const barsHeld = entryIdx >= 0 ? this.candles.length - 1 - entryIdx : 3;
+        // Count confirmed candles in history that closed at or after entryTime
+        const barsHeld = this.candles.filter((c) => c.time >= entryTimeSec - 5).length;
         const atrs = calcATR(this.candles, 14);
         const curAtr = atrs[atrs.length - 1] ?? (refPrice * 0.003);
+
+        // Keep evaluatedClosedCandleTime up to date while holding a position so we don't evaluate old closed candles upon exit
+        if (this.lastClosedCandle) {
+          this.evaluatedClosedCandleTime = this.lastClosedCandle.time;
+        }
 
         // Dynamic Ratchet SL: After entry, if price forms higher local base, lift SL
         const liftedSl = MaFanCoreRules.evaluateRatchetSl({
@@ -248,6 +253,7 @@ export class MaFanStrategy {
           const ok = await this.executor.executeTp2(pos, refPrice, exitDecision.reason || "TP2 Exit");
           if (ok) {
             this.activePosition = null;
+            if (this.lastClosedCandle) this.evaluatedClosedCandleTime = this.lastClosedCandle.time;
             this.totalCycles++;
             this.onStateUpdate?.(this.getState());
           }
@@ -260,6 +266,7 @@ export class MaFanStrategy {
           const ok = await this.executor.executeStopLoss(pos, refPrice);
           if (ok) {
             this.activePosition = null;
+            if (this.lastClosedCandle) this.evaluatedClosedCandleTime = this.lastClosedCandle.time;
             this.totalCycles++;
             this.onStateUpdate?.(this.getState());
           }
@@ -346,13 +353,17 @@ export class MaFanStrategy {
     const totalTrades = this.winCount + this.lossCount;
     const winRate = totalTrades > 0 ? (this.winCount / totalTrades) * 100 : 0;
 
+    const htfMultiplier = this.currentHtfRegime?.spreadMultiplier ?? 1.0;
+    const requiredSpread = Number((this.effectiveSpreadThreshold * htfMultiplier).toFixed(2));
+
     return {
       strategyType: "ma_fan",
       strategyMode: "ma_fan",
       symbol: this.symbol,
       isPaused: this.isPaused,
       activePosition: this.activePosition,
-      effectiveSpreadThreshold: this.effectiveSpreadThreshold,
+      effectiveSpreadThreshold: requiredSpread,
+      baseSpreadThreshold: this.effectiveSpreadThreshold,
       lastCalibration: this.lastCalibration,
       ribbon: this.currentRibbon,
       htfRegime: this.currentHtfRegime,

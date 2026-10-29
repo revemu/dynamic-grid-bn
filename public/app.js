@@ -1270,7 +1270,39 @@
         }
         return rsi;
       }
+      function calcEmaArray(values, period) {
+        const k = 2 / (period + 1);
+        const ema = new Array(values.length).fill(0);
+        if (values.length === 0) return ema;
+        const initial = Math.min(period, values.length);
+        let sum = 0;
+        for (let i = 0; i < initial; i++) sum += values[i];
+        let prev = sum / initial;
+        for (let i = 0; i < values.length; i++) {
+          if (i < initial - 1) {
+            ema[i] = values[i];
+          } else if (i === initial - 1) {
+            ema[i] = prev;
+          } else {
+            prev = values[i] * k + prev * (1 - k);
+            ema[i] = prev;
+          }
+        }
+        return ema;
+      }
+
+      function calcMacdClient(candles, fast = 12, slow = 26, signal = 9) {
+        const closes = candles.map((c) => c.close);
+        const emaFast = calcEmaArray(closes, fast);
+        const emaSlow = calcEmaArray(closes, slow);
+        const macdLine = closes.map((_, i) => emaFast[i] - emaSlow[i]);
+        const signalLine = calcEmaArray(macdLine, signal);
+        const hist = macdLine.map((m, i) => m - signalLine[i]);
+        return { macd: macdLine, signal: signalLine, hist };
+      }
+
       const rsiList = calcRsiClient(candles, 14);
+      const { hist: macdHist } = calcMacdClient(candles, 12, 26, 9);
 
       maFanCandleDataMap.clear();
       for (let i = 0; i < candles.length; i++) {
@@ -1310,7 +1342,10 @@
 
           const curRsi = rsiList[i] ?? 50;
           const prevRsi = i > 0 ? (rsiList[i - 1] ?? 50) : curRsi;
-          const isOversoldExhaustion = (prevRsi <= 45 || curRsi <= 40 || (curRsi > prevRsi && prevRsi <= 52)) && curRsi < 65;
+          const curHist = macdHist[i] ?? 0;
+          const prevHist = i > 0 ? (macdHist[i - 1] ?? 0) : curHist;
+          const isTurningUp = curHist > prevHist;
+          const isOversoldExhaustion = (prevRsi <= 45 || curRsi <= 40 || (isTurningUp && prevRsi <= 52)) && curRsi < 65;
 
           const range = c.high - c.low;
           const bodyBottom = Math.min(c.open, c.close);
@@ -1397,7 +1432,7 @@
     // 5-point Sniper conditions (Exact match with MaFanCoreRules)
     const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
-    const condHook = data.isHookUp && c.close < data.ema25;
+    const condHook = data.isHookUp && c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0020);
     const condExhaust = !!data.isOversoldExhaustion;
     const condAbsorption = (data.lowerWickPct || 0) >= 15;
 
@@ -1409,7 +1444,7 @@
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
-      if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
+      if (!condHook) missing.push(c.close >= data.ema25 * (1 - 0.0020) ? `ราคาอยู่ชิด/สูงกว่า EMA25 เกินไป (ขาด Upside Room ≥ 0.20%)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
       if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 45)`);
       if (!condAbsorption) missing.push(`ไส้ล่างซึมซับแรงขายต่ำเกินไป (${(data.lowerWickPct || 0).toFixed(1)}% < 15%)`);

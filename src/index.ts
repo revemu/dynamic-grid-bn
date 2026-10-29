@@ -443,6 +443,7 @@ async function main(): Promise<void> {
           });
           macroFeed?.start();
           tradingFeed?.start();
+          htfFeed?.start();
           wakeSleep?.();
           log(`🔄 Successfully switched Exchange Adapter to: ${exchange.exchangeName.toUpperCase()} (${nextInfo.symbol})`);
         } catch (err) {
@@ -481,6 +482,7 @@ async function main(): Promise<void> {
           });
           macroFeed?.start();
           tradingFeed?.start();
+          htfFeed?.start();
           wakeSleep?.();
           log(`🔄 Switched active ${exchange.exchangeName} trading pair to: ${nextInfo.symbol}`);
         } catch (err) {
@@ -742,6 +744,7 @@ async function main(): Promise<void> {
     macroFeed.start();
   }
   tradingFeed?.start();
+  htfFeed?.start();
 
   // Forward strategy events (ticks, buy/sell/cut executions, gas updates) to dashboard
   grid.onEvent((event) => {
@@ -780,6 +783,7 @@ async function main(): Promise<void> {
   dashboard.stop();
   macroFeed?.stop();
   tradingFeed?.stop();
+  htfFeed?.stop();
   bookTickerFeed?.stop();
   userDataFeed?.stop();
   exchange.destroy?.();

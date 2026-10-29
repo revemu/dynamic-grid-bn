@@ -430,6 +430,7 @@
             ema75: ev.ema75,
             ema200: ev.ema200,
             spreadPct: ev.fanSpreadPct,
+            requiredSpreadPct: ev.requiredSpreadPct,
             isFanningDown: ev.isFanningDown,
             isHookUp: ev.isHookUp,
             rsi: ev.rsi,
@@ -570,14 +571,14 @@
     const changePct = c.open > 0 ? ((c.close - c.open) / c.open) * 100 : 0;
     const changeColor = changePct >= 0 ? "#34d399" : "#f87171";
 
-    const targetSpread = currentRecord?.spreadThreshold || 0.25;
+    const targetSpread = data.requiredSpreadPct || currentRecord?.spreadThreshold || 0.25;
     const isSpreadReady = data.spreadPct >= targetSpread;
     const spreadDiff = data.spreadPct - targetSpread;
 
     // 5-point Sniper conditions (Exact match with MaFanCoreRules)
     const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
-    const condHook = data.isHookUp && c.close < data.ema25;
+    const condHook = data.isHookUp && c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0020);
     const condExhaust = !!data.isOversoldExhaustion;
     const condAbsorption = (data.lowerWickPct || 0) >= 15;
 
@@ -589,7 +590,7 @@
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
-      if (!condHook) missing.push(c.close >= data.ema25 ? `ราคาปิดอยู่สูงกว่า EMA25 (หลุดโซนย่อ)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
+      if (!condHook) missing.push(c.close >= data.ema25 * (1 - 0.0020) ? `ราคาอยู่ชิด/สูงกว่า EMA25 เกินไป (ขาด Upside Room ≥ 0.20%)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
       if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 45)`);
       if (!condAbsorption) missing.push(`ไส้ล่างซึมซับแรงขายต่ำเกินไป (${(data.lowerWickPct || 0).toFixed(1)}% < 15%)`);

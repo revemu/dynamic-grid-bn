@@ -5599,4 +5599,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - ในโหมด MA-FOLD-FAN ปรับให้ป้ายกำกับบนหัวชาร์ต (`elLegendTf`) และลายน้ำพื้นหลัง (`watermark`) ดึง `executionTimeframe` ("5M") มาแสดงผลอย่างถูกต้อง แทนที่จะดึง `dowTimeframe` ("15M") ของระบบเดิม ทำให้ผู้ใช้ตรวจสอบ Timeframe ได้ตรงกับความเป็นจริง
 
 
+---
+
+## 157. v0.2.157 — Deep Audit Remediation: Real-Time HTF Feed, BarsHeld Accurate Calculation, Feed Warmup Decoupling & Unified Candle Inspector (`src/index.ts`, `src/exchange/binance/feed.ts`, `src/strategy/ma-fan/strategy.ts`, `src/backtest-service.ts`, `public/app.js`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **เปิดใช้งาน `htfFeed.start()` และ `htfFeed.stop()` ในทุกสภาวะ (`src/index.ts`)**:
+   - **ปัญหาเดิม**: ตัวแปร `htfFeed` ถูกสร้างไว้แต่ไม่เคยถูกสั่ง `.start()` ทั้งตอนบอทเริ่มทำงาน (`main()`) หรือตอนสลับเหรียญ/สลับ Exchange ทำให้ไม่มีการรับแท่ง 15m สดจาก WebSocket ข้อมูล HTF จึงค้างอยู่ที่ค่า Snapshot เดิมตอนเปิดเครื่อง
+   - **การแก้ไข**: เพิ่ม `htfFeed?.start()` ในจุดเริ่มต้น `main()`, `symbolChanged`, `exchangeChanged` และเพิ่ม `htfFeed?.stop()` ใน `gracefulShutdown` เพื่อให้การอัปเดต HTF Regime ทำงานแบบ Real-time ตลอดเวลา
+
+2. **คำนวณ `barsHeld` ตามเวลาจริงและป้องกันการประเมินซื้อซ้ำกลางแท่งทันทีหลัง Exit (`src/strategy/ma-fan/strategy.ts`)**:
+   - **ปัญหาเดิม**: การคำนวณ `barsHeld` เดิมใช้ fallback เป็น 3 แท่งทันทีหากยังไม่มีแท่งใหม่หลังเวลาเปิดไม้ ทำให้เงื่อนไข Trapped Rescue ปลดล็อกเร็วเกินไป
+   - **การแก้ไข**:
+     - เปลี่ยนมานับแท่งเทียนที่ปิดจริงหลังเวลาเปิดไม้: `const barsHeld = this.candles.filter((c) => c.time >= entryTimeSec - 5).length;`
+     - ซิงค์ `this.evaluatedClosedCandleTime = this.lastClosedCandle.time` ตลอดระยะเวลาที่ถือ Position และหลังสั่งปิดไม้ TP2/SL เพื่อป้องกันไม่ให้บอทเปิดไม้ซื้อใหม่กลางแท่งเทียนเดิมทันทีหลังเพิ่งออกจากออเดอร์
+     - ส่ง `effectiveSpreadThreshold` ที่รวม `spreadMultiplier` จาก HTF Regime ออกทาง `getState()` ให้ Dashboard แสดงเกณฑ์ที่ต้องใช้อย่างถูกต้อง
+
+3. **ยกเลิกการส่ง Historical Candles เข้า Listeners ซ้ำซ้อนตอนเริ่มต้น Feed (`src/exchange/binance/feed.ts`)**:
+   - **ปัญหาเดิม**: `fetchHistoricalKlines()` ใน `BinanceAtrFeed` ส่งแท่งเทียนย้อนหลัง 300 แท่งเข้าไปใน `candleListeners` ซ้ำ ทั้งๆ ที่ระบบได้โหลดและแจกจ่ายผ่าน `loadHigherTimeframeCandles` และ `setInitialCandles` ไปแล้ว ทำให้เกิดการเรียก `onCandleClosed` ซ้ำถึง 300 ครั้งตอนสตาร์ตบอท
+   - **การแก้ไข**: ให้ `fetchHistoricalKlines()` ทำหน้าที่แค่อัปเดตค่าราคาล่าสุดและวอร์มอัปบัฟเฟอร์ ATR เท่านั้น โดยไม่ส่งแท่งย้อนหลังเข้าไปกระตุ้น Listeners อีกต่อไป
+
+4. **รวมตรรกะตัวตรวจวัดแท่งเทียน (Candle & Spread Inspector) ระหว่าง Live Dashboard และ Backtest Studio ให้ตรงกับ Backend 100% (`src/backtest-service.ts`, `public/app.js`, `public/backtest.js`)**:
+   - ใน `public/app.js`: เพิ่มฟังก์ชันคำนวณ `calcMacdClient` เพื่อหา `isTurningUp` ของ MACD Histogram และคำนวณ `isOversoldExhaustion` ให้ตรงกับสูตรของ `ExhaustionEngine` บน Backend แทนการเปรียบเทียบแค่ RSI
+   - ใน `public/app.js` และ `public/backtest.js`: เพิ่มเงื่อนไข `c.close <= data.ema25 * (1 - 0.0020)` (Minimum Upside Room $\ge 0.20\%$) ในการตรวจสอบ `condHook` พร้อมระบุสาเหตุที่ตกเกณฑ์อย่างชัดเจน
+   - ใน `src/backtest-service.ts`: บันทึก `requiredSpreadPct` (ที่คำนวณรวม `spreadMultiplier` ของ HTF แล้ว) ลงใน `evaluations` และให้ `public/backtest.js` นำไปเปรียบเทียบใน Candle Inspector ทำให้เกณฑ์ Spread ในการตรวจสอบแท่งเทียนตรงกับบอทจริง 100%
+
+
+
 

@@ -105,6 +105,8 @@ export interface BacktestEvaluationItem {
   ema25: number;
   ema75: number;
   ema200: number;
+  requiredSpreadPct?: number;
+  spreadMultiplier?: number;
 }
 
 export interface BacktestRecord {
@@ -561,9 +563,22 @@ export class BacktestService {
       worstTradePct: Number(worstTradePct.toFixed(2)),
     };
 
+    const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
     const evaluations: BacktestEvaluationItem[] = candles.map((c, idx) => {
       const rib = ribbonStates[idx]!;
       const exh = exhaustionStates[idx]!;
+      const htfReg = RegimeSupervisor.evaluateHtfRegime(candlesHtf, "15m", c.time);
+      const curAtrVal = atrs[idx] ?? (c.close * 0.003);
+      const baseSp = MaFanCoreRules.computeEffectiveSpread({
+        baseSpread: spread,
+        useAtrAdaptiveSpread: useAtrAdaptive,
+        isAutoCalibrated: isAuto,
+        curAtr: curAtrVal,
+        closePrice: c.close,
+        atrMultiplier,
+      });
+      const reqSp = Number((baseSp * (htfReg.spreadMultiplier ?? 1.0)).toFixed(2));
+
       return {
         time: c.time,
         fanSpreadPct: rib.fanSpreadPct,
@@ -577,6 +592,8 @@ export class BacktestService {
         ema25: rib.ema25,
         ema75: rib.ema75,
         ema200: rib.ema200,
+        requiredSpreadPct: reqSp,
+        spreadMultiplier: htfReg.spreadMultiplier,
       };
     });
 

@@ -102,9 +102,9 @@ export class BinanceAtrFeed implements AtrSource {
           if (isClosed) {
             this.onClosedBar(high, low, close);
           }
-          for (const listener of this.candleListeners) {
-            listener(candle, isClosed);
-          }
+          // Note: We intentionally do NOT dispatch historical candles to candleListeners here,
+          // because initial candles are already populated by loadHigherTimeframeCandles / setInitialCandles.
+          // Listeners should only receive live real-time candle events.
         }
       }
     } catch (err) {
