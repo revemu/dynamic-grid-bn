@@ -5982,6 +5982,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.173` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 174. v0.2.174 — Multi-Fill Split Sells Trade Cycle Consolidation & Accurate Win Rate Engine (`src/trade-rounds.ts`, `package.json`, `src/version.ts`)
+
+1. **แก้ไขบั๊กการตัดจบปิดรอบเทรดก่อนเวลาอันควรจากการ Stop Loss (`src/trade-rounds.ts`)**:
+   - **สาเหตุของปัญหา**:
+     - ใน `calculateTradeRounds` มีเงื่อนไขเดิม `const isFullExit = ["CUT", "EXIT"].includes(f.action); if (isInventoryFlat || isFullExit) finalizeRound(...)`
+     - เมื่อเกิดการ Stop Loss (`CUT`) แล้ว Binance แบ่งการจับคู่ใน Order Book เป็นหลายไม้ย่อย (Split Fills เช่น ไม้ซื้อ 722.2 HAEDAL โดนแบ่งขายเป็น 295.2 + 206.0 + 220.2):
+       - ไม้แรก (295.2) เช็คเจอ `action: "CUT"` ทำให้ `isFullExit = true` จึงสั่งปิดรอบทันที ทั้งที่ยังมีเหรียญค้างอีก 427.0 HAEDAL ที่กำลังขายตามมา
+       - ไม้ขายย่อยที่เหลือ (206.0 และ 220.2) จึงหลุดไปตั้งเป็นรอบใหม่ที่ไม่มีไม้ซื้อ กลายเป็น `SELL ONLY`
+       - ส่งผลให้การขายขาดทุนในรอบเดียว ถูกระบบนับเป็นการแพ้ 3 ครั้งซ้อน (รอบ #5, #6, #7) และฉุดให้อัตรา Win Rate ร่วงจาก 60.0% เหลือเพียง 43.7%
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - **Strict Inventory Flatness**: กำหนดให้รอบเทรดจะปิดลงได้ก็ต่อเมื่อเหรียญในคลังถูกระบายออกไปจนหมดจริง (`isInventoryFlat`: ปริมาณขายสะสม >= 95% ของไม้ซื้อ หรือมูลค่าคงเหลือ < $1.50 Dust)
+     - **Look-Ahead Order & Sell Protection**: ตรวจสอบไม้ถัดไป (`nextFill`) หากพบว่าไม้ถัดไปเป็น `orderId` เดียวกัน (กำลังถูก split fill) หรือยังอยู่ในช่วงขายต่อเนื่องของรอบนี้ จะ **ห้ามปิดรอบเด็ดขาด**
+     - ผลลัพธ์: รวมทุก partial fill ของการ Stop Loss หรือ TP1/TP2 เข้ามาอยู่ในรอบเทรดเดียวกันอย่างสมบูรณ์แบบ กำจัดรอบหลุดลอยแบบ `SELL ONLY` เป็น 0% และทำให้อัตรา Win Rate กลับมาถูกต้องตรงตามผลการเทรดจริงที่ **60.0% (ชนะ 6 / แพ้ 4 จาก 10 รอบจริง)**
+2. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.174` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

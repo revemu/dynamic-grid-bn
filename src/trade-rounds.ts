@@ -167,7 +167,8 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
   let currentRound: TradeRound | null = null;
   let inSellPhase = false;
 
-  for (const f of fills) {
+  for (let i = 0; i < fills.length; i++) {
+    const f = fills[i]!;
     const isBuy =
       f.side === "BUY" || f.action === "BUY_FILL" || f.action === "SNIPE_BUY";
     const qty = Number(f.qty || 0);
@@ -194,9 +195,9 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
       const remainingHeld = currentRound.buyQty - currentRound.sellQty;
       const remainingQuote = remainingHeld * (currentRound.avgBuyPrice || price);
       const isInventoryFlat = currentRound.buyQty > 0 && currentRound.sellCount > 0 && (
-        currentRound.sellQty >= currentRound.buyQty * 0.98 ||
-        remainingHeld <= 1e-6 ||
-        remainingQuote < 1.0
+        currentRound.sellQty >= currentRound.buyQty * 0.95 ||
+        remainingHeld <= 1e-5 ||
+        remainingQuote < 1.5
       );
       const isSellOnly = currentRound.buyQty === 0 && currentRound.sellCount > 0;
 
@@ -307,12 +308,29 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
         f.levelDesc?.includes("100% FULL EXIT");
 
       const isInventoryFlat = currentRound.buyQty > 0 && (
-        currentRound.sellQty >= currentRound.buyQty * 0.98 ||
-        remainingHeld <= 1e-6 ||
-        remainingQuote < 1.0
+        currentRound.sellQty >= currentRound.buyQty * 0.95 ||
+        remainingHeld <= 1e-5 ||
+        remainingQuote < 1.5
       );
 
-      if (isInventoryFlat || isFullExit) {
+      const nextFill = fills[i + 1];
+      const nextIsSell = nextFill && (
+        nextFill.side === "SELL" ||
+        nextFill.action === "SELL_FILL" ||
+        nextFill.action === "CUT" ||
+        nextFill.action === "TAKE_PROFIT" ||
+        nextFill.action === "SNIPE_SELL"
+      );
+      const nextIsSameOrder = Boolean(nextFill && f.orderId && nextFill.orderId === f.orderId);
+
+      // Do NOT prematurely close this round if:
+      // 1) The next fill belongs to the exact same order (multi-fill split lot)
+      // 2) Selling is still in progress (next fill is also a SELL) unless inventory is completely zero
+      // 3) Only close when inventory is actually flat, or when full exit has sold off the vast majority of inventory
+      const isLiquidated = isInventoryFlat || (isFullExit && (currentRound.sellQty >= currentRound.buyQty * 0.90 || remainingQuote < 2.0));
+      const shouldFinalize = isLiquidated && !nextIsSameOrder && (!nextIsSell || remainingHeld <= 1e-5);
+
+      if (shouldFinalize) {
         finalizeRound(currentRound, false);
         rounds.push(currentRound);
         currentRound = null;
@@ -488,9 +506,9 @@ function finalizeRound(r: TradeRound, isLatestRound: boolean): void {
   r.holdingQty = Math.max(0, r.buyQty - r.sellQty);
   const holdingValueQuote = r.holdingQty * (r.avgBuyPrice || 0);
   const isInventoryFlat = r.buyQty > 0 && (
-    r.sellQty >= r.buyQty * 0.98 ||
-    r.holdingQty <= 1e-6 ||
-    (holdingValueQuote < 1.0 && r.sellCount > 0)
+    r.sellQty >= r.buyQty * 0.95 ||
+    r.holdingQty <= 1e-5 ||
+    (holdingValueQuote < 1.5 && r.sellCount > 0)
   );
 
   if (r.sellCount > 0 && r.buyCount === 0) {
