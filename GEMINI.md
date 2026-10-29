@@ -5950,6 +5950,19 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.171` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 172. v0.2.172 — Relocate Strategy Plan Chips to Chart Header Center & Unconstrained Status Banner (`public/index.html`, `public/style.css`, `package.json`, `src/version.ts`)
+
+1. **Relocate Strategy Plan Chips to Chart Header Center Frame (`public/index.html` & `public/style.css`)**:
+   - ย้ายชิปราคาเป้าหมายกลยุทธ์ 4 ตัว (`IN จุดเข้า`, `TP1 EMA 25`, `TP2 Runner`, `SL Stop Loss`) ลงมาไว้ที่ **ตรงกลางของกรอบหัวชาร์ต (`panel-header`)** ในช่องว่างระหว่างชื่อเหรียญและปุ่มควบคุมไทม์เฟรม
+   - จัดวางชิปให้อยู่ติดกับขอบกราฟราคาอย่างสวยงามและเป็นธรรมชาติที่สุด
+2. **Unconstrained Full-Width Status Banner**:
+   - เมื่อย้ายชิปราคาลงมาที่กรอบล่าง แถบสถานะบอทด้านบน (`bot-status-banner`) จะเหลือเฉพาะข้อความสถานะและเหตุผล (`#bannerReasonText`) ทำให้มีพื้นที่กว้างเต็มบรรทัด ไม่ถูกชิปเบียดจนข้อความถูกตัดคำด้วย `...` อีกต่อไป
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.172` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
