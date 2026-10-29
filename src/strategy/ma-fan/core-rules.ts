@@ -182,8 +182,8 @@ export class MaFanCoreRules {
     const currentIndex = opts.currentIndex ?? (candles.length - 1);
 
     const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
-    // Require adequate upside room from closePrice to EMA25 (at least 0.20%) to avoid entering when price is already touching EMA25
-    const hasUpsideRoomToEma25 = closePrice <= ribbon.ema25 * (1 - 0.0020);
+    // Require adequate upside room from closePrice to EMA25 (at least 0.30%) to avoid entering when fees eat gross profit
+    const hasUpsideRoomToEma25 = closePrice <= ribbon.ema25 * (1 - 0.0030);
     const isDownside = ribbon.ema4 <= ribbon.ema25 && closePrice < ribbon.ema25 && hasUpsideRoomToEma25;
 
     // Minimum lower wick absorption check (at least 15% lower shadow rejection to filter out waterfall dumps)
@@ -285,7 +285,7 @@ export class MaFanCoreRules {
         actualText: closePrice < ribbon.ema25
           ? `ต่ำกว่า EMA25 ${(((ribbon.ema25 - closePrice) / ribbon.ema25) * 100).toFixed(2)}%`
           : "อยู่เหนือ EMA25",
-        requiredText: "ต่ำกว่า EMA25 ≥ 0.20%",
+        requiredText: "ต่ำกว่า EMA25 ≥ 0.30%",
       },
       {
         id: "wick",
@@ -466,7 +466,17 @@ export class MaFanCoreRules {
 
     const beFeeBuffer = (breakevenFeeBufferPct ?? 0.05) / 100;
 
-    // ── Priority 1: TP2 Check (if TP1 was already filled) ───────────────────
+    // ── Priority 1: Stop Loss / Breakeven Stop Check ────────────────────────
+    // If price falls to or below stopLossPrice, SL takes absolute precedence
+    if (lowPrice <= stopLossPrice) {
+      return {
+        action: "SL",
+        exitPrice: stopLossPrice,
+        reason: tp1Filled ? "Breakeven Stop Loss Triggered" : "Stop Loss Triggered",
+      };
+    }
+
+    // ── Priority 2: TP2 Check (if TP1 was already filled) ───────────────────
     if (tp1Filled) {
       const target = Math.max(ribbon.ema75, ribbon.ema200);
       const hitTarget = highPrice >= target && highPrice > entryPrice * 1.0035;
@@ -475,11 +485,13 @@ export class MaFanCoreRules {
       const hitOverbought = !!isOverbought && highPrice > entryPrice * 1.008;
 
       if (hitTarget || hitTrailing || hitOverbought) {
-        const exitPrice = hitTarget
+        const rawExitPrice = hitTarget
           ? Math.min(highPrice, Math.max(target, closePrice))
           : hitTrailing
           ? highestPriceSinceTp1 * trailingExitRatio
           : closePrice;
+        // Never allow TP2 to exit below the locked stopLossPrice (Breakeven)
+        const exitPrice = Math.max(stopLossPrice, rawExitPrice);
         return {
           action: "TP2",
           exitPrice,
@@ -490,15 +502,6 @@ export class MaFanCoreRules {
             : "Overbought Exhaustion Exit",
         };
       }
-    }
-
-    // ── Priority 2: Stop Loss Check ─────────────────────────────────────────
-    if (lowPrice <= stopLossPrice) {
-      return {
-        action: "SL",
-        exitPrice: stopLossPrice,
-        reason: "Stop Loss Triggered",
-      };
     }
 
     // ── Priority 3: TP1 at EMA 25 & Trapped Breakeven Rescue ────────────────

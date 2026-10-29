@@ -413,6 +413,43 @@ export class BacktestService {
     const atrs = opts.precomputed?.atrs ?? calcATR(candles, 14);
 
     const startIdx = opts.onlyEntryIdx !== undefined ? opts.onlyEntryIdx : warmup;
+
+    // Pre-initialize evaluations array to stay 100% in sync with exact rolling calibrations per candle
+    const evaluations: BacktestEvaluationItem[] = opts.onlyEntryIdx !== undefined ? [] : new Array(candles.length);
+    if (opts.onlyEntryIdx === undefined) {
+      for (let k = 0; k < startIdx; k++) {
+        const cK = candles[k]!;
+        const ribK = ribbonStates[k]!;
+        const exhK = exhaustionStates[k]!;
+        const htfK = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, cK.time, tp1Ratio);
+        const curAtrK = atrs[k] ?? (cK.close * 0.003);
+        const baseSpK = MaFanCoreRules.computeEffectiveSpread({
+          baseSpread: spread,
+          useAtrAdaptiveSpread: useAtrAdaptive,
+          isAutoCalibrated: isAuto,
+          curAtr: curAtrK,
+          closePrice: cK.close,
+          atrMultiplier,
+        });
+        evaluations[k] = {
+          time: cK.time,
+          fanSpreadPct: ribK.fanSpreadPct,
+          isFanningDown: ribK.isFanningDown,
+          isHookUp: ribK.isHookUp,
+          rsi: exhK.rsi,
+          isOversoldExhaustion: exhK.isOversoldExhaustion,
+          ema4: ribK.ema4,
+          ema8: ribK.ema8,
+          ema16: ribK.ema16,
+          ema25: ribK.ema25,
+          ema75: ribK.ema75,
+          ema200: ribK.ema200,
+          requiredSpreadPct: Number((baseSpK * (htfK.spreadMultiplier ?? 1.0)).toFixed(2)),
+          spreadMultiplier: htfK.spreadMultiplier,
+        };
+      }
+    }
+
     for (let i = startIdx; i < candles.length; i++) {
       const c = candles[i]!;
       const ribbon = ribbonStates[i]!;
@@ -738,6 +775,24 @@ export class BacktestService {
         const requiredSpread = currentSpread * htfRegime.spreadMultiplier;
 
         const exhaustion = exhaustionStates[i]!;
+        if (opts.onlyEntryIdx === undefined) {
+          evaluations[i] = {
+            time: c.time,
+            fanSpreadPct: ribbon.fanSpreadPct,
+            isFanningDown: ribbon.isFanningDown,
+            isHookUp: ribbon.isHookUp,
+            rsi: exhaustion.rsi,
+            isOversoldExhaustion: exhaustion.isOversoldExhaustion,
+            ema4: ribbon.ema4,
+            ema8: ribbon.ema8,
+            ema16: ribbon.ema16,
+            ema25: ribbon.ema25,
+            ema75: ribbon.ema75,
+            ema200: ribbon.ema200,
+            requiredSpreadPct: Number(requiredSpread.toFixed(2)),
+            spreadMultiplier: htfRegime.spreadMultiplier,
+          };
+        }
         const entryDecision = MaFanCoreRules.evaluateEntry({
           candles,
           currentIndex: i,
@@ -845,39 +900,6 @@ export class BacktestService {
       bestTradePct: Number(bestTradePct.toFixed(2)),
       worstTradePct: Number(worstTradePct.toFixed(2)),
     };
-
-    const evaluations: BacktestEvaluationItem[] = opts.onlyEntryIdx !== undefined ? [] : candles.map((c, idx) => {
-      const rib = ribbonStates[idx]!;
-      const exh = exhaustionStates[idx]!;
-      const htfReg = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, c.time, tp1Ratio);
-      const curAtrVal = atrs[idx] ?? (c.close * 0.003);
-      const baseSp = MaFanCoreRules.computeEffectiveSpread({
-        baseSpread: spread,
-        useAtrAdaptiveSpread: useAtrAdaptive,
-        isAutoCalibrated: isAuto,
-        curAtr: curAtrVal,
-        closePrice: c.close,
-        atrMultiplier,
-      });
-      const reqSp = Number((baseSp * (htfReg.spreadMultiplier ?? 1.0)).toFixed(2));
-
-      return {
-        time: c.time,
-        fanSpreadPct: rib.fanSpreadPct,
-        isFanningDown: rib.isFanningDown,
-        isHookUp: rib.isHookUp,
-        rsi: exh.rsi,
-        isOversoldExhaustion: exh.isOversoldExhaustion,
-        ema4: rib.ema4,
-        ema8: rib.ema8,
-        ema16: rib.ema16,
-        ema25: rib.ema25,
-        ema75: rib.ema75,
-        ema200: rib.ema200,
-        requiredSpreadPct: reqSp,
-        spreadMultiplier: htfReg.spreadMultiplier,
-      };
-    });
 
     const finalEffectiveSpread = isAuto && rollingSpreadCount > 0
       ? Number((rollingSpreadSum / rollingSpreadCount).toFixed(2))

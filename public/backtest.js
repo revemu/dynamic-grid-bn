@@ -608,7 +608,7 @@
     // 5-point Sniper conditions (Exact match with MaFanCoreRules)
     const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
-    const condHook = data.isHookUp && c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0020);
+    const condHook = data.isHookUp && c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0030);
     const condExhaust = !!data.isOversoldExhaustion;
     const condAbsorption = (data.lowerWickPct || 0) >= 15;
 
@@ -616,13 +616,13 @@
 
     let verdictHtml = "";
     if (allReady) {
-      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 5 ข้อ! (จังหวะเปิดไม้ BUY)</div>`;
+      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 5 ข้อ! (เปิดไม้ BUY ณ ราคาปิดแท่ง $${fmtPrice(c.close)} เข้าสู่แท่งถัดไป)</div>`;
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
-      if (!condHook) missing.push(c.close >= data.ema25 * (1 - 0.0020) ? `ราคาอยู่ชิด/สูงกว่า EMA25 เกินไป (ขาด Upside Room ≥ 0.20%)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
+      if (!condHook) missing.push(c.close >= data.ema25 * (1 - 0.0030) ? `ราคาอยู่ชิด/สูงกว่า EMA25 เกินไป (ขาด Upside Room ≥ 0.30%)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
-      if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 45)`);
+      if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 42)`);
       if (!condAbsorption) missing.push(`ไส้ล่างซึมซับแรงขายต่ำเกินไป (${(data.lowerWickPct || 0).toFixed(1)}% < 15%)`);
       verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;
     }
@@ -954,10 +954,10 @@
       actionTitle = isOpen ? `🟢 เข้าซื้อ (BUY) ไม้ #${t.id} [กำลังถือ]` : `🟢 เข้าซื้อ (BUY) ไม้ #${t.id}`;
       actionColor = "#10b981";
       bodyHtml = `
-        <div class="cot-row"><span class="cot-label">ราคาเข้า (Entry):</span><span class="cot-val" style="color: #34d399;">$${fmtPrice(t.entryPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">ราคาเข้า (ราคาปิดแท่ง):</span><span class="cot-val" style="color: #34d399;">$${fmtPrice(t.entryPrice)}</span></div>
         <div class="cot-row"><span class="cot-label">Fan Spread ตอนเข้า:</span><span class="cot-val">${t.fanSpreadAtEntry ? t.fanSpreadAtEntry.toFixed(2) + "%" : "--"}</span></div>
         <div class="cot-row"><span class="cot-label">Stop Loss:</span><span class="cot-val" style="color: #f87171;">$${fmtPrice(t.stopLossPrice)}</span></div>
-        <div class="cot-row"><span class="cot-label">เวลาเปิดไม้:</span><span class="cot-val">${fmtDateTime(t.entryTime)}</span></div>
+        <div class="cot-row"><span class="cot-label">แท่งสัญญาณ (Confirmed):</span><span class="cot-val">${fmtDateTime(t.entryTime)} (ปิดแท่งสมบูรณ์)</span></div>
         ${isOpen ? `<div class="cot-row"><span class="cot-label">สถานะปัจจุบัน:</span><span class="cot-val" style="color: #34d399; font-weight:700;">🟢 กำลังถือ Position (${t.holdingBars} แท่ง, PnL: ${t.pnlPct >= 0 ? "+" : ""}${t.pnlPct.toFixed(2)}%)</span></div>` : ""}
       `;
     } else if (item.action === "TP1") {

@@ -110,12 +110,12 @@ export class RibbonEngine {
 
     const curCandle = candles[idx]!;
 
-    // Momentum Hook Up: EMA 4 crosses above EMA 8 OR green candle closes above EMA 4 (while staying below EMA 25)
+    // Momentum Hook Up: EMA 4 crosses above EMA 8 OR green candle closes above EMA 4 (while curling/flattening out and staying below EMA 25)
     const isHookUp =
       curEma4 <= curEma25 * 1.002 &&
       curCandle.close < curEma25 &&
       ((curEma4 >= curEma8 && prevEma4 < prevEma8) ||
-        (curCandle.close > curEma4 && curCandle.close > curCandle.open));
+        (curCandle.close > curEma4 && curCandle.close > curCandle.open && curEma4 >= prevEma4 * 0.9992));
 
     // Momentum Hook Down (for Bearish exhaustion / Top exit)
     const isHookDown =
@@ -205,7 +205,7 @@ export class RibbonEngine {
         curEma4 <= curEma25 * 1.002 &&
         curCandle.close < curEma25 &&
         ((curEma4 >= curEma8 && prevEma4 < prevEma8) ||
-          (curCandle.close > curEma4 && curCandle.close > curCandle.open));
+          (curCandle.close > curEma4 && curCandle.close > curCandle.open && curEma4 >= prevEma4 * 0.9992));
 
       const isHookDown =
         (curEma4 <= curEma8 && prevEma4 > prevEma8) ||

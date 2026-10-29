@@ -6077,6 +6077,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.177` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 178. v0.2.178 — Forensic Root-Cause Fixes: Candle Inspector Desync, Confirmed Candle Close Entry Clarity & Cashflow Structural Upgrades (`src/backtest-service.ts`, `src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/regime.ts`, `src/strategy/ma-fan/ribbon.ts`, `src/strategy/ma-fan/exhaustion.ts`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **แก้ไขปัญหา Candle Inspector Desync กับ Dynamic Rolling Spread ใน Backtest (`src/backtest-service.ts`)**:
+   - **สาเหตุของปัญหา**:
+     - เมื่อทดสอบหลายวัน (เช่น 4,320 แท่ง / 15 วัน หรือ 8,640 แท่ง / 30 วัน) ระบบ Dynamic Rolling Calibrator จะปรับเปลี่ยนเกณฑ์ `currentRollingSpread` ทุกๆ 144 แท่ง (12 ชม.) เช่น ณ ช่วงแท่ง `Oct 24 03:25 AM` เกณฑ์คำนวณจริงปรับลดลงมาเหลือ `0.20%` (หรือ `0.25%` หลังรวม HTF Multiplier) ซึ่งทำให้แท่งที่มี Spread `0.55%` ผ่านเกณฑ์และเปิดไม้ซื้ออย่างถูกต้อง
+     - แต่ในฟังก์ชันสร้างข้อมูล Inspector (`evaluations`) เดิม ดันใช้ค่าเริ่มต้นคงที่ `spread = 0.45%` (ก่อนเริ่มรัน) ไปคูณกับ HTF Multiplier 1.25x จนได้ `0.56%` ส่งผลให้หน้าต่าง Inspector แสดงเกณฑ์ผิดตัวและฟ้องว่า `❌ ไม่ผ่าน (ขาดอีก 0.01%)` ทั้งที่ใน Loop จำลองจริงผ่านเกณฑ์ไปแล้ว
+   - **การแก้ไข**:
+     - ปรับให้ `evaluations[i]` ถูกบันทึกข้อมูลแบบ Synchronous พร้อมกับตัวแปรที่แท้จริงใน Loop คำนวณแต่ละแท่งเทียนโดยตรง
+     - ตัดการคำนวณซ้ำแบบ `.map()` ที่ใช้ค่าคงที่เดิมทิ้ง ทำให้ค่า `requiredSpreadPct` ในหน้าต่าง Inspector ตรงกับเงื่อนไขที่บอทใช้ตัดสินใจในประวัติศาสตร์ 100%
+2. **ความชัดเจนของเวลาและป้ายคำสั่งซื้อ (Confirmed Candle Close Entry Clarity) (`public/backtest.js`)**:
+   - อัปเดตคำอธิบายใน Candle Inspector: `🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 5 ข้อ! (เปิดไม้ BUY ณ ราคาปิดแท่ง $... เข้าสู่แท่งถัดไป)`
+   - ปรับข้อความใน Order Tooltip: `ราคาเข้า (ราคาปิดแท่ง): $...` และ `แท่งสัญญาณ (Confirmed): ... (ปิดแท่งสมบูรณ์)`
+   - ชี้แจงให้เห็นชัดเจนว่าในระบบกราฟ Binance เวลาของแท่งเทียนคือ Open Time แต่การเข้าซื้อของบอทประเมินจากราคาปิดที่ยืนยันแล้วของแท่งนั้น
+3. **การยกระดับโครงสร้าง R:R, คุณภาพสัญญาณ Hook และการป้องกัน Exit Bug (`core-rules.ts`, `regime.ts`, `ribbon.ts`, `exhaustion.ts`)**:
+   - **ป้องกันบั๊ก Breakeven SL โดน TP2 ข้ามหัว (`core-rules.ts`)**: ในจังหวะที่ถือไม้รัน (TP1 Filled) ให้เช็คเงื่อนไข `lowPrice <= stopLossPrice` เป็นลำดับสูงสุด และบังคับ Clamp ราคาออกของ TP2 ให้ไม่ต่ำกว่า `stopLossPrice` (จุด Breakeven ที่ล็อกไว้) เสมอ
+   - **เพิ่มระยะ Upside Room ขั้นต่ำถึง EMA25 (`core-rules.ts`)**: ปรับเพิ่มระยะห่างจากราคาปิดถึง EMA25 จากเดิม 0.20% เป็นอย่างน้อย 0.30% เพื่อให้มี Margin กำไรเพียงพอหลังหักค่าธรรมเนียม Taker Fee ไป-กลับของคู่ USDT
+   - **ปรับปรุง HTF Bullish Regime ให้สะท้อนความจริง (`regime.ts`)**: แก้ไขเงื่อนไข `OR` (`||`) ให้ราคาปิดบน 15m ต้องอยู่เหนือ EMA200 จริง (`isAboveEma200 && (isEmaAlignedUp || c.close >= curEma25)`) ป้องกันไม่ให้ขาลงช่วงแรกหลอกบอทว่าเป็นตลาดขาขึ้น
+   - **ยกระดับ Hook Up & True Exhaustion (`ribbon.ts` & `exhaustion.ts`)**: บังคับให้ EMA4 ต้องไม่ทิ่มลงชัน และปรับเกณฑ์ RSI Oversold ให้เป็นภาวะตึงตัวจริง (RSI <= 42/38)
+4. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.178` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

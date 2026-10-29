@@ -65,7 +65,8 @@ export class RegimeSupervisor {
 
     const isAboveEma200 = c.close >= curEma200 * 0.998;
     const isEmaAlignedUp = curEma25 >= curEma75;
-    const isBullish = isAboveEma200 || isEmaAlignedUp;
+    // HTF is Bullish only when price has not broken below EMA 200 AND either EMAs are aligned up or price is above EMA 25
+    const isBullish = isAboveEma200 && (isEmaAlignedUp || c.close >= curEma25);
 
     // Asymmetric risk rules:
     // If Bullish: Standard spread (1.0x), user configured baseTp1Ratio (e.g. 50%)
