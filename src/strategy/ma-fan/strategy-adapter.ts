@@ -73,6 +73,9 @@ export class MaFanTradingStrategy implements IStrategy {
       bullCushionEnabled: this.cfg.maFanBullCushion === true,
       waterfallGuardEnabled: this.cfg.maFanWaterfallGuard !== false,
       entryOnClosedOnly: this.cfg.maFanEntryOnClosedOnly ?? true,
+      macroGateMode: (this.cfg.maFanMacroGate as "off" | "noDeepBear" | "bullOnly") || "noDeepBear",
+      upsideFloorEnabled: this.cfg.maFanUpsideFloor !== false,
+      circuitBreakerEnabled: this.cfg.maFanCircuitBreaker !== false,
       maxPositionBudgetUsd: this.cfg.maFanMaxBudgetUsd ?? 200,
       isDryRun: this.cfg.dryRun ?? false,
       startPaused: this.cfg.startPaused ?? true,
@@ -450,6 +453,18 @@ export class MaFanTradingStrategy implements IStrategy {
     if (s.maFanEntryOnClosedOnly !== undefined) {
       this.cfg.maFanEntryOnClosedOnly = s.maFanEntryOnClosedOnly;
       this.maFan.config.entryOnClosedOnly = s.maFanEntryOnClosedOnly;
+    }
+    if (s.maFanMacroGate !== undefined) {
+      this.cfg.maFanMacroGate = s.maFanMacroGate;
+      this.maFan.config.macroGateMode = s.maFanMacroGate;
+    }
+    if (s.maFanUpsideFloor !== undefined) {
+      this.cfg.maFanUpsideFloor = s.maFanUpsideFloor;
+      this.maFan.config.upsideFloorEnabled = s.maFanUpsideFloor;
+    }
+    if (s.maFanCircuitBreaker !== undefined) {
+      this.cfg.maFanCircuitBreaker = s.maFanCircuitBreaker;
+      this.maFan.config.circuitBreakerEnabled = s.maFanCircuitBreaker;
     }
 
     this.maFan.config.manualSpreadPct = this.cfg.maFanManualSpreadPct;

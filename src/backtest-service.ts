@@ -76,6 +76,9 @@ export interface MarketScanOptions {
   cushionMode?: CushionMode;
   waterfallGuardMode?: WaterfallGuardMode;
   costModel?: { feePctPerSide: number; slippagePctPerFill: number };
+  macroGateMode?: "off" | "noDeepBear" | "bullOnly";
+  enableUpsideFloor?: boolean;
+  enableCircuitBreaker?: boolean;
 }
 
 export interface BacktestMarker {
@@ -120,6 +123,9 @@ export interface BacktestEvaluationItem {
   ema200: number;
   requiredSpreadPct?: number;
   spreadMultiplier?: number;
+  isDeepBear?: boolean;
+  isMacroBlocked?: boolean;
+  isCircuitBreakerActive?: boolean;
 }
 
 export interface BacktestRecord {
@@ -131,6 +137,9 @@ export interface BacktestRecord {
   spreadThreshold: number;
   isAutoCalibrated?: boolean;
   useRatchetSl?: boolean;
+  macroGateMode?: "off" | "noDeepBear" | "bullOnly";
+  enableUpsideFloor?: boolean;
+  enableCircuitBreaker?: boolean;
   summary: BacktestSummary;
   trades: BacktestTrade[];
   markers: BacktestMarker[];
@@ -322,6 +331,9 @@ export class BacktestService {
       tp1MinProfitPct?: number;
       minRewardRiskRatio?: number;
       waterfallGuardMode?: WaterfallGuardMode;
+      macroGateMode?: "off" | "noDeepBear" | "bullOnly";
+      enableUpsideFloor?: boolean;
+      enableCircuitBreaker?: boolean;
       exitInfoLag?: 0 | 1;
       warmupBars?: number;
       precomputed?: {
@@ -343,6 +355,9 @@ export class BacktestService {
     const tp1Ratio = Math.max(0.1, Math.min(0.9, opts.tp1Ratio ?? 0.50));
     const supervisorTf = opts.supervisorTimeframe ?? "15m";
     const targetMinutes = supervisorTf === "1h" ? 60 : 15;
+    const macroGateMode = opts.macroGateMode ?? "noDeepBear";
+    const enableUpsideFloor = opts.enableUpsideFloor !== false;
+    const enableCircuitBreaker = opts.enableCircuitBreaker !== false;
 
     // HTF candles: use provided or aggregate from candles
     const candlesHtf = opts.candlesHtf && opts.candlesHtf.length > 0
@@ -369,6 +384,8 @@ export class BacktestService {
         useRatchetSl,
         cushionMode: opts.cushionMode ?? "off",
         costModel: opts.costModel,
+        macroGateMode,
+        enableUpsideFloor,
       });
       spread = cal.bestSpreadPct || 0.25;
     }
@@ -382,6 +399,9 @@ export class BacktestService {
     const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
     const intrabarMode = opts.intrabarMode ?? "closeBased";
     const warmup = opts.warmupBars !== undefined ? opts.warmupBars : Math.min(100, Math.floor(candles.length / 4));
+
+    let recentSlTimes: number[] = [];
+    let cooldownUntilTs = 0;
 
     let cash = initialCapital;
     let heldQty = 0;
@@ -593,6 +613,13 @@ export class BacktestService {
           } else {
             grossLoss += Math.abs(totalPnlQuote);
             losses++;
+            recentSlTimes.push(c.time);
+            if (enableCircuitBreaker) {
+              recentSlTimes = recentSlTimes.filter((t) => t >= c.time - 12 * 3600);
+              if (recentSlTimes.length >= 2) {
+                cooldownUntilTs = c.time + 6 * 3600;
+              }
+            }
           }
 
           trades.push({
@@ -747,6 +774,8 @@ export class BacktestService {
             useRatchetSl,
             cushionMode: opts.cushionMode ?? "off",
             costModel: opts.costModel,
+            macroGateMode,
+            enableUpsideFloor,
           });
           if (cal.bestSpreadPct) {
             currentRollingSpread = cal.bestSpreadPct;
@@ -780,6 +809,26 @@ export class BacktestService {
         const requiredSpread = currentSpread * htfRegime.spreadMultiplier;
 
         const exhaustion = exhaustionStates[i]!;
+        const isCircuitActive = enableCircuitBreaker && c.time < cooldownUntilTs;
+
+        const entryDecision = MaFanCoreRules.evaluateEntry({
+          candles,
+          currentIndex: i,
+          closePrice: c.close,
+          ribbon,
+          exhaustion,
+          requiredSpreadPct: requiredSpread,
+          curAtr,
+          slBufferPct,
+          minRewardRiskRatio: opts.minRewardRiskRatio,
+          waterfallGuardMode: opts.waterfallGuardMode,
+          isHtfBull: !!htfRegime.isBullish,
+          macroGateMode,
+          htfRegime,
+          enableUpsideFloor,
+          circuitBreakerActive: isCircuitActive,
+        });
+
         if (opts.onlyEntryIdx === undefined) {
           evaluations[i] = {
             time: c.time,
@@ -796,21 +845,11 @@ export class BacktestService {
             ema200: ribbon.ema200,
             requiredSpreadPct: Number(requiredSpread.toFixed(2)),
             spreadMultiplier: htfRegime.spreadMultiplier,
+            isDeepBear: htfRegime.isDeepBear,
+            isMacroBlocked: entryDecision.blockedBy === "MACRO_GATE",
+            isCircuitBreakerActive: isCircuitActive,
           };
         }
-        const entryDecision = MaFanCoreRules.evaluateEntry({
-          candles,
-          currentIndex: i,
-          closePrice: c.close,
-          ribbon,
-          exhaustion,
-          requiredSpreadPct: requiredSpread,
-          curAtr,
-          slBufferPct,
-          minRewardRiskRatio: opts.minRewardRiskRatio,
-          waterfallGuardMode: opts.waterfallGuardMode,
-          isHtfBull: !!htfRegime.isBullish,
-        });
 
         if (entryDecision.shouldEnter) {
           activeTradeId++;
@@ -925,6 +964,9 @@ export class BacktestService {
       spreadThreshold: finalEffectiveSpread,
       isAutoCalibrated: isAuto,
       useRatchetSl,
+      macroGateMode,
+      enableUpsideFloor,
+      enableCircuitBreaker,
       summary,
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
@@ -1101,6 +1143,9 @@ export class BacktestService {
               cushionMode: opts.cushionMode ?? "off",
               waterfallGuardMode: opts.waterfallGuardMode ?? "off",
               costModel: symCostModel,
+              macroGateMode: opts.macroGateMode ?? "noDeepBear",
+              enableUpsideFloor: opts.enableUpsideFloor !== false,
+              enableCircuitBreaker: opts.enableCircuitBreaker !== false,
             });
 
             results.push({

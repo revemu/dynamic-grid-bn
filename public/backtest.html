@@ -88,6 +88,23 @@
         </div>
 
         <div class="bt-input-group">
+          <label>Macro Gate (1H)</label>
+          <select id="btMacroGate" title="ตัวกรองแนวโน้มใหญ่ ป้องกันตลาดขาลงลึก">
+            <option value="noDeepBear" selected>🛡️ No Deep Bear (แนะนำ)</option>
+            <option value="bullOnly">🐂 Bull Only (กระทิงเท่านั้น)</option>
+            <option value="off">🌐 Off (เทรดทุกสภาวะ)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
+          <label>Circuit Breaker</label>
+          <select id="btCircuitBreaker" title="หยุดพักบอท 6 ชั่วโมงเมื่อโดน SL 2 ไม้ติดใน 12 ชม.">
+            <option value="on" selected>⏸️ SL 2 ไม้ติด พัก 6 ชม.</option>
+            <option value="off">❌ ปิดเบรกเกอร์</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
           <label>เงินทุน ($)</label>
           <input type="number" id="btBudget" value="200" min="10" step="10" />
         </div>

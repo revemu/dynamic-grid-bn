@@ -40,6 +40,10 @@ export const defaultStrategyConfig = {
   maFanUseRatchetSl: true,
   maFanBullCushion: false,
   maFanWaterfallGuard: true,
+  maFanMacroGate: "noDeepBear" as "off" | "noDeepBear" | "bullOnly",
+  maFanUpsideFloor: true,
+  maFanCircuitBreaker: true,
+  maFanCircuitBreakerUntil: 0,
   maFanMaxBudgetUsd: 200,
   maFanEntryOnClosedOnly: true,
 
@@ -383,6 +387,12 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.maFanUseRatchetSl !== undefined) merged.maFanUseRatchetSl = Boolean(saved.maFanUseRatchetSl);
       if (saved.maFanBullCushion !== undefined) merged.maFanBullCushion = Boolean(saved.maFanBullCushion);
       if (saved.maFanWaterfallGuard !== undefined) merged.maFanWaterfallGuard = Boolean(saved.maFanWaterfallGuard);
+      if (saved.maFanMacroGate !== undefined && ["off", "noDeepBear", "bullOnly"].includes(saved.maFanMacroGate)) {
+        merged.maFanMacroGate = saved.maFanMacroGate;
+      }
+      if (saved.maFanUpsideFloor !== undefined) merged.maFanUpsideFloor = Boolean(saved.maFanUpsideFloor);
+      if (saved.maFanCircuitBreaker !== undefined) merged.maFanCircuitBreaker = Boolean(saved.maFanCircuitBreaker);
+      if (saved.maFanCircuitBreakerUntil !== undefined) merged.maFanCircuitBreakerUntil = Number(saved.maFanCircuitBreakerUntil);
       if (saved.htfTimeframe !== undefined) merged.htfTimeframe = String(saved.htfTimeframe);
       if (saved.vpLookbackBars !== undefined) merged.vpLookbackBars = Number(saved.vpLookbackBars);
       if (saved.enableTrendChannelGating !== undefined) merged.enableTrendChannelGating = Boolean(saved.enableTrendChannelGating);

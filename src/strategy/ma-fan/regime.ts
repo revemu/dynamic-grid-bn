@@ -74,12 +74,22 @@ export class RegimeSupervisor {
     const spreadMultiplier = isBullish ? 1.0 : 1.25;
     const recommendedTp1Ratio = isBullish ? cleanBaseTp1 : Math.max(cleanBaseTp1, 0.75);
 
+    const distToEma200Pct = curEma200 > 0 ? ((c.close - curEma200) / curEma200) * 100 : 0;
+    const prevEma200 = idx >= 5 ? cache.ema200[idx - 5]! : curEma200;
+    const ema200Slope = prevEma200 > 0 ? ((curEma200 - prevEma200) / prevEma200) * 100 : 0;
+
+    // Deep Bear regime: price is below EMA200 by more than 2.0% OR EMA200 is sloping down sharply
+    const isDeepBear = distToEma200Pct < -2.0 || ema200Slope < -0.15;
+
     return {
       timeframe,
       isBullish,
       isAboveEma200,
       spreadMultiplier,
       recommendedTp1Ratio,
+      isDeepBear,
+      distToEma200Pct: Number(distToEma200Pct.toFixed(2)),
+      ema200Slope: Number(ema200Slope.toFixed(3)),
     };
   }
 }

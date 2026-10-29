@@ -49,6 +49,9 @@ export interface HtfRegime {
   isAboveEma200: boolean;
   spreadMultiplier: number;
   recommendedTp1Ratio: number;
+  isDeepBear?: boolean;
+  distToEma200Pct?: number;
+  ema200Slope?: number;
 }
 
 export interface MaFanConfig {
@@ -68,6 +71,9 @@ export interface MaFanConfig {
   bullCushionEnabled?: boolean; // lenient breakeven SL when HTF is Bullish
   waterfallGuardEnabled?: boolean; // blocks entry on sudden vertical crashes (4+ reds, HTF drop >=2%, or vol >=2.5x)
   entryOnClosedOnly?: boolean; // evaluate entries on confirmed closed candles only (aligns with Backtest)
+  macroGateMode?: "off" | "noDeepBear" | "bullOnly"; // Macro HTF Trend Gate
+  upsideFloorEnabled?: boolean; // Require Spread >= 0.35% and Upside to EMA25 >= 0.45%
+  circuitBreakerEnabled?: boolean; // 2 SLs within 12 hours -> 6-hour pause
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;
   startPaused?: boolean;

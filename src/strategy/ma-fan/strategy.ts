@@ -58,6 +58,8 @@ export class MaFanStrategy {
   private winCount: number = 0;
   private lossCount: number = 0;
   private realizedPnl: number = 0;
+  private recentSlTimes: number[] = [];
+  public circuitBreakerCooldownUntil: number = 0;
 
   constructor(opts: MaFanStrategyOptions) {
     this.symbol = opts.symbol;
@@ -321,6 +323,16 @@ export class MaFanStrategy {
           this.log(`⚠️ Stop Loss triggered for ${this.symbol} at $${refPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)})`);
           const ok = await this.executor.executeStopLoss(pos, refPrice);
           if (ok) {
+            this.lossCount++;
+            const nowMs = Date.now();
+            this.recentSlTimes.push(nowMs);
+            // Retain SLs within the last 12 hours
+            this.recentSlTimes = this.recentSlTimes.filter((t) => t >= nowMs - 12 * 3600 * 1000);
+            if (this.config.circuitBreakerEnabled !== false && this.recentSlTimes.length >= 2) {
+              this.circuitBreakerCooldownUntil = nowMs + 6 * 3600 * 1000;
+              this.log(`⏸️ [CIRCUIT BREAKER] 2 Stop Losses triggered in 12h! Cooldown activated for 6 hours until ${new Date(this.circuitBreakerCooldownUntil).toLocaleTimeString()}`);
+            }
+
             appendDecisionSnapshot({
               version: APP_VERSION_INFO.version,
               symbol: this.symbol,
@@ -397,6 +409,8 @@ export class MaFanStrategy {
         const curAtr = atrs[atrs.length - 1] ?? 0;
         const evalPrice = (entryOnClosedOnly && this.lastClosedCandle) ? this.lastClosedCandle.close : refPrice;
 
+        const isCircuitActive = this.config.circuitBreakerEnabled !== false && Date.now() < this.circuitBreakerCooldownUntil;
+
         const entryDecision = MaFanCoreRules.evaluateEntry({
           candles: this.candles,
           closePrice: evalPrice,
@@ -407,12 +421,20 @@ export class MaFanStrategy {
           slBufferPct: this.config.slBufferPct,
           waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
           isHtfBull: htfRegime.isBullish,
+          macroGateMode: this.config.macroGateMode ?? "noDeepBear",
+          htfRegime,
+          enableUpsideFloor: this.config.upsideFloorEnabled !== false,
+          circuitBreakerActive: isCircuitActive,
         });
 
         this.lastEntryChecklist = entryDecision.checklist ?? null;
 
         if (entryDecision.blockedBy === "WATERFALL_GUARD") {
           this.log(`🛡️ [WATERFALL GUARD] Entry blocked: ${entryDecision.reason}`);
+        } else if (entryDecision.blockedBy === "MACRO_GATE") {
+          this.log(`🛡️ [MACRO GATE] Entry blocked: ${entryDecision.reason}`);
+        } else if (entryDecision.blockedBy === "CIRCUIT_BREAKER") {
+          this.log(`⏸️ [CIRCUIT BREAKER] Entry blocked: ${entryDecision.reason}`);
         }
 
         if (entryDecision.shouldEnter) {
@@ -466,7 +488,13 @@ export class MaFanStrategy {
 
   public computeLiveEntryChecklist(): EntryChecklist | null {
     if (!this.candles || this.candles.length < 25 || !this.currentRibbon) return null;
-    const htfRegime = this.currentHtfRegime || { isBullish: false, isAboveEma200: false, spreadMultiplier: 1.0, recommendedTp1Ratio: 0.5 };
+    const htfRegime: HtfRegime = this.currentHtfRegime || {
+      timeframe: this.config.supervisorTimeframe || "1h",
+      isBullish: false,
+      isAboveEma200: false,
+      spreadMultiplier: 1.0,
+      recommendedTp1Ratio: 0.5,
+    };
     const requiredSpread = Number((this.effectiveSpreadThreshold * htfRegime.spreadMultiplier).toFixed(2));
     const exhaustion = ExhaustionEngine.evaluate(this.candles);
     const atrs = calcATR(this.candles, 14);
@@ -474,6 +502,8 @@ export class MaFanStrategy {
     const targetCandle = this.lastClosedCandle || this.candles[this.candles.length - 1];
     const evalPrice = targetCandle ? targetCandle.close : 0;
     if (evalPrice <= 0) return null;
+
+    const isCircuitActive = this.config.circuitBreakerEnabled !== false && Date.now() < this.circuitBreakerCooldownUntil;
 
     const res = MaFanCoreRules.evaluateEntry({
       candles: this.candles,
@@ -485,6 +515,10 @@ export class MaFanStrategy {
       slBufferPct: this.config.slBufferPct,
       waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
       isHtfBull: !!htfRegime.isBullish,
+      macroGateMode: this.config.macroGateMode ?? "noDeepBear",
+      htfRegime,
+      enableUpsideFloor: this.config.upsideFloorEnabled !== false,
+      circuitBreakerActive: isCircuitActive,
     });
     return res.checklist ?? null;
   }
@@ -497,6 +531,7 @@ export class MaFanStrategy {
     const htfMultiplier = this.currentHtfRegime?.spreadMultiplier ?? 1.0;
     const requiredSpread = Number((this.effectiveSpreadThreshold * htfMultiplier).toFixed(2));
     const entryChecklist = this.lastEntryChecklist || this.computeLiveEntryChecklist();
+    const isCircuitActive = this.config.circuitBreakerEnabled !== false && Date.now() < this.circuitBreakerCooldownUntil;
 
     return {
       strategyType: "ma_fan",
@@ -509,6 +544,9 @@ export class MaFanStrategy {
       lastCalibration: this.lastCalibration,
       ribbon: this.currentRibbon,
       htfRegime: this.currentHtfRegime,
+      macroGateMode: this.config.macroGateMode ?? "noDeepBear",
+      isCircuitBreakerActive: isCircuitActive,
+      circuitBreakerUntil: this.circuitBreakerCooldownUntil,
       rsi: exhaustion?.rsi,
       macd: exhaustion?.macd,
       entryChecklist,

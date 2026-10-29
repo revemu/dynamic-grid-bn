@@ -4,7 +4,7 @@
  * All mathematical calculations and trade decisions are unified here.
  */
 
-import { Candle, RibbonState } from "./types.js";
+import { Candle, RibbonState, HtfRegime } from "./types.js";
 import { ExhaustionState } from "./exhaustion.js";
 
 export type WaterfallGuardMode = "off" | "consecutiveReds" | "bearCrash" | "volCapitulation" | "combined";
@@ -17,7 +17,7 @@ export interface WaterfallMetrics {
 }
 
 export interface EntryChecklistItem {
-  id: "spread" | "order" | "hook" | "oversold" | "upside" | "wick" | "waterfall" | "rr";
+  id: "spread" | "order" | "hook" | "oversold" | "upside" | "wick" | "waterfall" | "rr" | "macroGate" | "circuitBreaker";
   name: string;
   passed: boolean;
   actualText: string;
@@ -42,7 +42,7 @@ export interface EntryDecision {
   riskPct?: number;
   rewardPct?: number;
   rewardRisk?: number;
-  blockedBy?: "REWARD_RISK" | "WATERFALL_GUARD";
+  blockedBy?: "REWARD_RISK" | "WATERFALL_GUARD" | "MACRO_GATE" | "CIRCUIT_BREAKER" | "UPSIDE_FLOOR";
   waterfallMetrics?: WaterfallMetrics;
   checklist?: EntryChecklist;
   reason?: string;
@@ -166,6 +166,10 @@ export class MaFanCoreRules {
     minRewardRiskRatio?: number;
     waterfallGuardMode?: WaterfallGuardMode;
     isHtfBull?: boolean;
+    macroGateMode?: "off" | "noDeepBear" | "bullOnly";
+    htfRegime?: HtfRegime;
+    enableUpsideFloor?: boolean;
+    circuitBreakerActive?: boolean;
   }): EntryDecision {
     const {
       candles,
@@ -182,9 +186,13 @@ export class MaFanCoreRules {
     const currentIndex = opts.currentIndex ?? (candles.length - 1);
 
     const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
-    // Require adequate upside room from closePrice to EMA25 (at least 0.30%) to avoid entering when fees eat gross profit
-    const hasUpsideRoomToEma25 = closePrice <= ribbon.ema25 * (1 - 0.0030);
-    const isDownside = ribbon.ema4 <= ribbon.ema25 && closePrice < ribbon.ema25 && hasUpsideRoomToEma25;
+    // Require adequate upside room from closePrice to EMA25 to avoid entering when fees eat gross profit
+    const enableUpsideFloor = opts.enableUpsideFloor !== false;
+    const upsideRequiredPct = enableUpsideFloor ? 0.45 : 0.30;
+    const upsidePct = closePrice > 0 ? ((ribbon.ema25 - closePrice) / ribbon.ema25) * 100 : 0;
+    const hasUpsideRoomToEma25 = closePrice <= ribbon.ema25 * (1 - (upsideRequiredPct / 100));
+    const passesSpreadFloor = !enableUpsideFloor || ribbon.fanSpreadPct >= 0.35;
+    const isDownside = ribbon.ema4 <= ribbon.ema25 && closePrice < ribbon.ema25 && hasUpsideRoomToEma25 && passesSpreadFloor;
 
     // Minimum lower wick absorption check (at least 15% lower shadow rejection to filter out waterfall dumps)
     const curCandle = candles[currentIndex];
@@ -249,6 +257,23 @@ export class MaFanCoreRules {
       }
     }
 
+    // Macro Gate Check
+    const macroMode = opts.macroGateMode ?? "noDeepBear";
+    let isMacroBlocked = false;
+    let macroBlockReason = "";
+    if (macroMode === "bullOnly" && !isHtfBull) {
+      isMacroBlocked = true;
+      macroBlockReason = "ตลาด HTF ไม่ใช่กระทิง (Bull Only Mode)";
+    } else if (macroMode === "noDeepBear" && opts.htfRegime?.isDeepBear) {
+      isMacroBlocked = true;
+      const d = opts.htfRegime.distToEma200Pct ?? 0;
+      macroBlockReason = `ขาลงลึกใต้ EMA200 1H (${d.toFixed(1)}% หรือเส้นชันลง)`;
+    }
+
+    // Circuit Breaker Check
+    const isCircuitBlocked = !!opts.circuitBreakerActive;
+    const circuitBlockReason = isCircuitBlocked ? "⏸️ Risk Circuit Breaker Active (SL 2 ไม้ติด)" : "";
+
     const items: EntryChecklistItem[] = [
       {
         id: "spread",
@@ -283,9 +308,9 @@ export class MaFanCoreRules {
         name: "ระยะวิ่งถึง EMA25 (Upside Room)",
         passed: isDownside,
         actualText: closePrice < ribbon.ema25
-          ? `ต่ำกว่า EMA25 ${(((ribbon.ema25 - closePrice) / ribbon.ema25) * 100).toFixed(2)}%`
+          ? `ต่ำกว่า EMA25 ${upsidePct.toFixed(2)}%${enableUpsideFloor && upsidePct < 0.45 ? " (แคบไป)" : ""}`
           : "อยู่เหนือ EMA25",
-        requiredText: "ต่ำกว่า EMA25 ≥ 0.30%",
+        requiredText: enableUpsideFloor ? "ต่ำกว่า EMA25 ≥ 0.45%" : "ต่ำกว่า EMA25 ≥ 0.30%",
       },
       {
         id: "wick",
@@ -302,6 +327,26 @@ export class MaFanCoreRules {
         requiredText: "ไม่ติด Crash / แดง < 4 แท่ง",
       },
     ];
+
+    if (macroMode !== "off") {
+      items.push({
+        id: "macroGate",
+        name: "Macro Trend Gate",
+        passed: !isMacroBlocked,
+        actualText: isMacroBlocked ? macroBlockReason : (isHtfBull ? "ตลาดกระทิง / ปลอดภัย" : "ไม่ติด Deep Bear"),
+        requiredText: macroMode === "bullOnly" ? "HTF Bull Only" : "ไม่หลุดลึกใต้ 1H EMA200",
+      });
+    }
+
+    if (opts.circuitBreakerActive !== undefined) {
+      items.push({
+        id: "circuitBreaker",
+        name: "Risk Circuit Breaker",
+        passed: !isCircuitBlocked,
+        actualText: isCircuitBlocked ? circuitBlockReason : "ปกติ (ไม่ติด Cooldown)",
+        requiredText: "ไม่มี SL ติดกัน 2 ไม้ใน 12 ชม.",
+      });
+    }
 
     if (minRewardRiskRatio !== undefined && minRewardRiskRatio > 0) {
       items.push({
@@ -378,6 +423,40 @@ export class MaFanCoreRules {
         waterfallMetrics,
         checklist,
         reason: `Filtered by Waterfall Guard [${waterfallGuardMode}]: ${blockReason}`,
+      };
+    }
+
+    if (isMacroBlocked) {
+      return {
+        shouldEnter: false,
+        entryPrice: closePrice,
+        stopLossPrice,
+        swingLow,
+        fanSpreadPct: ribbon.fanSpreadPct,
+        riskPct: rrCalc.riskPct,
+        rewardPct: rrCalc.rewardPct,
+        rewardRisk: rrCalc.rr,
+        blockedBy: "MACRO_GATE",
+        waterfallMetrics,
+        checklist,
+        reason: `Filtered by Macro Gate [${macroMode}]: ${macroBlockReason}`,
+      };
+    }
+
+    if (isCircuitBlocked) {
+      return {
+        shouldEnter: false,
+        entryPrice: closePrice,
+        stopLossPrice,
+        swingLow,
+        fanSpreadPct: ribbon.fanSpreadPct,
+        riskPct: rrCalc.riskPct,
+        rewardPct: rrCalc.rewardPct,
+        rewardRisk: rrCalc.rr,
+        blockedBy: "CIRCUIT_BREAKER",
+        waterfallMetrics,
+        checklist,
+        reason: `Filtered by Risk Circuit Breaker: ${circuitBlockReason}`,
       };
     }
 

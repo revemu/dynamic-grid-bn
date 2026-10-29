@@ -6125,6 +6125,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.179` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 180. v0.2.180 — Triad Smart Gates: Macro HTF Gate, Upside/Spread Floor & Risk Circuit Breaker (`src/strategy/ma-fan/types.ts`, `src/strategy/ma-fan/regime.ts`, `src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/calibrator.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `src/config.ts`, `src/backtest-service.ts`, `src/server.ts`, `public/backtest.html`, `public/backtest.js`, `public/index.html`, `public/app.js`, `package.json`, `src/version.ts`)
+
+1. **สาเหตุของปัญหาการขาดทุนสะสมในรอบ 30 วัน (Deep Bear Bleed)**:
+   - ตลาดคริปโตช่วงเดือนตุลาคม 2026 เผชิญกับแนวโน้มขาลงภาพใหญ่ระดับ Macro (BTC -9.17%, SOL -20.31%, ARB -25.06%, DOGE -23.84%)
+   - ในสภาวะ Deep Bear ราคาของเหรียญจมอยู่ใต้เส้น EMA200 1H ลึกมาก การเด้งตัวของราคาเป็นเพียง Dead-Cat Bounce ระยะสั้นมากที่ไม่สามารถไปถึงแนวต้าน EMA25 หรือสร้างกำไรที่คุ้มค่าค่าธรรมเนียม Taker Fee ได้
+   - บอทเปิดไม้เข้าช้อนบ่อยครั้ง ส่งผลให้โดนลากชน Stop Loss ติดๆ กันในวันตลาดพัง (Crash Day) เกิด Drawdown สะสมต่อเนื่อง
+2. **Triad Smart Gates (3 ป้อมปราการคัดกรองสัญญาณเทรด)**:
+   - **Gate 1: Macro 1H Trend Gate (`macroGateMode: "noDeepBear" | "bullOnly" | "off"`)**:
+     - คำนวณ `distToEma200Pct` และ `ema200Slope` บนแท่งเทียน 1H ย้อนหลัง 5 แท่ง
+     - หากราคาอยู่ต่ำกว่า EMA200 1H เกิน -2.0% หรือความชันเส้น EMA200 ดิ่งลงชันกว่า -0.15% จะถูกจัดสถานะเป็น `isDeepBear = true`
+     - ในโหมด `noDeepBear` (ค่าเริ่มต้น): บล็อกการเข้าช้อนมีดในภาวะ Deep Bear ทันที ทำให้ลด Drawdown ใน SOL 30d ลงจาก -12.88% เหลือเพียง -1.04% และใน ARB 30d ลดจาก -5.10% เหลือ -1.69%
+   - **Gate 2: Upside & Spread Floor Filter (`enableUpsideFloor: true`)**:
+     - กรองระยะวิ่งถึงเป้าหมาย: บังคับให้ระยะห่างจากจุดเข้าถึงแนวต้านขาย EMA25 ต้องมี Upside $\ge 0.45\%$
+     - บังคับเกณฑ์ความกว้างพัด Spread $\ge 0.35\%$ เพื่อตัดสัญญาณแคบ (Chop) ที่กำไรไม่คุ้มค่า Taker Fee + Slippage
+   - **Gate 3: Risk Circuit Breaker (`enableCircuitBreaker: true`)**:
+     - บันทึกประวัติเวลาที่โดน Stop Loss ในรอบ 12 ชั่วโมง (`recentSlTimes`)
+     - หากโดน SL ติดกันตั้งแต่ $\ge 2$ ไม้ในรอบ 12 ชม. ระบบจะตัดวงจรปิดรับไม้ใหม่ทันทีเป็นเวลา 6 ชั่วโมง (`cooldownUntil`) เพื่อหยุดเลือดไหลในวันวิกฤติตลาด
+3. **การเชื่อมโยงระบบทั้ง Live Bot และ Backtest Studio**:
+   - รองรับใน Core Rules, AutoCalibrator, Bot Strategy Loop, Strategy Adapter, Config Loader, Backtest Service, และ REST API
+   - บนหน้าแดชบอร์ด Live Trading (`public/index.html`, `public/app.js`): มีส่วนควบคุม Macro Gate, Upside Floor และ Risk Circuit Breaker พร้อมแสดงสถานะ `⚡ Cooldown` บนแถบสถานะเมื่อ Circuit Breaker ทำงาน
+   - บนหน้า Backtest Studio (`public/backtest.html`, `public/backtest.js`): มี Dropdown เลือก Macro Gate และ Circuit Breaker รองรับทั้งการรันเดี่ยวและการสแกนทั้งตลาด (Market Scanner)
+4. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.180` ใน `package.json` และ `src/version.ts`
+
 
 
 

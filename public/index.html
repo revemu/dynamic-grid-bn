@@ -2030,6 +2030,43 @@
                   <span class="slider"></span>
                 </label>
               </div>
+
+              <!-- Triad Smart Gate 1: Macro HTF Gate -->
+              <div class="form-group" style="grid-column: 1 / -1;">
+                <label for="cfg_maFanMacroGate">
+                  🌐 Macro HTF Trend Gate (ตัวกรองแนวโน้มภาพใหญ่ 1H)
+                  <span class="help-tip" title="ป้องกันการเข้าช้อนมีดในตลาดขาลงรุนแรง (Deep Bear): ไม่เข้าเมื่อราคาอยู่ใต้ EMA200 1H เกิน 2% หรือ Slope ดิ่งเหว">💡</span>
+                </label>
+                <select id="cfg_maFanMacroGate" class="form-select">
+                  <option value="noDeepBear">🛡️ No Deep Bear (แนะนำ) — ป้องกันเข้าช้อนช่วงดิ่งใต้ EMA200 1H &gt; 2% หรือลาดลงแรง</option>
+                  <option value="bullOnly">🐂 Bull Only (เข้มงวด) — ช้อนเฉพาะตลาดกระทั่ง 1H อยู่เหนือ EMA200 เท่านั้น</option>
+                  <option value="off">🌐 Off (ปิดตัวกรอง) — เทรดทุกสภาพตลาดโดยไม่อิงแนวโน้ม 1H</option>
+                </select>
+              </div>
+
+              <!-- Triad Smart Gate 2: Upside & Spread Floor -->
+              <div class="form-group switch-group" style="grid-column: 1 / -1;">
+                <div class="switch-label-group">
+                  <span class="switch-title">🎯 Upside &amp; Spread Floor (กรองระยะวิ่งขั้นต่ำ ≥ 0.45% &amp; Spread ≥ 0.35%)</span>
+                  <span class="switch-desc">บล็อกสัญญาณที่ระยะห่างถึงแนวขาย EMA25 แคบเกินไป (&lt; 0.45%) เพื่อให้คุ้มค่าธรรมเนียม Taker Fee และหลีกเลี่ยงช่วงตลาดไซด์เวย์บีบแคบ</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_maFanUpsideFloor" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Triad Smart Gate 3: Risk Circuit Breaker -->
+              <div class="form-group switch-group" style="grid-column: 1 / -1;">
+                <div class="switch-label-group">
+                  <span class="switch-title">⚡ Risk Circuit Breaker (ระบบพักบอทฉุกเฉินเมื่อ SL 2 ไม้ติด)</span>
+                  <span class="switch-desc">หากโดน Stop Loss ติดกัน 2 ครั้งภายใน 12 ชั่วโมง บอทจะหยุดเข้าเทรดชั่วคราวเป็นเวลา 6 ชั่วโมงเพื่อป้องกันการโดนลากซ้ำซ้อนในวันตลาดพัง</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_maFanCircuitBreaker" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
             </div>
           </div>
 

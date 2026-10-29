@@ -750,6 +750,9 @@ export class DashboardServer {
           const slBufferPct = Number(parsed.slBufferPct) || Number(liveCfg.maFanSlBufferPct) || 0.25;
           const useRatchetSl = parsed.useRatchetSl !== false;
           const supervisorTimeframe = (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h";
+          const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "noDeepBear";
+          const enableUpsideFloor = parsed.enableUpsideFloor !== undefined ? Boolean(parsed.enableUpsideFloor) : (liveCfg.maFanUpsideFloor !== false);
+          const enableCircuitBreaker = parsed.enableCircuitBreaker !== undefined ? Boolean(parsed.enableCircuitBreaker) : (liveCfg.maFanCircuitBreaker !== false);
 
           // Compute required HTF supervisor candles based on limit and timeframe ratio
           const tfMinutes = timeframe === "1m" ? 1 : timeframe === "5m" ? 5 : timeframe === "15m" ? 15 : 60;
@@ -797,6 +800,9 @@ export class DashboardServer {
             cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
             waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
             costModel,
+            macroGateMode,
+            enableUpsideFloor,
+            enableCircuitBreaker,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -821,6 +827,9 @@ export class DashboardServer {
           const limit = Number(parsed.limit) || 500;
           const spreadThreshold = parsed.spreadThreshold === "auto" ? "auto" : (Number(parsed.spreadThreshold) || undefined);
           const useRatchetSl = parsed.useRatchetSl !== false;
+          const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "noDeepBear";
+          const enableUpsideFloor = parsed.enableUpsideFloor !== undefined ? Boolean(parsed.enableUpsideFloor) : (liveCfg.maFanUpsideFloor !== false);
+          const enableCircuitBreaker = parsed.enableCircuitBreaker !== undefined ? Boolean(parsed.enableCircuitBreaker) : (liveCfg.maFanCircuitBreaker !== false);
 
           let scanCostModel: { feePctPerSide: number; slippagePctPerFill: number } | undefined;
           if (parsed.feeTier === "zero" || parsed.feeTier === "none") {
@@ -848,6 +857,9 @@ export class DashboardServer {
             cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
             waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
             costModel: scanCostModel,
+            macroGateMode,
+            enableUpsideFloor,
+            enableCircuitBreaker,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

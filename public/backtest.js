@@ -38,6 +38,8 @@
   const inpSpread = document.getElementById("btSpread");
   const inpSlMode = document.getElementById("btSlMode");
   const inpFeeTier = document.getElementById("btFeeTier");
+  const inpMacroGate = document.getElementById("btMacroGate");
+  const inpCircuitBreaker = document.getElementById("btCircuitBreaker");
   const inpBudget = document.getElementById("btBudget");
 
   function getSelectedSymbol() {
@@ -1171,6 +1173,8 @@
     const budget = Number(inpBudget.value) || 200;
     const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
     const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
+    const macroGateMode = inpMacroGate ? inpMacroGate.value : "noDeepBear";
+    const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
 
     const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
     loadingOverlay.style.display = "flex";
@@ -1180,7 +1184,18 @@
       const resp = await fetch("/api/backtest/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, timeframe, limit, spreadThreshold, budget, useRatchetSl, feeTier }),
+        body: JSON.stringify({
+          symbol,
+          timeframe,
+          limit,
+          spreadThreshold,
+          budget,
+          useRatchetSl,
+          feeTier,
+          macroGateMode,
+          enableCircuitBreaker,
+          enableUpsideFloor: true,
+        }),
       });
 
       const data = await resp.json();
@@ -1381,6 +1396,8 @@
         const budget = Number(inpBudget?.value) || 200;
         const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
         const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
+        const macroGateMode = inpMacroGate ? inpMacroGate.value : "noDeepBear";
+        const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
 
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
@@ -1391,7 +1408,18 @@
           const res = await fetch("/api/backtest/scan", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ scope, timeframe, limit, spreadThreshold: spread, budget, useRatchetSl, feeTier }),
+            body: JSON.stringify({
+              scope,
+              timeframe,
+              limit,
+              spreadThreshold: spread,
+              budget,
+              useRatchetSl,
+              feeTier,
+              macroGateMode,
+              enableCircuitBreaker,
+              enableUpsideFloor: true,
+            }),
           });
 
           if (!res.ok) {

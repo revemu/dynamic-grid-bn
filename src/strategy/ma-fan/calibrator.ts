@@ -38,6 +38,8 @@ export interface CalibrateOptions {
   useRatchetSl?: boolean;
   cushionMode?: CushionMode;
   costModel?: { feePctPerSide?: number; slippagePctPerFill?: number };
+  macroGateMode?: "off" | "noDeepBear" | "bullOnly";
+  enableUpsideFloor?: boolean;
 }
 
 export class AutoCalibrator {
@@ -207,6 +209,10 @@ export class AutoCalibrator {
             requiredSpreadPct: requiredSpread,
             curAtr,
             slBufferPct,
+            isHtfBull: htfRegime.isBullish,
+            macroGateMode: opts?.macroGateMode ?? "noDeepBear",
+            htfRegime,
+            enableUpsideFloor: opts?.enableUpsideFloor !== false,
           });
 
           if (entryDecision.shouldEnter) {
