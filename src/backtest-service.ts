@@ -6,7 +6,7 @@
 
 import fs from "fs";
 import path from "path";
-import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState, WaterfallGuardMode } from "./strategy/ma-fan/index.js";
+import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, RollingSpreadCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState, WaterfallGuardMode } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
 
 export const STABLE_TOKENS = new Set([
@@ -346,6 +346,7 @@ export class BacktestService {
         atrs: number[];
       };
       onlyEntryIdx?: number;
+      trimWarmupPrefix?: boolean;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -369,33 +370,35 @@ export class BacktestService {
       : BacktestService.aggregateCandles(candles, targetMinutes);
 
     const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
-    const isLongBacktest = candles.length > 1000;
-    const rollingLookback = Math.min(1000, Math.max(300, Math.floor(candles.length / 3)));
-    const rollingCadence = 144; // Re-calibrate every 144 bars (~12 hours on 5m)
-
-    // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
-    if (isAuto) {
-      const initialWindow = isLongBacktest ? candles.slice(0, Math.max(rollingLookback, 500)) : candles;
-      const initialHtf = candlesHtf.filter((h) => h.time <= initialWindow[initialWindow.length - 1].time);
-      const cal = AutoCalibrator.calibrate(symbol, initialWindow, undefined, initialHtf.length > 0 ? initialHtf : candlesHtf, {
-        slBufferPct,
-        trailingPullbackPct,
-        breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
-        tp1Ratio,
-        initialCapital,
-        supervisorTimeframe: supervisorTf,
-        useRatchetSl,
-        cushionMode: opts.cushionMode ?? "off",
-        costModel: opts.costModel,
-        macroGateMode,
-        enableUpsideFloor,
-      });
-      spread = cal.bestSpreadPct || 0.25;
+
+    // Instantiate Causal RollingSpreadCalibrator for 100% lookahead-free walk-forward calibration
+    const rollingCal = isAuto
+      ? new RollingSpreadCalibrator(symbol, candles, candlesHtf, {
+          slBufferPct,
+          trailingPullbackPct,
+          breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
+          tp1Ratio,
+          initialCapital,
+          supervisorTimeframe: supervisorTf,
+          executionTimeframe: timeframe === "15m" ? "15m" : "5m",
+          useRatchetSl,
+          cushionMode: opts.cushionMode ?? "off",
+          costModel: opts.costModel,
+          macroGateMode,
+          enableUpsideFloor,
+          waterfallGuardMode: opts.waterfallGuardMode ?? "combined",
+          lookbackBars: 1000,
+          tieBreakMarginPct: 0.02,
+          defensiveOnLossRegime: true,
+        })
+      : null;
+
+    if (rollingCal && candles.length > 0) {
+      spread = rollingCal.bestSpreadAt(candles.length - 1);
     }
 
     let currentRollingSpread = spread;
-    let lastRollingCalibratedBar = -999;
     let rollingSpreadSum = 0;
     let rollingSpreadCount = 0;
 
@@ -451,8 +454,9 @@ export class BacktestService {
         const exhK = exhaustionStates[k]!;
         const htfK = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, cK.time, tp1Ratio);
         const curAtrK = atrs[k] ?? (cK.close * 0.003);
+        const activeSpK = rollingCal ? rollingCal.bestSpreadAt(k) : spread;
         const baseSpK = MaFanCoreRules.computeEffectiveSpread({
-          baseSpread: spread,
+          baseSpread: activeSpK,
           useAtrAdaptiveSpread: useAtrAdaptive,
           isAutoCalibrated: isAuto,
           curAtr: curAtrK,
@@ -763,32 +767,9 @@ export class BacktestService {
         }
       }
 
-      // Dynamic Rolling Auto-Calibration on multi-day backtests
-      if (isAuto && isLongBacktest && (i - lastRollingCalibratedBar >= rollingCadence)) {
-        const windowCandles = candles.slice(Math.max(0, i - rollingLookback), i);
-        if (windowCandles.length >= 200) {
-          const windowHtf = candlesHtf.filter((h) => h.time <= c.time && h.time >= windowCandles[0].time);
-          const cal = AutoCalibrator.calibrate(symbol, windowCandles, undefined, windowHtf.length > 0 ? windowHtf : undefined, {
-            slBufferPct,
-            trailingPullbackPct,
-            breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
-            tp1Ratio,
-            initialCapital,
-            supervisorTimeframe: supervisorTf,
-            useRatchetSl,
-            cushionMode: opts.cushionMode ?? "off",
-            costModel: opts.costModel,
-            macroGateMode,
-            enableUpsideFloor,
-          });
-          if (cal.bestSpreadPct) {
-            currentRollingSpread = cal.bestSpreadPct;
-          }
-        }
-        lastRollingCalibratedBar = i;
-      }
-
-      if (isAuto) {
+      // Dynamic Rolling Auto-Calibration on every single bar (100% Causal Walk-Forward)
+      if (rollingCal) {
+        currentRollingSpread = rollingCal.bestSpreadAt(i);
         rollingSpreadSum += currentRollingSpread;
         rollingSpreadCount++;
       }
@@ -958,13 +939,16 @@ export class BacktestService {
       ? Number((rollingSpreadSum / rollingSpreadCount).toFixed(2))
       : spread;
 
+    const finalCandles = (opts.trimWarmupPrefix && warmup > 0) ? candles.slice(warmup) : candles;
+    const finalEvaluations = (opts.trimWarmupPrefix && warmup > 0) ? evaluations.slice(warmup) : evaluations;
+
     const id = `bt_${Date.now()}`;
     const record: BacktestRecord = {
       id,
       createdAt: new Date().toISOString(),
       symbol,
       timeframe,
-      candleCount: candles.length,
+      candleCount: finalCandles.length,
       spreadThreshold: finalEffectiveSpread,
       isAutoCalibrated: isAuto,
       useRatchetSl,
@@ -974,8 +958,8 @@ export class BacktestService {
       summary,
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
-      candles,
-      evaluations,
+      candles: finalCandles,
+      evaluations: finalEvaluations,
     };
 
     // Save to persistent database
@@ -1117,15 +1101,19 @@ export class BacktestService {
           try {
             const sym = cand.symbol;
             const supTf = opts.supervisorTimeframe ?? "15m";
+            const isAutoSpread = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
+            const warmupPrefixBars = isAutoSpread ? 1200 : 0;
+            const fetchLimit = limit + warmupPrefixBars;
             const tfMinutes = timeframe === "1m" ? 1 : timeframe === "5m" ? 5 : timeframe === "15m" ? 15 : 60;
             const htfMinutes = supTf === "1h" ? 60 : 15;
-            const htfLimit = Math.max(300, Math.ceil((limit * tfMinutes) / htfMinutes) + 50);
+            const htfLimit = Math.max(300, Math.ceil((fetchLimit * tfMinutes) / htfMinutes) + 50);
 
             const [candles, candlesHtf] = await Promise.all([
-              this.fetchBinanceCandles(sym, timeframe, limit),
+              this.fetchBinanceCandles(sym, timeframe, fetchLimit),
               this.fetchBinanceCandles(sym, supTf, htfLimit).catch(() => []),
             ]);
             if (!candles || candles.length < 50) return;
+            const actualWarmup = isAutoSpread ? Math.max(0, candles.length - limit) : 0;
 
             const symCostModel = opts.costModel ?? (
               sym.endsWith("FDUSD")
@@ -1154,6 +1142,8 @@ export class BacktestService {
               macroGateMode: opts.macroGateMode ?? "off",
               enableUpsideFloor: opts.enableUpsideFloor !== false,
               enableCircuitBreaker: opts.enableCircuitBreaker !== false,
+              warmupBars: actualWarmup,
+              trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
             });
 
             results.push({

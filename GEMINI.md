@@ -6228,6 +6228,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
 2. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.183` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 184. v0.2.184 — 100% Causal Rolling Spread Auto-Calibration Per Closed Candle & Zero Lookahead Parity (`src/strategy/ma-fan/rolling-calibrator.ts`, `src/strategy/ma-fan/calibrator.ts`, `src/strategy/ma-fan/strategy.ts`, `src/backtest-service.ts`, `src/server.ts`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **สาเหตุของข้อแตกต่างระหว่าง Backtest กับบอทจริง (Parity Discrepancy Root Cause)**:
+   - **บอทจริง (Live Bot)**: คำนวณ Sweet Spot Spread เพียงครั้งเดียวตอนเปิดระบบหรือสลับเหรียญ (เช่น ได้ `0.20%` ตอน 21:59) และค้างค่านั้นไว้ ส่งผลให้เมื่อตลาดเกิดพัดกาง `1.67% >= 0.25%` (0.20% * 1.25 HTF bear multiplier) ในช่วงตลาดทิ้งตัวดิ่ง บอทจริงเข้าซื้อและโดน Stop Loss
+   - **Backtest**: ใน Backtest Studio เมื่อผู้ใช้เลือกทดสอบ `1,000 แท่ง` ตัวแปร `isLongBacktest = candles.length > 1000` กลายเป็นเท็จ ทำให้ Backtest นำแท่งเทียนทั้ง 1,000 แท่ง (ซึ่งรวมเหตุการณ์ราคาดิ่งในอนาคตด้วย) ไปคำนวณ `AutoCalibrator` ล่วงหน้าทั้งชุด (Lookahead Bias) จึงได้ค่า `1.50%` (เมื่อคูณ 1.25 HTF กลายเป็น `1.88%`) ส่งผลให้ Backtest กรองไม้นี้ออกล่วงหน้า
+2. **สถาปัตยกรรม 100% Causal Walk-Forward Rolling Auto-Calibrator (`src/strategy/ma-fan/rolling-calibrator.ts`)**:
+   - สร้างคลาส `RollingSpreadCalibrator` ที่ทำงานแบบ 2-pass O(N) precomputation ในหน่วยเสี้ยววินาที:
+     - **Pass 1 (Precomputation)**: คำนวณ Ribbon, Exhaustion, ATR, HTF Regime และผลการเข้า-ออกของการเทรดจำลองแต่ละ Candidate Spread ล่วงหน้าครั้งเดียวทั้งชุดแท่งเทียน
+     - **Pass 2 (Causal Lookup)**: เมธอด `bestSpreadAt(candleIndex, lookbackBars = 1000)` คำนวณผลลัพธ์ย้อนหลังอย่างเคร่งครัดเฉพาะไม้เทรดที่ปิดสมบูรณ์แล้วก่อนหรือ ณ แท่งเทียนนั้น (`exitIdx <= candleIndex`) ปราศจาก Lookahead Bias 100% และผ่านการทดสอบ Causality Test อย่างสมบูรณ์แบบ
+   - **Tie-Break Margin 2%**: เมื่อ Net PnL ของแต่ละ Candidate Spread ใกล้เคียงกันภายใน 2% จะเลือกค่า Spread ที่กว้างกว่าเสมอ เพื่อลด Trade Frequency ในช่วงตลาดเสี่ยงสูง
+   - **Defensive Loss Fallback**: ในสภาวะตลาดขาลงรุนแรงที่ทุกค่า Spread แคบขาดทุนติดลบ ระบบจะไม่ดันทุรังเลือกค่าที่ติดลบน้อย แต่จะเลือกค่า Spread ที่กว้างขึ้นตัวแรกที่ไม่มีการเข้าเทรด (0 Trades) เพื่อรักษาเงินทุนไม่ให้โดนทุบ
+3. **การคำนวณใหม่ทุกแท่งเทียนที่ปิดสมบูรณ์บนบอทจริง (Real-Time Live Bot Recalibration)**:
+   - ใน `src/strategy/ma-fan/strategy.ts`: เมธอด `onCandle(candle, isClosed)` เมื่อแท่งเทียนปิด (`isClosed === true`) จะเรียก `this.calibrateSpread()` ทันที ทำให้บอทจริงประเมินสภาวะตลาดและปรับค่า Sweet Spot Spread อัตโนมัติทุกแท่ง 5 นาที
+   - ขยายขนาดแคชประวัติแท่งเทียนในแรม (`maxCandles = 1400`) ทั้งใน `strategy.ts` และ `src/index.ts` เพื่อให้มีประวัติ 1,000 แท่งพร้อมคำนวณได้ทันที
+4. **ความสมบูรณ์แบบบน Backtest Studio & Market Scanner (`src/backtest-service.ts`, `src/server.ts`, `public/backtest.js`)**:
+   - ใน `runMaFanSimulation`: เมื่อเลือก `spreadThreshold = "auto"` ระบบจะใช้ `RollingSpreadCalibrator` จำลองการคำนวณ Spread ที่บอทจริงมองเห็น ณ แท่งเทียนนั้นๆ (`rollingCal.bestSpreadAt(i)`) แบบ Walk-Forward จริง 100%
+   - ใน `/api/backtest/run` และ `scanMarket`: เพิ่มระบบดึงแท่งเทียนล่วงหน้าสำหรับ Warmup 1,200 แท่ง (`fetchLimit = limit + 1200`) และทำการ `trimWarmupPrefix: true` ทำให้แท่งเทียนแท่งแรกสุดที่แสดงใน Studio มีประวัติ 1,000 แท่งพร้อมประเมินค่า Spread เหมือนบอทจริงที่รันมานาน
+   - การแสดงผลบนกราฟและ Inspector ใน `public/backtest.js` แสดงค่า Spread Threshold ที่บอทใช้จริง ณ แต่ละแท่งเทียนอย่างแม่นยำ
+5. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.184` ใน `package.json` และ `src/version.ts`
+
 
 
 

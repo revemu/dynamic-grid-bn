@@ -411,7 +411,7 @@
     legSymTf.textContent = `${sym} ${tf}`;
     overlayStatus.textContent = `ผลการทดสอบ: ${sym} (${tf})`;
     const spreadLabel = record.isAutoCalibrated
-      ? `Spread เฉลี่ย ~${(record.spreadThreshold || 0.25).toFixed(2)}% (Auto Calibrate ⚡)`
+      ? `Spread เฉลี่ย ~${(record.spreadThreshold || 0.25).toFixed(2)}% (Causal Auto ⚡)`
       : `Spread ≥ ${(record.spreadThreshold || 0.25).toFixed(2)}%`;
     overlayInfo.textContent = `ทดสอบ ${record.candleCount} แท่ง | ${spreadLabel} | ${record.trades?.length || 0} ไม้`;
 
@@ -419,12 +419,13 @@
     if (record.candles && record.candles.length > 0) {
       candleSeries.setData(record.candles);
 
-      const e4 = calcEma(record.candles, 4);
-      const e8 = calcEma(record.candles, 8);
-      const e16 = calcEma(record.candles, 16);
-      const e25 = calcEma(record.candles, 25);
-      const e75 = calcEma(record.candles, 75);
-      const e200 = calcEma(record.candles, 200);
+      const hasWarmEmas = Array.isArray(record.evaluations) && record.evaluations.length === record.candles.length && record.evaluations[0]?.ema4 !== undefined;
+      const e4 = hasWarmEmas ? record.evaluations.map((e) => ({ time: e.time, value: e.ema4 })) : calcEma(record.candles, 4);
+      const e8 = hasWarmEmas ? record.evaluations.map((e) => ({ time: e.time, value: e.ema8 })) : calcEma(record.candles, 8);
+      const e16 = hasWarmEmas ? record.evaluations.map((e) => ({ time: e.time, value: e.ema16 })) : calcEma(record.candles, 16);
+      const e25 = hasWarmEmas ? record.evaluations.map((e) => ({ time: e.time, value: e.ema25 })) : calcEma(record.candles, 25);
+      const e75 = hasWarmEmas ? record.evaluations.map((e) => ({ time: e.time, value: e.ema75 })) : calcEma(record.candles, 75);
+      const e200 = hasWarmEmas ? record.evaluations.map((e) => ({ time: e.time, value: e.ema200 })) : calcEma(record.candles, 200);
 
       ema4Series.setData(e4);
       ema8Series.setData(e8);

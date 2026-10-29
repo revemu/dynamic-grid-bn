@@ -134,9 +134,13 @@ export class MaFanStrategy {
     } else {
       this.candles.push(candle);
       this.candles.sort((a, b) => a.time - b.time);
-      if (this.candles.length > 1200) this.candles.shift();
+      if (this.candles.length > 1400) this.candles.shift();
     }
     this.recomputeIndicators();
+    // Dynamically recalibrate spread on every closed candle (1:1 Causal Parity with Backtest)
+    if (this.config.autoCalibrateSpreadOnSwitch && this.candles.length >= 50) {
+      this.calibrateSpread();
+    }
   }
 
   public onHtfCandle(candle: Candle, isClosed: boolean): void {
@@ -147,7 +151,7 @@ export class MaFanStrategy {
     } else {
       this.candlesHtf.push(candle);
       this.candlesHtf.sort((a, b) => a.time - b.time);
-      if (this.candlesHtf.length > 300) this.candlesHtf.shift();
+      if (this.candlesHtf.length > 400) this.candlesHtf.shift();
     }
     this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio, this.config.executionTimeframe);
   }
@@ -155,6 +159,12 @@ export class MaFanStrategy {
   public calibrateSpread(): CalibrationResult | null {
     if (this.candles.length < 50) return null;
     const t0 = Date.now();
+    const isFdusd = this.symbol.endsWith("FDUSD");
+    const costModel = isFdusd
+      ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
+      : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+
+    const prevBestSpread = this.lastCalibration?.bestSpreadPct;
     const res = AutoCalibrator.calibrate(this.symbol, this.candles, undefined, this.candlesHtf, {
       slBufferPct: this.config.slBufferPct,
       trailingPullbackPct: this.config.trailingPullbackPct,
@@ -162,12 +172,22 @@ export class MaFanStrategy {
       tp1Ratio: this.config.tp1Ratio,
       initialCapital: this.config.maxPositionBudgetUsd,
       supervisorTimeframe: this.config.supervisorTimeframe,
+      executionTimeframe: this.config.executionTimeframe,
       useRatchetSl: this.config.useRatchetSl !== false,
       cushionMode: this.config.bullCushionEnabled ? "htfBull" : "off",
+      costModel,
+      macroGateMode: this.config.macroGateMode ?? "off",
+      enableUpsideFloor: this.config.upsideFloorEnabled !== false,
+      waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
+      lookbackBars: 1000,
+      tieBreakMarginPct: 0.02,
+      defensiveOnLossRegime: true,
     });
     this.lastCalibration = res;
     this.effectiveSpreadThreshold = res.bestSpreadPct;
-    this.log(`⚡ [AUTO_CALIBRATED] ${this.symbol} sweet spot spread: ${res.bestSpreadPct}% (Sim WinRate: ${res.winRate.toFixed(1)}%, took ${Date.now() - t0}ms)`);
+    if (prevBestSpread === undefined || Math.abs(prevBestSpread - res.bestSpreadPct) >= 0.001) {
+      this.log(`⚡ [AUTO_CALIBRATED] ${this.symbol} sweet spot spread: ${res.bestSpreadPct}% (Sim WinRate: ${res.winRate.toFixed(1)}%, PF: ${res.profitFactor.toFixed(2)}, took ${Date.now() - t0}ms)`);
+    }
     return res;
   }
 

@@ -143,8 +143,8 @@ async function main(): Promise<void> {
     const initialCandleLimit = isMaFan ? 1000 : (config.initialCandleCount ?? 300);
 
     if (isMaFan) {
-      macroDowEngine.setMaxCandles(1200);
-      dashboard?.setMaxCandles?.(1200);
+      macroDowEngine.setMaxCandles(1400);
+      dashboard?.setMaxCandles?.(1400);
     }
 
     await Promise.all([

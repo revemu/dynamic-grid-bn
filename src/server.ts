@@ -754,10 +754,14 @@ export class DashboardServer {
           const enableUpsideFloor = parsed.enableUpsideFloor !== undefined ? Boolean(parsed.enableUpsideFloor) : (liveCfg.maFanUpsideFloor !== false);
           const enableCircuitBreaker = parsed.enableCircuitBreaker !== undefined ? Boolean(parsed.enableCircuitBreaker) : (liveCfg.maFanCircuitBreaker !== false);
 
-          // Compute required HTF supervisor candles based on limit and timeframe ratio
+          const isAutoSpread = spreadThreshold === "auto";
+          const warmupPrefixBars = isAutoSpread ? 1200 : 0;
+          const fetchLimit = limit + warmupPrefixBars;
+
+          // Compute required HTF supervisor candles based on fetchLimit and timeframe ratio
           const tfMinutes = timeframe === "1m" ? 1 : timeframe === "5m" ? 5 : timeframe === "15m" ? 15 : 60;
           const htfMinutes = supervisorTimeframe === "1h" ? 60 : 15;
-          const htfLimit = Math.max(300, Math.ceil((limit * tfMinutes) / htfMinutes) + 50);
+          const htfLimit = Math.max(300, Math.ceil((fetchLimit * tfMinutes) / htfMinutes) + 50);
 
           let feePctPerSide = 0.075;
           let slippagePctPerFill = 0.01;
@@ -780,9 +784,11 @@ export class DashboardServer {
           const costModel = { feePctPerSide, slippagePctPerFill };
 
           const [candles, candlesHtf] = await Promise.all([
-            BacktestService.fetchBinanceCandles(symbol, timeframe, limit),
+            BacktestService.fetchBinanceCandles(symbol, timeframe, fetchLimit),
             BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, htfLimit).catch(() => []),
           ]);
+          const actualWarmup = isAutoSpread ? Math.max(0, candles.length - limit) : 0;
+
           const result = BacktestService.runMaFanSimulation(candles, {
             symbol,
             timeframe,
@@ -803,6 +809,8 @@ export class DashboardServer {
             macroGateMode,
             enableUpsideFloor,
             enableCircuitBreaker,
+            warmupBars: actualWarmup,
+            trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

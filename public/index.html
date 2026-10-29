@@ -1924,8 +1924,8 @@
 
               <div class="form-group switch-group" style="grid-column: 1 / -1;">
                 <div class="switch-label-group">
-                  <span class="switch-title">🧠 Auto-Calibrate Spread เมื่อสลับเหรียญ (In-Memory Backtest)</span>
-                  <span class="switch-desc">จำลองรันแท่งเทียนในหน่วยความจำทันทีที่สลับเหรียญ เพื่อหาค่า Spread ที่ให้ Win Rate และกำไรสูงสุดของเหรียญนั้นอัตโนมัติ</span>
+                  <span class="switch-title">🧠 Auto-Calibrate Spread อัตโนมัติทุกแท่งที่ปิด (Causal Walk-Forward)</span>
+                  <span class="switch-desc">จำลองคำนวณย้อนหลังอัตโนมัติทุกครั้งที่แท่งเทียนปิด เพื่อปรับ Sweet Spot Spread ตามพฤติกรรมตลาดจริงแบบเรียลไทม์ (ไม่มองอนาคต 1:1 กับ Backtest)</span>
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="cfg_maFanAutoCalibrateSpreadOnSwitch" checked />
