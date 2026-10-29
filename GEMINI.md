@@ -5663,6 +5663,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
 2. **ขยับ Version Cache-Busting ใน `public/index.html` (`public/index.html`)**:
    - ปรับ `<script src="app.js?v=3.44"></script>` เพื่อบังคับให้เบราว์เซอร์ของผู้ใช้โหลดไฟล์สคริปต์ที่แก้ไขแล้วทันทีโดยไม่ติด Cache เดิม
 
+---
+
+## 160. v0.2.160 — 100% Config Synchronization Between Live Bot, Backtest Studio, Scanner & Auto-Calibrator (`public/backtest.js`, `public/backtest.html`, `public/index.html`, `src/backtest-service.ts`, `src/server.ts`, `src/strategy/ma-fan/calibrator.ts`, `src/strategy/ma-fan/regime.ts`, `src/strategy/ma-fan/strategy.ts`, `package.json`, `src/version.ts`)
+
+1. **ดึง Config จากบอทจริงมาตั้งค่าเริ่มต้นในหน้า Backtest Studio อัตโนมัติ (`public/backtest.js`, `public/backtest.html`)**:
+   - **ปัญหาเดิม**: หน้า Backtest Studio โหลดค่าเริ่มต้นแบบฮาร์ดโค้ดใน HTML เช่น เงินทุน `$200`, Timeframe `5m`, และดึง `/api/config` เฉพาะเมื่อไม่มีพารามิเตอร์ `?symbol=` ใน URL และนำไปใส่เฉพาะช่องเหรียญเท่านั้น ทำให้ผู้ใช้ต้องคอยกรอกงบประมาณ, Spread, และโหมด SL ใหม่ทุกครั้ง
+   - **การแก้ไข**: อัปเดต `DOMContentLoaded` ให้ดึง `/api/config` สม่ำเสมอเพื่อ Pre-fill ฟิลด์ทั้งหมดจากบอทจริง:
+     - `inpBudget`: ดึงค่าจาก `cfg.maFanMaxBudgetUsd` (หรืองบประมาณบอทจริง)
+     - `inpTimeframe`: ดึงค่าจาก `cfg.maFanExecutionTimeframe`
+     - `inpSpread`: หากเปิด `cfg.maFanAutoCalibrateSpreadOnSwitch` จะเลือก `"auto"` ให้ทันที หากใช้ Manual Spread จะเลือกหรือสร้าง Option ค่า Spread จริงให้
+     - `inpSlMode`: ดึงค่าจาก `cfg.maFanUseRatchetSl` (`"ratchet"` หรือ `"fixed"`)
+     - `inpSymbol`: ใช้ค่าจาก URL `?symbol=` เป็นลำดับแรก หากไม่มีจะดึง `cfg.symbol` ของบอทจริง
+   - ปรับ Cache-busting เป็น `backtest.js?v=3.45` และ `app.js?v=3.45`
+
+2. **กำจัด Hardcoded Values ใน `AutoCalibrator` และเชื่อมโยงพารามิเตอร์เต็มรูปแบบ (`src/strategy/ma-fan/calibrator.ts`, `src/strategy/ma-fan/strategy.ts`)**:
+   - **ปัญหาเดิม**: `AutoCalibrator.calibrate` ฮาร์ดโค้ดค่า `slBufferPct = 0.25`, `trailingPullbackPct = 0.45`, `breakevenFeeBufferPct = 0.05`, `tp1Ratio = 0.50`, `initialCapital = 200`, และตีกรอบแท่งเทียนระดับสูงไว้ที่ 15m เท่านั้น ทำให้ผลการค้นหา Sweet Spot Spread ไม่ตรงกับพารามิเตอร์ที่บอทจริงหรือผู้ใช้ตั้งไว้
+   - **การแก้ไข**: เพิ่ม Interface `CalibrateOptions` และส่งผ่านค่า `opts` ทั้งหมด (`slBufferPct`, `trailingPullbackPct`, `breakevenFeeBufferPct`, `tp1Ratio`, `initialCapital`, `supervisorTimeframe`, `useRatchetSl`) พร้อมรองรับการรวบแท่งเทียน HTF ตาม `targetMinutes` (15m หรือ 60m ตาม `supervisorTimeframe`)
+
+3. **ปรับ `RegimeSupervisor` ให้เคารพสัดส่วน TP1 Ratio ของผู้ใช้ (`src/strategy/ma-fan/regime.ts`, `src/strategy/ma-fan/strategy.ts`)**:
+   - **การแก้ไข**: ปรับ `evaluateHtfRegime` ให้รับพารามิเตอร์ `baseTp1Ratio` จาก Config บอทจริง โดยในสภาวะ Bullish จะใช้ค่า `baseTp1Ratio` ตามที่ตั้งไว้ และในสภาวะ Bearish จะปรับเป็น `Math.max(baseTp1Ratio, 0.75)` เพื่อลดความเสี่ยงอย่างรวดเร็ว
+
+4. **เชื่อมโยงพารามิเตอร์ใน Backtest Service และ REST API ครบวงจร (`src/backtest-service.ts`, `src/server.ts`)**:
+   - เพิ่มการรองรับ `supervisorTimeframe` ("15m" | "1h") ใน `runMaFanSimulation` และ `scanMarket`
+   - ใน `/api/backtest/run` และ `/api/backtest/scan`: ส่งผ่านพารามิเตอร์ครบทุกตัว โดยดึงค่าจาก request body ก่อน หากไม่ได้ระบุจะ fallback ไปดึงค่าสดจาก `liveCfg` (`maFanSupervisorTimeframe`, `maFanMaxBudgetUsd`, `maFanTrailingPullbackPct`, `maFanTp1Ratio`, `maFanBreakevenFeeBufferPct`, `maFanSlBufferPct`, `maFanUseRatchetSl`)
+   - ทำให้ผลการทดสอบ Backtest, การสแกนเหรียญ Market Scanner, การ Calibrate และการเทรดจริงบนเซิร์ฟเวอร์รันด้วยตรรกะและคอนฟิกเดียวกัน 100%
+
+
 
 
 

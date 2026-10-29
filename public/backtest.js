@@ -1476,15 +1476,48 @@
     const sym = urlParams.get("symbol");
     if (sym) {
       setSymbolValue(sym);
-    } else {
-      // Pre-fill with active bot symbol from server settings if available
-      fetch("/api/config")
-        .then((r) => r.json())
-        .then((cfg) => {
-          if (cfg && cfg.symbol) setSymbolValue(cfg.symbol);
-        })
-        .catch(() => {});
     }
+
+    // Always pre-fill settings from active live bot configuration
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((cfg) => {
+        if (!cfg) return;
+        if (!sym && cfg.symbol) {
+          setSymbolValue(cfg.symbol);
+        }
+        if (inpBudget && (cfg.maFanMaxBudgetUsd || cfg.budget)) {
+          inpBudget.value = cfg.maFanMaxBudgetUsd || cfg.budget;
+        }
+        if (inpTimeframe && cfg.maFanExecutionTimeframe) {
+          inpTimeframe.value = cfg.maFanExecutionTimeframe;
+        }
+        if (inpSpread) {
+          if (cfg.maFanAutoCalibrateSpreadOnSwitch) {
+            inpSpread.value = "auto";
+          } else if (cfg.maFanManualSpreadPct !== undefined) {
+            const spreadStr = String(cfg.maFanManualSpreadPct);
+            let hasOption = false;
+            for (let i = 0; i < inpSpread.options.length; i++) {
+              if (inpSpread.options[i].value === spreadStr) {
+                hasOption = true;
+                break;
+              }
+            }
+            if (!hasOption) {
+              const opt = document.createElement("option");
+              opt.value = spreadStr;
+              opt.textContent = `🎯 ${spreadStr}% (จากบอทจริง)`;
+              inpSpread.appendChild(opt);
+            }
+            inpSpread.value = spreadStr;
+          }
+        }
+        if (inpSlMode && cfg.maFanUseRatchetSl !== undefined) {
+          inpSlMode.value = cfg.maFanUseRatchetSl ? "ratchet" : "fixed";
+        }
+      })
+      .catch(() => {});
 
     // Do NOT automatically run backtest on page load; wait for user to click "Run Backtest"
   });

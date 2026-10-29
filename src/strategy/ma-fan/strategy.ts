@@ -113,7 +113,7 @@ export class MaFanStrategy {
 
   public setInitialHtfCandles(candles: Candle[]): void {
     this.candlesHtf = candles.filter((c) => c.isClosed !== false).sort((a, b) => a.time - b.time);
-    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe);
+    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio);
   }
 
   public onCandle(candle: Candle, isClosed: boolean): void {
@@ -140,13 +140,21 @@ export class MaFanStrategy {
       this.candlesHtf.sort((a, b) => a.time - b.time);
       if (this.candlesHtf.length > 300) this.candlesHtf.shift();
     }
-    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe);
+    this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio);
   }
 
   public calibrateSpread(): CalibrationResult | null {
     if (this.candles.length < 50) return null;
     const t0 = Date.now();
-    const res = AutoCalibrator.calibrate(this.symbol, this.candles, undefined, this.candlesHtf);
+    const res = AutoCalibrator.calibrate(this.symbol, this.candles, undefined, this.candlesHtf, {
+      slBufferPct: this.config.slBufferPct,
+      trailingPullbackPct: this.config.trailingPullbackPct,
+      breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
+      tp1Ratio: this.config.tp1Ratio,
+      initialCapital: this.config.maxPositionBudgetUsd,
+      supervisorTimeframe: this.config.supervisorTimeframe,
+      useRatchetSl: this.config.useRatchetSl !== false,
+    });
     this.lastCalibration = res;
     this.effectiveSpreadThreshold = res.bestSpreadPct;
     this.log(`⚡ [AUTO_CALIBRATED] ${this.symbol} sweet spot spread: ${res.bestSpreadPct}% (Sim WinRate: ${res.winRate.toFixed(1)}%, took ${Date.now() - t0}ms)`);
@@ -155,7 +163,7 @@ export class MaFanStrategy {
 
   public refreshConfig(): void {
     if (this.candlesHtf.length > 0) {
-      this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe);
+      this.currentHtfRegime = RegimeSupervisor.evaluateHtfRegime(this.candlesHtf, this.config.supervisorTimeframe, undefined, this.config.tp1Ratio);
     }
     if (this.config.autoCalibrateSpreadOnSwitch && this.candles.length >= 50 && !this.lastCalibration) {
       this.calibrateSpread();

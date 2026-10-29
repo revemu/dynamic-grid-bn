@@ -11,15 +11,17 @@ export class RegimeSupervisor {
   public static evaluateHtfRegime(
     candlesHtf: Candle[],
     timeframe: "15m" | "1h" = "15m",
-    targetTime?: number
+    targetTime?: number,
+    baseTp1Ratio: number = 0.50
   ): HtfRegime {
+    const cleanBaseTp1 = Math.max(0.1, Math.min(0.9, baseTp1Ratio));
     if (candlesHtf.length === 0) {
       return {
         timeframe,
         isBullish: true,
         isAboveEma200: true,
         spreadMultiplier: 1.0,
-        recommendedTp1Ratio: 0.50,
+        recommendedTp1Ratio: cleanBaseTp1,
       };
     }
 
@@ -50,10 +52,10 @@ export class RegimeSupervisor {
     const isBullish = isAboveEma200 || isEmaAlignedUp;
 
     // Asymmetric risk rules:
-    // If Bullish: Standard spread (1.0x), 50% TP1 / 50% Runner
-    // If Bearish: Deeper spread required (1.25x), 75% TP1 fast / 25% Runner
+    // If Bullish: Standard spread (1.0x), user configured baseTp1Ratio (e.g. 50%)
+    // If Bearish: Deeper spread required (1.25x), higher TP1 ratio to derisk faster (at least 75%)
     const spreadMultiplier = isBullish ? 1.0 : 1.25;
-    const recommendedTp1Ratio = isBullish ? 0.50 : 0.75;
+    const recommendedTp1Ratio = isBullish ? cleanBaseTp1 : Math.max(cleanBaseTp1, 0.75);
 
     return {
       timeframe,

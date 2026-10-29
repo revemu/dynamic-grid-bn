@@ -65,6 +65,7 @@ export interface MarketScanOptions {
   trailingPullbackPct?: number;
   tp1Ratio?: number;
   breakevenFeeBufferPct?: number;
+  supervisorTimeframe?: "15m" | "1h";
 }
 
 export interface BacktestMarker {
@@ -237,6 +238,7 @@ export class BacktestService {
       trailingPullbackPct?: number;
       tp1Ratio?: number;
       breakevenFeeBufferPct?: number;
+      supervisorTimeframe?: "15m" | "1h";
       saveToHistory?: boolean;
       candlesHtf?: Candle[];
     }
@@ -250,17 +252,26 @@ export class BacktestService {
     const atrMultiplier = opts.atrMultiplier ?? 1.25;
     const trailingPullbackPct = opts.trailingPullbackPct ?? 0.45;
     const tp1Ratio = Math.max(0.1, Math.min(0.9, opts.tp1Ratio ?? 0.50));
-    const beFeeBuffer = (opts.breakevenFeeBufferPct ?? 0.05) / 100;
+    const supervisorTf = opts.supervisorTimeframe ?? "15m";
+    const targetMinutes = supervisorTf === "1h" ? 60 : 15;
 
-    // HTF 15m candles: use provided or aggregate from 5m candles
+    // HTF candles: use provided or aggregate from candles
     const candlesHtf = opts.candlesHtf && opts.candlesHtf.length > 0
       ? opts.candlesHtf
-      : BacktestService.aggregateCandles(candles, 15);
+      : BacktestService.aggregateCandles(candles, targetMinutes);
 
     // Resolve spread threshold (auto calibrate if requested or <= 0)
     let spread = typeof opts.spreadThreshold === "number" && opts.spreadThreshold > 0 ? opts.spreadThreshold : 0.25;
     if (opts.spreadThreshold === "auto" || !opts.spreadThreshold) {
-      const cal = AutoCalibrator.calibrate(symbol, candles, undefined, candlesHtf);
+      const cal = AutoCalibrator.calibrate(symbol, candles, undefined, candlesHtf, {
+        slBufferPct,
+        trailingPullbackPct,
+        breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
+        tp1Ratio,
+        initialCapital,
+        supervisorTimeframe: supervisorTf,
+        useRatchetSl,
+      });
       spread = cal.bestSpreadPct || 0.25;
     }
 
@@ -299,8 +310,8 @@ export class BacktestService {
       const ribbon = ribbonStates[i]!;
       const curAtr = atrs[i] ?? (c.close * 0.003);
 
-      // Evaluate Higher Timeframe (HTF 15m) Regime (aligns with Live Bot)
-      const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, "15m", c.time);
+      // Evaluate Higher Timeframe Regime (aligns with Live Bot)
+      const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, c.time, tp1Ratio);
       const activeTp1Ratio = Math.max(0.1, Math.min(0.9, htfRegime.recommendedTp1Ratio ?? tp1Ratio));
 
       // Current portfolio equity
@@ -567,7 +578,7 @@ export class BacktestService {
     const evaluations: BacktestEvaluationItem[] = candles.map((c, idx) => {
       const rib = ribbonStates[idx]!;
       const exh = exhaustionStates[idx]!;
-      const htfReg = RegimeSupervisor.evaluateHtfRegime(candlesHtf, "15m", c.time);
+      const htfReg = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, c.time, tp1Ratio);
       const curAtrVal = atrs[idx] ?? (c.close * 0.003);
       const baseSp = MaFanCoreRules.computeEffectiveSpread({
         baseSpread: spread,
@@ -769,6 +780,7 @@ export class BacktestService {
               trailingPullbackPct: opts.trailingPullbackPct ?? 0.45,
               tp1Ratio: opts.tp1Ratio ?? 0.5,
               breakevenFeeBufferPct: opts.breakevenFeeBufferPct ?? 0.05,
+              supervisorTimeframe: opts.supervisorTimeframe ?? "15m",
               saveToHistory: false, // Don't pollute persistent history database
             });
 

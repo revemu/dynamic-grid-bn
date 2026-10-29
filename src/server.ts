@@ -748,6 +748,7 @@ export class DashboardServer {
           const budget = Number(parsed.budget) || Number(liveCfg.maFanMaxBudgetUsd) || 200;
           const slBufferPct = Number(parsed.slBufferPct) || Number(liveCfg.maFanSlBufferPct) || 0.25;
           const useRatchetSl = parsed.useRatchetSl !== false;
+          const supervisorTimeframe = (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h";
 
           const candles = await BacktestService.fetchBinanceCandles(symbol, timeframe, limit);
           const result = BacktestService.runMaFanSimulation(candles, {
@@ -759,9 +760,10 @@ export class DashboardServer {
             useRatchetSl,
             useAtrAdaptiveSpread: liveCfg.maFanUseAtrAdaptiveSpread ?? true,
             atrMultiplier: Number(liveCfg.maFanAtrMultiplier) || 1.25,
-            trailingPullbackPct: Number(liveCfg.maFanTrailingPullbackPct) || 0.45,
-            tp1Ratio: Number(liveCfg.maFanTp1Ratio) || 0.5,
-            breakevenFeeBufferPct: Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05,
+            trailingPullbackPct: parsed.trailingPullbackPct !== undefined ? Number(parsed.trailingPullbackPct) : (Number(liveCfg.maFanTrailingPullbackPct) || 0.45),
+            tp1Ratio: parsed.tp1Ratio !== undefined ? Number(parsed.tp1Ratio) : (Number(liveCfg.maFanTp1Ratio) || 0.5),
+            breakevenFeeBufferPct: parsed.breakevenFeeBufferPct !== undefined ? Number(parsed.breakevenFeeBufferPct) : (Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05),
+            supervisorTimeframe,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -794,12 +796,13 @@ export class DashboardServer {
             spreadThreshold,
             useRatchetSl,
             initialCapital: Number(parsed.budget) || Number(liveCfg.maFanMaxBudgetUsd) || 200,
-            slBufferPct: Number(parsed.slBufferPct) || Number(liveCfg.maFanSlBufferPct) || 0.25,
+            slBufferPct: parsed.slBufferPct !== undefined ? Number(parsed.slBufferPct) : (Number(liveCfg.maFanSlBufferPct) || 0.25),
             useAtrAdaptiveSpread: liveCfg.maFanUseAtrAdaptiveSpread ?? true,
             atrMultiplier: Number(liveCfg.maFanAtrMultiplier) || 1.25,
-            trailingPullbackPct: Number(liveCfg.maFanTrailingPullbackPct) || 0.45,
-            tp1Ratio: Number(liveCfg.maFanTp1Ratio) || 0.5,
-            breakevenFeeBufferPct: Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05,
+            trailingPullbackPct: parsed.trailingPullbackPct !== undefined ? Number(parsed.trailingPullbackPct) : (Number(liveCfg.maFanTrailingPullbackPct) || 0.45),
+            tp1Ratio: parsed.tp1Ratio !== undefined ? Number(parsed.tp1Ratio) : (Number(liveCfg.maFanTp1Ratio) || 0.5),
+            breakevenFeeBufferPct: parsed.breakevenFeeBufferPct !== undefined ? Number(parsed.breakevenFeeBufferPct) : (Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05),
+            supervisorTimeframe: (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h",
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

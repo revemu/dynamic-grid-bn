@@ -10,8 +10,8 @@ import { ExhaustionEngine } from "./exhaustion.js";
 import { MaFanCoreRules } from "./core-rules.js";
 import { RegimeSupervisor } from "./regime.js";
 
-function aggregateTo15m(candles: Candle[]): Candle[] {
-  const targetSeconds = 15 * 60;
+function aggregateTo15m(candles: Candle[], targetMinutes = 15): Candle[] {
+  const targetSeconds = targetMinutes * 60;
   const groups = new Map<number, Candle>();
   for (const c of candles) {
     const bucket = Math.floor(c.time / targetSeconds) * targetSeconds;
@@ -28,13 +28,32 @@ function aggregateTo15m(candles: Candle[]): Candle[] {
   return Array.from(groups.values()).sort((a, b) => a.time - b.time);
 }
 
+export interface CalibrateOptions {
+  slBufferPct?: number;
+  trailingPullbackPct?: number;
+  breakevenFeeBufferPct?: number;
+  tp1Ratio?: number;
+  initialCapital?: number;
+  supervisorTimeframe?: "15m" | "1h";
+  useRatchetSl?: boolean;
+}
+
 export class AutoCalibrator {
   public static calibrate(
     symbol: string,
     candles: Candle[],
     candidateSpreads: number[] = [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.65, 0.80, 1.00, 1.25, 1.50, 1.80],
-    candlesHtf?: Candle[]
+    candlesHtf?: Candle[],
+    opts?: CalibrateOptions
   ): CalibrationResult {
+    const slBufferPct = opts?.slBufferPct ?? 0.25;
+    const trailingPullbackPct = opts?.trailingPullbackPct ?? 0.45;
+    const breakevenFeeBufferPct = opts?.breakevenFeeBufferPct ?? 0.05;
+    const tp1Ratio = Math.max(0.1, Math.min(0.9, opts?.tp1Ratio ?? 0.50));
+    const initialCapital = opts?.initialCapital ?? 200;
+    const supervisorTimeframe = opts?.supervisorTimeframe ?? "15m";
+    const useRatchetSl = opts?.useRatchetSl !== false;
+
     const candidatesResults: {
       spreadPct: number;
       netPnlPct: number;
@@ -43,7 +62,8 @@ export class AutoCalibrator {
       profitFactor: number;
     }[] = [];
 
-    const htfList = candlesHtf && candlesHtf.length > 0 ? candlesHtf : aggregateTo15m(candles);
+    const targetMinutes = supervisorTimeframe === "1h" ? 60 : 15;
+    const htfList = candlesHtf && candlesHtf.length > 0 ? candlesHtf : aggregateTo15m(candles, targetMinutes);
     const warmup = Math.min(100, Math.floor(candles.length / 4));
 
     // Precompute Ribbon and Exhaustion arrays once in O(N)
@@ -54,7 +74,7 @@ export class AutoCalibrator {
     const atrs = calcATR(candles, 14);
 
     for (const spread of candidateSpreads) {
-      let cash = 200;
+      let cash = initialCapital;
       let heldQty = 0;
       let entryPrice = 0;
       let entryIdx = 0;
@@ -87,8 +107,8 @@ export class AutoCalibrator {
             currentSlPrice: stopLossPrice,
             currentPrice: c.close,
             curAtr,
-            slBufferPct: 0.25,
-            useRatchetSl: true,
+            slBufferPct,
+            useRatchetSl,
           });
           if (liftedSl !== null && liftedSl > stopLossPrice) {
             stopLossPrice = liftedSl;
@@ -104,8 +124,8 @@ export class AutoCalibrator {
             tp1Filled,
             highestPriceSinceTp1: highestSinceTp1,
             ribbon,
-            trailingPullbackPct: 0.45,
-            breakevenFeeBufferPct: 0.05,
+            trailingPullbackPct,
+            breakevenFeeBufferPct,
             isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
             barsHeld,
           });
@@ -133,8 +153,8 @@ export class AutoCalibrator {
           }
 
           if (exitDecision.action === "TP1") {
-            const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, "15m", c.time);
-            const activeTp1Ratio = htfRegime.recommendedTp1Ratio ?? 0.50;
+            const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, supervisorTimeframe, c.time, tp1Ratio);
+            const activeTp1Ratio = htfRegime.recommendedTp1Ratio ?? tp1Ratio;
             tp1Price = exitDecision.exitPrice;
             tp1Qty = heldQty * activeTp1Ratio;
             cash += tp1Qty * tp1Price;
@@ -149,7 +169,7 @@ export class AutoCalibrator {
 
         // Position Entry
         if (heldQty === 0 && cash >= 10) {
-          const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, "15m", c.time);
+          const htfRegime = RegimeSupervisor.evaluateHtfRegime(htfList, supervisorTimeframe, c.time, tp1Ratio);
           const requiredSpread = spread * htfRegime.spreadMultiplier;
           const exhaustion = exhaustionStates[i]!;
           const curAtr = atrs[i] || c.close * 0.003;
@@ -162,7 +182,7 @@ export class AutoCalibrator {
             exhaustion,
             requiredSpreadPct: requiredSpread,
             curAtr,
-            slBufferPct: 0.25,
+            slBufferPct,
           });
 
           if (entryDecision.shouldEnter) {
@@ -184,7 +204,7 @@ export class AutoCalibrator {
       const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
       const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99.9 : 0;
       const finalEquity = cash + heldQty * candles[candles.length - 1]!.close;
-      const netPnlPct = ((finalEquity - 200) / 200) * 100;
+      const netPnlPct = ((finalEquity - initialCapital) / initialCapital) * 100;
 
       candidatesResults.push({
         spreadPct: spread,
