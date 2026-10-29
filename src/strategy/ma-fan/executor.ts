@@ -130,6 +130,7 @@ export class MaFanOrderExecutor {
 
     let fillPrice = entryPrice;
     let netReceivedQty = qty;
+    let exchangeOrderId: string | number | undefined;
 
     if (!this.dryRun) {
       try {
@@ -142,6 +143,7 @@ export class MaFanOrderExecutor {
           qty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
+        if (res.orderId) exchangeOrderId = res.orderId;
 
         // 🛡️ Deduct Trading Fee in Base Asset (Binance Spot fee deduction)
         if (Array.isArray(res.fills) && res.fills.length > 0) {
@@ -190,7 +192,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "BUY", fillPrice, finalHoldingQty);
+    const orderRecord = this.recordDbOrder(trade, "BUY", fillPrice, finalHoldingQty, undefined, exchangeOrderId);
     this.onTrade?.(orderRecord || trade);
 
     return position;
@@ -229,6 +231,7 @@ export class MaFanOrderExecutor {
     this.log(`🎯 [TP1_EMA25] ${position.symbol} | Target: $${currentPrice.toFixed(4)} | Selling: ${sellQty} | DryRun: ${this.dryRun}`);
 
     let fillPrice = currentPrice;
+    let exchangeOrderId: string | number | undefined;
     if (!this.dryRun) {
       try {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
@@ -240,6 +243,7 @@ export class MaFanOrderExecutor {
           qty: sellQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
+        if (res.orderId) exchangeOrderId = res.orderId;
       } catch (err: any) {
         this.log(`❌ TP1 order failed: ${err.message}`);
         return false;
@@ -274,7 +278,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -310,6 +314,7 @@ export class MaFanOrderExecutor {
     this.log(`🚀 [TP2_RUNNER] ${position.symbol} | Price: $${currentPrice.toFixed(4)} | Qty: ${sellQty} | Reason: ${reason} | DryRun: ${this.dryRun}`);
 
     let fillPrice = currentPrice;
+    let exchangeOrderId: string | number | undefined;
     if (!this.dryRun) {
       try {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
@@ -321,6 +326,7 @@ export class MaFanOrderExecutor {
           qty: sellQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
+        if (res.orderId) exchangeOrderId = res.orderId;
       } catch (err: any) {
         this.log(`❌ TP2 order failed: ${err.message}`);
         return false;
@@ -344,7 +350,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -379,6 +385,7 @@ export class MaFanOrderExecutor {
     this.log(`🔴 [STOP_LOSS] ${position.symbol} | Trigger: $${currentPrice.toFixed(4)} | SL Price: $${position.stopLossPrice.toFixed(4)} | Qty: ${sellQty} | Breakeven Locked: ${position.isBreakevenLocked}`);
 
     let fillPrice = currentPrice;
+    let exchangeOrderId: string | number | undefined;
     if (!this.dryRun) {
       try {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
@@ -390,6 +397,7 @@ export class MaFanOrderExecutor {
           qty: sellQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
+        if (res.orderId) exchangeOrderId = res.orderId;
       } catch (err: any) {
         this.log(`❌ Stop Loss exit failed: ${err.message}`);
         return false;
@@ -413,7 +421,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -424,7 +432,8 @@ export class MaFanOrderExecutor {
     side: "BUY" | "SELL",
     price: number,
     qty: number,
-    pnl?: number
+    pnl?: number,
+    exchangeOrderId?: string | number,
   ): UnifiedOrderRecord | undefined {
     try {
       const sym = (trade.symbol || "").toUpperCase();
@@ -447,9 +456,10 @@ export class MaFanOrderExecutor {
         baseAsset = sym.slice(0, -4);
         quoteAsset = "USDC";
       }
+      const realOrderId = exchangeOrderId ? String(exchangeOrderId) : trade.id;
       return this.db.recordEvent({
         id: trade.id,
-        orderId: trade.id,
+        orderId: realOrderId,
         symbol: trade.symbol,
         baseAsset,
         quoteAsset,

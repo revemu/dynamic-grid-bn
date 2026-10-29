@@ -5962,6 +5962,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.172` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 173. v0.2.173 — Binance Multi-Fill Split Lots Bot Order Inheritance & Retroactive Healing (`src/db.ts`, `src/strategy/ma-fan/executor.ts`, `public/app.js`, `package.json`, `src/version.ts`)
+
+1. **สืบทอดประเภทคำสั่งและเหตุผลของบอทให้แก่ทุก Partial Fill (Bot Order Metadata Inheritance)**:
+   - **สาเหตุของปัญหา**:
+     - เมื่อบอทส่งคำสั่งขาย (เช่น Stop Loss หรือ TP1) บน Binance Spot แล้ว Binance จับคู่ Order Book เป็นหลายไม้ย่อย (Split Lots ภายใต้ `orderId` เดียวกัน เช่น ไม้ Stop Loss 768.4 ตัว แบ่งเป็น 206.9 ตัว + 561.5 ตัว)
+     - ก้อนแรกจับคู่กับออเดอร์ของบอทได้ จึงแสดงป้าย `🔴 Stop Loss` ถูกต้อง แต่ก้อนที่สองที่ตามมา ระบบมองว่า slot เดิมมี `tradeId` ไปแล้ว จึงเข้าใจผิดว่าเป็นรายการเทรดมือใหม่จากภายนอกบนเว็บ/แอป Binance และบันทึกเป็น `action: SELL_FILL`, `reason: Binance Account Trade (SELL)`
+     - หน้าแดชบอร์ดเมื่อพบคำว่า "Binance" จึงนำไปแสดงเป็นป้ายสีส้ม `⚡ Binance Trade` ทำให้ผู้ใช้สับสนว่าทำไมบอทมองว่า Binance เป็นคนขาย ทั้งที่บอทสั่งขายเอง
+   - **การแก้ไข**:
+     - ใน `src/db.ts` ฟังก์ชัน `syncRecentTradesFromBinance`: ปรับปรุงระบบตรวจสอบความสัมพันธ์ของออเดอร์ หากพบว่า trade fill ที่เข้ามามี `orderId` ตรงกับคำสั่งของบอท (`botOrdersByOrderId`) หรือคำสั่งในระบบ จะทำการสืบทอด `action` (`CUT`, `TAKE_PROFIT`, `SNIPE_BUY`), `reason` (`Swing Low SL Hit`, `EMA 25 Mean Reversion Reached`), `levelDesc` และ `type` จากคำสั่งบอทเสมอ จะไม่ถูกเปลี่ยนเป็น `Binance Account Trade` อีกต่อไป ทำให้ทุก lot ย่อยที่ถูก split แสดงป้ายกลยุทธ์ที่แท้จริงครบถ้วน
+2. **บันทึก Exchange Order ID ตั้งแต่ส่งคำสั่ง (`src/strategy/ma-fan/executor.ts`)**:
+   - ใน `executeBuy`, `executeTp1`, `executeTp2`, `executeStopLoss`: ดึงค่า `res.orderId` ที่ได้จากการตอบกลับของ Binance มาบันทึกลงฐานข้อมูลเป็น `orderId` ของ `UnifiedOrderRecord` ทันทีตั้งแต่เสี้ยววินาทีแรกที่ส่งคำสั่ง แทนที่จะใช้ `mf_sl_...` ชั่วคราว ช่วยให้ระบบ Reconcile จับคู่ได้แม่นยำ 100% โดยไม่ต้องพึ่ง Proximity Matching
+3. **ระบบ Auto-Heal ซ่อมแซมประวัติเก่าในฐานข้อมูลย้อนหลังอัตโนมัติ (`src/db.ts`)**:
+   - เพิ่มระบบ Auto-Heal ใน `syncRecentTradesFromBinance` โดยจะกวาดตรวจเรคอร์ดเก่าในฐานข้อมูล หากพบเรคอร์ดที่เคยถูกติดป้าย `Binance Account Trade` แต่มี `orderId` เดียวกันกับคำสั่งบอท จะทำการอัปเดตคืนค่า `action`, `reason`, `levelDesc`, `type` ให้ตรงกับคำสั่งหลักของบอททันที (เช่น ไม้ #32 จะกลับมาเป็น `🔴 Stop Loss` และไม้ #28 จะกลับมาเป็น `🔵 TP1 (EMA 25)` ทันทีเมื่อบอทบูตหรือกด Sync)
+4. **Dashboard UI Badge Protection (`public/app.js`)**:
+   - ปรับปรุงเงื่อนไขแสดงป้าย `⚡ Binance Trade` ใน `renderTradeManagerTable` ให้แสดงเฉพาะรายการที่ไม่มี Bot Action เท่านั้น หากมี action ของบอท (`CUT`, `TAKE_PROFIT`, `SNIPE_BUY` ฯลฯ) จะให้ความสำคัญสูงสุดกับป้ายกลยุทธ์ของบอทเสมอ
+5. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.173` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

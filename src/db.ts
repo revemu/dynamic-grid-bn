@@ -1495,11 +1495,30 @@ export class BotDatabase {
         return true;
       });
 
-      // 2. Map existing orders by orderId and tradeId
+      // 2. Map existing orders by orderId and tradeId (and track bot-placed orders)
       const ordersByOrderId = new Map<string, UnifiedOrderRecord>();
       const ordersByTradeId = new Map<string, UnifiedOrderRecord>();
+      const botOrdersByOrderId = new Map<string, UnifiedOrderRecord>();
       for (const o of this.data.orders) {
-        if (o.orderId) ordersByOrderId.set(o.orderId.toString(), o);
+        if (o.orderId) {
+          const oIdStr = o.orderId.toString();
+          ordersByOrderId.set(oIdStr, o);
+          const isBot =
+            o.reason &&
+            !o.reason.includes("Binance Account Trade") &&
+            (o.action === "CUT" ||
+              o.action === "TAKE_PROFIT" ||
+              o.action === "SNIPE_BUY" ||
+              o.action === "SNIPE_SELL" ||
+              o.action === "CLAIM" ||
+              (o as any).type === "STOP_LOSS" ||
+              (o as any).type === "TP1_EMA25" ||
+              (o as any).type === "TP2_RUNNER" ||
+              (o as any).type === "BUY_HOOK");
+          if (isBot) {
+            botOrdersByOrderId.set(oIdStr, o);
+          }
+        }
         if (o.tradeId) ordersByTradeId.set(o.tradeId.toString(), o);
       }
 
@@ -1556,8 +1575,39 @@ export class BotDatabase {
           }
           ordersByTradeId.set(tId, existing);
           ordersByOrderId.set(oId, existing);
+          const isBot =
+            existing.reason &&
+            !existing.reason.includes("Binance Account Trade") &&
+            (existing.action === "CUT" ||
+              existing.action === "TAKE_PROFIT" ||
+              existing.action === "SNIPE_BUY" ||
+              existing.action === "SNIPE_SELL" ||
+              existing.action === "CLAIM" ||
+              (existing as any).type === "STOP_LOSS" ||
+              (existing as any).type === "TP1_EMA25" ||
+              (existing as any).type === "TP2_RUNNER" ||
+              (existing as any).type === "BUY_HOOK");
+          if (isBot) {
+            botOrdersByOrderId.set(oId, existing);
+          }
           syncedCount++;
         } else {
+          // If this is a subsequent partial fill for a known bot order, inherit bot action & reason
+          const parentOrder = botOrdersByOrderId.get(oId) || ordersByOrderId.get(oId);
+          const isBotOrder = parentOrder && parentOrder.reason && !parentOrder.reason.includes("Binance Account Trade");
+
+          const action = isBotOrder && parentOrder.action
+            ? parentOrder.action
+            : (side === "BUY" ? "BUY_FILL" : "SELL_FILL");
+
+          const reason = isBotOrder && parentOrder.reason
+            ? parentOrder.reason
+            : (side === "BUY" ? "Binance Account Trade (BUY)" : "Binance Account Trade (SELL)");
+
+          const levelDesc = isBotOrder && parentOrder.levelDesc
+            ? parentOrder.levelDesc
+            : (side === "BUY" ? "Reconciled Buy Fill" : "Reconciled Sell Fill");
+
           const newOrder: UnifiedOrderRecord = {
             id: `bin_${time}_${tId}`,
             orderId: oId,
@@ -1572,23 +1622,75 @@ export class BotDatabase {
             notional: quoteQty,
             notionalUsdso: quoteQty,
             status: "FILLED",
-            action: side === "BUY" ? "BUY_FILL" : "SELL_FILL",
-            placedTime: time,
+            action,
+            placedTime: parentOrder?.placedTime || time,
             fillTime: time,
             time,
             fillPrice: price,
-            reason: side === "BUY" ? "Binance Account Trade (BUY)" : "Binance Account Trade (SELL)",
-            levelDesc: side === "BUY" ? "Reconciled Buy Fill" : "Reconciled Sell Fill",
+            reason,
+            levelDesc,
             maker: t.isMaker,
             tradeId: tId,
             fee,
             feeAsset,
+            isIoc: parentOrder?.isIoc,
+            targetPrice: parentOrder?.targetPrice,
+            limitPrice: parentOrder?.limitPrice,
+            slippagePct: parentOrder?.slippagePct,
+            dryRun: parentOrder?.dryRun,
           };
+          if (isBotOrder && (parentOrder as any).type) {
+            (newOrder as any).type = (parentOrder as any).type;
+          }
           this.data.orders.unshift(newOrder);
           ordersByTradeId.set(tId, newOrder);
           ordersByOrderId.set(oId, newOrder);
+          if (isBotOrder) {
+            botOrdersByOrderId.set(oId, newOrder);
+          }
           syncedCount++;
         }
+      }
+
+      // 4. Auto-heal: Ensure all partial fills sharing the same orderId inherit the bot's action & reason
+      for (const o of this.data.orders) {
+        if (
+          o.orderId &&
+          o.reason &&
+          !o.reason.includes("Binance Account Trade") &&
+          (o.action === "CUT" ||
+            o.action === "TAKE_PROFIT" ||
+            o.action === "SNIPE_BUY" ||
+            o.action === "SNIPE_SELL" ||
+            o.action === "CLAIM" ||
+            (o as any).type === "STOP_LOSS" ||
+            (o as any).type === "TP1_EMA25" ||
+            (o as any).type === "TP2_RUNNER" ||
+            (o as any).type === "BUY_HOOK")
+        ) {
+          botOrdersByOrderId.set(o.orderId.toString(), o);
+        }
+      }
+
+      let healedCount = 0;
+      for (const o of this.data.orders) {
+        if (o.orderId && o.reason?.includes("Binance Account Trade")) {
+          const parent = botOrdersByOrderId.get(o.orderId.toString());
+          if (parent) {
+            o.action = parent.action;
+            o.reason = parent.reason;
+            o.levelDesc = parent.levelDesc;
+            if ((parent as any).type) (o as any).type = (parent as any).type;
+            if (parent.isIoc !== undefined) o.isIoc = parent.isIoc;
+            if (parent.targetPrice !== undefined) o.targetPrice = parent.targetPrice;
+            if (parent.limitPrice !== undefined) o.limitPrice = parent.limitPrice;
+            if (parent.slippagePct !== undefined) o.slippagePct = parent.slippagePct;
+            healedCount++;
+          }
+        }
+      }
+      if (healedCount > 0) {
+        this.log(`🛡️ [syncRecentTradesFromBinance] Auto-healed ${healedCount} split partial fill(s) to retain bot action/reason`);
       }
 
       // Sort all orders descending by time so newest orders appear at top

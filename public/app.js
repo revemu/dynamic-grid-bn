@@ -7572,7 +7572,7 @@
           actBadge = `<span class="badge-exit badge-act-ratchet">🟠 Ratchet SL</span>`;
         } else if (o.action === "CUT" || o.action === "CUT_LOSS" || o.type === "STOP_LOSS") {
           actBadge = `<span class="badge-exit badge-act-sl">🔴 Stop Loss</span>`;
-        } else if (o.reason?.includes("Binance")) {
+        } else if (o.reason?.includes("Binance Account Trade") || (o.reason?.includes("Binance") && (!o.action || o.action === "BUY_FILL" || o.action === "SELL_FILL"))) {
           actBadge = `<span class="badge-exit" style="background:rgba(245,158,11,0.2); color:#fbbf24; border:1px solid rgba(245,158,11,0.4);">⚡ Binance Trade</span>`;
         }
 
