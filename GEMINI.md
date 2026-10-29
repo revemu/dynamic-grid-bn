@@ -5812,6 +5812,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.165` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 166. v0.2.166 — Phase 3, 4 & 5: Backtest Validation Findings, Pre-Registered Decision Gate & Live Decision Snapshot Logging (`src/strategy/ma-fan/decision-log.ts`, `src/strategy/ma-fan/strategy.ts`, `src/server.ts`, `src/research/`, `package.json`, `src/version.ts`)
+
+1. **ผลการทดสอบ Backtest Validation Suite (Phase 3 & 4) บน Universe 31 เหรียญ ย้อนหลัง 15 วัน**:
+   - จำลองการเทรดแบบ **Entry-Matched** (1,299 สัญญาณ De-clustered) และ **Full-Path Continuous Trading** ข้าม 12 แขนการทดลอง และ 6 Scenarios ภายใต้ต้นทุน C1 (Fee 0.075% + Slippage 0.03%):
+     - **เกณฑ์ข้อ 1 (Sample Size ≥ 30)**: **ผ่านอย่างสมบูรณ์** เกิดเหตุการณ์ Cushion ทำงานจริง (**Fired Count = 229 ครั้ง**) จึงสรุปผลได้อย่างเด็ดขาดที่หน้าต่าง 15 วัน ไม่ต้องขยายหน้าต่างข้อมูล
+     - **เกณฑ์ข้อ 2 (90% Cluster Bootstrap CI > 0)**: **ไม่ผ่าน** (ค่าเฉลี่ยผลต่างกำไรสุทธิ `Mean Δ = -0.0129%`, 90% CI: `[-0.0407%, +0.0149%]`, Sign Test: `+51 / -41, p = 0.348`) แสดงว่าการผ่อนปรน Breakeven SL ไม่ได้เพิ่มกำไรสุทธิอย่างมีนัยสำคัญ แต่ทำให้ไม้ที่ไหลลงเหวกินขาดทุนลึกขึ้นชดเชยไม้ที่เด้งไป TP2
+     - **เกณฑ์ข้อ 3 (Pessimistic ≥ 0)**: ผ่าน (`Mean Δ = +0.0809%`)
+     - **เกณฑ์ข้อ 4 (Unseen/Seen > 0)**: ไม่ผ่าน (ทั้งสองช่วงมีค่าเฉลี่ย Δ ติดลบเล็กน้อย)
+     - **เกณฑ์ข้อ 5 (Max DD & Loss Ratio)**: ผ่าน
+   - **ข้อสรุปตาม Pre-registered Rule**: กฎ Bull Cushion **ไม่ผ่านเกณฑ์การเปิดเป็นค่าเริ่มต้น** จึงให้คงค่าสวิตช์ `maFanBullCushion: false` ปิดไว้เป็นค่าเริ่มต้นเพื่อคุ้มครองเงินทุนของผู้ใช้
+   - **ข้อค้นพบสำคัญยิ่ง (RQ3 Fee-Aware Grid)**:
+     - การเพิ่ม Breakeven Fee Buffer จาก `0.05%` เป็น `0.20%` (`G3_BE20_TP20`) สามารถลดไม้ที่ออก Breakeven แล้วขาดทุนสุทธิ (จากค่าธรรมเนียม) ลงจาก **256 ไม้ เหลือเพียง 178 ไม้ (-30.5%)** พร้อมดัน Win Rate เพิ่มขึ้นจาก **48.0% เป็น 53.3%**
+2. **Phase 5: ระบบบันทึก Decision Snapshot ระดับโปรดักชัน (`src/strategy/ma-fan/decision-log.ts`, `src/strategy/ma-fan/strategy.ts`, `src/server.ts`)**:
+   - เพิ่ม `appendDecisionSnapshot` บันทึกสถานะอินดิเคเตอร์, โครงสร้าง HTF, สเปรด, Stop Loss, และราคา Fill ทันทีที่มีการกระทำ (ENTRY, TP1, TP2, SL, RATCHET) ลงใน `data/decision-snapshots.jsonl`
+   - เพิ่ม API Endpoint `GET /api/decision-snapshots?limit=200` ใน `src/server.ts` สำหรับดึงประวัติการตัดสินใจสดจากเซิร์ฟเวอร์จริง
+   - สร้างสคริปต์ตรวจสอบความสอดคล้อง `src/research/reconcile.ts` ดึงประวัติออเดอร์สดจาก VPS Binance ตรวจสอบ Slippage จริงพบว่าอยู่ที่ระดับ 0.00% – 0.02% สอดคล้องกับโมเดล C1
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.166` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

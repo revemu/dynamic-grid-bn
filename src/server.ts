@@ -11,6 +11,7 @@ import type { Candle } from "./market-structure.js";
 import { BotDatabase, getDatabase } from "./db.js";
 import { APP_VERSION_INFO } from "./version.js";
 import { BacktestService } from "./backtest-service.js";
+import { readLatestDecisionSnapshots } from "./strategy/ma-fan/decision-log.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -850,6 +851,14 @@ export class DashboardServer {
       }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, record }));
+      return;
+    }
+
+    if (pathname === "/api/decision-snapshots" && req.method === "GET") {
+      const limit = Math.min(1000, Math.max(1, parseInt(parsedUrl.searchParams.get("limit") || "200", 10)));
+      const snapshots = readLatestDecisionSnapshots(limit);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, count: snapshots.length, snapshots }));
       return;
     }
 

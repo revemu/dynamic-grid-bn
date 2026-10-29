@@ -733,7 +733,7 @@ export class BacktestService {
     };
 
     const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
-    const evaluations: BacktestEvaluationItem[] = candles.map((c, idx) => {
+    const evaluations: BacktestEvaluationItem[] = opts.onlyEntryIdx !== undefined ? [] : candles.map((c, idx) => {
       const rib = ribbonStates[idx]!;
       const exh = exhaustionStates[idx]!;
       const htfReg = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, c.time, tp1Ratio);

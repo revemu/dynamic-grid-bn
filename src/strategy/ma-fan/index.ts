@@ -11,3 +11,4 @@ export * from "./core-rules.js";
 export * from "./executor.js";
 export * from "./strategy.js";
 export * from "./strategy-adapter.js";
+export * from "./decision-log.js";

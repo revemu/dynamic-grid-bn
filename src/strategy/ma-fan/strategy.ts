@@ -17,6 +17,8 @@ import { RegimeSupervisor } from "./regime.js";
 import { AutoCalibrator } from "./calibrator.js";
 import { MaFanOrderExecutor } from "./executor.js";
 import { MaFanCoreRules } from "./core-rules.js";
+import { appendDecisionSnapshot } from "./decision-log.js";
+import { APP_VERSION_INFO } from "../../version.js";
 
 export interface MaFanStrategyOptions {
   symbol: string;
@@ -252,6 +254,17 @@ export class MaFanStrategy {
           const roundedSl = this.executor.roundPrice(liftedSl);
           if (roundedSl > pos.stopLossPrice) {
             this.log(`🛡️ [RATCHET_SL] Lifting SL for ${this.symbol} from $${pos.stopLossPrice.toFixed(4)} to $${roundedSl.toFixed(4)}`);
+            appendDecisionSnapshot({
+              version: APP_VERSION_INFO.version,
+              symbol: this.symbol,
+              kind: "RATCHET",
+              refPrice,
+              entryPrice: pos.entryPrice,
+              stopLossPrice: roundedSl,
+              barsHeld,
+              lastClosedCandleTime: this.lastClosedCandle?.time,
+              reason: `Lifting SL from $${pos.stopLossPrice.toFixed(4)} to $${roundedSl.toFixed(4)}`,
+            });
             pos.stopLossPrice = roundedSl;
             this.onStateUpdate?.(this.getState());
           }
@@ -280,6 +293,20 @@ export class MaFanStrategy {
         if (exitDecision.action === "TP2") {
           const ok = await this.executor.executeTp2(pos, refPrice, exitDecision.reason || "TP2 Exit");
           if (ok) {
+            appendDecisionSnapshot({
+              version: APP_VERSION_INFO.version,
+              symbol: this.symbol,
+              kind: "TP2",
+              refPrice,
+              fillPrice: exitDecision.exitPrice,
+              qty: pos.remainingQty,
+              entryPrice: pos.entryPrice,
+              stopLossPrice: pos.stopLossPrice,
+              barsHeld,
+              lastClosedCandleTime: this.lastClosedCandle?.time,
+              ribbon,
+              reason: exitDecision.reason,
+            });
             this.activePosition = null;
             if (this.lastClosedCandle) this.evaluatedClosedCandleTime = this.lastClosedCandle.time;
             this.totalCycles++;
@@ -293,6 +320,20 @@ export class MaFanStrategy {
           this.log(`⚠️ Stop Loss triggered for ${this.symbol} at $${refPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)})`);
           const ok = await this.executor.executeStopLoss(pos, refPrice);
           if (ok) {
+            appendDecisionSnapshot({
+              version: APP_VERSION_INFO.version,
+              symbol: this.symbol,
+              kind: "SL",
+              refPrice,
+              fillPrice: exitDecision.exitPrice,
+              qty: pos.remainingQty,
+              entryPrice: pos.entryPrice,
+              stopLossPrice: pos.stopLossPrice,
+              barsHeld,
+              lastClosedCandleTime: this.lastClosedCandle?.time,
+              ribbon,
+              reason: exitDecision.reason,
+            });
             this.activePosition = null;
             if (this.lastClosedCandle) this.evaluatedClosedCandleTime = this.lastClosedCandle.time;
             this.totalCycles++;
@@ -306,6 +347,22 @@ export class MaFanStrategy {
           const ratio = htfRegime.recommendedTp1Ratio ?? this.config.tp1Ratio;
           const ok = await this.executor.executeTp1(pos, refPrice, ratio);
           if (ok) {
+            appendDecisionSnapshot({
+              version: APP_VERSION_INFO.version,
+              symbol: this.symbol,
+              kind: "TP1",
+              refPrice,
+              fillPrice: exitDecision.exitPrice,
+              qty: pos.remainingQty,
+              entryPrice: pos.entryPrice,
+              stopLossPrice: pos.stopLossPrice,
+              barsHeld,
+              lastClosedCandleTime: this.lastClosedCandle?.time,
+              ribbon,
+              cushionApplied: exitDecision.cushionApplied,
+              cushionEnabled: this.config.bullCushionEnabled,
+              reason: exitDecision.reason,
+            });
             if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > pos.stopLossPrice) {
               pos.stopLossPrice = this.executor.roundPrice(exitDecision.newStopLossPrice);
             }
@@ -364,6 +421,25 @@ export class MaFanStrategy {
           );
 
           if (newPos) {
+            appendDecisionSnapshot({
+              version: APP_VERSION_INFO.version,
+              symbol: this.symbol,
+              kind: "ENTRY",
+              refPrice,
+              fillPrice: newPos.entryPrice,
+              qty: newPos.remainingQty,
+              entryPrice: newPos.entryPrice,
+              stopLossPrice: newPos.stopLossPrice,
+              barsHeld: 0,
+              lastClosedCandleTime: this.lastClosedCandle?.time,
+              ribbon,
+              atr: curAtr,
+              rsi: exhaustion.rsi,
+              htf: { isBullish: !!htfRegime.isBullish, isAboveEma200: !!htfRegime.isAboveEma200 },
+              effectiveSpreadThreshold: this.effectiveSpreadThreshold,
+              cushionEnabled: this.config.bullCushionEnabled,
+              reason: `Spread ${entryDecision.fanSpreadPct.toFixed(2)}% >= ${requiredSpread.toFixed(2)}%`,
+            });
             this.activePosition = newPos;
             this.onStateUpdate?.(this.getState());
           }
