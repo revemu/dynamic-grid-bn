@@ -6000,6 +6000,17 @@ When investigating live production behavior, debugging issues, or analyzing trad
 2. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.174` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 175. v0.2.175 — Newest-First Sorting for Live Trade Log Rounds Table (`public/app.js`, `package.json`, `src/version.ts`)
+
+1. **จัดเรียงสรุปรอบเทรดจากรอบล่าสุดขึ้นก่อนเสมอ (Newest-First Sorting)**:
+   - ใน `public/app.js` ฟังก์ชัน `renderLiveRoundsTable`: ปรับปรุงให้เรียงลำดับอาเรย์รอบเทรดแบบ Descending (`b.roundNumber - a.roundNumber`) ก่อนเรนเดอร์ลงในตาราง `#ltRoundsTbody`
+   - ช่วยให้รอบเทรดล่าสุด (เช่น รอบ #10) แสดงอยู่ที่แถวบนสุดทันที และเรียงย้อนลงไปหารอบเก่า (#9, #8, ... จนถึง #1) สอดคล้องกับแท็บ "ประวัติเทรด" ที่แสดงรายการเทรดล่าสุดอยู่บนสุดเช่นกัน
+2. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.175` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

@@ -7627,7 +7627,8 @@
       return;
     }
 
-    elLtRoundsTbody.innerHTML = tmRounds
+    const sortedRounds = [...tmRounds].sort((a, b) => (b.roundNumber || 0) - (a.roundNumber || 0));
+    elLtRoundsTbody.innerHTML = sortedRounds
       .map((r) => {
         const isClosed = r.status === "CLOSED";
         const statusBadge = isClosed
