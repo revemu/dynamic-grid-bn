@@ -438,6 +438,9 @@ export class MaFanStrategy {
               htf: { isBullish: !!htfRegime.isBullish, isAboveEma200: !!htfRegime.isAboveEma200 },
               effectiveSpreadThreshold: this.effectiveSpreadThreshold,
               cushionEnabled: this.config.bullCushionEnabled,
+              rewardRisk: entryDecision.rewardRisk,
+              riskPct: entryDecision.riskPct,
+              rewardPct: entryDecision.rewardPct,
               reason: `Spread ${entryDecision.fanSpreadPct.toFixed(2)}% >= ${requiredSpread.toFixed(2)}%`,
             });
             this.activePosition = newPos;

@@ -36,6 +36,7 @@ export interface BacktestTrade {
   holdingBars: number;
   cushionApplied?: boolean;
   costQuote?: number;
+  rewardRiskAtEntry?: number;
 }
 
 export interface MarketScanResultItem {
@@ -253,6 +254,7 @@ export class BacktestService {
       intrabarMode?: "optimistic" | "closeBased" | "pessimistic";
       cushionThresholdPct?: number;
       tp1MinProfitPct?: number;
+      minRewardRiskRatio?: number;
       exitInfoLag?: 0 | 1;
       warmupBars?: number;
       precomputed?: {
@@ -317,6 +319,7 @@ export class BacktestService {
     let tradeInvest = 0;
     let tradeProceeds = 0;
     let lastCushionApplied = false;
+    let rrAtEntry: number | undefined = undefined;
 
     const trades: BacktestTrade[] = [];
     const markers: BacktestMarker[] = [];
@@ -437,6 +440,7 @@ export class BacktestService {
             holdingBars: barsHeld,
             cushionApplied: lastCushionApplied,
             costQuote,
+            rewardRiskAtEntry: rrAtEntry,
           });
 
           // TP2 Marker
@@ -494,6 +498,7 @@ export class BacktestService {
             holdingBars: barsHeld,
             cushionApplied: lastCushionApplied,
             costQuote,
+            rewardRiskAtEntry: rrAtEntry,
           });
 
           // SL Marker
@@ -592,6 +597,7 @@ export class BacktestService {
               holdingBars: barsHeld,
               cushionApplied: lastCushionApplied,
               costQuote,
+              rewardRiskAtEntry: rrAtEntry,
             });
 
             markers.push({
@@ -638,6 +644,7 @@ export class BacktestService {
           requiredSpreadPct: requiredSpread,
           curAtr,
           slBufferPct,
+          minRewardRiskRatio: opts.minRewardRiskRatio,
         });
 
         if (entryDecision.shouldEnter) {
@@ -647,6 +654,7 @@ export class BacktestService {
           spreadAtEntry = entryDecision.fanSpreadPct;
           initialSlPrice = entryDecision.stopLossPrice;
           stopLossPrice = initialSlPrice;
+          rrAtEntry = entryDecision.rewardRisk;
 
           const invest = cash * 0.98;
           heldQty = (invest / entryPrice) * (1 - costPerFill);
@@ -699,6 +707,7 @@ export class BacktestService {
         holdingBars: barsHeld,
         cushionApplied: lastCushionApplied,
         costQuote,
+        rewardRiskAtEntry: rrAtEntry,
       });
     }
 

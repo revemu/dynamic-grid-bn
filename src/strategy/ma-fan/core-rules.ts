@@ -13,6 +13,10 @@ export interface EntryDecision {
   stopLossPrice: number;
   swingLow: number;
   fanSpreadPct: number;
+  riskPct?: number;
+  rewardPct?: number;
+  rewardRisk?: number;
+  blockedBy?: "REWARD_RISK";
   reason?: string;
 }
 
@@ -52,6 +56,28 @@ export class MaFanCoreRules {
   }
 
   /**
+   * Helper: Compute Reward:Risk Ratio relative to TP1 (EMA 25)
+   * riskPct = distance to SL (%)
+   * rewardPct = distance to EMA 25 (%)
+   * rr = rewardPct / riskPct (capped at 99 if risk <= 0)
+   */
+  public static computeRewardRisk(opts: {
+    entryPrice: number;
+    ema25: number;
+    stopLossPrice: number;
+  }): { riskPct: number; rewardPct: number; rr: number } {
+    const { entryPrice, ema25, stopLossPrice } = opts;
+    const riskPct = entryPrice > 0 ? ((entryPrice - stopLossPrice) / entryPrice) * 100 : 0;
+    const rewardPct = entryPrice > 0 ? ((ema25 - entryPrice) / entryPrice) * 100 : 0;
+    const rr = riskPct > 0 ? Math.min(99, rewardPct / riskPct) : 99;
+    return {
+      riskPct,
+      rewardPct,
+      rr,
+    };
+  }
+
+  /**
    * 2. Evaluate Sniper Entry
    * Unifies all 5 entry qualification checks and initial stop loss calculation.
    */
@@ -64,8 +90,9 @@ export class MaFanCoreRules {
     requiredSpreadPct: number;
     curAtr: number;
     slBufferPct: number;
+    minRewardRiskRatio?: number;
   }): EntryDecision {
-    const { candles, closePrice, ribbon, exhaustion, requiredSpreadPct, curAtr, slBufferPct } = opts;
+    const { candles, closePrice, ribbon, exhaustion, requiredSpreadPct, curAtr, slBufferPct, minRewardRiskRatio } = opts;
     const currentIndex = opts.currentIndex ?? (candles.length - 1);
 
     const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
@@ -104,12 +131,36 @@ export class MaFanCoreRules {
     const slDist = Math.max(swingLow * (slBufferPct / 100), curAtr * 1.0);
     const stopLossPrice = swingLow - slDist;
 
+    const rrCalc = MaFanCoreRules.computeRewardRisk({
+      entryPrice: closePrice,
+      ema25: ribbon.ema25,
+      stopLossPrice,
+    });
+
+    if (minRewardRiskRatio !== undefined && minRewardRiskRatio > 0 && rrCalc.rr < minRewardRiskRatio) {
+      return {
+        shouldEnter: false,
+        entryPrice: closePrice,
+        stopLossPrice,
+        swingLow,
+        fanSpreadPct: ribbon.fanSpreadPct,
+        riskPct: rrCalc.riskPct,
+        rewardPct: rrCalc.rewardPct,
+        rewardRisk: rrCalc.rr,
+        blockedBy: "REWARD_RISK",
+        reason: `Filtered by RR (${rrCalc.rr.toFixed(2)} < ${minRewardRiskRatio.toFixed(2)})`,
+      };
+    }
+
     return {
       shouldEnter: true,
       entryPrice: closePrice,
       stopLossPrice,
       swingLow,
       fanSpreadPct: ribbon.fanSpreadPct,
+      riskPct: rrCalc.riskPct,
+      rewardPct: rrCalc.rewardPct,
+      rewardRisk: rrCalc.rr,
       reason: `Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Hook, Oversold, Wick ${lowerWickPct.toFixed(1)}%`,
     };
   }

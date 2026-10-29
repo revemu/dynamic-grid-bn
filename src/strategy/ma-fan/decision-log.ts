@@ -40,6 +40,9 @@ export interface DecisionSnapshot {
   effectiveSpreadThreshold?: number;
   cushionApplied?: boolean;
   cushionEnabled?: boolean;
+  rewardRisk?: number;
+  riskPct?: number;
+  rewardPct?: number;
   reason?: string;
 }
 
@@ -74,6 +77,9 @@ export function appendDecisionSnapshot(snapshot: Partial<DecisionSnapshot>): voi
       effectiveSpreadThreshold: snapshot.effectiveSpreadThreshold,
       cushionApplied: snapshot.cushionApplied,
       cushionEnabled: snapshot.cushionEnabled,
+      rewardRisk: snapshot.rewardRisk,
+      riskPct: snapshot.riskPct,
+      rewardPct: snapshot.rewardPct,
       reason: snapshot.reason,
     };
 

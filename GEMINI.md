@@ -5833,6 +5833,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.166` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 167. v0.2.167 — Phase R0: Reward:Risk Engine Architecture, Verification Gate & Log-Only Tracking (`src/strategy/ma-fan/core-rules.ts`, `src/backtest-service.ts`, `src/strategy/ma-fan/decision-log.ts`, `src/strategy/ma-fan/strategy.ts`, `src/research/verify-rr-gate.ts`, `package.json`, `src/version.ts`)
+
+1. **Reward:Risk Calculation & Gating Architecture (`src/strategy/ma-fan/core-rules.ts`)**:
+   - เพิ่ม `MaFanCoreRules.computeRewardRisk({ entryPrice, ema25, stopLossPrice })`:
+     - `riskPct = (entryPrice - stopLossPrice) / entryPrice * 100` (ระยะถึง SL)
+     - `rewardPct = (ema25 - entryPrice) / entryPrice * 100` (ระยะถึง TP1 EMA25)
+     - `rr = riskPct > 0 ? min(99, rewardPct / riskPct) : 99`
+   - เพิ่ม `minRewardRiskRatio?: number` ใน `evaluateEntry`: หากระบุและ `rr < minRewardRiskRatio` จะบล็อกการเข้าด้วย `shouldEnter: false, blockedBy: "REWARD_RISK"` โดยคงพฤติกรรมเดิม 100% เมื่อไม่ระบุ
+   - อัปเดต `EntryDecision` ให้ส่งคืน `riskPct`, `rewardPct`, `rewardRisk`, `blockedBy`
+2. **Backtest Engine Integration (`src/backtest-service.ts`)**:
+   - เพิ่ม `minRewardRiskRatio?: number` ใน `runMaFanSimulation` ส่งต่อเข้า `evaluateEntry`
+   - เพิ่มฟิลด์ `rewardRiskAtEntry?: number` ใน `BacktestTrade` บันทึกค่า RR ทุกไม้ที่เข้าเทรด
+3. **Decision Log-Only Snapshot Tracking (`src/strategy/ma-fan/decision-log.ts` & `src/strategy/ma-fan/strategy.ts`)**:
+   - เพิ่มฟิลด์ `rewardRisk`, `riskPct`, `rewardPct` ใน `DecisionSnapshot`
+   - ใน `strategy.ts` ส่งค่า RR เข้า `appendDecisionSnapshot` ตอนเกิดไม้ `ENTRY` โดย**ไม่เปิดใช้การ gate บนบอทจริง** (ค่าเริ่มต้นยังคงปิด gate 100% เพื่อเก็บข้อมูล forward test)
+4. **Acceptance Gate R0 Verification (`src/research/verify-rr-gate.ts`)**:
+   - ตรวจสอบผ่าน 4/4 เคส: เคส HAEDAL (`RR ≈ 1.358`), เคส Risk <= 0 (`rr = 99`), เคสค่า Default ไม่ใส่เกณฑ์เทียบเท่าส่ง 0, และเคสการบล็อกเฉพาะไม้ที่ `rr < minRewardRiskRatio`
+   - ตรวจสอบ Golden Baseline ผ่าน 6/6 เหรียญแบบ Bitwise Equivalence 100%
+5. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.167` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
