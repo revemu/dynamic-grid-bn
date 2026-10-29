@@ -1,6 +1,6 @@
 {
   "name": "dynamic-grid",
-  "version": "0.2.164",
+  "version": "0.2.165",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,8 @@
     "cancel-all": "tsx src/cancel-all.ts",
     "history": "tsx src/fetch-history.ts",
     "inspect-orders": "tsx src/inspect-orders.ts",
+    "research:snapshot": "tsx src/research/fetch-snapshot.ts",
+    "research:verify": "tsx src/research/verify-golden.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

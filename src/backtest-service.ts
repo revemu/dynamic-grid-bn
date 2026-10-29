@@ -6,7 +6,7 @@
 
 import fs from "fs";
 import path from "path";
-import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode } from "./strategy/ma-fan/index.js";
+import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
 
 export const STABLE_TOKENS = new Set([
@@ -34,6 +34,8 @@ export interface BacktestTrade {
   pnlQuote: number;
   pnlPct: number;
   holdingBars: number;
+  cushionApplied?: boolean;
+  costQuote?: number;
 }
 
 export interface MarketScanResultItem {
@@ -247,6 +249,18 @@ export class BacktestService {
       saveToHistory?: boolean;
       candlesHtf?: Candle[];
       cushionMode?: CushionMode;
+      costModel?: { feePctPerSide: number; slippagePctPerFill: number };
+      intrabarMode?: "optimistic" | "closeBased" | "pessimistic";
+      cushionThresholdPct?: number;
+      tp1MinProfitPct?: number;
+      exitInfoLag?: 0 | 1;
+      warmupBars?: number;
+      precomputed?: {
+        ribbonStates: RibbonState[];
+        exhaustionStates: ExhaustionState[];
+        atrs: number[];
+      };
+      onlyEntryIdx?: number;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -282,7 +296,11 @@ export class BacktestService {
       spread = cal.bestSpreadPct || 0.25;
     }
 
-    const warmup = Math.min(100, Math.floor(candles.length / 4));
+    const cm = opts.costModel ?? { feePctPerSide: 0, slippagePctPerFill: 0 };
+    const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
+    const intrabarMode = opts.intrabarMode ?? "closeBased";
+    const warmup = opts.warmupBars !== undefined ? opts.warmupBars : Math.min(100, Math.floor(candles.length / 4));
+
     let cash = initialCapital;
     let heldQty = 0;
     let entryPrice = 0;
@@ -296,6 +314,9 @@ export class BacktestService {
     let highestSinceTp1 = 0;
     let activeTradeId = 0;
     let spreadAtEntry = 0;
+    let tradeInvest = 0;
+    let tradeProceeds = 0;
+    let lastCushionApplied = false;
 
     const trades: BacktestTrade[] = [];
     const markers: BacktestMarker[] = [];
@@ -307,12 +328,13 @@ export class BacktestService {
     let peakEquity = initialCapital;
     let maxDrawdownPct = 0;
 
-    // Precompute indicators in single pass for fast simulation
-    const ribbonStates = RibbonEngine.computeAllRibbonStates(candles);
-    const exhaustionStates = ExhaustionEngine.computeAllExhaustion(candles);
-    const atrs = calcATR(candles, 14);
+    // Precompute indicators in single pass for fast simulation (or use precomputed)
+    const ribbonStates = opts.precomputed?.ribbonStates ?? RibbonEngine.computeAllRibbonStates(candles);
+    const exhaustionStates = opts.precomputed?.exhaustionStates ?? ExhaustionEngine.computeAllExhaustion(candles);
+    const atrs = opts.precomputed?.atrs ?? calcATR(candles, 14);
 
-    for (let i = warmup; i < candles.length; i++) {
+    const startIdx = opts.onlyEntryIdx !== undefined ? opts.onlyEntryIdx : warmup;
+    for (let i = startIdx; i < candles.length; i++) {
       const c = candles[i]!;
       const ribbon = ribbonStates[i]!;
       const curAtr = atrs[i] ?? (c.close * 0.003);
@@ -330,16 +352,25 @@ export class BacktestService {
       // ─── POSITION EXITS ──────────────────────────────────────────────
       if (heldQty > 0) {
         if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
-        const barsHeld = i - entryIdx;
+
+        const ei = (opts.exitInfoLag === 1) ? i - 1 : i;
+        const ribbonX = ribbonStates[ei]!;
+        const curAtrX = atrs[ei] ?? (candles[ei]!.close * 0.003);
+        const exhX = exhaustionStates[ei]!;
+        const htfRegimeX = (ei === i)
+          ? htfRegime
+          : RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, candles[ei]!.time, tp1Ratio);
+        const activeTp1RatioX = Math.max(0.1, Math.min(0.9, htfRegimeX.recommendedTp1Ratio ?? tp1Ratio));
+        const barsHeld = ei - entryIdx;
 
         // Dynamic Ratchet SL via Universal MaFanCoreRules
         const liftedSl = MaFanCoreRules.evaluateRatchetSl({
           candles,
-          currentIndex: i,
+          currentIndex: ei,
           barsHeld,
           currentSlPrice: stopLossPrice,
-          currentPrice: c.close,
-          curAtr,
+          currentPrice: candles[ei]!.close,
+          curAtr: curAtrX,
           slBufferPct,
           useRatchetSl,
         });
@@ -356,24 +387,27 @@ export class BacktestService {
           stopLossPrice,
           tp1Filled,
           highestPriceSinceTp1: highestSinceTp1,
-          ribbon,
+          ribbon: ribbonX,
           trailingPullbackPct,
           breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
-          isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
+          isOverbought: exhX.isOverboughtExhaustion,
           barsHeld,
-          isHtfBull: !!htfRegime.isBullish,
+          isHtfBull: !!htfRegimeX.isBullish,
           cushionMode: opts.cushionMode ?? "off",
+          cushionThresholdPct: opts.cushionThresholdPct,
+          tp1MinProfitPct: opts.tp1MinProfitPct,
         });
 
         // 1. TP2 Exit (Macro Runner / Trailing Stop)
         if (exitDecision.action === "TP2") {
           const exitP = exitDecision.exitPrice;
-          const pnl2 = (exitP - entryPrice) * heldQty;
-          cash += heldQty * exitP;
+          const proceeds = heldQty * exitP * (1 - costPerFill);
+          cash += proceeds;
+          tradeProceeds += proceeds;
 
-          const totalPnlQuote = (tp1Price - entryPrice) * tp1Qty + pnl2;
-          const totalInvest = (heldQty + (tp1Filled ? tp1Qty : 0)) * entryPrice;
-          const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
+          const totalPnlQuote = tradeProceeds - tradeInvest;
+          const tradePnlPct = tradeInvest > 0 ? (totalPnlQuote / tradeInvest) * 100 : 0;
+          const costQuote = (tradeInvest * costPerFill) + (tp1Qty * tp1Price * costPerFill) + (heldQty * exitP * costPerFill);
 
           if (totalPnlQuote >= 0) {
             grossProfit += totalPnlQuote;
@@ -401,6 +435,8 @@ export class BacktestService {
             pnlQuote: totalPnlQuote,
             pnlPct: tradePnlPct,
             holdingBars: barsHeld,
+            cushionApplied: lastCushionApplied,
+            costQuote,
           });
 
           // TP2 Marker
@@ -413,20 +449,22 @@ export class BacktestService {
           });
 
           heldQty = 0;
+          if (opts.onlyEntryIdx !== undefined) break;
           continue;
         }
 
         // 2. Stop Loss Exit
         if (exitDecision.action === "SL") {
           const exitP = exitDecision.exitPrice;
-          const pnl = (exitP - entryPrice) * heldQty;
-          cash += heldQty * exitP;
+          const proceeds = heldQty * exitP * (1 - costPerFill);
+          cash += proceeds;
+          tradeProceeds += proceeds;
 
           const isRatchet = !tp1Filled && stopLossPrice > initialSlPrice;
           const exitType: BacktestTrade["exitType"] = tp1Filled ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
-          const totalPnlQuote = pnl + (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0);
-          const totalInvest = (heldQty + (tp1Filled ? tp1Qty : 0)) * entryPrice;
-          const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
+          const totalPnlQuote = tradeProceeds - tradeInvest;
+          const tradePnlPct = tradeInvest > 0 ? (totalPnlQuote / tradeInvest) * 100 : 0;
+          const costQuote = (tradeInvest * costPerFill) + (tp1Filled ? tp1Qty * tp1Price * costPerFill : 0) + (heldQty * exitP * costPerFill);
 
           if (totalPnlQuote >= 0) {
             grossProfit += totalPnlQuote;
@@ -454,6 +492,8 @@ export class BacktestService {
             pnlQuote: totalPnlQuote,
             pnlPct: tradePnlPct,
             holdingBars: barsHeld,
+            cushionApplied: lastCushionApplied,
+            costQuote,
           });
 
           // SL Marker
@@ -473,6 +513,7 @@ export class BacktestService {
           });
 
           heldQty = 0;
+          if (opts.onlyEntryIdx !== undefined) break;
           continue;
         }
 
@@ -480,11 +521,16 @@ export class BacktestService {
         if (exitDecision.action === "TP1") {
           tp1Price = exitDecision.exitPrice;
           tp1Time = c.time;
-          tp1Qty = heldQty * activeTp1Ratio;
-          cash += tp1Qty * tp1Price;
+          tp1Qty = heldQty * activeTp1RatioX;
+          const tp1Proceeds = tp1Qty * tp1Price * (1 - costPerFill);
+          cash += tp1Proceeds;
+          tradeProceeds += tp1Proceeds;
           heldQty -= tp1Qty;
           tp1Filled = true;
           highestSinceTp1 = c.high;
+          if (exitDecision.cushionApplied) {
+            lastCushionApplied = true;
+          }
           if (exitDecision.newStopLossPrice) {
             stopLossPrice = Math.max(stopLossPrice, exitDecision.newStopLossPrice);
           }
@@ -495,21 +541,28 @@ export class BacktestService {
             position: "aboveBar",
             color: "#38bdf8",
             shape: "circle",
-            text: `🔵 TP1 (${(activeTp1Ratio * 100).toFixed(0)}%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
+            text: `🔵 TP1 (${(activeTp1RatioX * 100).toFixed(0)}%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
           });
 
           // Intra-candle Breakeven SL check:
-          // If Breakeven SL is active and the candle spiked to EMA 25 for TP1 and subsequently dumped to close at/below Breakeven SL,
-          // close the remaining half as TP1+SL_BE within the same candle (matching Live Bot behavior)
-          if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > entryPrice && c.close <= stopLossPrice) {
+          // Controlled by intrabarMode ("closeBased" | "pessimistic" | "optimistic")
+          let hitIntrabarBe = false;
+          if (intrabarMode === "closeBased") {
+            hitIntrabarBe = c.close <= stopLossPrice;
+          } else if (intrabarMode === "pessimistic") {
+            hitIntrabarBe = c.low <= stopLossPrice;
+          }
+
+          if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > entryPrice && hitIntrabarBe) {
             const exitP = stopLossPrice;
-            const pnl = (exitP - entryPrice) * heldQty;
-            cash += heldQty * exitP;
+            const beProceeds = heldQty * exitP * (1 - costPerFill);
+            cash += beProceeds;
+            tradeProceeds += beProceeds;
 
             const exitType: BacktestTrade["exitType"] = "TP1+SL_BE";
-            const totalPnlQuote = pnl + (tp1Price - entryPrice) * tp1Qty;
-            const totalInvest = (heldQty + tp1Qty) * entryPrice;
-            const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
+            const totalPnlQuote = tradeProceeds - tradeInvest;
+            const tradePnlPct = tradeInvest > 0 ? (totalPnlQuote / tradeInvest) * 100 : 0;
+            const costQuote = (tradeInvest * costPerFill) + (tp1Qty * tp1Price * costPerFill) + (heldQty * exitP * costPerFill);
 
             if (totalPnlQuote >= 0) {
               grossProfit += totalPnlQuote;
@@ -537,6 +590,8 @@ export class BacktestService {
               pnlQuote: totalPnlQuote,
               pnlPct: tradePnlPct,
               holdingBars: barsHeld,
+              cushionApplied: lastCushionApplied,
+              costQuote,
             });
 
             markers.push({
@@ -548,6 +603,7 @@ export class BacktestService {
             });
 
             heldQty = 0;
+            if (opts.onlyEntryIdx !== undefined) break;
             continue;
           }
         }
@@ -555,6 +611,10 @@ export class BacktestService {
 
       // ─── POSITION ENTRY (SNIPER HOOK) ────────────────────────────────
       if (heldQty === 0 && cash >= 10) {
+        if (opts.onlyEntryIdx !== undefined && i !== opts.onlyEntryIdx) {
+          continue;
+        }
+
         const isAuto = opts.spreadThreshold === "auto" || !opts.spreadThreshold;
         const currentSpread = MaFanCoreRules.computeEffectiveSpread({
           baseSpread: spread,
@@ -589,11 +649,14 @@ export class BacktestService {
           stopLossPrice = initialSlPrice;
 
           const invest = cash * 0.98;
-          heldQty = invest / entryPrice;
-          tp1Qty = 0;
+          heldQty = (invest / entryPrice) * (1 - costPerFill);
+          tradeInvest = invest;
+          tradeProceeds = 0;
           cash -= invest;
+          tp1Qty = 0;
           tp1Filled = false;
           highestSinceTp1 = entryPrice;
+          lastCushionApplied = false;
 
           // Buy Marker
           markers.push({
@@ -603,6 +666,8 @@ export class BacktestService {
             shape: "arrowUp",
             text: `🟢 BUY #${activeTradeId} @ $${entryPrice.toFixed(2)} (Spread: ${spreadAtEntry.toFixed(2)}%)`,
           });
+        } else if (opts.onlyEntryIdx !== undefined && i === opts.onlyEntryIdx) {
+          break;
         }
       }
     }
@@ -611,11 +676,11 @@ export class BacktestService {
     if (heldQty > 0 && entryIdx >= 0 && candles.length > 0) {
       const lastCandle = candles[candles.length - 1]!;
       const currentPrice = lastCandle.close;
-      const unrealizedPnl2 = (currentPrice - entryPrice) * heldQty;
-      const totalPnlQuote = (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0) + unrealizedPnl2;
-      const totalInvest = (heldQty + (tp1Filled ? tp1Qty : 0)) * entryPrice;
-      const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
+      const unrealizedProceeds = heldQty * currentPrice * (1 - costPerFill);
+      const totalPnlQuote = (tradeProceeds + unrealizedProceeds) - tradeInvest;
+      const tradePnlPct = tradeInvest > 0 ? (totalPnlQuote / tradeInvest) * 100 : 0;
       const barsHeld = candles.length - 1 - entryIdx;
+      const costQuote = (tradeInvest * costPerFill) + (tp1Filled ? tp1Qty * tp1Price * costPerFill : 0) + (heldQty * currentPrice * costPerFill);
 
       trades.push({
         id: activeTradeId,
@@ -632,11 +697,13 @@ export class BacktestService {
         pnlQuote: totalPnlQuote,
         pnlPct: tradePnlPct,
         holdingBars: barsHeld,
+        cushionApplied: lastCushionApplied,
+        costQuote,
       });
     }
 
     // Performance Summary Calculations
-    const finalCapital = cash + (heldQty > 0 ? heldQty * candles[candles.length - 1]!.close : 0);
+    const finalCapital = cash + (heldQty > 0 ? heldQty * candles[candles.length - 1]!.close * (1 - costPerFill) : 0);
     const netPnlQuote = finalCapital - initialCapital;
     const netPnlPct = (netPnlQuote / initialCapital) * 100;
     const closedTrades = trades.filter((t) => t.exitType !== "OPEN" && t.exitType !== "TP1+OPEN");

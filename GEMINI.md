@@ -5791,6 +5791,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.164` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 165. v0.2.165 — Phase 1 & 2: Deterministic Research Suite, Golden Test & Engine Parity Options (`src/research/`, `src/backtest-service.ts`, `package.json`, `src/version.ts`)
+
+1. **Phase 1: Deterministic Snapshot & Data Layer Architecture (`src/research/data.ts`, `src/research/types.ts`, `src/research/fetch-snapshot.ts`)**:
+   - สร้างโมดูลวิจัยแยกเฉพาะใน `src/research/` ภายใต้ TypeScript Compiler Root
+   - ระบบ Pagination ดึงข้อมูลแท่งเทียน 5m และ 15m ย้อนหลังจาก Binance REST API พร้อม Exponential Backoff และเคารพ `Retry-After` Header
+   - ระบบคัดเลือก Universe Top 30 USDT ที่มีสภาพคล่องสูงสุด (ตัด Stablecoins ออก) + บังคับรวม 6 เหรียญหลัก (`HAEDALUSDT, BNBUSDT, ETHUSDT, SOLUSDT, SUIUSDT, NEARUSDT`) บันทึกเป็น `universe.json`
+   - ระบบตรวจคุณภาพข้อมูล: Coverage ≥ 99%, ไม่มี Gap ขาดหายเกิน 3 แท่ง, ราคาปิดเป็นบวกทุกแท่ง และคำนวณ Checksum SHA-256 บันทึก `manifest.json` (ผ่านครบทั้ง 31 เหรียญ 100%)
+2. **Phase 2: ขยายออปชันจำลองสมจริงใน `runMaFanSimulation` (`src/backtest-service.ts`)**:
+   - `costModel`: `{ feePctPerSide, slippagePctPerFill }` คำนวณหักต้นทุนค่าธรรมเนียมและ Slippage จริงทุก Fill ขาเข้าและขาออก (TP1, TP2, SL, Breakeven, OPEN) โดยที่ `{0,0}` ให้ผลเท่าเดิม 100%
+   - `exitInfoLag`: `0 | 1` โดย `1` คือ **Live Parity** ประเมินอินดิเคเตอร์และโครงสร้าง Dow Theory จากแท่งปิดก่อนหน้า (`ei = i - 1`) และนับ `barsHeld = ei - entryIdx` ตรงตามพฤติกรรมบอทจริงในรันไทม์
+   - `intrabarMode`: `"optimistic" | "closeBased" | "pessimistic"` ตรวจสอบการชน Breakeven SL ในแท่งเดียวกัน
+   - `onlyEntryIdx`: โหมดจำลองแบบ Entry-matched วิ่งเฉพาะไม้ที่เข้าที่แท่งสัญญาณนั้นๆ
+   - `precomputed` & `warmupBars`: รองรับการส่ง Cache อินดิเคเตอร์เพื่อความเร็วสูงสุดในการคำนวณระดับ Matrix
+3. **Acceptance Gate P1 & P2 Verified (`src/research/verify-golden.ts`, `src/research/verify-options.ts`)**:
+   - ผ่านการทดสอบ Golden Test บน 6 เหรียญอ้างอิง เทียบกับ `golden.json` ตรงกันทุกไม้ระดับทศนิยม 1e-9 (Bitwise Equivalence)
+   - ผ่านการทดสอบ Gate P2 ครบทั้ง 3 กรณี: Cost Model C1 ลด Net PnL อย่างสมเหตุสมผล, `onlyEntryIdx` ทำงานสมบูรณ์, `exitInfoLag` จำลอง Live Parity ได้ตรงเป้าหมาย
+4. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.165` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
