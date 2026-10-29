@@ -158,6 +158,57 @@
           <span class="banner-trigger-text" id="bannerTriggerText" style="display: none;">Evaluating market tick</span>
         </div>
 
+        <!-- 🪭 MA Fan Plan Chips (Embedded in Unified Strategy Strip) -->
+        <div class="banner-mf-levels" id="maFanPlanCard" style="display: none;">
+          <div class="mf-level-chip mf-chip-entry">
+            <span class="mf-badge" style="background:#10b981;">IN</span>
+            <div class="mf-chip-body">
+              <span class="mf-chip-title">จุดเข้า (Entry)</span>
+              <span class="mf-chip-val" id="mfEntryPrice">--.------</span>
+            </div>
+            <span class="mf-chip-sub" id="mfEntryQty">--</span>
+          </div>
+
+          <div class="mf-level-chip mf-chip-tp1">
+            <span class="mf-badge" style="background:#3b82f6;">TP1</span>
+            <div class="mf-chip-body">
+              <span class="mf-chip-title">TP1 (EMA 25)</span>
+              <span class="mf-chip-val" id="mfTp1Price">--.------</span>
+            </div>
+            <span class="mf-chip-sub" id="mfTp1Desc">ขาย 50%</span>
+          </div>
+
+          <div class="mf-level-chip mf-chip-tp2">
+            <span class="mf-badge" style="background:#a855f7;">TP2</span>
+            <div class="mf-chip-body">
+              <span class="mf-chip-title">TP2 Runner</span>
+              <span class="mf-chip-val" id="mfTp2Price">--.------</span>
+            </div>
+            <span class="mf-chip-sub" id="mfTp2TargetDesc">รันเทรนด์</span>
+          </div>
+
+          <div class="mf-level-chip mf-chip-sl">
+            <span class="mf-badge" style="background:#ef4444;" id="mfSlBadge">SL</span>
+            <div class="mf-chip-body">
+              <span class="mf-chip-title" id="mfSlTitle">Stop Loss</span>
+              <span class="mf-chip-val" id="mfSlPrice">--.------</span>
+            </div>
+            <span class="mf-chip-sub" id="mfSlStatus">--</span>
+          </div>
+
+          <!-- Compatibility hidden elements -->
+          <span id="mfSignalDesc" style="display:none;"></span>
+          <span id="mfReqSpread" style="display:none;"></span>
+          <span id="mfCurrentSpread" style="display:none;"></span>
+          <span id="mfHtfRegime" style="display:none;"></span>
+          <span id="mfPositionStatus" style="display:none;"></span>
+          <span id="mfWinRate" style="display:none;"></span>
+          <span id="mfCycles" style="display:none;"></span>
+          <span id="mfRealizedPnl" style="display:none;"></span>
+          <span id="mfSignalBanner" style="display:none;"></span>
+          <span id="mfSignalType" style="display:none;"></span>
+        </div>
+
         <div class="banner-controls-group">
           <button class="ctrl-nav-btn ctrl-btn-pause" id="btnPauseBot" title="หยุดชั่วคราว / เริ่มการทำงานของบอท">
             <span class="btn-icon" id="pauseBtnIcon">⏸️</span>
@@ -188,62 +239,6 @@
 
       <!-- ──── COLUMN 1: Large Primary Chart ──── -->
       <div class="col-chart">
-        <!-- ── Horizontal MA Fan Plan Strip (Entry, TP1, TP2, SL) ── -->
-        <div class="ma-fan-plan-strip" id="maFanPlanCard" style="display: none;">
-          <div class="mf-strip-brand">
-            <span class="mf-strip-badge">🪭 MA-FOLD-FAN</span>
-            <span class="mf-strip-desc" id="mfSignalDesc">รอพัดกางตึงสุด (Spread ≥ <span id="mfReqSpread">0.20</span>%) + Hook</span>
-          </div>
-
-          <div class="mf-strip-levels">
-            <div class="mf-level-chip mf-chip-entry">
-              <span class="mf-badge" style="background:#10b981;">IN</span>
-              <div class="mf-chip-body">
-                <span class="mf-chip-title">จุดเข้าซื้อ (Entry)</span>
-                <span class="mf-chip-val" id="mfEntryPrice">--.------</span>
-              </div>
-              <span class="mf-chip-sub" id="mfEntryQty">--</span>
-            </div>
-
-            <div class="mf-level-chip mf-chip-tp1">
-              <span class="mf-badge" style="background:#3b82f6;">TP1</span>
-              <div class="mf-chip-body">
-                <span class="mf-chip-title">TP1 (EMA 25)</span>
-                <span class="mf-chip-val" id="mfTp1Price">--.------</span>
-              </div>
-              <span class="mf-chip-sub" id="mfTp1Desc">ขาย 50%</span>
-            </div>
-
-            <div class="mf-level-chip mf-chip-tp2">
-              <span class="mf-badge" style="background:#a855f7;">TP2</span>
-              <div class="mf-chip-body">
-                <span class="mf-chip-title">TP2 Runner</span>
-                <span class="mf-chip-val" id="mfTp2Price">--.------</span>
-              </div>
-              <span class="mf-chip-sub" id="mfTp2TargetDesc">รันเทรนด์</span>
-            </div>
-
-            <div class="mf-level-chip mf-chip-sl">
-              <span class="mf-badge" style="background:#ef4444;" id="mfSlBadge">SL</span>
-              <div class="mf-chip-body">
-                <span class="mf-chip-title" id="mfSlTitle">Stop Loss</span>
-                <span class="mf-chip-val" id="mfSlPrice">--.------</span>
-              </div>
-              <span class="mf-chip-sub" id="mfSlStatus">--</span>
-            </div>
-          </div>
-
-          <!-- Compatibility hidden elements to maintain script updates without visual clutter -->
-          <span id="mfCurrentSpread" style="display:none;"></span>
-          <span id="mfHtfRegime" style="display:none;"></span>
-          <span id="mfPositionStatus" style="display:none;"></span>
-          <span id="mfWinRate" style="display:none;"></span>
-          <span id="mfCycles" style="display:none;"></span>
-          <span id="mfRealizedPnl" style="display:none;"></span>
-          <span id="mfSignalBanner" style="display:none;"></span>
-          <span id="mfSignalType" style="display:none;"></span>
-        </div>
-
         <section class="chart-panel">
           <div class="panel-header">
             <div class="panel-title-group">

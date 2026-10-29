@@ -1982,13 +1982,11 @@
       elCurrentSpread.style.color = curSpread >= effSpread ? "#4ade80" : "#38bdf8";
     }
 
-    // Direct sync to top chart status pill
+    // Direct sync to top chart status pill (hidden in MA Fan mode to eliminate duplicate spread display)
     const elMafanStatusPill = document.getElementById("mafanStatusPill");
     const elMafanStatusText = document.getElementById("mafanStatusText");
     if (elMafanStatusPill && elMafanStatusText) {
-      elMafanStatusPill.style.display = "inline-flex";
-      const htfStr = htf ? ` • HTF: ${htf.timeframe} ${htf.isBullish ? "BULL" : "BEAR"}` : "";
-      elMafanStatusText.textContent = `🪭 Spread: ${curSpread.toFixed(2)}% (เกณฑ์ ≥ ${effSpread.toFixed(2)}%)${htfStr}`;
+      elMafanStatusPill.style.display = "none";
     }
 
     if (elHtfRegime) {

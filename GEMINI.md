@@ -5934,6 +5934,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
 2. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.170` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 171. v0.2.171 — Unified Strategy HUD & Action Strip Consolidation (`public/index.html`, `public/style.css`, `public/app.js`, `src/strategy/ma-fan/strategy-adapter.ts`, `package.json`, `src/version.ts`)
+
+1. **Unified Strategy HUD & Action Strip Consolidation (`public/index.html` & `public/style.css`)**:
+   - ยุบรวมแถบสถานะบอท (Bar 1: `bot-status-strip`) และแถบเป้าหมายการเทรด (Bar 2: `ma-fan-plan-strip`) เข้าเป็น **แถบเดียวจบ (Unified Strategy & Action Strip)**:
+     - **ฝั่งซ้าย**: แสดงสถานะและเหตุผลบอทสั้นกระชับ (`#bannerStatusPill` + `#bannerReasonText`) รวมค่า Spread และ HTF Regime ไว้จุดเดียว
+     - **ตรงกลาง**: ชิปเป้าหมายกลยุทธ์ 4 ตัว (`IN จุดเข้า`, `TP1 EMA 25`, `TP2 Runner`, `SL Stop Loss`) กะทัดรัด ตัวเลขคมชัด
+     - **ฝั่งขวา**: ปุ่มสั่งการทำงาน (`Pause`, `ยกเลิกออเดอร์`, `ขายล้างพอร์ต`, `รีเซ็ต`)
+   - ลบแถบ `ma-fan-plan-strip` ที่กินพื้นที่และแสดงข้อความซ้ำซ้อนออก ประหยัดความสูงหน้าจอไปได้ทันที **~55px** ช่วยให้กราฟ TradingView มีพื้นที่กว้างขึ้นเต็มตา
+2. **Chart Header De-duplication (`public/app.js`)**:
+   - ปิดการแสดงผลป้าย `mafanStatusPill` บนหัวชาร์ต เพื่อขจัดข้อความบอกค่า Spread ที่ซ้ำซ้อนกัน 3 รอบ
+   - หัวชาร์ตคงไว้เฉพาะชื่อเหรียญ ไทม์เฟรม และปุ่มสลับ `5M` / `15M (HTF)` และปุ่มจัดกึ่งกลางกราฟ
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.171` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

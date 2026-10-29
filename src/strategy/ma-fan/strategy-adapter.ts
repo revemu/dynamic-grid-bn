@@ -214,10 +214,14 @@ export class MaFanTradingStrategy implements IStrategy {
       compactCalibration = rest;
     }
 
+    const regimeStr = state.htfRegime
+      ? `HTF: ${state.htfRegime.isBullish ? "BULL" : "BEAR"}`
+      : "ACTIVE";
+
     let botAction = {
-      title: "🪭 MA-FOLD-FAN Scanning",
-      reason: `กำลังสแกนพัด (ปัจจุบัน: ${curSpread.toFixed(2)}% / ต้องการ ≥ ${reqSpread.toFixed(2)}%)`,
-      nextTrigger: "รอพัดกางตึงสุด + ปลายพัดม้วนกลับ (Hook)",
+      title: "🪭 MA-FOLD-FAN",
+      reason: `สแกนพัด (Spread: ${curSpread.toFixed(2)}% / ≥ ${reqSpread.toFixed(2)}% • ${regimeStr})`,
+      nextTrigger: "รอพัดกางตึงสุด + ปลายม้วนกลับ (Hook)",
       severity: "info",
     };
 
@@ -240,15 +244,11 @@ export class MaFanTradingStrategy implements IStrategy {
     } else if (ribbon?.isFanningDown && curSpread >= reqSpread) {
       botAction = {
         title: "⚡ Stretched Fan Alert",
-        reason: `พัดกางตึงแล้ว (${curSpread.toFixed(2)}% ≥ ${reqSpread.toFixed(2)}%)`,
+        reason: `พัดกางตึงแล้ว (${curSpread.toFixed(2)}% ≥ ${reqSpread.toFixed(2)}% • ${regimeStr})`,
         nextTrigger: "รอดักจังหวะม้วนหัว Hook เพื่อเข้าซื้อทันที",
         severity: "warning",
       };
     }
-
-    const regimeStr = state.htfRegime
-      ? `HTF: ${state.htfRegime.isBullish ? "BULL" : "BEAR"}`
-      : "ACTIVE";
 
     const tickData = {
       ...state,
