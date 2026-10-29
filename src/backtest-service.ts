@@ -6,7 +6,7 @@
 
 import fs from "fs";
 import path from "path";
-import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState } from "./strategy/ma-fan/index.js";
+import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState, WaterfallGuardMode } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
 
 export const STABLE_TOKENS = new Set([
@@ -255,6 +255,7 @@ export class BacktestService {
       cushionThresholdPct?: number;
       tp1MinProfitPct?: number;
       minRewardRiskRatio?: number;
+      waterfallGuardMode?: WaterfallGuardMode;
       exitInfoLag?: 0 | 1;
       warmupBars?: number;
       precomputed?: {
@@ -645,6 +646,8 @@ export class BacktestService {
           curAtr,
           slBufferPct,
           minRewardRiskRatio: opts.minRewardRiskRatio,
+          waterfallGuardMode: opts.waterfallGuardMode,
+          isHtfBull: !!htfRegime.isBullish,
         });
 
         if (entryDecision.shouldEnter) {

@@ -7,6 +7,15 @@
 import { Candle, RibbonState } from "./types.js";
 import { ExhaustionState } from "./exhaustion.js";
 
+export type WaterfallGuardMode = "off" | "consecutiveReds" | "bearCrash" | "volCapitulation" | "combined";
+
+export interface WaterfallMetrics {
+  consecutiveReds: number;
+  dropPct12: number;
+  volRatio: number;
+  isHtfBull: boolean;
+}
+
 export interface EntryDecision {
   shouldEnter: boolean;
   entryPrice: number;
@@ -16,7 +25,8 @@ export interface EntryDecision {
   riskPct?: number;
   rewardPct?: number;
   rewardRisk?: number;
-  blockedBy?: "REWARD_RISK";
+  blockedBy?: "REWARD_RISK" | "WATERFALL_GUARD";
+  waterfallMetrics?: WaterfallMetrics;
   reason?: string;
 }
 
@@ -78,6 +88,51 @@ export class MaFanCoreRules {
   }
 
   /**
+   * Helper: Compute Waterfall Crash Metrics
+   * - consecutiveReds: consecutive red candles (close < open) immediately preceding current bar
+   * - dropPct12: price drop from 12-bar highest high to current close (%)
+   * - volRatio: current candle volume vs 20-bar average preceding volume
+   */
+  public static computeWaterfallMetrics(opts: {
+    candles: Candle[];
+    currentIndex?: number;
+    closePrice: number;
+    isHtfBull?: boolean;
+  }): WaterfallMetrics {
+    const { candles, closePrice, isHtfBull = false } = opts;
+    const currentIndex = opts.currentIndex ?? (candles.length - 1);
+
+    // 1. Consecutive red dump candles immediately preceding this bar
+    let consecutiveReds = 0;
+    for (let b = currentIndex - 1; b >= Math.max(0, currentIndex - 15); b--) {
+      const bar = candles[b];
+      if (bar && bar.close < bar.open) {
+        consecutiveReds++;
+      } else {
+        break;
+      }
+    }
+
+    // 2. Drop depth across last 12 bars (from peak high to closePrice)
+    const drop12Slice = candles.slice(Math.max(0, currentIndex - 11), currentIndex + 1).map((x) => x.high);
+    const maxHigh12 = drop12Slice.length > 0 ? Math.max(...drop12Slice) : closePrice;
+    const dropPct12 = maxHigh12 > 0 ? ((maxHigh12 - closePrice) / maxHigh12) * 100 : 0;
+
+    // 3. Volume ratio: curCandle volume / 20-bar average preceding volume
+    const curCandle = candles[currentIndex];
+    const volSlice = candles.slice(Math.max(0, currentIndex - 20), currentIndex).map((x) => x.volume);
+    const avgVol = volSlice.length > 0 ? volSlice.reduce((a, b) => a + b, 0) / volSlice.length : (curCandle?.volume ?? 1);
+    const volRatio = avgVol > 0 && curCandle ? curCandle.volume / avgVol : 1.0;
+
+    return {
+      consecutiveReds,
+      dropPct12: Number(dropPct12.toFixed(4)),
+      volRatio: Number(volRatio.toFixed(2)),
+      isHtfBull,
+    };
+  }
+
+  /**
    * 2. Evaluate Sniper Entry
    * Unifies all 5 entry qualification checks and initial stop loss calculation.
    */
@@ -91,8 +146,21 @@ export class MaFanCoreRules {
     curAtr: number;
     slBufferPct: number;
     minRewardRiskRatio?: number;
+    waterfallGuardMode?: WaterfallGuardMode;
+    isHtfBull?: boolean;
   }): EntryDecision {
-    const { candles, closePrice, ribbon, exhaustion, requiredSpreadPct, curAtr, slBufferPct, minRewardRiskRatio } = opts;
+    const {
+      candles,
+      closePrice,
+      ribbon,
+      exhaustion,
+      requiredSpreadPct,
+      curAtr,
+      slBufferPct,
+      minRewardRiskRatio,
+      waterfallGuardMode,
+      isHtfBull,
+    } = opts;
     const currentIndex = opts.currentIndex ?? (candles.length - 1);
 
     const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
@@ -152,6 +220,66 @@ export class MaFanCoreRules {
       };
     }
 
+    // Waterfall Guard Filter
+    const waterfallMetrics = MaFanCoreRules.computeWaterfallMetrics({
+      candles,
+      currentIndex,
+      closePrice,
+      isHtfBull,
+    });
+
+    if (waterfallGuardMode && waterfallGuardMode !== "off") {
+      let isBlocked = false;
+      let blockReason = "";
+
+      switch (waterfallGuardMode) {
+        case "consecutiveReds":
+          if (waterfallMetrics.consecutiveReds >= 4) {
+            isBlocked = true;
+            blockReason = `Consecutive Red Bars (${waterfallMetrics.consecutiveReds} >= 4)`;
+          }
+          break;
+        case "bearCrash":
+          if (!waterfallMetrics.isHtfBull && waterfallMetrics.dropPct12 >= 2.5) {
+            isBlocked = true;
+            blockReason = `Bear Crash Drop (${waterfallMetrics.dropPct12.toFixed(2)}% >= 2.5% in HTF BEAR)`;
+          }
+          break;
+        case "volCapitulation":
+          if (waterfallMetrics.volRatio >= 2.5) {
+            isBlocked = true;
+            blockReason = `Volume Capitulation Spike (${waterfallMetrics.volRatio.toFixed(1)}x >= 2.5x)`;
+          }
+          break;
+        case "combined":
+          if (
+            (!waterfallMetrics.isHtfBull && waterfallMetrics.dropPct12 >= 2.0) ||
+            waterfallMetrics.volRatio >= 2.5 ||
+            waterfallMetrics.consecutiveReds >= 4
+          ) {
+            isBlocked = true;
+            blockReason = `Waterfall Crash ((Drop ${waterfallMetrics.dropPct12.toFixed(2)}% in ${waterfallMetrics.isHtfBull ? "BULL" : "BEAR"}) | Vol ${waterfallMetrics.volRatio.toFixed(1)}x | Reds ${waterfallMetrics.consecutiveReds})`;
+          }
+          break;
+      }
+
+      if (isBlocked) {
+        return {
+          shouldEnter: false,
+          entryPrice: closePrice,
+          stopLossPrice,
+          swingLow,
+          fanSpreadPct: ribbon.fanSpreadPct,
+          riskPct: rrCalc.riskPct,
+          rewardPct: rrCalc.rewardPct,
+          rewardRisk: rrCalc.rr,
+          blockedBy: "WATERFALL_GUARD",
+          waterfallMetrics,
+          reason: `Filtered by Waterfall Guard [${waterfallGuardMode}]: ${blockReason}`,
+        };
+      }
+    }
+
     return {
       shouldEnter: true,
       entryPrice: closePrice,
@@ -161,6 +289,7 @@ export class MaFanCoreRules {
       riskPct: rrCalc.riskPct,
       rewardPct: rrCalc.rewardPct,
       rewardRisk: rrCalc.rr,
+      waterfallMetrics,
       reason: `Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Hook, Oversold, Wick ${lowerWickPct.toFixed(1)}%`,
     };
   }

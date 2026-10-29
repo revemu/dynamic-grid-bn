@@ -5864,6 +5864,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - **เหตุผลเชิงกลไกตลาด**: ในระบบ MA Fan ยิ่งราคาทุบดิ่งน้ำตกแรง (พัดถ่างกว้างจัด) เส้น EMA 25 จะยิ่งอยู่สูงลิบ ทำให้ระยะ Reward ดูกว้างผิดปกติและคำนวณ RR ได้สูง (เช่นไม้ HAEDAL ล่าสุดมี RR = 1.36) แต่แท้จริงแล้วคือจังหวะที่มีดกำลังตกแรงที่สุด การกรองด้วย RR จึงไม่สามารถแยกแยะมีดตกได้ และการตั้งเกณฑ์ RR >= 1.0 ยังไปบล็อกไม้เด้งปกติที่ TP1 อยู่ใกล้ทิ้งไปเกือบหมด
    - **ข้อปฏิบัติบนบอทจริง**: คงการตั้งค่าปิด RR Gate (`minRewardRiskRatio = 0`) ไว้ตามเดิม และเตรียมทดสอบแนวทาง **Waterfall Guard (Two-Step / Deceleration)** ต่อไป
 
+---
+
+## 168. v0.2.168 — Phase W0: Waterfall Crash Guard Engine Architecture & Verification Gate (`src/strategy/ma-fan/core-rules.ts`, `src/backtest-service.ts`, `src/research/verify-waterfall-rule.ts`, `package.json`, `src/version.ts`)
+
+1. **Waterfall Crash Metrics & Detection Engine (`src/strategy/ma-fan/core-rules.ts`)**:
+   - เพิ่ม `MaFanCoreRules.computeWaterfallMetrics({ candles, currentIndex, closePrice, isHtfBull })`:
+     - `consecutiveReds`: จำนวนแท่งแดงติดต่อกัน (`close < open`) ก่อนหน้าแท่งปัจจุบัน
+     - `dropPct12`: ระยะร่วงจากจุดสูงสุด 12 แท่งถึงราคาปิดปัจจุบัน (%)
+     - `volRatio`: อัตราส่วน Volume ของแท่งปัจจุบันเทียบกับค่าเฉลี่ย 20 แท่งก่อนหน้า
+   - เพิ่ม `WaterfallGuardMode`: `"off" | "consecutiveReds" | "bearCrash" | "volCapitulation" | "combined"`
+   - เพิ่ม `waterfallGuardMode` ใน `evaluateEntry`: หากเข้าเงื่อนไขจะบล็อกด้วย `shouldEnter: false, blockedBy: "WATERFALL_GUARD"`
+2. **Backtest Engine Integration (`src/backtest-service.ts`)**:
+   - เพิ่ม `waterfallGuardMode` ใน options ของ `runMaFanSimulation` ส่งต่อเข้า `evaluateEntry` พร้อม `isHtfBull: !!htfRegime.isBullish`
+3. **Verification Suites Passed 100%**:
+   - `src/research/verify-waterfall-rule.ts` ผ่านครบ 4/4 เคส
+   - Golden Reference Baseline ผ่านครบ 6/6 เหรียญแบบ Bitwise 100%
+4. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.168` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
