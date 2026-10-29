@@ -1401,8 +1401,10 @@
 
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
-        if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scope.toUpperCase()}) บน ${timeframe}...`;
-        if (scannerCountText) scannerCountText.textContent = "ประมวลผลกลยุทธ์ MA Fan Sniper แบบคู่ขนาน...";
+        const scopeLabel = scope === "top100" ? "Top 100 USDT" : scope === "top50" ? "Top 50 USDT" : scope === "top20" ? "Top 20 USDT" : scope.toUpperCase();
+        const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
+        if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scopeLabel}) บน ${timeframe} ย้อนหลัง ${limit.toLocaleString()} แท่ง (${dayEstimate})...`;
+        if (scannerCountText) scannerCountText.textContent = "กำลังดาวน์โหลดแท่งเทียนและประมวลผล MA Fan Sniper แบบคู่ขนาน...";
 
         try {
           const res = await fetch("/api/backtest/scan", {

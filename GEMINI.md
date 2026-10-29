@@ -6186,6 +6186,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.181` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 182. v0.2.182 — Market Scanner Full-History Alignment & Top 100 USDT Scope Expansion (`src/backtest-service.ts`, `src/server.ts`, `public/backtest.html`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **ปลดล็อกเพดานแท่งเทียนใน Market Scanner ให้ตรงกับ Single Backtest (`src/backtest-service.ts`, `src/server.ts`)**:
+   - **สาเหตุของปัญหาเดิม**:
+     - ใน `scanMarket` เดิมมีการล็อกเพดานไว้ที่ `Math.min(1000, opts.limit)` ทำให้เมื่อผู้ใช้เลือก 7 วัน (2,016 แท่ง), 15 วัน (4,320 แท่ง) หรือ 30 วัน (8,640 แท่ง) ตัวสแกนจะดึงข้อมูลจริงเพียง 1,000 แท่งแรก (~3.5 วัน)
+     - และเมื่อกดปุ่ม "📊 ดูกราฟ" หน้าเว็บจะเปิด Single Backtest ด้วยจำนวนแท่งเต็ม ทำให้ตัวเลขกำไรและจำนวนไม้ไม่ตรงกันกับตาราง Scanner
+     - นอกจากนี้ แท่งเทียน HTF 15m ใน Scanner เดิมถูกฮาร์ดโค้ดไว้ที่ 300 แท่งคงที่ ไม่สัมพันธ์กับจำนวนแท่งเทียนที่ขยายขึ้น
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - ปลดล็อกเพดาน `limit` ใน `scanMarket` เป็น `Math.min(15000, Math.max(100, opts.limit || 1000))` รองรับการสแกนเต็มจำนวนแท่ง 500, 1000, 2016, 4320, 8640 แท่ง
+     - คำนวณ `htfLimit` อัตโนมัติตามสัดส่วน Timeframe เหมือน Single Backtest (`Math.max(300, Math.ceil((limit * tfMinutes) / htfMinutes) + 50)`)
+     - เพิ่มระบบป้องกัน Rate Limit: จัดการ HTTP 429 แบบ Exponential Backoff Retry ใน `fetchBinanceCandles` และใส่ Safe Pacing (60ms) ระหว่าง Batch ทำให้สแกนเหรียญจำนวนมากได้ราบรื่น ไม่หลุด Connection
+2. **ขยายขอบเขต Top 100 USDT บนแดชบอร์ด (`public/backtest.html`, `public/backtest.js`)**:
+   - ปรับเมนู Scope ในหน้าต่าง Scanner ให้ชัดเจนและเลือกง่าย:
+     - 🔥 **Top 20 USDT** (สภาพคล่องสูงสุด — รวดเร็ว ~5-10 วินาที)
+     - 🚀 **Top 50 USDT** (เหรียญยอดนิยม — ~15-25 วินาที)
+     - 🌐 **Top 100 USDT** (ครอบคลุมทั้งตลาด — ~30-50 วินาที)
+     - 🟡 **FDUSD Pairs** (0% Maker Fee)
+   - ปรับปรุงข้อความสถานะในหน้าเว็บให้แสดงชื่อ Scope, Timeframe, และระยะเวลาที่เลือกอย่างชัดเจน
+   - ซิงค์ค่า `limit` และพารามิเตอร์เมื่อกด "📊 ดูกราฟ" ให้ผลลัพธ์ใน Single Backtest ตรงกับตาราง Leaderboard 100%
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.182` ใน `package.json` และ `src/version.ts`
+
 
 
 

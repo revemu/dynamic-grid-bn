@@ -238,7 +238,11 @@ export class BacktestService {
         url += `&endTime=${currentEndTime}`;
       }
 
-      const res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
+      let res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
+      if (res.status === 429) {
+        await new Promise((r) => setTimeout(r, 1500));
+        res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
+      }
       if (!res.ok) {
         if (candlesMap.size > 0) break; // Graceful fallback if we already got candles
         throw new Error(`Failed to fetch historical candles from Binance (HTTP ${res.status})`);
@@ -1066,7 +1070,7 @@ export class BacktestService {
   public static async scanMarket(opts: MarketScanOptions): Promise<MarketScanResultItem[]> {
     const scope = opts.scope || "top20";
     const timeframe = opts.timeframe || "5m";
-    const limit = Math.min(1000, Math.max(100, opts.limit || 500));
+    const limit = Math.min(15000, Math.max(100, opts.limit || 1000));
 
     // 1. Fetch 24h ticker to get liquid symbols
     const tickerRes = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
@@ -1113,9 +1117,13 @@ export class BacktestService {
           try {
             const sym = cand.symbol;
             const supTf = opts.supervisorTimeframe ?? "15m";
+            const tfMinutes = timeframe === "1m" ? 1 : timeframe === "5m" ? 5 : timeframe === "15m" ? 15 : 60;
+            const htfMinutes = supTf === "1h" ? 60 : 15;
+            const htfLimit = Math.max(300, Math.ceil((limit * tfMinutes) / htfMinutes) + 50);
+
             const [candles, candlesHtf] = await Promise.all([
               this.fetchBinanceCandles(sym, timeframe, limit),
-              this.fetchBinanceCandles(sym, supTf, 300).catch(() => []),
+              this.fetchBinanceCandles(sym, supTf, htfLimit).catch(() => []),
             ]);
             if (!candles || candles.length < 50) return;
 
@@ -1172,6 +1180,9 @@ export class BacktestService {
           }
         })
       );
+      if (i + chunkSize < candidates.length) {
+        await new Promise((r) => setTimeout(r, 60));
+      }
     }
 
     // 3. Sort by Net PnL % descending, then assign rank

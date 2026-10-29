@@ -824,7 +824,7 @@ export class DashboardServer {
           const parsed = body ? JSON.parse(body) : {};
           const scope = parsed.scope || "top20";
           const timeframe = parsed.timeframe || (liveCfg.maFanExecutionTimeframe as string) || "5m";
-          const limit = Number(parsed.limit) || 500;
+          const limit = Number(parsed.limit) || 1000;
           const spreadThreshold = parsed.spreadThreshold === "auto" ? "auto" : (Number(parsed.spreadThreshold) || undefined);
           const useRatchetSl = parsed.useRatchetSl !== false;
           const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "off";
