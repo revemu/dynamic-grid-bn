@@ -1163,8 +1163,9 @@
     const budget = Number(inpBudget.value) || 200;
     const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
 
+    const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
     loadingOverlay.style.display = "flex";
-    loadingText.textContent = `กำลังดึง ${limit} แท่งเทียนของ ${symbol} และรันจำลอง MA Fan Sniper (${useRatchetSl ? "Ratchet SL" : "Fixed SL"})...`;
+    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${useRatchetSl ? "Ratchet SL" : "Fixed SL"})...`;
 
     try {
       const resp = await fetch("/api/backtest/run", {

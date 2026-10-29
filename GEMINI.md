@@ -6010,6 +6010,49 @@ When investigating live production behavior, debugging issues, or analyzing trad
 2. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.175` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 176. v0.2.176 — Comprehensive Entry Checklist Indicator & 15/30 Days Backtest Engine (`src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `src/backtest-service.ts`, `src/server.ts`, `public/index.html`, `public/app.js`, `public/backtest.html`, `public/backtest.js`)
+
+1. **ระบบ 7-Point Entry Checklist สำหรับสแกนจังหวะเข้าซื้อ (Comprehensive Entry Checklist)**:
+   - **ปัญหาเดิม**: บน Chart Legend และ Bot Status Banner แสดงเพียงค่า `Spread: X.XX% (กางตึง ✅)` ซึ่งเป็นเพียง 1 ใน 7 เงื่อนไข ทำให้ผู้ใช้เกิดความสับสนว่าทำไมบอทกางตึงแล้วแต่ยังไม่เข้าซื้อ
+   - **โครงสร้างโมเดล `EntryChecklist` (`src/strategy/ma-fan/core-rules.ts`)**:
+     - รวบรวมและประเมินเกณฑ์การเข้าซื้อ 7 ข้ออย่างครบถ้วนเสมอ:
+       1. `พัดกางตึง (Spread ≥ Target)`
+       2. `พัดเรียงขาลง (Ribbon Down: EMA 4 ≤ 8 ≤ 16 ≤ 25)`
+       3. `ปลายม้วนตัวขึ้น (Hook Up: EMA4 งัดขึ้น / แท่งเด้งเหนือ EMA4)`
+       4. `แรงขายหมด (Oversold: RSI ≤ 45 หรือ MACD งัดขึ้น)`
+       5. `ระยะวิ่งถึง EMA25 (Upside Room ≥ 0.20%)`
+       6. `ไส้ล่างซึมซับ (Lower Wick ≥ 15%)`
+       7. `ความปลอดภัย (Waterfall Guard ไม่ติด Crash Dump)`
+       (+ R:R Gate ถ้าเปิดใช้งาน)
+     - คืนค่า `passedCount`, `totalCount`, `allPassed`, `passedLabels`, `waitingLabels` และ `items` ที่ระบุสถานะและค่าจริง
+   - **อัปเกรดชิปสถานะ Chart Legend และ Tooltip (`public/index.html` & `public/app.js`)**:
+     - แสดงทั้งค่า Spread และจำนวนเงื่อนไข: `🪭 Spread: 0.80% | 🎯 ซื้อ: 4/7 (รอ 3 ข้อ ⏳)`
+     - ไฮไลท์สีเขียวสว่างเมื่อผ่านครบทุกข้อ: `🟢 ซื้อ: 7/7 (พร้อมซื้อ ✅)`
+     - Hover Tooltip แสดงรายการเงื่อนไขทั้ง 7 ข้อพร้อมสถานะ `✅ ผ่าน` / `⏳ รอ` และค่าจริง
+     - สามารถคลิกที่ชิปเพื่อเปิดหน้าต่าง Candle Inspector ตรวจสอบแท่งเทียนได้ทันที
+   - **อัปเกรด Bot Status Banner (`src/strategy/ma-fan/strategy-adapter.ts`)**:
+     - แจ้งสรุปจำนวนเงื่อนไขที่ผ่านและเงื่อนไขที่กำลังรอคอยแบบ Real-time เช่น `🎯 สแกนสัญญาณซื้อ (4/7) — กำลังรอ: ปลายม้วนขึ้น (Hook Up), แรงขายหมด (Oversold), ไส้ล่างซึมซับ`
+   - **ซิงค์ Candle Inspector Popover (`public/app.js`)**:
+     - แสดงรายการตรวจวัดครบ 7 ข้อตรงกับตรรกะคำนวณจริงของบอท
+
+2. **ระบบ Backtest ย้อนหลัง 7, 15 และ 30 วัน (Extended Multi-Batch Pagination Engine)**:
+   - **ปัญหาเดิม**: Binance REST API จำกัดการดึงแท่งเทียนรอบละ 1,000 แท่ง ทำให้บน Timeframe 5m แสดงผลได้เพียง ~3.5 วัน
+   - **อัปเกรด `BacktestService.fetchBinanceCandles` (`src/backtest-service.ts`)**:
+     - เพิ่มระบบ Auto-Pagination แบบถอยเวลาย้อนหลัง (Backward Paging with `endTime`) เมื่อ `limit > 1000`
+     - รองรับการดึงข้อมูลประวัติย้อนหลังสูงสุด 15,000 แท่ง
+     - ป้องกันข้อมูลซ้ำซ้อนด้วย Map Keying และเรียงลำดับเวลาอย่างสมบูรณ์
+     - ทดสอบจริง: ดึง 15 วัน (4,320 แท่ง) ใช้เวลาเพียง ~600ms และ 30 วัน (8,640 แท่ง) ใช้เวลาเพียง ~1.2 วินาที
+   - **ซิงค์ HTF Supervisor Candles (`src/server.ts`)**:
+     - คำนวณขยายช่วงแท่งเทียนภาพใหญ่ (15m/1h) ตามสัดส่วนของ Limit หลัก เพื่อให้ Regime Analysis และ Bull Cushion ครอบคลุมทั้ง 30 วัน
+   - **เพิ่มตัวเลือกใน Dropdown หน้าเว็บ Backtest Studio (`public/backtest.html` & `public/backtest.js`)**:
+     - เพิ่มตัวเลือก `📅 7 วัน (~2,000 แท่ง)`, `📅 15 วัน (~4,320 แท่ง)`, และ `📅 30 วัน (~8,640 แท่ง)` ทั้งในแท็บ Single Backtest และ Market Scanner
+     - ปรับข้อความสถานะ Loading Overlay แจ้งจำนวนวันและแท่งเทียนที่กำลังดึงข้อมูลอย่างชัดเจน
+
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.176` ใน `package.json` และ `src/version.ts`
+
 
 
 

@@ -218,11 +218,16 @@ export class MaFanTradingStrategy implements IStrategy {
       ? `HTF: ${state.htfRegime.isBullish ? "BULL" : "BEAR"}`
       : "ACTIVE";
 
+    const cl = state.entryChecklist;
+    const clPassed = cl?.passedCount ?? 0;
+    const clTotal = cl?.totalCount ?? 7;
+    const waitingList = cl?.waitingLabels ?? [];
+
     let botAction = {
-      title: "🪭 MA-FOLD-FAN",
-      reason: `สแกนพัด (Spread: ${curSpread.toFixed(2)}% / ≥ ${reqSpread.toFixed(2)}% • ${regimeStr})`,
-      nextTrigger: "รอพัดกางตึงสุด + ปลายม้วนกลับ (Hook)",
-      severity: "info",
+      title: cl ? `🎯 สแกนสัญญาณซื้อ (${clPassed}/${clTotal})` : "🪭 MA-FOLD-FAN",
+      reason: `สแกนพัด (${cl ? `ผ่าน ${clPassed}/${clTotal} ข้อ • ` : ""}Spread: ${curSpread.toFixed(2)}% / ≥ ${reqSpread.toFixed(2)}% • ${regimeStr})`,
+      nextTrigger: waitingList.length > 0 ? `กำลังรอ: ${waitingList.slice(0, 3).join(", ")}` : "รอพัดกางตึงสุด + ปลายม้วนกลับ (Hook)",
+      severity: clPassed >= 4 ? "warning" : "info",
     };
 
     if (pos) {
@@ -241,11 +246,18 @@ export class MaFanTradingStrategy implements IStrategy {
           severity: "success",
         };
       }
+    } else if (cl?.allPassed) {
+      botAction = {
+        title: "⚡ จังหวะเข้าซื้อ Sniper",
+        reason: `ผ่านเกณฑ์ซื้อครบ ${clPassed}/${clTotal} ข้อ (Spread: ${curSpread.toFixed(2)}% • ${regimeStr})`,
+        nextTrigger: "ส่งคำสั่งซื้ออัตโนมัติทันทีที่แท่งเทียนปิดสมบูรณ์",
+        severity: "success",
+      };
     } else if (ribbon?.isFanningDown && curSpread >= reqSpread) {
       botAction = {
-        title: "⚡ Stretched Fan Alert",
+        title: `⚡ Stretched Fan (${clPassed}/${clTotal})`,
         reason: `พัดกางตึงแล้ว (${curSpread.toFixed(2)}% ≥ ${reqSpread.toFixed(2)}% • ${regimeStr})`,
-        nextTrigger: "รอดักจังหวะม้วนหัว Hook เพื่อเข้าซื้อทันที",
+        nextTrigger: waitingList.length > 0 ? `กำลังรอ: ${waitingList.slice(0, 3).join(", ")}` : "รอดักจังหวะม้วนหัว Hook เพื่อเข้าซื้อทันที",
         severity: "warning",
       };
     }

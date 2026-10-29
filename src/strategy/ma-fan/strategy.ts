@@ -16,7 +16,7 @@ import { ExhaustionEngine } from "./exhaustion.js";
 import { RegimeSupervisor } from "./regime.js";
 import { AutoCalibrator } from "./calibrator.js";
 import { MaFanOrderExecutor } from "./executor.js";
-import { MaFanCoreRules } from "./core-rules.js";
+import { MaFanCoreRules, EntryChecklist } from "./core-rules.js";
 import { appendDecisionSnapshot } from "./decision-log.js";
 import { APP_VERSION_INFO } from "../../version.js";
 
@@ -44,6 +44,7 @@ export class MaFanStrategy {
   private effectiveSpreadThreshold: number = 0.40;
   private lastClosedCandle: Candle | null = null;
   private evaluatedClosedCandleTime: number = 0;
+  private lastEntryChecklist: EntryChecklist | null = null;
 
   private isPaused: boolean = true;
   private isProcessing: boolean = false;
@@ -408,6 +409,8 @@ export class MaFanStrategy {
           isHtfBull: htfRegime.isBullish,
         });
 
+        this.lastEntryChecklist = entryDecision.checklist ?? null;
+
         if (entryDecision.blockedBy === "WATERFALL_GUARD") {
           this.log(`🛡️ [WATERFALL GUARD] Entry blocked: ${entryDecision.reason}`);
         }
@@ -461,6 +464,31 @@ export class MaFanStrategy {
     }
   }
 
+  public computeLiveEntryChecklist(): EntryChecklist | null {
+    if (!this.candles || this.candles.length < 25 || !this.currentRibbon) return null;
+    const htfRegime = this.currentHtfRegime || { isBullish: false, isAboveEma200: false, spreadMultiplier: 1.0, recommendedTp1Ratio: 0.5 };
+    const requiredSpread = Number((this.effectiveSpreadThreshold * htfRegime.spreadMultiplier).toFixed(2));
+    const exhaustion = ExhaustionEngine.evaluate(this.candles);
+    const atrs = calcATR(this.candles, 14);
+    const curAtr = atrs[atrs.length - 1] ?? 0;
+    const targetCandle = this.lastClosedCandle || this.candles[this.candles.length - 1];
+    const evalPrice = targetCandle ? targetCandle.close : 0;
+    if (evalPrice <= 0) return null;
+
+    const res = MaFanCoreRules.evaluateEntry({
+      candles: this.candles,
+      closePrice: evalPrice,
+      ribbon: this.currentRibbon,
+      exhaustion,
+      requiredSpreadPct: requiredSpread,
+      curAtr,
+      slBufferPct: this.config.slBufferPct,
+      waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
+      isHtfBull: !!htfRegime.isBullish,
+    });
+    return res.checklist ?? null;
+  }
+
   public getState(): any {
     const exhaustion = this.candles.length >= 25 ? ExhaustionEngine.evaluate(this.candles) : null;
     const totalTrades = this.winCount + this.lossCount;
@@ -468,6 +496,7 @@ export class MaFanStrategy {
 
     const htfMultiplier = this.currentHtfRegime?.spreadMultiplier ?? 1.0;
     const requiredSpread = Number((this.effectiveSpreadThreshold * htfMultiplier).toFixed(2));
+    const entryChecklist = this.lastEntryChecklist || this.computeLiveEntryChecklist();
 
     return {
       strategyType: "ma_fan",
@@ -482,6 +511,7 @@ export class MaFanStrategy {
       htfRegime: this.currentHtfRegime,
       rsi: exhaustion?.rsi,
       macd: exhaustion?.macd,
+      entryChecklist,
       metrics: {
         totalCycles: this.totalCycles,
         winCount: this.winCount,

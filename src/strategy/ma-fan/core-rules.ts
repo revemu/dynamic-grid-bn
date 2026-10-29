@@ -16,6 +16,23 @@ export interface WaterfallMetrics {
   isHtfBull: boolean;
 }
 
+export interface EntryChecklistItem {
+  id: "spread" | "order" | "hook" | "oversold" | "upside" | "wick" | "waterfall" | "rr";
+  name: string;
+  passed: boolean;
+  actualText: string;
+  requiredText: string;
+}
+
+export interface EntryChecklist {
+  passedCount: number;
+  totalCount: number;
+  allPassed: boolean;
+  items: EntryChecklistItem[];
+  passedLabels: string[];
+  waitingLabels: string[];
+}
+
 export interface EntryDecision {
   shouldEnter: boolean;
   entryPrice: number;
@@ -27,6 +44,7 @@ export interface EntryDecision {
   rewardRisk?: number;
   blockedBy?: "REWARD_RISK" | "WATERFALL_GUARD";
   waterfallMetrics?: WaterfallMetrics;
+  checklist?: EntryChecklist;
   reason?: string;
 }
 
@@ -175,27 +193,9 @@ export class MaFanCoreRules {
     const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
     const hasLowerWickAbsorption = lowerWickPct >= 15;
 
-    const qualified =
-      ribbon.isFanningDown &&
-      isStretched &&
-      ribbon.isHookUp &&
-      exhaustion.isOversoldExhaustion &&
-      isDownside &&
-      hasLowerWickAbsorption;
-
-    if (!qualified) {
-      return {
-        shouldEnter: false,
-        entryPrice: 0,
-        stopLossPrice: 0,
-        swingLow: 0,
-        fanSpreadPct: ribbon.fanSpreadPct,
-      };
-    }
-
     // Dynamic SL: Look back 11 bars (idx - 10 to idx) for lowest point
     const recentLows = candles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map((x) => x.low);
-    const swingLow = Math.min(...recentLows);
+    const swingLow = recentLows.length > 0 ? Math.min(...recentLows) : closePrice;
     const slDist = Math.max(swingLow * (slBufferPct / 100), curAtr * 1.0);
     const stopLossPrice = swingLow - slDist;
 
@@ -205,21 +205,6 @@ export class MaFanCoreRules {
       stopLossPrice,
     });
 
-    if (minRewardRiskRatio !== undefined && minRewardRiskRatio > 0 && rrCalc.rr < minRewardRiskRatio) {
-      return {
-        shouldEnter: false,
-        entryPrice: closePrice,
-        stopLossPrice,
-        swingLow,
-        fanSpreadPct: ribbon.fanSpreadPct,
-        riskPct: rrCalc.riskPct,
-        rewardPct: rrCalc.rewardPct,
-        rewardRisk: rrCalc.rr,
-        blockedBy: "REWARD_RISK",
-        reason: `Filtered by RR (${rrCalc.rr.toFixed(2)} < ${minRewardRiskRatio.toFixed(2)})`,
-      };
-    }
-
     // Waterfall Guard Filter
     const waterfallMetrics = MaFanCoreRules.computeWaterfallMetrics({
       candles,
@@ -228,10 +213,10 @@ export class MaFanCoreRules {
       isHtfBull,
     });
 
-    if (waterfallGuardMode && waterfallGuardMode !== "off") {
-      let isBlocked = false;
-      let blockReason = "";
+    let isBlocked = false;
+    let blockReason = "";
 
+    if (waterfallGuardMode && waterfallGuardMode !== "off") {
       switch (waterfallGuardMode) {
         case "consecutiveReds":
           if (waterfallMetrics.consecutiveReds >= 4) {
@@ -262,22 +247,138 @@ export class MaFanCoreRules {
           }
           break;
       }
+    }
 
-      if (isBlocked) {
-        return {
-          shouldEnter: false,
-          entryPrice: closePrice,
-          stopLossPrice,
-          swingLow,
-          fanSpreadPct: ribbon.fanSpreadPct,
-          riskPct: rrCalc.riskPct,
-          rewardPct: rrCalc.rewardPct,
-          rewardRisk: rrCalc.rr,
-          blockedBy: "WATERFALL_GUARD",
-          waterfallMetrics,
-          reason: `Filtered by Waterfall Guard [${waterfallGuardMode}]: ${blockReason}`,
-        };
-      }
+    const items: EntryChecklistItem[] = [
+      {
+        id: "spread",
+        name: "พัดกางตึง (Spread)",
+        passed: isStretched,
+        actualText: `${ribbon.fanSpreadPct.toFixed(2)}%`,
+        requiredText: `≥ ${requiredSpreadPct.toFixed(2)}%`,
+      },
+      {
+        id: "order",
+        name: "พัดเรียงขาลง (Ribbon Down)",
+        passed: ribbon.isFanningDown,
+        actualText: ribbon.isFanningDown ? "เรียง 4≤8≤16≤25" : (ribbon.isFanningUp ? "เรียงทิศขึ้น" : "ยังไม่เรียง"),
+        requiredText: "EMA 4 ≤ 8 ≤ 16 ≤ 25",
+      },
+      {
+        id: "hook",
+        name: "ปลายม้วนขึ้น (Hook Up)",
+        passed: ribbon.isHookUp,
+        actualText: ribbon.isHookUp ? "ม้วนขึ้นแล้ว" : "ยังไม่งัดขึ้น",
+        requiredText: "EMA4 เลี้ยวขึ้น / ปิดเหนือ EMA4",
+      },
+      {
+        id: "oversold",
+        name: "แรงขายหมด (Oversold)",
+        passed: exhaustion.isOversoldExhaustion,
+        actualText: `RSI ${typeof exhaustion.rsi === "number" ? exhaustion.rsi.toFixed(1) : "--"}${exhaustion.isOversoldExhaustion ? " (ขายหมดแรง)" : ""}`,
+        requiredText: "RSI ≤ 45 หรือ MACD งัดขึ้น",
+      },
+      {
+        id: "upside",
+        name: "ระยะวิ่งถึง EMA25 (Upside Room)",
+        passed: isDownside,
+        actualText: closePrice < ribbon.ema25
+          ? `ต่ำกว่า EMA25 ${(((ribbon.ema25 - closePrice) / ribbon.ema25) * 100).toFixed(2)}%`
+          : "อยู่เหนือ EMA25",
+        requiredText: "ต่ำกว่า EMA25 ≥ 0.20%",
+      },
+      {
+        id: "wick",
+        name: "ไส้ล่างซึมซับ (Lower Wick)",
+        passed: hasLowerWickAbsorption,
+        actualText: `${lowerWickPct.toFixed(1)}%`,
+        requiredText: "≥ 15.0%",
+      },
+      {
+        id: "waterfall",
+        name: "Waterfall Guard",
+        passed: !isBlocked,
+        actualText: isBlocked ? blockReason : "ปลอดภัย (ไม่ติด Dump)",
+        requiredText: "ไม่ติด Crash / แดง < 4 แท่ง",
+      },
+    ];
+
+    if (minRewardRiskRatio !== undefined && minRewardRiskRatio > 0) {
+      items.push({
+        id: "rr",
+        name: "Reward:Risk Gate",
+        passed: rrCalc.rr >= minRewardRiskRatio,
+        actualText: `R:R ${rrCalc.rr.toFixed(2)}`,
+        requiredText: `≥ ${minRewardRiskRatio.toFixed(2)}`,
+      });
+    }
+
+    const passedCount = items.filter((it) => it.passed).length;
+    const totalCount = items.length;
+    const allPassed = passedCount === totalCount;
+    const passedLabels = items.filter((it) => it.passed).map((it) => it.name);
+    const waitingLabels = items.filter((it) => !it.passed).map((it) => it.name);
+
+    const checklist: EntryChecklist = {
+      passedCount,
+      totalCount,
+      allPassed,
+      items,
+      passedLabels,
+      waitingLabels,
+    };
+
+    const qualified =
+      ribbon.isFanningDown &&
+      isStretched &&
+      ribbon.isHookUp &&
+      exhaustion.isOversoldExhaustion &&
+      isDownside &&
+      hasLowerWickAbsorption;
+
+    if (!qualified) {
+      return {
+        shouldEnter: false,
+        entryPrice: 0,
+        stopLossPrice: 0,
+        swingLow: 0,
+        fanSpreadPct: ribbon.fanSpreadPct,
+        checklist,
+        reason: `รอเงื่อนไข: ${waitingLabels.join(", ")}`,
+      };
+    }
+
+    if (minRewardRiskRatio !== undefined && minRewardRiskRatio > 0 && rrCalc.rr < minRewardRiskRatio) {
+      return {
+        shouldEnter: false,
+        entryPrice: closePrice,
+        stopLossPrice,
+        swingLow,
+        fanSpreadPct: ribbon.fanSpreadPct,
+        riskPct: rrCalc.riskPct,
+        rewardPct: rrCalc.rewardPct,
+        rewardRisk: rrCalc.rr,
+        blockedBy: "REWARD_RISK",
+        checklist,
+        reason: `Filtered by RR (${rrCalc.rr.toFixed(2)} < ${minRewardRiskRatio.toFixed(2)})`,
+      };
+    }
+
+    if (isBlocked) {
+      return {
+        shouldEnter: false,
+        entryPrice: closePrice,
+        stopLossPrice,
+        swingLow,
+        fanSpreadPct: ribbon.fanSpreadPct,
+        riskPct: rrCalc.riskPct,
+        rewardPct: rrCalc.rewardPct,
+        rewardRisk: rrCalc.rr,
+        blockedBy: "WATERFALL_GUARD",
+        waterfallMetrics,
+        checklist,
+        reason: `Filtered by Waterfall Guard [${waterfallGuardMode}]: ${blockReason}`,
+      };
     }
 
     return {
@@ -290,6 +391,7 @@ export class MaFanCoreRules {
       rewardPct: rrCalc.rewardPct,
       rewardRisk: rrCalc.rr,
       waterfallMetrics,
+      checklist,
       reason: `Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Hook, Oversold, Wick ${lowerWickPct.toFixed(1)}%`,
     };
   }

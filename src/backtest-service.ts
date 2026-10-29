@@ -175,38 +175,98 @@ export class BacktestService {
     limit: number = 1000
   ): Promise<Candle[]> {
     const cleanSym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
-    const clampedLimit = Math.min(1000, Math.max(50, limit));
-    const url = `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=${interval}&limit=${clampedLimit}`;
 
-    const res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
-    if (!res.ok) {
-      throw new Error(`Failed to fetch historical candles from Binance (HTTP ${res.status})`);
+    // Quick single fetch if limit <= 1000
+    if (limit <= 1000) {
+      const clampedLimit = Math.min(1000, Math.max(50, limit));
+      const url = `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=${interval}&limit=${clampedLimit}`;
+
+      const res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
+      if (!res.ok) {
+        throw new Error(`Failed to fetch historical candles from Binance (HTTP ${res.status})`);
+      }
+
+      const raw = (await res.json()) as any[];
+      if (!Array.isArray(raw) || raw.length === 0) {
+        throw new Error(`No historical candles returned for ${cleanSym} on ${interval}`);
+      }
+
+      const nowMs = Date.now();
+      const candles: Candle[] = [];
+      for (const k of raw) {
+        const time = Math.floor(Number(k[0]) / 1000);
+        const closeTimeMs = Number(k[6]);
+        // Filter out live forming unclosed bar to ensure backtest evaluates strictly closed bars
+        if (Number.isFinite(closeTimeMs) && closeTimeMs > nowMs) continue;
+        const open = Number(k[1]);
+        const high = Number(k[2]);
+        const low = Number(k[3]);
+        const close = Number(k[4]);
+        const volume = Number(k[5]) || 0;
+
+        if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
+          candles.push({ time, open, high, low, close, volume, isClosed: true });
+        }
+      }
+
+      return candles.sort((a, b) => a.time - b.time);
     }
 
-    const raw = (await res.json()) as any[];
-    if (!Array.isArray(raw) || raw.length === 0) {
+    // Extended Multi-page fetch for 7, 15, 30 days (up to 15,000 candles)
+    const candlesMap = new Map<number, Candle>();
+    let currentEndTime: number | undefined = undefined;
+    const maxCandles = Math.min(15000, Math.max(50, limit));
+    const maxBatches = Math.ceil(maxCandles / 1000) + 3;
+
+    for (let batch = 0; batch < maxBatches && candlesMap.size < maxCandles; batch++) {
+      let url = `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=${interval}&limit=1000`;
+      if (currentEndTime) {
+        url += `&endTime=${currentEndTime}`;
+      }
+
+      const res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
+      if (!res.ok) {
+        if (candlesMap.size > 0) break; // Graceful fallback if we already got candles
+        throw new Error(`Failed to fetch historical candles from Binance (HTTP ${res.status})`);
+      }
+
+      const raw = (await res.json()) as any[];
+      if (!Array.isArray(raw) || raw.length === 0) break;
+
+      const nowMs = Date.now();
+      let earliestOpenMs = Infinity;
+
+      for (const k of raw) {
+        const openTimeMs = Number(k[0]);
+        const closeTimeMs = Number(k[6]);
+        if (Number.isFinite(closeTimeMs) && closeTimeMs > nowMs) continue;
+        const time = Math.floor(openTimeMs / 1000);
+        const open = Number(k[1]);
+        const high = Number(k[2]);
+        const low = Number(k[3]);
+        const close = Number(k[4]);
+        const volume = Number(k[5]) || 0;
+
+        if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
+          candlesMap.set(time, { time, open, high, low, close, volume, isClosed: true });
+        }
+        if (openTimeMs < earliestOpenMs) {
+          earliestOpenMs = openTimeMs;
+        }
+      }
+
+      if (earliestOpenMs === Infinity || earliestOpenMs === currentEndTime) {
+        break;
+      }
+      currentEndTime = earliestOpenMs - 1;
+    }
+
+    if (candlesMap.size === 0) {
       throw new Error(`No historical candles returned for ${cleanSym} on ${interval}`);
     }
 
-    const nowMs = Date.now();
-    const candles: Candle[] = [];
-    for (const k of raw) {
-      const time = Math.floor(Number(k[0]) / 1000);
-      const closeTimeMs = Number(k[6]);
-      // Filter out live forming unclosed bar to ensure backtest evaluates strictly closed bars
-      if (Number.isFinite(closeTimeMs) && closeTimeMs > nowMs) continue;
-      const open = Number(k[1]);
-      const high = Number(k[2]);
-      const low = Number(k[3]);
-      const close = Number(k[4]);
-      const volume = Number(k[5]) || 0;
-
-      if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
-        candles.push({ time, open, high, low, close, volume, isClosed: true });
-      }
-    }
-
-    return candles.sort((a, b) => a.time - b.time);
+    const sorted = Array.from(candlesMap.values()).sort((a, b) => a.time - b.time);
+    return sorted.slice(-maxCandles);
   }
 
   /**

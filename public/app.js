@@ -1396,18 +1396,81 @@
     const el200 = document.getElementById("legEma200"); if (el200) { el200.textContent = fmtPrice(data.ema200); el200.style.color = curColors.c200; }
 
     const targetSpread = latestGridData?.effectiveSpreadThreshold || latestGridData?.fanSpreadThreshold || latestGridData?.minFanSpread || 0.25;
+    const elLegChecklistVal = document.getElementById("legChecklistVal");
+
+    // Evaluate or retrieve checklist
+    let cl = null;
+    const isLatestCandle = latestCandle && latestCandle.time === data.candle.time;
+    if (isLatestCandle && latestGridData?.entryChecklist) {
+      cl = latestGridData.entryChecklist;
+    } else {
+      // Evaluate for hovered or historical candle
+      const c = data.candle;
+      const isSpreadReady = data.spreadPct >= targetSpread;
+      const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
+      const condSpread = isSpreadReady;
+      const condHook = data.isHookUp;
+      const condExhaust = !!data.isOversoldExhaustion;
+      const condUpside = c ? (c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0020)) : true;
+      const condAbsorption = (data.lowerWickPct || 0) >= 15;
+      const condWaterfall = true;
+
+      const items = [
+        { name: "พัดกางตึง", passed: condSpread, actualText: `${data.spreadPct.toFixed(2)}%`, requiredText: `≥ ${targetSpread.toFixed(2)}%` },
+        { name: "พัดเรียงขาลง", passed: condOrder, actualText: condOrder ? "เรียง 4≤8≤16≤25" : "ยังไม่เรียง", requiredText: "EMA 4≤8≤16≤25" },
+        { name: "ปลายม้วนขึ้น (Hook)", passed: condHook, actualText: condHook ? "ม้วนขึ้นแล้ว" : "ยังไม่งัดขึ้น", requiredText: "EMA4 เลี้ยวขึ้น" },
+        { name: "แรงขายหมด (Oversold)", passed: condExhaust, actualText: `RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'}`, requiredText: "RSI ≤ 45 หรือ MACD งัดขึ้น" },
+        { name: "ระยะวิ่งถึง EMA25", passed: condUpside, actualText: c && c.close < data.ema25 ? `ต่ำกว่า EMA25 ${(((data.ema25 - c.close) / data.ema25) * 100).toFixed(2)}%` : "ชิด/เหนือ EMA25", requiredText: "ต่ำกว่า EMA25 ≥ 0.20%" },
+        { name: "ไส้ล่างซึมซับ", passed: condAbsorption, actualText: `${(data.lowerWickPct || 0).toFixed(1)}%`, requiredText: "≥ 15.0%" },
+        { name: "Waterfall Guard", passed: condWaterfall, actualText: "ปลอดภัย", requiredText: "ไม่ติด Dump" },
+      ];
+      const passedCount = items.filter(x => x.passed).length;
+      cl = {
+        passedCount,
+        totalCount: items.length,
+        allPassed: passedCount === items.length,
+        items,
+        waitingLabels: items.filter(x => !x.passed).map(x => x.name),
+      };
+    }
+
     if (elLegFanSpreadChip && elLegFanSpreadVal) {
-      if (data.spreadPct >= targetSpread) {
-        elLegFanSpreadChip.style.background = "rgba(16, 185, 129, 0.2)";
-        elLegFanSpreadChip.style.borderColor = "rgba(16, 185, 129, 0.5)";
+      const pCount = cl?.passedCount ?? 0;
+      const tCount = cl?.totalCount ?? 7;
+      const allOk = cl?.allPassed;
+
+      if (allOk) {
+        elLegFanSpreadChip.style.background = "rgba(16, 185, 129, 0.25)";
+        elLegFanSpreadChip.style.borderColor = "rgba(16, 185, 129, 0.6)";
         elLegFanSpreadChip.style.color = "#34d399";
-        elLegFanSpreadVal.textContent = `${data.spreadPct.toFixed(2)}% (กางตึง ✅)`;
-      } else {
-        elLegFanSpreadChip.style.background = "rgba(245, 158, 11, 0.15)";
-        elLegFanSpreadChip.style.borderColor = "rgba(245, 158, 11, 0.35)";
+        elLegFanSpreadVal.textContent = `${data.spreadPct.toFixed(2)}%`;
+        if (elLegChecklistVal) elLegChecklistVal.textContent = `${pCount}/${tCount} (พร้อมซื้อ ✅)`;
+      } else if (pCount >= 4) {
+        elLegFanSpreadChip.style.background = "rgba(245, 158, 11, 0.18)";
+        elLegFanSpreadChip.style.borderColor = "rgba(245, 158, 11, 0.45)";
         elLegFanSpreadChip.style.color = "#fbbf24";
-        elLegFanSpreadVal.textContent = `${data.spreadPct.toFixed(2)}% (ยังไม่ตึง ⚠️)`;
+        elLegFanSpreadVal.textContent = `${data.spreadPct.toFixed(2)}%`;
+        if (elLegChecklistVal) elLegChecklistVal.textContent = `${pCount}/${tCount} (รอ ${tCount - pCount} ข้อ ⏳)`;
+      } else {
+        elLegFanSpreadChip.style.background = "rgba(148, 163, 184, 0.12)";
+        elLegFanSpreadChip.style.borderColor = "rgba(148, 163, 184, 0.3)";
+        elLegFanSpreadChip.style.color = "#94a3b8";
+        elLegFanSpreadVal.textContent = `${data.spreadPct.toFixed(2)}%`;
+        if (elLegChecklistVal) elLegChecklistVal.textContent = `${pCount}/${tCount} (รอ ${tCount - pCount} ข้อ)`;
       }
+
+      // Build rich tooltip
+      const tooltipLines = [
+        `🎯 เงื่อนไขการเข้าซื้อ Sniper (${pCount}/${tCount} ข้อ):`,
+      ];
+      if (cl?.items) {
+        cl.items.forEach((it, idx) => {
+          tooltipLines.push(`[${idx + 1}] ${it.name}: ${it.passed ? "✅ ผ่าน" : "⏳ รอ"} (${it.actualText || it.requiredText})`);
+        });
+      }
+      tooltipLines.push("(คลิกที่ป้ายนี้หรือแท่งเทียนเพื่อเปิดหน้าต่างวิเคราะห์ละเอียด)");
+      elLegFanSpreadChip.title = tooltipLines.join("\n");
+      elLegFanSpreadChip.onclick = () => openCandleInspector(data.time);
     }
   }
 
@@ -1429,26 +1492,40 @@
     const isSpreadReady = data.spreadPct >= targetSpread;
     const spreadDiff = data.spreadPct - targetSpread;
 
-    // 5-point Sniper conditions (Exact match with MaFanCoreRules)
-    const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
+    // 7-point Sniper conditions (Exact match with MaFanCoreRules)
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
-    const condHook = data.isHookUp && c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0020);
+    const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
+    const condHook = data.isHookUp;
     const condExhaust = !!data.isOversoldExhaustion;
+    const condUpside = c ? (c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0020)) : true;
     const condAbsorption = (data.lowerWickPct || 0) >= 15;
+    const condWaterfall = true; // Historical candle passed without ongoing cascade
 
-    const allReady = condOrder && condSpread && condHook && condExhaust && condAbsorption;
+    const checklistItems = [
+      { num: 1, name: "พัดกางตึง (Spread)", passed: condSpread, detail: condSpread ? `≥ ${targetSpread.toFixed(2)}% (${data.spreadPct.toFixed(2)}%)` : (data.ema4 > data.ema25 ? `พัดผิดทิศ (EMA4 > EMA25)` : `ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`) },
+      { num: 2, name: "พัดเรียงขาลง (EMA 4≤8≤16≤25)", passed: condOrder, detail: condOrder ? "เรียงสมบูรณ์" : (data.isFanningUp ? "เรียงทิศขึ้น" : "ยังไม่เรียง") },
+      { num: 3, name: "ปลายม้วนตัวกลับ (Hook Up)", passed: condHook, detail: condHook ? "ม้วนขึ้นแล้ว" : "ยังไม่งัดขึ้น" },
+      { num: 4, name: "แรงขายหมด (Oversold)", passed: condExhaust, detail: condExhaust ? `RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} (Oversold)` : `RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} (> 45)` },
+      { num: 5, name: "ระยะวิ่งถึง EMA25 (Upside Room)", passed: condUpside, detail: c && c.close < data.ema25 ? `ห่าง ${(((data.ema25 - c.close) / data.ema25) * 100).toFixed(2)}% (≥0.20%)` : "ชิด/สูงกว่า EMA25" },
+      { num: 6, name: "ไส้ล่างซึมซับ (Lower Wick ≥ 15%)", passed: condAbsorption, detail: `${(data.lowerWickPct || 0).toFixed(1)}%` },
+      { num: 7, name: "Waterfall Guard", passed: condWaterfall, detail: "ปลอดภัย (ไม่ติด Dump)" },
+    ];
+
+    const passedCount = checklistItems.filter(x => x.passed).length;
+    const allReady = passedCount === checklistItems.length;
 
     let verdictHtml = "";
     if (allReady) {
-      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 5 ข้อ! (จังหวะเปิดไม้ BUY)</div>`;
+      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 7 ข้อ! (จังหวะเปิดไม้ BUY)</div>`;
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
-      if (!condHook) missing.push(c.close >= data.ema25 * (1 - 0.0020) ? `ราคาอยู่ชิด/สูงกว่า EMA25 เกินไป (ขาด Upside Room ≥ 0.20%)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
+      if (!condHook) missing.push(`ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 45)`);
+      if (!condUpside) missing.push(`ราคาอยู่ชิด/สูงกว่า EMA25 เกินไป (ขาด Upside Room ≥ 0.20%)`);
       if (!condAbsorption) missing.push(`ไส้ล่างซึมซับแรงขายต่ำเกินไป (${(data.lowerWickPct || 0).toFixed(1)}% < 15%)`);
-      verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;
+      verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ ผ่าน ${passedCount}/7 ข้อ (รอ: ${missing.join(", ")})</div>`;
     }
 
     elCandleInspectorCard.innerHTML = `
@@ -1508,26 +1585,12 @@
       </div>
 
       <div class="cic-checklist">
-        <div class="cic-check-item">
-          <span>1. พัดเรียงตัวขาลง (EMA 4 < 8 < 16 < 25)</span>
-          <span style="color: ${condOrder ? "#34d399" : "#f87171"}; font-weight:700;">${condOrder ? "✅ ผ่าน" : "❌ ไม่ผ่าน"}</span>
-        </div>
-        <div class="cic-check-item">
-          <span>2. พัดกางตึง (Spread ≥ ${targetSpread.toFixed(2)}%)</span>
-          <span style="color: ${condSpread ? "#34d399" : "#f87171"}; font-weight:700;">${condSpread ? "✅ ผ่าน" : "❌ ไม่ผ่าน"}</span>
-        </div>
-        <div class="cic-check-item">
-          <span>3. ปลายพัดม้วนตัวกลับ (Hook Up)</span>
-          <span style="color: ${condHook ? "#34d399" : "#f87171"}; font-weight:700;">${condHook ? "✅ ผ่าน" : "⏳ ไม่ม้วน"}</span>
-        </div>
-        <div class="cic-check-item">
-          <span>4. ภาวะหมดแรงเทขาย (Oversold Exhaustion)</span>
-          <span style="color: ${condExhaust ? "#34d399" : "#f87171"}; font-weight:700;">${condExhaust ? `✅ ผ่าน (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})` : `⏳ รอขายหมด (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'})`}</span>
-        </div>
-        <div class="cic-check-item">
-          <span>5. แรงซึมซับไส้ล่าง (Lower Wick ≥ 15%)</span>
-          <span style="color: ${condAbsorption ? "#34d399" : "#f87171"}; font-weight:700;">${condAbsorption ? `✅ ผ่าน (${(data.lowerWickPct || 0).toFixed(1)}%)` : `❌ ไม่ผ่าน (${(data.lowerWickPct || 0).toFixed(1)}%)`}</span>
-        </div>
+        ${checklistItems.map((it) => `
+          <div class="cic-check-item">
+            <span>${it.num}. ${it.name}</span>
+            <span style="color: ${it.passed ? "#34d399" : "#f87171"}; font-weight:700;">${it.passed ? "✅ ผ่าน" : "⏳ รอ"} (${it.detail})</span>
+          </div>
+        `).join("")}
       </div>
 
       ${verdictHtml}

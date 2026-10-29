@@ -751,9 +751,14 @@ export class DashboardServer {
           const useRatchetSl = parsed.useRatchetSl !== false;
           const supervisorTimeframe = (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h";
 
+          // Compute required HTF supervisor candles based on limit and timeframe ratio
+          const tfMinutes = timeframe === "1m" ? 1 : timeframe === "5m" ? 5 : timeframe === "15m" ? 15 : 60;
+          const htfMinutes = supervisorTimeframe === "1h" ? 60 : 15;
+          const htfLimit = Math.max(300, Math.ceil((limit * tfMinutes) / htfMinutes) + 50);
+
           const [candles, candlesHtf] = await Promise.all([
             BacktestService.fetchBinanceCandles(symbol, timeframe, limit),
-            BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, 300).catch(() => []),
+            BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, htfLimit).catch(() => []),
           ]);
           const result = BacktestService.runMaFanSimulation(candles, {
             symbol,
