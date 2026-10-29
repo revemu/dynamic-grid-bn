@@ -2882,7 +2882,6 @@
       clampStr = `${gateBadge} • ${clampStr}`;
     }
 
-    const isMaFan = data.strategyType === "ma_fan" || data.strategyMode === "ma_fan";
     const elMafanStatusPill = document.getElementById("mafanStatusPill");
     const elMafanStatusText = document.getElementById("mafanStatusText");
     const btnToggleHtfLines = document.getElementById("btnToggleHtfLines");

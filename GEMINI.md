@@ -5652,6 +5652,19 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - **การแก้ไข**: นำ `calcATR(candles, 14)` จาก `ribbon.ts` มาใช้แทนลูปคำนวณ ATR แยก และปรับระยะ `warmup` เป็น `candles.length / 4` ให้สอดคล้องกัน 100%
 
 
+---
+
+## 159. v0.2.159 — Resolve Fatal Frontend SyntaxError Causing Blank Page & Bump Cache-Busting (`public/app.js`, `public/index.html`, `package.json`, `src/version.ts`)
+
+1. **แก้ไขข้อผิดพลาด Fatal SyntaxError ใน `public/app.js` (`public/app.js`)**:
+   - **สาเหตุของปัญหา**: ภายในฟังก์ชัน `updateTick(data)` มีการประกาศตัวแปร `const isMaFan` ซ้ำสองครั้ง (ที่บรรทัด 2742 และบรรทัด 2885) ส่งผลให้ JavaScript Engine (V8) โยนข้อผิดพลาด `SyntaxError: Identifier 'isMaFan' has already been declared` ตั้งแต่ขั้นตอน Parsing ของสคริปต์ ทำให้เบราว์เซอร์หยุดการทำงานของ `app.js` ทั้งหมด หน้าเว็บจึงไม่เริ่มต้นการวาดกราฟ ไม่เชื่อมต่อ SSE และค้างอยู่ที่ Placeholder เริ่มต้น (`Synchronizing market data...`, `v...`, หน้ากราฟมืดว่างเปล่า)
+   - **การแก้ไข**: ลบการประกาศซ้ำ `const isMaFan` ที่บรรทัด 2885 ออก เพื่อให้โค้ดเรียกใช้ตัวแปร `isMaFan` ที่ประกาศไว้แล้วที่บรรทัด 2742 อย่างถูกต้อง และผ่านการตรวจสอบด้วย `node --check public/app.js` 100%
+
+2. **ขยับ Version Cache-Busting ใน `public/index.html` (`public/index.html`)**:
+   - ปรับ `<script src="app.js?v=3.44"></script>` เพื่อบังคับให้เบราว์เซอร์ของผู้ใช้โหลดไฟล์สคริปต์ที่แก้ไขแล้วทันทีโดยไม่ติด Cache เดิม
+
+
+
 
 
 
