@@ -5761,6 +5761,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.163` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 164. v0.2.164 — Phase 0: Isolated Bull Cushion Toggle (Default OFF) with Full Architecture Alignment (`src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/types.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `src/strategy/ma-fan/calibrator.ts`, `src/config.ts`, `src/backtest-service.ts`, `src/server.ts`, `public/index.html`, `public/app.js`, `package.json`, `src/version.ts`)
+
+1. **เพิ่มสวิตช์ Toggle `maFanBullCushion` (ค่าเริ่มต้น: ปิด `false`) ตามแผนตรวจสอบความถูกต้อง Phase 0**:
+   - เพื่อความปลอดภัยสูงสุดของบอทจริงในระหว่างการรัน Backtest Validation ขนานใหญ่ (Universe Top 30) กฎ Bull Cushion จะถูกตั้งค่าเริ่มต้นเป็น **ปิด (`false`)**
+   - เพิ่มชนิดข้อมูล `export type CushionMode = "off" | "htfBull" | "always"` ใน `src/strategy/ma-fan/core-rules.ts`
+   - ปรับ `MaFanCoreRules.evaluateExits` ให้รับ `cushionMode`, `cushionThresholdPct`, `tp1MinProfitPct` และส่งคืน `cushionApplied?: boolean`:
+     - เมื่อ `cushionMode === "off"`: ยก Stop Loss ขึ้นมาที่ Breakeven เสมอ (พฤติกรรมดั้งเดิมที่ปลอดภัย)
+     - เมื่อ `cushionMode === "htfBull"`: ปฏิบัติตามกฎ Cushion ผ่อนปรน Breakeven SL เฉพาะเมื่อ `isHtfBull === true` และกำไร TP1 `< 0.35%`
+     - เมื่อ `cushionMode === "always"`: ผ่อนปรน Breakeven SL เมื่อกำไร TP1 `< 0.35%` โดยไม่สนใจแนวโน้ม HTF (สำหรับกลุ่มทดลอง G2)
+2. **ผูกระบบ Config, Database, Strategy Adapter และ Runtime Lifecycle**:
+   - `src/config.ts`: เพิ่ม `maFanBullCushion: false` ใน `defaultStrategyConfig` และใน `loadConfigFromDatabase`
+   - `src/strategy/ma-fan/strategy-adapter.ts`: รองรับการส่งค่าเข้า `MaFanConfig` และการอัปเดตรันไทม์ผ่าน `updateRuntimeSettings` แบบ Real-time ทันที
+   - `src/strategy/ma-fan/strategy.ts`: ส่ง `cushionMode: this.config.bullCushionEnabled ? "htfBull" : "off"` เข้าสู่ `evaluateExits` และ `calibrateSpread`
+   - `src/strategy/ma-fan/calibrator.ts`: รับ `cushionMode` ใน `CalibrateOptions` และส่งเข้า `evaluateExits`
+   - `src/backtest-service.ts`: รับ `cushionMode` ใน `runMaFanSimulation` และ `MarketScanOptions` พร้อม Export `STABLE_TOKENS` ระดับโมดูล
+   - `src/server.ts`: ส่งต่อ `cushionMode` ใน `/api/backtest/run` และ `/api/backtest/scan`
+3. **UI Dashboard Settings Control (`public/index.html`, `public/app.js`)**:
+   - เพิ่มสวิตช์ Toggle `#cfg_maFanBullCushion` ใน Section MA Fan Strategy Settings (Unchecked by default)
+   - ผูก Event Getter/Setter ใน `public/app.js` และขยับ Cache-Busting เป็น `app.js?v=3.47`
+4. **Acceptance Gate P0 Verified (`src/research/verify-cushion-rule.ts`)**:
+   - ผ่านการทดสอบ Unit Verification ทั้ง 4 กรณี:
+     - Case 1: `mode=off` → ยก SL ชนทุน Breakeven เสมอ (`cushionApplied=false`)
+     - Case 2: `mode=htfBull, isHtfBull=true, profit < 0.35%` → รักษาระยะ Cushion ฐานเดิม (`cushionApplied=true`)
+     - Case 3: `mode=htfBull, isHtfBull=false, profit < 0.35%` → ยก SL ชนทุน Breakeven เสมอ (`cushionApplied=false`)
+     - Case 4: `mode=always, profit >= 0.35%` → ยก SL ชนทุน Breakeven เสมอ (`cushionApplied=false`)
+5. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.164` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

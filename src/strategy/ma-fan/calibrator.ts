@@ -7,7 +7,7 @@
 import { Candle, CalibrationResult } from "./types.js";
 import { RibbonEngine, calcATR } from "./ribbon.js";
 import { ExhaustionEngine } from "./exhaustion.js";
-import { MaFanCoreRules } from "./core-rules.js";
+import { CushionMode, MaFanCoreRules } from "./core-rules.js";
 import { RegimeSupervisor } from "./regime.js";
 
 function aggregateTo15m(candles: Candle[], targetMinutes = 15): Candle[] {
@@ -36,6 +36,7 @@ export interface CalibrateOptions {
   initialCapital?: number;
   supervisorTimeframe?: "15m" | "1h";
   useRatchetSl?: boolean;
+  cushionMode?: CushionMode;
 }
 
 export class AutoCalibrator {
@@ -130,6 +131,7 @@ export class AutoCalibrator {
             isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
             barsHeld,
             isHtfBull: !!htfRegime.isBullish,
+            cushionMode: opts?.cushionMode ?? "off",
           });
 
           if (exitDecision.action === "TP2") {

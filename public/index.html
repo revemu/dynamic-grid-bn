@@ -2012,6 +2012,17 @@
                   <span class="slider"></span>
                 </label>
               </div>
+
+              <div class="form-group switch-group" style="grid-column: 1 / -1;">
+                <div class="switch-label-group">
+                  <span class="switch-title">🫧 Bull Cushion (ผ่อนปรน Breakeven SL เมื่อ HTF Bull) — ทดลอง</span>
+                  <span class="switch-desc">เมื่อไทม์เฟรมใหญ่เป็นขาขึ้น (HTF Bull) และ TP1 กำไรแคบ (&lt; 0.35%) จะไม่รีบยก SL ชนทุนทันที แต่ใช้ Dynamic Ratchet SL หรือฐานเดิม เพื่อเปิดโอกาสให้รันเทรนด์ไป TP2</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_maFanBullCushion" />
+                  <span class="slider"></span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -2525,7 +2536,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=3.46"></script>
+  <script src="app.js?v=3.47"></script>
 </body>
 
 </html>

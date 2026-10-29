@@ -18,10 +18,13 @@ export interface EntryDecision {
 
 export type ExitActionType = "NONE" | "TP1" | "TP2" | "SL";
 
+export type CushionMode = "off" | "htfBull" | "always";
+
 export interface ExitDecision {
   action: ExitActionType;
   exitPrice: number;
   newStopLossPrice?: number;
+  cushionApplied?: boolean;
   reason?: string;
 }
 
@@ -160,6 +163,9 @@ export class MaFanCoreRules {
     isOverbought?: boolean;
     barsHeld?: number;
     isHtfBull?: boolean;
+    cushionMode?: CushionMode;
+    cushionThresholdPct?: number;
+    tp1MinProfitPct?: number;
   }): ExitDecision {
     const {
       highPrice,
@@ -217,19 +223,23 @@ export class MaFanCoreRules {
     if (!tp1Filled) {
       // Trapped Position Rescue only activates if held for >= 3 bars and EMA25 drifted below entry
       const isTrapped = (barsHeld !== undefined && barsHeld >= 3) && (ribbon.ema25 <= entryPrice * 1.0015);
+      const minProfitFrac = Math.max((opts.tp1MinProfitPct ?? 0.20) / 100, beFeeBuffer);
       const minProfitPrice = isTrapped
         ? entryPrice * (1 + beFeeBuffer)
-        : entryPrice * (1 + Math.max(0.0020, beFeeBuffer));
+        : entryPrice * (1 + minProfitFrac);
       const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
 
       if (highPrice >= tp1Target) {
         // Trend-Aware Breathing Cushion for Breakeven SL:
-        // If HTF is confirmed BULL and TP1 profit is tight (< 0.35%), allow the TP2 Runner to breathe
-        // using the Dynamic Ratchet SL / swing low base instead of choking it with immediate Breakeven SL!
-        // If HTF is BEAR (or profit is already >= 0.35%), strictly raise SL to Breakeven immediately.
+        // If Cushion is active (mode === "always" or mode === "htfBull" with HTF Bull) and TP1 profit is tight (< threshold),
+        // allow the TP2 Runner to breathe using the Dynamic Ratchet SL / swing low base instead of choking it with immediate Breakeven SL!
+        // If mode === "off" (or profit is already >= threshold), strictly raise SL to Breakeven immediately.
         const tp1ProfitPct = ((tp1Target - entryPrice) / entryPrice) * 100;
-        const shouldPreserveBreathingCushion = !!opts.isHtfBull && tp1ProfitPct < 0.35;
-        const newStopLossPrice = shouldPreserveBreathingCushion
+        const mode = opts.cushionMode ?? "off";
+        const threshold = opts.cushionThresholdPct ?? 0.35;
+        const cushionApplied =
+          (mode === "always" || (mode === "htfBull" && !!opts.isHtfBull)) && tp1ProfitPct < threshold;
+        const newStopLossPrice = cushionApplied
           ? stopLossPrice
           : Math.max(stopLossPrice, entryPrice * (1 + beFeeBuffer));
 
@@ -237,9 +247,10 @@ export class MaFanCoreRules {
           action: "TP1",
           exitPrice: tp1Target,
           newStopLossPrice,
+          cushionApplied,
           reason: isTrapped
             ? "Trapped Position Breakeven Rescue"
-            : shouldPreserveBreathingCushion
+            : cushionApplied
             ? "TP1 Mean Reversion (HTF Bull Cushion Active)"
             : "TP1 Mean Reversion at EMA 25",
         };

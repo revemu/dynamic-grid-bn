@@ -154,6 +154,7 @@ export class MaFanStrategy {
       initialCapital: this.config.maxPositionBudgetUsd,
       supervisorTimeframe: this.config.supervisorTimeframe,
       useRatchetSl: this.config.useRatchetSl !== false,
+      cushionMode: this.config.bullCushionEnabled ? "htfBull" : "off",
     });
     this.lastCalibration = res;
     this.effectiveSpreadThreshold = res.bestSpreadPct;
@@ -272,6 +273,7 @@ export class MaFanStrategy {
           isOverbought: exhaustion.isOverboughtExhaustion,
           barsHeld,
           isHtfBull: !!htfRegime.isBullish,
+          cushionMode: this.config.bullCushionEnabled ? "htfBull" : "off",
         });
 
         // A. Take Profit 2 (Macro Runner / Trailing Stop)

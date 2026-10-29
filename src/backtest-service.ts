@@ -6,8 +6,12 @@
 
 import fs from "fs";
 import path from "path";
-import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor } from "./strategy/ma-fan/index.js";
+import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
+
+export const STABLE_TOKENS = new Set([
+  "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
+]);
 
 export interface BacktestTrade {
   id: number;
@@ -66,6 +70,7 @@ export interface MarketScanOptions {
   tp1Ratio?: number;
   breakevenFeeBufferPct?: number;
   supervisorTimeframe?: "15m" | "1h";
+  cushionMode?: CushionMode;
 }
 
 export interface BacktestMarker {
@@ -241,6 +246,7 @@ export class BacktestService {
       supervisorTimeframe?: "15m" | "1h";
       saveToHistory?: boolean;
       candlesHtf?: Candle[];
+      cushionMode?: CushionMode;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -271,6 +277,7 @@ export class BacktestService {
         initialCapital,
         supervisorTimeframe: supervisorTf,
         useRatchetSl,
+        cushionMode: opts.cushionMode ?? "off",
       });
       spread = cal.bestSpreadPct || 0.25;
     }
@@ -355,6 +362,7 @@ export class BacktestService {
           isOverbought: exhaustionStates[i]?.isOverboughtExhaustion,
           barsHeld,
           isHtfBull: !!htfRegime.isBullish,
+          cushionMode: opts.cushionMode ?? "off",
         });
 
         // 1. TP2 Exit (Macro Runner / Trailing Stop)
@@ -814,10 +822,6 @@ export class BacktestService {
       count: number;
     }>;
 
-    const STABLE_TOKENS = new Set([
-      "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
-    ]);
-
     let targetTickers = tickers.filter((t) => Number(t.quoteVolume) > 10_000 && Number(t.count) > 100);
 
     if (scope === "fdusd") {
@@ -870,6 +874,7 @@ export class BacktestService {
               supervisorTimeframe: supTf,
               candlesHtf: candlesHtf.length > 0 ? candlesHtf : undefined,
               saveToHistory: false, // Don't pollute persistent history database
+              cushionMode: opts.cushionMode ?? "off",
             });
 
             results.push({
