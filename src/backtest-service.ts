@@ -26,7 +26,7 @@ export interface BacktestTrade {
   slPnlPct?: number;
   exitTime: number;
   exitPrice: number;
-  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL";
+  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL" | "OPEN" | "TP1+OPEN";
   pnlQuote: number;
   pnlPct: number;
   holdingBars: number;
@@ -488,6 +488,59 @@ export class BacktestService {
             shape: "circle",
             text: `🔵 TP1 (${(activeTp1Ratio * 100).toFixed(0)}%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
           });
+
+          // Intra-candle Breakeven SL check:
+          // If the candle spiked to EMA 25 for TP1 and subsequently dumped to close at/below the newly raised Breakeven SL,
+          // close the remaining half as TP1+SL_BE within the same candle (matching Live Bot behavior)
+          if (c.close <= stopLossPrice) {
+            const exitP = stopLossPrice;
+            const pnl = (exitP - entryPrice) * heldQty;
+            cash += heldQty * exitP;
+
+            const exitType: BacktestTrade["exitType"] = "TP1+SL_BE";
+            const totalPnlQuote = pnl + (tp1Price - entryPrice) * tp1Qty;
+            const totalInvest = (heldQty + tp1Qty) * entryPrice;
+            const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
+
+            if (totalPnlQuote >= 0) {
+              grossProfit += totalPnlQuote;
+              wins++;
+            } else {
+              grossLoss += Math.abs(totalPnlQuote);
+              losses++;
+            }
+
+            trades.push({
+              id: activeTradeId,
+              entryTime: candles[entryIdx]!.time,
+              entryPrice,
+              stopLossPrice,
+              fanSpreadAtEntry: spreadAtEntry,
+              tp1Time,
+              tp1Price,
+              tp1PnlPct: ((tp1Price - entryPrice) / entryPrice) * 100,
+              slTime: c.time,
+              slPrice: exitP,
+              slPnlPct: ((exitP - entryPrice) / entryPrice) * 100,
+              exitTime: c.time,
+              exitPrice: exitP,
+              exitType,
+              pnlQuote: totalPnlQuote,
+              pnlPct: tradePnlPct,
+              holdingBars: barsHeld,
+            });
+
+            markers.push({
+              time: c.time,
+              position: "belowBar",
+              color: "#f59e0b",
+              shape: "arrowDown",
+              text: `🟡 SL BE #${activeTradeId} @ $${exitP.toFixed(2)}`,
+            });
+
+            heldQty = 0;
+            continue;
+          }
         }
       }
 
@@ -545,14 +598,43 @@ export class BacktestService {
       }
     }
 
+    // If a position is still open at the end of the simulation, record as OPEN trade
+    if (heldQty > 0 && entryIdx >= 0 && candles.length > 0) {
+      const lastCandle = candles[candles.length - 1]!;
+      const currentPrice = lastCandle.close;
+      const unrealizedPnl2 = (currentPrice - entryPrice) * heldQty;
+      const totalPnlQuote = (tp1Filled ? (tp1Price - entryPrice) * tp1Qty : 0) + unrealizedPnl2;
+      const totalInvest = (heldQty + (tp1Filled ? tp1Qty : 0)) * entryPrice;
+      const tradePnlPct = totalInvest > 0 ? (totalPnlQuote / totalInvest) * 100 : 0;
+      const barsHeld = candles.length - 1 - entryIdx;
+
+      trades.push({
+        id: activeTradeId,
+        entryTime: candles[entryIdx]!.time,
+        entryPrice,
+        stopLossPrice,
+        fanSpreadAtEntry: spreadAtEntry,
+        tp1Time: tp1Filled ? tp1Time : undefined,
+        tp1Price: tp1Filled ? tp1Price : undefined,
+        tp1PnlPct: tp1Filled ? ((tp1Price - entryPrice) / entryPrice) * 100 : undefined,
+        exitTime: lastCandle.time,
+        exitPrice: currentPrice,
+        exitType: tp1Filled ? "TP1+OPEN" : "OPEN",
+        pnlQuote: totalPnlQuote,
+        pnlPct: tradePnlPct,
+        holdingBars: barsHeld,
+      });
+    }
+
     // Performance Summary Calculations
     const finalCapital = cash + (heldQty > 0 ? heldQty * candles[candles.length - 1]!.close : 0);
     const netPnlQuote = finalCapital - initialCapital;
     const netPnlPct = (netPnlQuote / initialCapital) * 100;
-    const totalTrades = trades.length;
-    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+    const closedTrades = trades.filter((t) => t.exitType !== "OPEN" && t.exitType !== "TP1+OPEN");
+    const totalClosed = closedTrades.length;
+    const winRate = totalClosed > 0 ? (wins / totalClosed) * 100 : 0;
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99.9 : 0;
-    const avgBarsHeld = totalTrades > 0 ? Math.round(trades.reduce((a, b) => a + b.holdingBars, 0) / totalTrades) : 0;
+    const avgBarsHeld = trades.length > 0 ? Math.round(trades.reduce((a, b) => a + b.holdingBars, 0) / trades.length) : 0;
 
     const pnlPcts = trades.map((t) => t.pnlPct);
     const bestTradePct = pnlPcts.length > 0 ? Math.max(...pnlPcts) : 0;
@@ -563,7 +645,7 @@ export class BacktestService {
       finalCapital: Number(finalCapital.toFixed(2)),
       netPnlQuote: Number(netPnlQuote.toFixed(2)),
       netPnlPct: Number(netPnlPct.toFixed(2)),
-      totalTrades,
+      totalTrades: trades.length,
       winTrades: wins,
       lossTrades: losses,
       winRate: Number(winRate.toFixed(1)),

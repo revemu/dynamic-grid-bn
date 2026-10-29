@@ -164,6 +164,17 @@ export class AutoCalibrator {
             if (exitDecision.newStopLossPrice) {
               stopLossPrice = Math.max(stopLossPrice, exitDecision.newStopLossPrice);
             }
+            // Intra-candle Breakeven SL check
+            if (c.close <= stopLossPrice) {
+              const exitP = stopLossPrice;
+              const pnl2 = (exitP - entryPrice) * heldQty;
+              cash += heldQty * exitP;
+              const totalPnl = pnl2 + (tp1Price - entryPrice) * tp1Qty;
+              if (totalPnl >= 0) { grossProfit += totalPnl; wins++; }
+              else { grossLoss += Math.abs(totalPnl); losses++; }
+              heldQty = 0;
+              continue;
+            }
           }
         }
 

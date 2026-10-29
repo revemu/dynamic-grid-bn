@@ -218,10 +218,37 @@
         borderColor: "#22304d",
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
+      localization: {
+        priceFormatter: (price) =>
+          typeof price === "number" && Number.isFinite(price) ? fmtPrice(price) : "",
+        timeFormatter: (time) => {
+          const timestamp = typeof time === "number" ? time : (time?.timestamp || time);
+          if (!timestamp) return "";
+          const date = new Date(timestamp * 1000);
+          const day = String(date.getDate()).padStart(2, "0");
+          const month = date.toLocaleDateString(undefined, { month: "short" });
+          const hours = String(date.getHours()).padStart(2, "0");
+          const minutes = String(date.getMinutes()).padStart(2, "0");
+          return `${day} ${month} ${hours}:${minutes}`;
+        },
+      },
       timeScale: {
         borderColor: "#22304d",
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const timestamp = typeof time === "number" ? time : (time?.timestamp || time);
+          if (!timestamp) return "";
+          const date = new Date(timestamp * 1000);
+          const hours = String(date.getHours()).padStart(2, "0");
+          const minutes = String(date.getMinutes()).padStart(2, "0");
+          const day = String(date.getDate()).padStart(2, "0");
+          const month = String(date.getMonth() + 1).padStart(2, "0");
+          if (tickMarkType === 0) return `${day}/${month}`;
+          if (tickMarkType === 1) return `${day}/${month}`;
+          if (tickMarkType === 2) return `${hours}:${minutes}`;
+          return `${hours}:${minutes}`;
+        },
       },
     });
 
@@ -825,7 +852,7 @@
           badgeType: "RATCHET_SL",
           trade: t,
         });
-      } else {
+      } else if (t.exitType === "SL") {
         items.push({
           tradeId: t.id,
           action: "SL",
@@ -837,6 +864,7 @@
           trade: t,
         });
       }
+      // Note: for "OPEN" and "TP1+OPEN" trades, entry badge B (and TP1 if filled) are already added above
     }
 
     orderBadgesData = items;
@@ -919,13 +947,15 @@
     let bodyHtml = "";
 
     if (item.action === "BUY") {
-      actionTitle = `🟢 เข้าซื้อ (BUY) ไม้ #${t.id}`;
+      const isOpen = t.exitType?.includes("OPEN");
+      actionTitle = isOpen ? `🟢 เข้าซื้อ (BUY) ไม้ #${t.id} [กำลังถือ]` : `🟢 เข้าซื้อ (BUY) ไม้ #${t.id}`;
       actionColor = "#10b981";
       bodyHtml = `
         <div class="cot-row"><span class="cot-label">ราคาเข้า (Entry):</span><span class="cot-val" style="color: #34d399;">$${fmtPrice(t.entryPrice)}</span></div>
         <div class="cot-row"><span class="cot-label">Fan Spread ตอนเข้า:</span><span class="cot-val">${t.fanSpreadAtEntry ? t.fanSpreadAtEntry.toFixed(2) + "%" : "--"}</span></div>
-        <div class="cot-row"><span class="cot-label">Stop Loss เริ่มต้น:</span><span class="cot-val" style="color: #f87171;">$${fmtPrice(t.stopLossPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">Stop Loss:</span><span class="cot-val" style="color: #f87171;">$${fmtPrice(t.stopLossPrice)}</span></div>
         <div class="cot-row"><span class="cot-label">เวลาเปิดไม้:</span><span class="cot-val">${fmtDateTime(t.entryTime)}</span></div>
+        ${isOpen ? `<div class="cot-row"><span class="cot-label">สถานะปัจจุบัน:</span><span class="cot-val" style="color: #34d399; font-weight:700;">🟢 กำลังถือ Position (${t.holdingBars} แท่ง, PnL: ${t.pnlPct >= 0 ? "+" : ""}${t.pnlPct.toFixed(2)}%)</span></div>` : ""}
       `;
     } else if (item.action === "TP1") {
       actionTitle = `🔵 ขาย TP1 50% (EMA 25) ไม้ #${t.id}`;
@@ -1059,7 +1089,15 @@
         } else if (t.exitType === "RATCHET_SL") {
           badgeClass = "badge-ratchet-sl";
           badgeLabel = "🛡️ Ratchet SL";
+        } else if (t.exitType === "OPEN") {
+          badgeClass = "badge-open";
+          badgeLabel = "🟢 ถือค้าง (OPEN)";
+        } else if (t.exitType === "TP1+OPEN") {
+          badgeClass = "badge-open-tp1";
+          badgeLabel = "🔵 TP1 + ถือต่อ (OPEN)";
         }
+
+        const isStillOpen = t.exitType?.includes("OPEN");
 
         return `
           <tr data-trade-id="${t.id}" data-entry-time="${t.entryTime}" data-exit-time="${t.exitTime}">
@@ -1071,7 +1109,9 @@
             <td>${t.fanSpreadAtEntry ? t.fanSpreadAtEntry.toFixed(2) + "%" : "--"}</td>
             <td>
               <span>$${fmtPrice(t.exitPrice)}</span>
-              <div style="font-size: 10px; color: #94a3b8;">${fmtDateTime(t.exitTime)}</div>
+              <div style="font-size: 10px; color: ${isStillOpen ? "#34d399" : "#94a3b8"};">
+                ${isStillOpen ? "(ราคาปัจจุบัน)" : fmtDateTime(t.exitTime)}
+              </div>
             </td>
             <td><span class="badge-exit ${badgeClass}">${badgeLabel}</span></td>
             <td>${t.holdingBars} แท่ง</td>

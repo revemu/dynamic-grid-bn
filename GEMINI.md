@@ -5717,6 +5717,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
    - เมื่อกดปุ่ม `📊 ดูกราฟ` จากตาราง Scanner ระบบจะคัดลอก Timeframe, จำนวนแท่ง, และ Spread จาก Scanner ไปที่หน้ากราฟทันที ทำให้ผลตอบแทนและจำนวนไม้ตรงกัน 100%
    - ปรับสูตร `tradePnlPct` ใน Backtest ให้หารด้วยต้นทุนเงินลงทุนจริงของไม้นั้น (`(heldQty + tp1Qty) * entryPrice`)
 
+---
+
+## 162. v0.2.162 — Fix Backtest Timezone Parity, Reveal Open Positions & Same-Bar Post-TP1 Breakeven SL (`src/backtest-service.ts`, `src/strategy/ma-fan/calibrator.ts`, `public/backtest.js`, `public/backtest.css`, `public/backtest.html`, `package.json`, `src/version.ts`)
+
+1. **แก้ไขแกนเวลาและ Crosshair ใน Backtest Studio ให้ตรงกับ Timezone ท้องถิ่น (Bangkok / Local) 100% (`public/backtest.js`)**:
+   - **สาเหตุของปัญหา**: Lightweight Charts โดยค่าเริ่มต้นจะอ่าน UNIX Timestamp วินาที และฟอร์แมตแกนเวลาด้านล่าง (Time Scale) รวมถึงป้ายลอย Crosshair เวลา เป็นเวลาสากล UTC (ช้ากว่าเวลาท้องถิ่นไทย 7 ชั่วโมง เช่น `01:20` แทนที่จะเป็น `08:20`)
+   - **การแก้ไข**: เพิ่ม `localization.timeFormatter` และ `timeScale.tickMarkFormatter` ในการสร้างชาร์ตของ Backtest Studio โดยแปลง Timestamp ด้วย `new Date(sec * 1000)` ใน Local Timezone เดียวกับแดชบอร์ดหลักของบอทจริง ทำให้ทั้งแกนเวลาด้านล่างและป้ายเวลาใต้ Crosshair แสดงวันและเวลาตรงกับแท่งเทียนของบอทจริง 100%
+
+2. **เปิดเผยไม้เทรดที่ยังถือค้างอยู่ (`OPEN` / `TP1+OPEN`) บนกราฟและตาราง Backtest Studio (`src/backtest-service.ts`, `public/backtest.js`, `public/backtest.css`)**:
+   - **สาเหตุของปัญหา**: ใน `runMaFanSimulation` เดิมจะบันทึกไม้ลงใน `record.trades` เฉพาะเมื่อไม้นั้นปิดสถานะ 100% (`TP2` หรือ `SL`) แล้วเท่านั้น หากแท่งเทียนสุดท้ายของ Backtest ยังถือ Position อยู่ (เช่น ไม้ `08:20:00` ซึ่งยังถือค้างอยู่ตอนผู้ใช้กดรัน Backtest ก่อนแท่ง `09:00:00` จะปิดสมบูรณ์) ไม้นั้นจะไม่ถูกส่งเข้าไปใน `trades` และฟังก์ชัน `buildOrderBadges` ในหน้าเว็บจะวาดป้ายวงกลม `B` บนกราฟจาก `record.trades` เท่านั้น ส่งผลให้ไม้ล่าสุดไม่แสดงป้าย `B` บนกราฟ และไม่ปรากฏในตารางประวัติการเทรด ทำให้ผู้ใช้เข้าใจผิดว่า Backtest ไม่ได้เข้าออเดอร์
+   - **การแก้ไข**:
+     - ใน `runMaFanSimulation`: เมื่อวนลูปจำลองครบทุกแท่งเทียนแล้ว หากยังมีสถานะถือของอยู่ (`heldQty > 0`) ให้นำไม้นั้นบันทึกลงใน `trades` ทันทีด้วย `exitType: tp1Filled ? "TP1+OPEN" : "OPEN"`, ราคาปิดของแท่งเทียนล่าสุด, และกำไร/ขาดทุนที่ยังไม่เกิดขึ้นจริง (Unrealized PnL)
+     - ใน `buildOrderBadges`: วาดป้ายวงกลม `B` (และ `TP1` หากชนแล้ว) บนกราฟ Backtest ทันที โดยไม่วาดป้าย Exit
+     - ใน `renderTradesTable`: แสดงป้ายสถานะ `🟢 ถือค้าง (OPEN)` หรือ `🔵 TP1 + ถือต่อ (OPEN)`, แสดงราคาปัจจุบัน และกำไร Unrealized PnL
+     - เพิ่มคลาส CSS `.badge-open` และ `.badge-open-tp1` ใน `public/backtest.css`
+
+3. **รองรับจังหวะเกิด `TP1` แล้วราคาไหลลงมาชน Breakeven SL ในแท่งเดียวกัน (Same-Candle Post-TP1 Breakeven SL) (`src/backtest-service.ts`, `src/strategy/ma-fan/calibrator.ts`)**:
+   - **สาเหตุของปัญหา**: ในแท่งเทียนที่มีความผันผวนสูง เช่น `09:00:00` ราคาอาจพุ่งขึ้นไปแตะเส้น EMA 25 เพื่อชน TP1 (50%) พร้อมยก SL ขึ้นมาบังทุน แต่ก่อนหมดแท่ง ราคากลับทุบตัวลงมาปิดต่ำกว่าจุดบังทุน ในบอทจริงจะตรวจจับและคัทออกที่ Breakeven ทันทีในแท่งนั้น แต่ใน Backtest และ Calibrator เดิมจะจบรอบการตรวจ Exit ของแท่งนั้นทันทีหลังเกิด TP1 แล้วรอไปตรวจในแท่งถัดไป
+   - **การแก้ไข**: ใน `runMaFanSimulation` และ `AutoCalibrator.calibrate` เมื่อเกิด `TP1` และยก SL บังทุนแล้ว ให้ตรวจสอบเพิ่มเติมทันทีว่า `c.close <= stopLossPrice` หรือไม่ หากราคาปิดแท่งต่ำกว่าจุดบังทุน ให้บันทึกการปิดไม้ครึ่งหลังเป็น `TP1+SL_BE` ในแท่งเดียวกันทันที สอดคล้องกับพฤติกรรมจริงของบอท
+
+4. **ขยับ Version และ Cache-Busting (`public/backtest.html`, `package.json`, `src/version.ts`)**:
+   - ขยับ Patch Version เป็น `0.2.162`
+   - ขยับ `<script src="backtest.js?v=3.47"></script>` และ `<link rel="stylesheet" href="backtest.css?v=1.1" />` ใน `public/backtest.html`
+
 
 
 
