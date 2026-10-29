@@ -58,6 +58,8 @@ export class MaFanStrategy {
   private winCount: number = 0;
   private lossCount: number = 0;
   private realizedPnl: number = 0;
+  private grossPnl: number = 0;
+  private totalFeesQuote: number = 0;
   private recentSlTimes: number[] = [];
   public circuitBreakerCooldownUntil: number = 0;
 
@@ -93,7 +95,9 @@ export class MaFanStrategy {
         this.totalCycles = summary.closedRounds || 0;
         this.winCount = summary.winRounds || 0;
         this.lossCount = summary.lossRounds || 0;
-        this.realizedPnl = Number((summary.totalNetPnlQuote || summary.totalGrossPnlQuote || 0).toFixed(4));
+        this.grossPnl = Number((summary.totalGrossPnlQuote || 0).toFixed(4));
+        this.totalFeesQuote = Number((summary.totalFeeQuote || summary.totalGasQuote || 0).toFixed(4));
+        this.realizedPnl = Number((summary.totalNetPnlQuote !== undefined ? summary.totalNetPnlQuote : (summary.totalGrossPnlQuote || 0)).toFixed(4));
       }
     } catch (_) {}
   }
@@ -421,7 +425,7 @@ export class MaFanStrategy {
           slBufferPct: this.config.slBufferPct,
           waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
           isHtfBull: htfRegime.isBullish,
-          macroGateMode: this.config.macroGateMode ?? "noDeepBear",
+          macroGateMode: this.config.macroGateMode ?? "off",
           htfRegime,
           enableUpsideFloor: this.config.upsideFloorEnabled !== false,
           circuitBreakerActive: isCircuitActive,
@@ -515,7 +519,7 @@ export class MaFanStrategy {
       slBufferPct: this.config.slBufferPct,
       waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
       isHtfBull: !!htfRegime.isBullish,
-      macroGateMode: this.config.macroGateMode ?? "noDeepBear",
+      macroGateMode: this.config.macroGateMode ?? "off",
       htfRegime,
       enableUpsideFloor: this.config.upsideFloorEnabled !== false,
       circuitBreakerActive: isCircuitActive,
@@ -544,7 +548,7 @@ export class MaFanStrategy {
       lastCalibration: this.lastCalibration,
       ribbon: this.currentRibbon,
       htfRegime: this.currentHtfRegime,
-      macroGateMode: this.config.macroGateMode ?? "noDeepBear",
+      macroGateMode: this.config.macroGateMode ?? "off",
       isCircuitBreakerActive: isCircuitActive,
       circuitBreakerUntil: this.circuitBreakerCooldownUntil,
       rsi: exhaustion?.rsi,
@@ -556,6 +560,8 @@ export class MaFanStrategy {
         lossCount: this.lossCount,
         winRate,
         realizedPnl: this.realizedPnl,
+        grossPnl: this.grossPnl,
+        totalFeesQuote: this.totalFeesQuote,
       },
       lastUpdated: Date.now(),
     };

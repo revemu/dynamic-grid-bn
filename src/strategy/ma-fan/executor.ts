@@ -131,6 +131,8 @@ export class MaFanOrderExecutor {
     let fillPrice = entryPrice;
     let netReceivedQty = qty;
     let exchangeOrderId: string | number | undefined;
+    let executedFee: number | undefined;
+    let executedFeeAsset: string | undefined;
 
     if (!this.dryRun) {
       try {
@@ -150,11 +152,15 @@ export class MaFanOrderExecutor {
           const sym = symbol.toUpperCase();
           const baseSym = (this.symbolInfo?.baseAsset || sym.replace(/(USDT|FDUSD|USDSO|USDC)$/i, "")).toUpperCase();
           let baseFee = 0;
+          let totalFee = 0;
           for (const f of res.fills) {
+            totalFee += Number(f.commission || 0);
+            if (f.commissionAsset) executedFeeAsset = f.commissionAsset;
             if ((f.commissionAsset || "").toUpperCase() === baseSym) {
               baseFee += Number(f.commission || 0);
             }
           }
+          if (totalFee > 0) executedFee = totalFee;
           if (baseFee > 0) {
             netReceivedQty = Math.max(0, qty - baseFee);
             this.log(`ℹ️ [BUY_FEE DEDUCTION] Bought ${qty} ${baseSym} - fee ${baseFee} ${baseSym} = net received ${netReceivedQty} ${baseSym}`);
@@ -192,7 +198,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "BUY", fillPrice, finalHoldingQty, undefined, exchangeOrderId);
+    const orderRecord = this.recordDbOrder(trade, "BUY", fillPrice, finalHoldingQty, undefined, exchangeOrderId, executedFee, executedFeeAsset);
     this.onTrade?.(orderRecord || trade);
 
     return position;
@@ -232,6 +238,9 @@ export class MaFanOrderExecutor {
 
     let fillPrice = currentPrice;
     let exchangeOrderId: string | number | undefined;
+    let executedFee: number | undefined;
+    let executedFeeAsset: string | undefined;
+
     if (!this.dryRun) {
       try {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
@@ -244,6 +253,14 @@ export class MaFanOrderExecutor {
         });
         if (res.price && res.price > 0) fillPrice = res.price;
         if (res.orderId) exchangeOrderId = res.orderId;
+        if (Array.isArray(res.fills) && res.fills.length > 0) {
+          let totalFee = 0;
+          for (const f of res.fills) {
+            totalFee += Number(f.commission || 0);
+            if (f.commissionAsset) executedFeeAsset = f.commissionAsset;
+          }
+          if (totalFee > 0) executedFee = totalFee;
+        }
       } catch (err: any) {
         this.log(`❌ TP1 order failed: ${err.message}`);
         return false;
@@ -278,7 +295,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -315,6 +332,9 @@ export class MaFanOrderExecutor {
 
     let fillPrice = currentPrice;
     let exchangeOrderId: string | number | undefined;
+    let executedFee: number | undefined;
+    let executedFeeAsset: string | undefined;
+
     if (!this.dryRun) {
       try {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
@@ -327,6 +347,14 @@ export class MaFanOrderExecutor {
         });
         if (res.price && res.price > 0) fillPrice = res.price;
         if (res.orderId) exchangeOrderId = res.orderId;
+        if (Array.isArray(res.fills) && res.fills.length > 0) {
+          let totalFee = 0;
+          for (const f of res.fills) {
+            totalFee += Number(f.commission || 0);
+            if (f.commissionAsset) executedFeeAsset = f.commissionAsset;
+          }
+          if (totalFee > 0) executedFee = totalFee;
+        }
       } catch (err: any) {
         this.log(`❌ TP2 order failed: ${err.message}`);
         return false;
@@ -350,7 +378,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -386,6 +414,9 @@ export class MaFanOrderExecutor {
 
     let fillPrice = currentPrice;
     let exchangeOrderId: string | number | undefined;
+    let executedFee: number | undefined;
+    let executedFeeAsset: string | undefined;
+
     if (!this.dryRun) {
       try {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
@@ -398,6 +429,14 @@ export class MaFanOrderExecutor {
         });
         if (res.price && res.price > 0) fillPrice = res.price;
         if (res.orderId) exchangeOrderId = res.orderId;
+        if (Array.isArray(res.fills) && res.fills.length > 0) {
+          let totalFee = 0;
+          for (const f of res.fills) {
+            totalFee += Number(f.commission || 0);
+            if (f.commissionAsset) executedFeeAsset = f.commissionAsset;
+          }
+          if (totalFee > 0) executedFee = totalFee;
+        }
       } catch (err: any) {
         this.log(`❌ Stop Loss exit failed: ${err.message}`);
         return false;
@@ -421,7 +460,7 @@ export class MaFanOrderExecutor {
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId);
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -434,6 +473,8 @@ export class MaFanOrderExecutor {
     qty: number,
     pnl?: number,
     exchangeOrderId?: string | number,
+    fee?: number,
+    feeAsset?: string,
   ): UnifiedOrderRecord | undefined {
     try {
       const sym = (trade.symbol || "").toUpperCase();
@@ -476,6 +517,8 @@ export class MaFanOrderExecutor {
         fillPrice: price,
         pnl,
         pnlQuote: pnl,
+        fee,
+        feeAsset,
         reason: trade.reason,
         dryRun: this.dryRun,
       });

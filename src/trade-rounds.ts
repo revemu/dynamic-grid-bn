@@ -24,6 +24,9 @@ export interface TradeRoundTrade {
   gasFeeQuote?: number;
   gasFeeUsdso?: number;
   gasFeeSomi?: number;
+  fee?: number;
+  feeAsset?: string;
+  feeQuote?: number;
   reason?: string;
   explorerUrl?: string;
 }
@@ -65,6 +68,7 @@ export interface TradeRound {
   totalGasQuote: number;       // Complete total fee/gas spent
   totalGasUsdso?: number;
   totalGasSomi?: number;
+  totalFeeQuote?: number;      // Complete fee (CEX Commission + DEX Gas)
   netPnlQuote: number;         // Net realized PnL (Gross PnL - Total Gas/Fee)
   netPnlUsdso?: number;
 
@@ -98,6 +102,7 @@ export interface TradeRoundSummary {
   totalCancelGasUsdso?: number;
   totalGasQuote: number;
   totalGasUsdso?: number;
+  totalFeeQuote?: number;
   totalNetPnlQuote: number;
   totalNetPnlUsdso?: number;
 }
@@ -178,6 +183,33 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     const gasQuote = Number(f.gasFeeQuote || f.gasFeeUsdso || 0);
     const gasSomi = Number(f.gasFeeSomi || 0);
     const pnl = Number(f.pnlQuote !== undefined ? f.pnlQuote : f.pnlUsdso !== undefined ? f.pnlUsdso : (f.pnl || 0));
+
+    // Calculate CEX commission fee in quote currency (USDT / Quote Asset)
+    const rawFee = Number(f.fee || 0);
+    const feeAsset = (f.feeAsset || "").toUpperCase();
+    let cexFeeQuote = 0;
+    if (rawFee > 0) {
+      const quoteSym = (f.quoteAsset || "USDT").toUpperCase();
+      const baseSym = (f.baseAsset || "").toUpperCase();
+      if (feeAsset === quoteSym || ["USDT", "USDSO", "FDUSD", "USDC", "USD"].includes(feeAsset)) {
+        cexFeeQuote = rawFee;
+      } else if (feeAsset === baseSym && price > 0) {
+        cexFeeQuote = rawFee * price;
+      } else if (feeAsset === "BNB" && notional > 0) {
+        // Binance BNB fee discount tier (0.075%)
+        cexFeeQuote = notional * 0.00075;
+      } else if (notional > 0) {
+        cexFeeQuote = notional * 0.00075;
+      }
+    } else if (!f.dryRun && !gasQuote && !(f.symbol || "").toUpperCase().endsWith("FDUSD") && notional > 0) {
+      // Fallback for live Binance fills where fee field might not yet be reconciled
+      const isSomnia = Boolean(f.explorerUrl?.includes("somnia") || (f.txHash && typeof f.txHash === "string" && f.txHash.startsWith("0x")));
+      if (!isSomnia) {
+        cexFeeQuote = notional * 0.00075;
+      }
+    }
+
+    const totalTradeFeeQuote = gasQuote + cexFeeQuote;
 
     // Guard against cross-symbol price regime jump (>5x difference) within the same round
     if (currentRound && currentRound.avgBuyPrice > 0 && price > 0) {
@@ -270,9 +302,20 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
       gasFeeQuote: gasQuote,
       gasFeeUsdso: gasQuote,
       gasFeeSomi: gasSomi,
+      fee: rawFee,
+      feeAsset: f.feeAsset,
+      feeQuote: totalTradeFeeQuote,
       reason: f.reason || f.levelDesc,
       explorerUrl: f.explorerUrl,
     };
+
+    if (cexFeeQuote > 0) {
+      currentRound.fillGasQuote = (currentRound.fillGasQuote || 0) + cexFeeQuote;
+      currentRound.fillGasUsdso = currentRound.fillGasQuote;
+      currentRound.totalGasQuote = (currentRound.totalGasQuote || 0) + cexFeeQuote;
+      currentRound.totalGasUsdso = currentRound.totalGasQuote;
+      currentRound.totalFeeQuote = currentRound.totalGasQuote;
+    }
 
     if (isBuy) {
       currentRound.buyTrades.push(tradeRecord);
@@ -494,6 +537,7 @@ export function calculateTradeRounds(orders: UnifiedOrderRecord[], activeSymbol?
     totalCancelGasUsdso: totalCancelGasQuote,
     totalGasQuote,
     totalGasUsdso: totalGasQuote,
+    totalFeeQuote: totalGasQuote,
     totalNetPnlQuote,
     totalNetPnlUsdso: totalNetPnlQuote,
   };

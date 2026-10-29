@@ -210,7 +210,7 @@ export class AutoCalibrator {
             curAtr,
             slBufferPct,
             isHtfBull: htfRegime.isBullish,
-            macroGateMode: opts?.macroGateMode ?? "noDeepBear",
+            macroGateMode: opts?.macroGateMode ?? "off",
             htfRegime,
             enableUpsideFloor: opts?.enableUpsideFloor !== false,
           });

@@ -6151,6 +6151,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.180` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 181. v0.2.181 — Live Bot Real Binance Fee Deduction (Net Realized PnL) & Macro Gate Default Rollback (`src/trade-rounds.ts`, `src/strategy/ma-fan/executor.ts`, `src/strategy/ma-fan/strategy.ts`, `src/strategy/ma-fan/strategy-adapter.ts`, `public/app.js`, `src/config.ts`, `src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/calibrator.ts`, `src/backtest-service.ts`, `src/server.ts`, `public/backtest.js`, `public/backtest.html`, `public/index.html`, `package.json`, `src/version.ts`)
+
+1. **การคำนวณและหักค่าธรรมเนียมจริงของ Binance ใน Live Bot Dashboard (`src/trade-rounds.ts`, `src/strategy/ma-fan/executor.ts`, `src/strategy/ma-fan/strategy.ts`, `public/app.js`)**:
+   - **สาเหตุของปัญหา**:
+     - หน้าเว็บ Dashboard บนกระดาน Binance แสดงตัวเลข Realized PnL เป็นแบบ Gross (ไม่เคยหักค่าธรรมเนียม CEX) ต่างจาก DreamDEX ที่หักค่า Gas On-chain ทำให้ตัวเลขกำไรสูงเกินจริงเมื่อเทียบกับเงินในกระเป๋า Spot (เช่น บนเซิร์ฟเวอร์จริง HAEDALUSDT โชว์ Gross PnL `-$0.42` แต่เสียค่าธรรมเนียม Binance ไป `$0.55` ทำให้เงินหายจริง `-$0.98` และมีไม้เทรดที่เข้าใจผิดว่าชนะแต่แท้จริงแล้วขาดทุนค่าฟี)
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - **ดึงและบันทึกค่าธรรมเนียมจาก Binance Execution (`src/strategy/ma-fan/executor.ts`)**:
+       - สกัด `commission` และ `commissionAsset` จาก `res.fills` ของทุกคำสั่งเทรด (Buy, TP1, TP2, Stop Loss)
+       - ส่งต่อไปยัง `recordDbOrder` และบันทึกลงฟิลด์ `fee` และ `feeAsset` ในตาราง Order History ของฐานข้อมูล
+     - **คำนวณต้นทุนค่าธรรมเนียมใน Trade Rounds Engine (`src/trade-rounds.ts`)**:
+       - เพิ่ม `fee?: number; feeAsset?: string; feeQuote?: number;` ใน `TradeRoundTrade`
+       - เพิ่ม `totalFeeQuote?: number;` ใน `TradeRound` และ `TradeRoundSummary`
+       - แปลงมูลค่า `fee` เป็น Quote Currency (`cexFeeQuote`):
+         - หากจ่ายเป็น Quote Currency (เช่น USDT/USDC/FDUSD) -> ใช้ค่าโดยตรง
+         - หากหักจากเหรียญที่ซื้อ Base Currency -> แปลงด้วยราคา Fill
+         - หากจ่ายด้วยเหรียญ BNB (ได้รับส่วนลด 25% เป็น 0.075%) -> คำนวณมูลค่าเทียบเท่า 0.075% ของ Notional Value
+       - ผสาน `cexFeeQuote` (CEX) เข้ากับ `gasQuote` (DEX) เป็น `totalTradeFeeQuote` สุทธิรายไม้
+       - หักลบค่าธรรมเนียมออกจากกำไรของรอบนั้นๆ (`netPnlQuote = grossPnlQuote - totalFeeQuote`)
+     - **การส่งต่อ State & Telemetry (`src/strategy/ma-fan/strategy.ts`, `strategy-adapter.ts`)**:
+       - เพิ่มตัวแปร `grossPnl` และ `totalFeesQuote`
+       - อัปเดต `realizedPnl` ให้ใช้ `totalNetPnlQuote` ที่หักค่าฟีแล้ว 100%
+       - ส่ง `tradeRealizedPnl` (Gross PnL), `netPnlUsdso` (Net PnL), และ `totalGasSpentUsdso` (Total Fees) ไปยัง Frontend ผ่าน Server-Sent Events (SSE)
+     - **การแสดงผลบนหน้าจอแดชบอร์ด (`public/app.js`)**:
+       - อัปเดต Top KPI Card ให้แสดง Net Realized PnL ที่แท้จริงตรงกับเงินในกระเป๋า
+       - แสดงป้ายค่าธรรมเนียมรวม `Fee: -$X.XX` อย่างโปร่งใสใต้ตัวเลขกำไรสุทธิ
+2. **ปรับค่าเริ่มต้น Macro Gate Fallback กลับเป็น `"off"` หลังการทดสอบ Robust 120 วัน**:
+   - ผลการทดสอบ Systematic Walk-Forward & Out-of-Sample ข้าม 120 วัน (4 Time Windows × 30 วัน, 8 IS coins, 8 OOS coins) บน Timeframe 15m:
+     - ที่ 15m กลยุทธ์ MA Fan มี Positive Gross Edge สม่ำเสมอ (+2.94% IS, +3.75% OOS)
+     - เมื่อเปิด Macro Gate (`dist < -2.0%`) ประสิทธิภาพลดลงเหลือเพียง (+0.57% IS, +0.48% OOS) เนื่องจากช่วงที่ราคาจมลึกใต้ EMA200 1H มักเป็นจุด Overextended Reversal ที่เกิด Mean-Reversion Bounce รุนแรงและทำกำไรได้ดีที่สุด
+     - เพื่อรักษา Edge สูงสุดของระบบ จึงปรับค่าเริ่มต้นของ `macroGateMode` กลับมาเป็น `"off"` ในทุกส่วน (`src/config.ts`, `core-rules.ts`, `calibrator.ts`, `strategy.ts`, `strategy-adapter.ts`, `backtest-service.ts`, `server.ts`, `public/app.js`, `public/backtest.js`, `public/backtest.html`, `public/index.html`) โดยผู้ใช้ยังคงเลือกเปิดใช้งานได้ตามความสมัครใจ
+3. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.181` ใน `package.json` และ `src/version.ts`
+
 
 
 

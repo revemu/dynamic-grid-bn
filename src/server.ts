@@ -750,7 +750,7 @@ export class DashboardServer {
           const slBufferPct = Number(parsed.slBufferPct) || Number(liveCfg.maFanSlBufferPct) || 0.25;
           const useRatchetSl = parsed.useRatchetSl !== false;
           const supervisorTimeframe = (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h";
-          const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "noDeepBear";
+          const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "off";
           const enableUpsideFloor = parsed.enableUpsideFloor !== undefined ? Boolean(parsed.enableUpsideFloor) : (liveCfg.maFanUpsideFloor !== false);
           const enableCircuitBreaker = parsed.enableCircuitBreaker !== undefined ? Boolean(parsed.enableCircuitBreaker) : (liveCfg.maFanCircuitBreaker !== false);
 
@@ -827,7 +827,7 @@ export class DashboardServer {
           const limit = Number(parsed.limit) || 500;
           const spreadThreshold = parsed.spreadThreshold === "auto" ? "auto" : (Number(parsed.spreadThreshold) || undefined);
           const useRatchetSl = parsed.useRatchetSl !== false;
-          const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "noDeepBear";
+          const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "off";
           const enableUpsideFloor = parsed.enableUpsideFloor !== undefined ? Boolean(parsed.enableUpsideFloor) : (liveCfg.maFanUpsideFloor !== false);
           const enableCircuitBreaker = parsed.enableCircuitBreaker !== undefined ? Boolean(parsed.enableCircuitBreaker) : (liveCfg.maFanCircuitBreaker !== false);
 

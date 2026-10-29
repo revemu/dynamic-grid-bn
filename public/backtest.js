@@ -1173,7 +1173,7 @@
     const budget = Number(inpBudget.value) || 200;
     const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
     const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
-    const macroGateMode = inpMacroGate ? inpMacroGate.value : "noDeepBear";
+    const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
     const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
 
     const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
@@ -1396,7 +1396,7 @@
         const budget = Number(inpBudget?.value) || 200;
         const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
         const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
-        const macroGateMode = inpMacroGate ? inpMacroGate.value : "noDeepBear";
+        const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
         const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
 
         btnStartScan.disabled = true;

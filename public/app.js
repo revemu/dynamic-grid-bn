@@ -3265,7 +3265,11 @@
       elKpiTradePnl.title = `Trade Profit: ${tradePnl >= 0 ? "+$" : "-$"}${Math.abs(tradePnl).toFixed(4)} ${quoteSym}`;
     }
     if (elKpiGasSpent) {
-      if (totalGasSpentSomi > 0) {
+      if (totalGasSpentUsdso > 0) {
+        elKpiGasSpent.textContent = `Fee: -$${totalGasSpentUsdso.toFixed(2)}`;
+        elKpiGasSpent.title = `Total Trading Fee/Gas: $${totalGasSpentUsdso.toFixed(4)} ${quoteSym}`;
+        elKpiGasSpent.style.display = "";
+      } else if (totalGasSpentSomi > 0) {
         elKpiGasSpent.textContent = `Fee: -${totalGasSpentSomi.toFixed(4)} ${baseSym}`;
         elKpiGasSpent.title = `Total Trading Fee/Gas: ${totalGasSpentSomi.toFixed(4)} ${baseSym}`;
         elKpiGasSpent.style.display = "";
@@ -5431,7 +5435,7 @@
       setCheck("cfg_maFanUseRatchetSl", data.maFanUseRatchetSl !== false);
       setCheck("cfg_maFanBullCushion", data.maFanBullCushion === true);
       setCheck("cfg_maFanWaterfallGuard", data.maFanWaterfallGuard !== false);
-      setVal("cfg_maFanMacroGate", data.maFanMacroGate || "noDeepBear");
+      setVal("cfg_maFanMacroGate", data.maFanMacroGate || "off");
       setCheck("cfg_maFanUpsideFloor", data.maFanUpsideFloor !== false);
       setCheck("cfg_maFanCircuitBreaker", data.maFanCircuitBreaker !== false);
       setVal("cfg_maFanBreakevenFeeBufferPct", data.maFanBreakevenFeeBufferPct ?? 0.05);
@@ -5703,7 +5707,7 @@
       maFanUseRatchetSl: Boolean(document.getElementById("cfg_maFanUseRatchetSl")?.checked),
       maFanBullCushion: Boolean(document.getElementById("cfg_maFanBullCushion")?.checked),
       maFanWaterfallGuard: Boolean(document.getElementById("cfg_maFanWaterfallGuard")?.checked),
-      maFanMacroGate: document.getElementById("cfg_maFanMacroGate")?.value || "noDeepBear",
+      maFanMacroGate: document.getElementById("cfg_maFanMacroGate")?.value || "off",
       maFanUpsideFloor: Boolean(document.getElementById("cfg_maFanUpsideFloor")?.checked),
       maFanCircuitBreaker: Boolean(document.getElementById("cfg_maFanCircuitBreaker")?.checked),
       maFanBreakevenFeeBufferPct: parseFloat(document.getElementById("cfg_maFanBreakevenFeeBufferPct")?.value) || 0.05,

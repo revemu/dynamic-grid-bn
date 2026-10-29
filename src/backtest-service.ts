@@ -355,7 +355,7 @@ export class BacktestService {
     const tp1Ratio = Math.max(0.1, Math.min(0.9, opts.tp1Ratio ?? 0.50));
     const supervisorTf = opts.supervisorTimeframe ?? "15m";
     const targetMinutes = supervisorTf === "1h" ? 60 : 15;
-    const macroGateMode = opts.macroGateMode ?? "noDeepBear";
+    const macroGateMode = opts.macroGateMode ?? "off";
     const enableUpsideFloor = opts.enableUpsideFloor !== false;
     const enableCircuitBreaker = opts.enableCircuitBreaker !== false;
 
@@ -1143,7 +1143,7 @@ export class BacktestService {
               cushionMode: opts.cushionMode ?? "off",
               waterfallGuardMode: opts.waterfallGuardMode ?? "off",
               costModel: symCostModel,
-              macroGateMode: opts.macroGateMode ?? "noDeepBear",
+              macroGateMode: opts.macroGateMode ?? "off",
               enableUpsideFloor: opts.enableUpsideFloor !== false,
               enableCircuitBreaker: opts.enableCircuitBreaker !== false,
             });

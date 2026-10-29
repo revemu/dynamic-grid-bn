@@ -258,7 +258,7 @@ export class MaFanCoreRules {
     }
 
     // Macro Gate Check
-    const macroMode = opts.macroGateMode ?? "noDeepBear";
+    const macroMode = opts.macroGateMode ?? "off";
     let isMacroBlocked = false;
     let macroBlockReason = "";
     if (macroMode === "bullOnly" && !isHtfBull) {
