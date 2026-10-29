@@ -5083,29 +5083,111 @@
     const grpStage2 = document.getElementById("group_stage2Multiplier");
     if (grpStage2) grpStage2.style.display = twoStageEnabled ? "" : "none";
 
-    const stratType = document.getElementById("cfg_strategyType")?.value || "dynamic_grid";
-    const tabBtnSwing = document.getElementById("tabBtnSwing");
-    if (tabBtnSwing) {
-      if (stratType === "swing_trade") {
-        tabBtnSwing.textContent = "🏹 5. สวิงเทรด ⭐ (เปิดใช้งาน)";
-        tabBtnSwing.style.borderColor = "#6366f1";
-        tabBtnSwing.style.color = "#a5b4fc";
+    updateStrategyTabsVisibility(false);
+  }
+
+  function activateSettingsTab(tabId) {
+    const tabBtns = document.querySelectorAll(".settings-tabs .tab-btn");
+    const tabPanes = document.querySelectorAll(".tab-pane");
+    tabBtns.forEach((b) => {
+      if (b.getAttribute("data-tab") === tabId) {
+        b.classList.add("active");
       } else {
-        tabBtnSwing.textContent = "🏹 5. สวิงเทรด (Swing Trade)";
-        tabBtnSwing.style.borderColor = "";
-        tabBtnSwing.style.color = "";
+        b.classList.remove("active");
       }
-    }
-    const tabBtnMaFan = document.getElementById("tabBtnMaFan");
-    if (tabBtnMaFan) {
-      if (stratType === "ma_fan") {
-        tabBtnMaFan.textContent = "🪭 6. MA Fan ⭐ (เปิดใช้งาน)";
-        tabBtnMaFan.style.borderColor = "#a855f7";
-        tabBtnMaFan.style.color = "#c084fc";
+    });
+    tabPanes.forEach((p) => {
+      if (p.id === tabId) {
+        p.classList.add("active");
       } else {
-        tabBtnMaFan.textContent = "🪭 6. MA Fan Sniper";
-        tabBtnMaFan.style.borderColor = "";
-        tabBtnMaFan.style.color = "";
+        p.classList.remove("active");
+      }
+    });
+  }
+
+  function updateStrategyTabsVisibility(autoActivatePrimary = false) {
+    const stratType = document.getElementById("cfg_strategyType")?.value || "dynamic_grid";
+    const btnExec = document.getElementById("tabBtnExecution");
+    const btnStruct = document.getElementById("tabBtnStructure");
+    const btnRisk = document.getElementById("tabBtnRisk");
+    const btnApi = document.getElementById("tabBtnApi");
+    const btnSwing = document.getElementById("tabBtnSwing");
+    const btnMaFan = document.getElementById("tabBtnMaFan");
+
+    const gridBtns = [btnExec, btnStruct, btnRisk];
+    let primaryTabId = "tab-execution";
+
+    if (stratType === "ma_fan") {
+      primaryTabId = "tab-ma-fan";
+
+      // 1. Move MA Fan tab to front and highlight
+      if (btnMaFan) {
+        btnMaFan.style.display = "inline-flex";
+        btnMaFan.style.order = "-1";
+        btnMaFan.textContent = "🪭 กลยุทธ์ MA-FOLD-FAN ⭐ (ใช้งานอยู่)";
+        btnMaFan.style.borderColor = "#a855f7";
+        btnMaFan.style.color = "#c084fc";
+      }
+
+      // 2. Hide other strategy tabs
+      gridBtns.forEach((b) => { if (b) b.style.display = "none"; });
+      if (btnSwing) btnSwing.style.display = "none";
+
+      // 3. Keep API tab visible
+      if (btnApi) {
+        btnApi.style.display = "inline-flex";
+        btnApi.style.order = "1";
+        btnApi.textContent = "🔌 กระดานเทรด & ระบบ";
+      }
+
+    } else if (stratType === "swing_trade") {
+      primaryTabId = "tab-swing";
+
+      // 1. Move Swing tab to front and highlight
+      if (btnSwing) {
+        btnSwing.style.display = "inline-flex";
+        btnSwing.style.order = "-1";
+        btnSwing.textContent = "🏹 สวิงเทรด (Swing Trade) ⭐ (ใช้งานอยู่)";
+        btnSwing.style.borderColor = "#6366f1";
+        btnSwing.style.color = "#a5b4fc";
+      }
+
+      // 2. Hide other strategy tabs
+      gridBtns.forEach((b) => { if (b) b.style.display = "none"; });
+      if (btnMaFan) btnMaFan.style.display = "none";
+
+      // 3. Keep API tab visible
+      if (btnApi) {
+        btnApi.style.display = "inline-flex";
+        btnApi.style.order = "1";
+        btnApi.textContent = "🔌 กระดานเทรด & ระบบ";
+      }
+
+    } else {
+      // Dynamic Grid
+      primaryTabId = "tab-execution";
+
+      // 1. Show Grid tabs in natural sequence
+      if (btnExec) { btnExec.style.display = "inline-flex"; btnExec.style.order = "1"; }
+      if (btnStruct) { btnStruct.style.display = "inline-flex"; btnStruct.style.order = "2"; }
+      if (btnRisk) { btnRisk.style.display = "inline-flex"; btnRisk.style.order = "3"; }
+      if (btnApi) {
+        btnApi.style.display = "inline-flex";
+        btnApi.style.order = "4";
+        btnApi.textContent = "🔌 4. กระดานเทรด & ระบบ";
+      }
+
+      // 2. Hide other strategy tabs
+      if (btnSwing) btnSwing.style.display = "none";
+      if (btnMaFan) btnMaFan.style.display = "none";
+    }
+
+    if (autoActivatePrimary) {
+      activateSettingsTab(primaryTabId);
+    } else {
+      const activeBtn = document.querySelector(".settings-tabs .tab-btn.active");
+      if (!activeBtn || activeBtn.style.display === "none") {
+        activateSettingsTab(primaryTabId);
       }
     }
   }
@@ -5300,6 +5382,7 @@
 
       updateGridSimulatorPreview();
       updateSettingsConditionalVisibility();
+      updateStrategyTabsVisibility(true);
     } catch (e) {
       console.error("Failed to load settings:", e);
     }

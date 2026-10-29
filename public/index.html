@@ -794,14 +794,14 @@
       </div>
 
       <div class="modal-body">
-        <!-- 4 Clear Logical Tabs -->
-        <div class="settings-tabs">
-          <button class="tab-btn active" data-tab="tab-execution">🎯 1. กริด &amp; การออกคำสั่ง</button>
-          <button class="tab-btn" data-tab="tab-structure">📊 2. กรอบราคา &amp; โครงสร้าง</button>
-          <button class="tab-btn" data-tab="tab-risk">🛡️ 3. ความเสี่ยง &amp; Cut Loss</button>
-          <button class="tab-btn" data-tab="tab-api">🔌 4. กระดานเทรด &amp; ระบบ</button>
-          <button class="tab-btn" id="tabBtnSwing" data-tab="tab-swing">🏹 5. สวิงเทรด (Swing Trade)</button>
-          <button class="tab-btn" id="tabBtnMaFan" data-tab="tab-ma-fan">🪭 6. MA-FOLD-FAN</button>
+        <!-- Contextual Logical Tabs (Dynamic strategy isolation & auto-first) -->
+        <div class="settings-tabs" id="settingsTabsContainer">
+          <button class="tab-btn" id="tabBtnExecution" data-tab="tab-execution">🎯 1. กริด &amp; การออกคำสั่ง</button>
+          <button class="tab-btn" id="tabBtnStructure" data-tab="tab-structure">📊 2. กรอบราคา &amp; โครงสร้าง</button>
+          <button class="tab-btn" id="tabBtnRisk" data-tab="tab-risk">🛡️ 3. ความเสี่ยง &amp; Cut Loss</button>
+          <button class="tab-btn" id="tabBtnApi" data-tab="tab-api">🔌 กระดานเทรด &amp; ระบบ</button>
+          <button class="tab-btn" id="tabBtnSwing" data-tab="tab-swing">🏹 สวิงเทรด (Swing Trade)</button>
+          <button class="tab-btn" id="tabBtnMaFan" data-tab="tab-ma-fan">🪭 MA-FOLD-FAN</button>
         </div>
 
         <!-- ═══════════════════ TAB 1: กริด & การออกคำสั่ง (Grid & Execution) ═══════════════════ -->

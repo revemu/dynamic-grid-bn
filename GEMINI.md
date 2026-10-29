@@ -5914,6 +5914,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.169` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 170. v0.2.170 — Contextual Strategy Tabs Ordering & Dynamic Filtering in Settings Modal (`public/index.html`, `public/app.js`, `package.json`, `src/version.ts`)
+
+1. **Contextual Strategy Tabs Ordering & Dynamic Isolation (`public/app.js` & `public/index.html`)**:
+   - เพิ่มระบบตรวจจับกลยุทธ์ที่กำลังเปิดใช้งาน (`cfg_strategyType` เช่น `ma_fan`, `dynamic_grid`, `swing_trade`):
+     - **เมื่อเลือก `ma_fan` (MA-FOLD-FAN)**:
+       - ยกแท็บ `🪭 กลยุทธ์ MA-FOLD-FAN ⭐ (ใช้งานอยู่)` ขึ้นมาแสดงเป็นอันดับแรกสุด (`order: -1`) และ Activate ให้เปิดหน้านี้ทันทีเมื่อผู้ใช้เปิด Settings Modal
+       - ซ่อนแท็บของกลยุทธ์อื่นทั้งหมด (แท็บ 1 กริด, แท็บ 2 กรอบราคา, แท็บ 3 ความเสี่ยงกริด, และแท็บ 5 สวิงเทรด) ด้วย `display: none`
+       - คงแท็บ `🔌 กระดานเทรด & ระบบ` (`order: 1`) ไว้สำหรับตั้ง API / สลับเหรียญ / ปรับพารามิเตอร์ระบบ
+     - **เมื่อเลือก `dynamic_grid`**:
+       - แสดงเฉพาะแท็บกริด (แท็บ 1, 2, 3) และแท็บกระดานเทรด (แท็บ 4)
+       - ซ่อนแท็บสวิงเทรด และแท็บ MA Fan
+     - **เมื่อเลือก `swing_trade`**:
+       - ยกแท็บ `🏹 สวิงเทรด (Swing Trade) ⭐ (ใช้งานอยู่)` ขึ้นมาแสดงเป็นอันดับแรกสุด (`order: -1`)
+       - ซ่อนแท็บกริดทั้ง 3 แท็บ และแท็บ MA Fan
+   - เมื่อผู้ใช้สลับกลยุทธ์ในช่อง Dropdown: แถบแท็บจะคำนวณและปรับการซ่อน/แสดงและจัดลำดับใหม่ทันทีแบบ Real-time
+2. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.170` ใน `package.json` และ `src/version.ts`
+
+
 
 
 
