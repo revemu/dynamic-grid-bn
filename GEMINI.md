@@ -6210,6 +6210,24 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **ขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.182` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 183. v0.2.183 — Backtest Studio Upside & Spread Floor Control Integration (`public/backtest.html`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **เพิ่มตัวเลือกเปิด-ปิด Upside & Spread Floor บน Backtest Studio (`public/backtest.html`, `public/backtest.js`)**:
+   - **สาเหตุของปัญหา**:
+     - หน้าตั้งค่าบอทจริงมีสวิตช์ `cfg_maFanUpsideFloor` ให้เปิด-ปิดตัวกรองระยะวิ่ง ≥ 0.45% และ Spread ≥ 0.35%
+     - แต่บนหน้าเว็บ Backtest Studio กลับไม่มี Dropdown หรือปุ่มสำหรับควบคุมตัวกรองนี้ โดยในสคริปต์ `public/backtest.js` ได้ฮาร์ดโค้ดส่งค่า `enableUpsideFloor: true` ไปยัง Backend เสมอ ทำให้ผู้ใช้ไม่สามารถทดสอบแบบปิดตัวกรอง (Off) ได้
+   - **การแก้ไขและสถาปัตยกรรมใหม่**:
+     - เพิ่ม Dropdown `#btUpsideFloor` บนแถบควบคุม Header ของ Backtest Studio:
+       - 🎯 `On` (กรองระยะวิ่งถึง EMA25 ≥ 0.45% และ Spread ≥ 0.35%)
+       - ❌ `Off` (ปิดตัวกรอง — อนุญาตให้เข้าไม้ที่มี Upside แคบหรือตลาดไซด์เวย์บีบตัว)
+     - เพิ่ม Dropdown `#scUpsideFloor` ในหน้าต่าง Market Scanner Modal สำหรับการจัดอันดับเหรียญ
+     - ผูกค่าใน `public/backtest.js` ให้ส่งต่อไปยังทั้ง `/api/backtest/run` (Single Backtest) และ `/api/backtest/scan` (Market Scanner) ตามตัวเลือกของผู้ใช้
+     - ซิงค์ค่าเมื่อผู้ใช้กด "📊 ดูกราฟ" จาก Scanner ตาราง Leaderboard ไปยัง Single Backtest อย่างสมบูรณ์แบบ
+2. **ขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.183` ใน `package.json` และ `src/version.ts`
+
 
 
 

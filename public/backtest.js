@@ -40,6 +40,7 @@
   const inpFeeTier = document.getElementById("btFeeTier");
   const inpMacroGate = document.getElementById("btMacroGate");
   const inpCircuitBreaker = document.getElementById("btCircuitBreaker");
+  const inpUpsideFloor = document.getElementById("btUpsideFloor");
   const inpBudget = document.getElementById("btBudget");
 
   function getSelectedSymbol() {
@@ -1175,6 +1176,7 @@
     const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
     const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
     const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
+    const enableUpsideFloor = inpUpsideFloor ? inpUpsideFloor.value === "on" : true;
 
     const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
     loadingOverlay.style.display = "flex";
@@ -1194,7 +1196,7 @@
           feeTier,
           macroGateMode,
           enableCircuitBreaker,
-          enableUpsideFloor: true,
+          enableUpsideFloor,
         }),
       });
 
@@ -1362,6 +1364,7 @@
   const scTimeframe = document.getElementById("scTimeframe");
   const scLimit = document.getElementById("scLimit");
   const scSpread = document.getElementById("scSpread");
+  const scUpsideFloor = document.getElementById("scUpsideFloor");
 
   function initScannerEvents() {
     loadLatestScannerResults();
@@ -1398,6 +1401,7 @@
         const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
         const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
         const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
+        const enableUpsideFloor = scUpsideFloor ? scUpsideFloor.value === "on" : (inpUpsideFloor ? inpUpsideFloor.value === "on" : true);
 
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
@@ -1420,7 +1424,7 @@
               feeTier,
               macroGateMode,
               enableCircuitBreaker,
-              enableUpsideFloor: true,
+              enableUpsideFloor,
             }),
           });
 
@@ -1514,6 +1518,7 @@
           if (scTimeframe && inpTimeframe) inpTimeframe.value = scTimeframe.value;
           if (scLimit && inpLimit) inpLimit.value = scLimit.value;
           if (scSpread && inpSpread) inpSpread.value = scSpread.value;
+          if (scUpsideFloor && inpUpsideFloor) inpUpsideFloor.value = scUpsideFloor.value;
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
           runBacktest();
         }

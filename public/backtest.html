@@ -105,6 +105,14 @@
         </div>
 
         <div class="bt-input-group">
+          <label>Upside Floor</label>
+          <select id="btUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.45% และ Spread ≥ 0.35%">
+            <option value="on" selected>🎯 On (กรองระยะวิ่ง ≥ 0.45%)</option>
+            <option value="off">❌ Off (ปิดตัวกรอง)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
           <label>เงินทุน ($)</label>
           <input type="number" id="btBudget" value="200" min="10" step="10" />
         </div>
@@ -302,6 +310,13 @@
                 <option value="auto" selected>Auto Calibrate</option>
                 <option value="0.25">≥ 0.25%</option>
                 <option value="0.35">≥ 0.35%</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Upside Floor</label>
+              <select id="scUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.45% และ Spread ≥ 0.35%">
+                <option value="on" selected>🎯 On (≥ 0.45%)</option>
+                <option value="off">❌ Off (ปิด)</option>
               </select>
             </div>
             <button id="btnStartScan" class="btn-run btn-start-scan">
