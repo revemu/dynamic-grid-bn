@@ -85,7 +85,7 @@ export interface MarketScanOptions {
   fastCutThresholdPct?: number;
   stagnationBars?: number;
   maxSlPct?: number;
-  tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid";
+  tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid";
   tradeDirection?: "long" | "short" | "both";
 }
 
@@ -592,6 +592,585 @@ export class BacktestService {
   }
 
   /**
+   * Run full-fidelity simulation for Dual Hybrid Engine (Dynamic Grid + MA-Fan Sniper)
+   * Allocates capital between Dynamic Grid (continuous micro-cashflow) and MA-Fan Sniper (momentum expansion)
+   */
+  public static runDualHybridSimulation(
+    candles: Candle[],
+    opts: {
+      symbol: string;
+      timeframe?: string;
+      initialCapital?: number;
+      gridCapitalPct?: number;
+      sniperCapitalPct?: number;
+      spreadThreshold?: number | "auto";
+      tradeDirection?: "long" | "short" | "both";
+      macroGateMode?: "off" | "noDeepBear" | "bullOnly";
+      enableUpsideFloor?: boolean;
+      enableCircuitBreaker?: boolean;
+      enableFastCut?: boolean;
+      fastCutThresholdPct?: number;
+      maxSlPct?: number;
+      costModel?: { feePctPerSide: number; slippagePctPerFill: number };
+      saveToHistory?: boolean;
+      precomputed?: {
+        ribbonStates: RibbonState[];
+        exhaustionStates: ExhaustionState[];
+        atrs: number[];
+      };
+      candlesHtf?: Candle[];
+    }
+  ): BacktestRecord {
+    const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+    const timeframe = opts.timeframe || "5m";
+    const initialCapital = opts.initialCapital ?? 200;
+    const gridCapPct = opts.gridCapitalPct ?? 60;
+    const sniperCapPct = opts.sniperCapitalPct ?? 40;
+    const gridInitialCap = initialCapital * (gridCapPct / 100);
+    const sniperInitialCap = initialCapital * (sniperCapPct / 100);
+
+    const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+    const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
+    const tradeDirection = opts.tradeDirection ?? "both";
+    const macroGateMode = opts.macroGateMode ?? "noDeepBear";
+    const enableUpsideFloor = opts.enableUpsideFloor !== false;
+    const enableCircuitBreaker = opts.enableCircuitBreaker !== false;
+    const enableFastCut = opts.enableFastCut !== false;
+    const fastCutThresholdPct = opts.fastCutThresholdPct ?? -0.80;
+    const maxSlPct = opts.maxSlPct ?? 1.80;
+
+    // Precompute indicators for Sniper Engine
+    const ribbonStates = opts.precomputed?.ribbonStates ?? RibbonEngine.computeAllRibbonStates(candles);
+    const exhaustionStates = opts.precomputed?.exhaustionStates ?? ExhaustionEngine.computeAllExhaustion(candles);
+    const atrs = opts.precomputed?.atrs ?? calcATR(candles, 14);
+    const candlesHtf = opts.candlesHtf && opts.candlesHtf.length > 0
+      ? opts.candlesHtf
+      : BacktestService.aggregateCandles(candles, 15);
+
+    // Dow Structure Engine for Dynamic Grid
+    const dow = new DowStructureEngine(3, true, 20.0, 300);
+    const warmup = Math.min(100, Math.floor(candles.length / 4));
+    for (let k = 0; k < warmup; k++) {
+      dow.addCandle(candles[k]);
+    }
+
+    // Grid Subsystem State
+    let gridCash = gridInitialCap;
+    let heldLots: Array<{
+      id: number;
+      index: number;
+      qty: number;
+      buyPrice: number;
+      entryTime: number;
+      targetPrice: number;
+      costQuote: number;
+    }> = [];
+
+    // Sniper Subsystem State
+    let sniperCash = sniperInitialCap;
+    let sniperHeldQty = 0;
+    let sniperEntryPrice = 0;
+    let sniperInitialSlPrice = 0;
+    let sniperStopLossPrice = 0;
+    let sniperActiveSide: "LONG" | "SHORT" = "LONG";
+    let sniperTp1Hit = false;
+    let sniperTp1Price = 0;
+    let sniperTp1Time = 0;
+    let sniperTp1PnlPct = 0;
+    let sniperEntryIdx = 0;
+    let highestSinceEntry = 0;
+    let highestSinceTp1 = 0;
+    let lowestSinceEntry = 0;
+    let lowestSinceTp1 = 0;
+    let sniperTradeCost = 0;
+    let recentSlTimes: number[] = [];
+    let cooldownUntilTs = 0;
+    let lastSniperExitBar = -1;
+
+    // Setup Rolling Spread Calibrator if spread === "auto"
+    const isAuto = opts.spreadThreshold === "auto" || opts.spreadThreshold === undefined;
+    let rollingCal: RollingSpreadCalibrator | null = null;
+    let spread = 0.45;
+    if (isAuto) {
+      rollingCal = new RollingSpreadCalibrator(symbol, candles, candlesHtf, {
+        slBufferPct: 0.15,
+        trailingPullbackPct: 0.45,
+        tp1Ratio: 0.5,
+        initialCapital: sniperInitialCap,
+        useRatchetSl: true,
+        costModel: opts.costModel,
+        macroGateMode,
+        enableUpsideFloor,
+      });
+    } else {
+      spread = Number(opts.spreadThreshold) || 0.45;
+    }
+
+    const trades: BacktestTrade[] = [];
+    const markers: BacktestMarker[] = [];
+    const evaluations: BacktestEvaluationItem[] = new Array(candles.length);
+    let grossProfit = 0;
+    let grossLoss = 0;
+    let wins = 0;
+    let losses = 0;
+    let peakEquity = initialCapital;
+    let maxDrawdownPct = 0;
+    let tradeCounter = 0;
+    let totalFeesQuote = 0;
+
+    for (let i = warmup; i < candles.length; i++) {
+      const c = candles[i];
+      dow.addCandle(c);
+
+      const structure = dow.getStructure(c.close, undefined, { useOnlyClosedCandles: true });
+      const floor = structure.bottomBound;
+      const ceiling = structure.upperBound;
+      const center = structure.centerPrice;
+      const channelSpan = ceiling - floor;
+
+      // HTF Regime & Ribbon Evaluation for Sniper
+      const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, "15m", c.time, 0.5);
+      const ribbon = ribbonStates[i]!;
+      const exhaustion = exhaustionStates[i]!;
+      const curAtr = atrs[i] ?? (c.close * 0.003);
+
+      let currentRollingSpread = spread;
+      if (rollingCal) {
+        currentRollingSpread = rollingCal.bestSpreadAt(i);
+      }
+      const activeBaseSpread = isAuto ? currentRollingSpread : spread;
+      const currentSpread = MaFanCoreRules.computeEffectiveSpread({
+        baseSpread: activeBaseSpread,
+        useAtrAdaptiveSpread: true,
+        isAutoCalibrated: isAuto,
+        curAtr,
+        closePrice: c.close,
+        atrMultiplier: 1.25,
+      });
+      const reqSpread = currentSpread * htfRegime.spreadMultiplier;
+      const isCircuitActive = enableCircuitBreaker && c.time < cooldownUntilTs;
+
+      evaluations[i] = {
+        time: c.time,
+        fanSpreadPct: ribbon.fanSpreadPct,
+        isFanningDown: ribbon.isFanningDown,
+        isHookUp: ribbon.isHookUp,
+        rsi: exhaustion.rsi,
+        rsiSma: exhaustion.rsiSma,
+        isOversoldExhaustion: exhaustion.isOversoldExhaustion,
+        ema4: ribbon.ema4,
+        ema8: ribbon.ema8,
+        ema16: ribbon.ema16,
+        ema25: ribbon.ema25,
+        ema75: ribbon.ema75,
+        ema200: ribbon.ema200,
+        requiredSpreadPct: Number(reqSpread.toFixed(2)),
+        spreadMultiplier: htfRegime.spreadMultiplier,
+        isDeepBear: htfRegime.isDeepBear,
+        isMacroBlocked: false,
+        isCircuitBreakerActive: isCircuitActive,
+      };
+
+      // ── 1. EVALUATE GRID EXITS (TP & Cut Loss) ──
+      if (channelSpan > 0) {
+        const cutLossPrice = floor * 0.985;
+        const remainingLots: typeof heldLots = [];
+        for (const lot of heldLots) {
+          if (c.high >= lot.targetPrice) {
+            const exitPrice = lot.targetPrice;
+            const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+            const invest = lot.qty * lot.buyPrice;
+            const pnlQuote = proceeds - invest;
+            const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+            gridCash += proceeds;
+            const exitCost = lot.qty * exitPrice * costPerFill;
+            totalFeesQuote += lot.costQuote + exitCost;
+
+            if (pnlQuote >= 0) { grossProfit += pnlQuote; wins++; }
+            else { grossLoss += Math.abs(pnlQuote); losses++; }
+
+            trades.push({
+              id: lot.id,
+              side: "LONG",
+              entryTime: lot.entryTime,
+              entryPrice: lot.buyPrice,
+              stopLossPrice: cutLossPrice,
+              fanSpreadAtEntry: 0,
+              tp1Time: c.time,
+              tp1Price: exitPrice,
+              tp1PnlPct: pnlPct,
+              exitTime: c.time,
+              exitPrice,
+              exitType: "TP1+TP2",
+              pnlQuote,
+              pnlPct,
+              holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+              costQuote: lot.costQuote + exitCost,
+            });
+
+            markers.push({
+              time: c.time,
+              position: "aboveBar",
+              color: "#3b82f6",
+              shape: "circle",
+              text: `🔵 GRID TP #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+            });
+            continue;
+          }
+
+          if (c.low <= cutLossPrice) {
+            const exitPrice = cutLossPrice;
+            const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+            const invest = lot.qty * lot.buyPrice;
+            const pnlQuote = proceeds - invest;
+            const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+            gridCash += proceeds;
+            const exitCost = lot.qty * exitPrice * costPerFill;
+            totalFeesQuote += lot.costQuote + exitCost;
+
+            grossLoss += Math.abs(pnlQuote);
+            losses++;
+
+            trades.push({
+              id: lot.id,
+              side: "LONG",
+              entryTime: lot.entryTime,
+              entryPrice: lot.buyPrice,
+              stopLossPrice: cutLossPrice,
+              fanSpreadAtEntry: 0,
+              exitTime: c.time,
+              exitPrice,
+              exitType: "SL",
+              pnlQuote,
+              pnlPct,
+              holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+              costQuote: lot.costQuote + exitCost,
+            });
+
+            markers.push({
+              time: c.time,
+              position: "belowBar",
+              color: "#ef4444",
+              shape: "arrowDown",
+              text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
+            });
+            continue;
+          }
+          remainingLots.push(lot);
+        }
+        heldLots = remainingLots;
+
+        // ── 2. EVALUATE GRID BUYS ──
+        const trancheQuote = gridInitialCap / 4;
+        const currentGridInv = heldLots.reduce((s, l) => s + (l.qty * l.buyPrice), 0);
+        if (currentGridInv + trancheQuote <= gridInitialCap && gridCash >= trancheQuote && heldLots.length < 4) {
+          const buyLevels = [
+            floor + channelSpan * 0.45,
+            floor + channelSpan * 0.33,
+            floor + channelSpan * 0.20,
+            floor + channelSpan * 0.08,
+          ];
+          const sellTargets = [
+            floor + channelSpan * 0.55,
+            floor + channelSpan * 0.68,
+            floor + channelSpan * 0.80,
+            floor + channelSpan * 0.92,
+          ];
+
+          for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
+            const bl = buyLevels[lvlIdx];
+            const alreadyFilled = heldLots.some((l) => l.index === lvlIdx);
+            if (!alreadyFilled && c.low <= bl && c.close >= cutLossPrice) {
+              tradeCounter++;
+              const buyPrice = bl;
+              const invest = trancheQuote;
+              const fillQty = (invest / buyPrice) * (1 - costPerFill);
+              gridCash -= invest;
+
+              heldLots.push({
+                id: tradeCounter,
+                index: lvlIdx,
+                qty: fillQty,
+                buyPrice,
+                entryTime: c.time,
+                targetPrice: sellTargets[lvlIdx] ?? (buyPrice * 1.015),
+                costQuote: invest * costPerFill,
+              });
+
+              markers.push({
+                time: c.time,
+                position: "belowBar",
+                color: "#10b981",
+                shape: "circle",
+                text: `🟢 GRID BUY #${tradeCounter} (L${lvlIdx + 1}) @ $${buyPrice.toFixed(4)}`,
+              });
+              break;
+            }
+          }
+        }
+      }
+
+      // ── 3. EVALUATE SNIPER EXITS ──
+      if (sniperHeldQty > 0) {
+        if (c.high > highestSinceEntry) highestSinceEntry = c.high;
+        if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
+        if (lowestSinceEntry === 0 || c.low < lowestSinceEntry) lowestSinceEntry = c.low;
+        if (lowestSinceTp1 === 0 || c.low < lowestSinceTp1) lowestSinceTp1 = c.low;
+
+        const barsHeld = i - sniperEntryIdx;
+
+        // Ratchet SL
+        const liftedSl = MaFanCoreRules.evaluateRatchetSl({
+          candles,
+          currentIndex: i,
+          barsHeld,
+          currentSlPrice: sniperStopLossPrice,
+          currentPrice: c.close,
+          curAtr,
+          slBufferPct: 0.15,
+          useRatchetSl: true,
+          positionSide: sniperActiveSide,
+        });
+        if (liftedSl !== null) {
+          if (sniperActiveSide === "LONG" && liftedSl > sniperStopLossPrice) sniperStopLossPrice = liftedSl;
+          else if (sniperActiveSide === "SHORT" && liftedSl < sniperStopLossPrice) sniperStopLossPrice = liftedSl;
+        }
+
+        const exitDecision = MaFanCoreRules.evaluateExits({
+          highPrice: c.high,
+          lowPrice: c.low,
+          closePrice: c.close,
+          positionSide: sniperActiveSide,
+          entryPrice: sniperEntryPrice,
+          tp1Filled: sniperTp1Hit,
+          stopLossPrice: sniperStopLossPrice,
+          highestPriceSinceTp1: highestSinceTp1,
+          lowestPriceSinceTp1: lowestSinceTp1,
+          highestPriceSinceEntry: highestSinceEntry,
+          lowestPriceSinceEntry: lowestSinceEntry,
+          ribbon,
+          exhaustion,
+          trailingPullbackPct: 0.45,
+          isOverbought: exhaustion.isOverboughtExhaustion,
+          isOversold: exhaustion.isOversoldExhaustion,
+          barsHeld,
+          isHtfBull: !!htfRegime.isBullish,
+          tp1MinProfitPct: 0.65,
+          enableFastCut,
+          fastCutThresholdPct,
+          stagnationBars: 6,
+        });
+
+        if (exitDecision.action === "TP2" || exitDecision.action === "SL") {
+          const exitPrice = exitDecision.exitPrice;
+          tradeCounter++;
+          let pnlQuote = 0;
+          if (sniperActiveSide === "LONG") {
+            pnlQuote = (sniperHeldQty * exitPrice * (1 - costPerFill)) - (sniperHeldQty * sniperEntryPrice);
+          } else {
+            pnlQuote = (sniperHeldQty * sniperEntryPrice) - (sniperHeldQty * exitPrice * (1 + costPerFill));
+          }
+          const invest = sniperHeldQty * sniperEntryPrice;
+          const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+          sniperCash += (invest + pnlQuote);
+          const exitCost = sniperHeldQty * exitPrice * costPerFill;
+          totalFeesQuote += sniperTradeCost + exitCost;
+
+          if (pnlQuote >= 0) { grossProfit += pnlQuote; wins++; }
+          else { grossLoss += Math.abs(pnlQuote); losses++; }
+
+          const isFastCut = exitDecision.reason?.startsWith("Fast Technical Cut") || exitDecision.reason?.startsWith("Fast Stagnation Cut");
+          const isRatchet = !sniperTp1Hit && (sniperActiveSide === "LONG" ? sniperStopLossPrice > sniperInitialSlPrice : sniperStopLossPrice < sniperInitialSlPrice);
+          const exitType: BacktestTrade["exitType"] = exitDecision.action === "TP2" ? "TP1+TP2" : isFastCut ? "TECH_FAST_CUT" : sniperTp1Hit ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
+
+          trades.push({
+            id: tradeCounter,
+            side: sniperActiveSide,
+            entryTime: candles[sniperEntryIdx].time,
+            entryPrice: sniperEntryPrice,
+            stopLossPrice: sniperStopLossPrice,
+            fanSpreadAtEntry: ribbonStates[sniperEntryIdx].fanSpreadPct,
+            tp1Time: sniperTp1Hit ? sniperTp1Time : undefined,
+            tp1Price: sniperTp1Hit ? sniperTp1Price : undefined,
+            tp1PnlPct: sniperTp1Hit ? sniperTp1PnlPct : undefined,
+            exitTime: c.time,
+            exitPrice,
+            exitType,
+            pnlQuote,
+            pnlPct,
+            holdingBars: barsHeld,
+            costQuote: sniperTradeCost + exitCost,
+          });
+
+          markers.push({
+            time: c.time,
+            position: sniperActiveSide === "LONG" ? "aboveBar" : "belowBar",
+            color: pnlQuote >= 0 ? "#8b5cf6" : "#ef4444",
+            shape: pnlQuote >= 0 ? "arrowDown" : "square",
+            text: `🎯 SNIPER ${exitType} #${tradeCounter} @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
+          });
+
+          if (pnlQuote < 0) {
+            recentSlTimes.push(c.time);
+            if (enableCircuitBreaker) {
+              recentSlTimes = recentSlTimes.filter((t) => t >= c.time - 12 * 3600);
+              if (recentSlTimes.length >= 2) {
+                cooldownUntilTs = c.time + 6 * 3600;
+              }
+            }
+          }
+          lastSniperExitBar = i;
+          sniperHeldQty = 0;
+          sniperTp1Hit = false;
+        } else if (exitDecision.action === "TP1" && !sniperTp1Hit) {
+          sniperTp1Hit = true;
+          sniperTp1Price = exitDecision.exitPrice;
+          sniperTp1Time = c.time;
+          const halfQty = sniperHeldQty * 0.5;
+          let partialPnl = 0;
+          if (sniperActiveSide === "LONG") {
+            partialPnl = (halfQty * sniperTp1Price * (1 - costPerFill)) - (halfQty * sniperEntryPrice);
+          } else {
+            partialPnl = (halfQty * sniperEntryPrice) - (halfQty * sniperTp1Price * (1 + costPerFill));
+          }
+          sniperTp1PnlPct = (partialPnl / (halfQty * sniperEntryPrice)) * 100;
+          sniperCash += (halfQty * sniperEntryPrice + partialPnl);
+          sniperHeldQty -= halfQty;
+          highestSinceTp1 = c.high;
+          lowestSinceTp1 = c.low;
+          sniperStopLossPrice = sniperEntryPrice;
+
+          markers.push({
+            time: c.time,
+            position: sniperActiveSide === "LONG" ? "aboveBar" : "belowBar",
+            color: "#06b6d4",
+            shape: "circle",
+            text: `🎯 SNIPER TP1 (50%) @ $${sniperTp1Price.toFixed(4)} (+${sniperTp1PnlPct.toFixed(2)}%)`,
+          });
+        }
+      }
+
+      // ── 4. EVALUATE SNIPER ENTRY ──
+      if (sniperHeldQty === 0 && sniperCash >= sniperInitialCap * 0.8 && !isCircuitActive && i > lastSniperExitBar) {
+        const modularDecision = MaFanCoreRules.evaluateModularEntry({
+          tradeMode: "dual",
+          tradeDirection,
+          candles,
+          closePrice: c.close,
+          currentIndex: i,
+          ribbon,
+          exhaustion,
+          curAtr,
+          requiredSpreadPct: reqSpread,
+          slBufferPct: 0.15,
+          macroGateMode,
+          isHtfBull: !!htfRegime.isBullish,
+          htfRegime,
+          enableUpsideFloor,
+          circuitBreakerActive: isCircuitActive,
+          maxSlPct,
+        });
+
+        if (modularDecision.shouldEnter) {
+          sniperActiveSide = modularDecision.positionSide ?? "LONG";
+          sniperEntryPrice = modularDecision.entryPrice;
+          sniperInitialSlPrice = modularDecision.stopLossPrice;
+          sniperStopLossPrice = modularDecision.stopLossPrice;
+          sniperEntryPrice = modularDecision.entryPrice;
+          sniperStopLossPrice = modularDecision.stopLossPrice;
+          sniperEntryIdx = i;
+          const invest = sniperInitialCap;
+          sniperHeldQty = (invest / sniperEntryPrice) * (1 - costPerFill);
+          sniperCash -= invest;
+          sniperTradeCost = invest * costPerFill;
+          highestSinceEntry = c.high;
+          lowestSinceEntry = c.low;
+          highestSinceTp1 = 0;
+          lowestSinceTp1 = 0;
+          sniperTp1Hit = false;
+
+          markers.push({
+            time: c.time,
+            position: sniperActiveSide === "LONG" ? "belowBar" : "aboveBar",
+            color: "#f59e0b",
+            shape: sniperActiveSide === "LONG" ? "arrowUp" : "arrowDown",
+            text: `🎯 SNIPER ${sniperActiveSide} @ $${sniperEntryPrice.toFixed(4)}`,
+          });
+        }
+      }
+
+      // ── 5. COMBINED EQUITY CURVE & MAX DD ──
+      const gridInvVal = heldLots.reduce((s, l) => s + (l.qty * c.close), 0);
+      const sniperPosVal = sniperHeldQty > 0
+        ? (sniperActiveSide === "LONG"
+            ? sniperHeldQty * c.close
+            : (sniperHeldQty * sniperEntryPrice) + (sniperHeldQty * (sniperEntryPrice - c.close)))
+        : 0;
+      const curEquity = gridCash + gridInvVal + sniperCash + sniperPosVal;
+      if (curEquity > peakEquity) peakEquity = curEquity;
+      const dd = peakEquity > 0 ? ((peakEquity - curEquity) / peakEquity) * 100 : 0;
+      if (dd > maxDrawdownPct) maxDrawdownPct = dd;
+    }
+
+    // End of simulation liquidation
+    const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
+    const endGridVal = heldLots.reduce((s, l) => s + (l.qty * lastPrice * (1 - costPerFill)), 0);
+    const endSniperVal = sniperHeldQty > 0 ? sniperHeldQty * lastPrice * (1 - costPerFill) : 0;
+    const finalCapital = gridCash + endGridVal + sniperCash + endSniperVal;
+    const netPnlQuote = finalCapital - initialCapital;
+    const netPnlPct = (netPnlQuote / initialCapital) * 100;
+    const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0;
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0;
+    const avgBarsHeld = trades.length > 0 ? Math.round(trades.reduce((a, b) => a + b.holdingBars, 0) / trades.length) : 0;
+    const pnlPcts = trades.map((t) => t.pnlPct);
+    const bestTradePct = pnlPcts.length > 0 ? Math.max(...pnlPcts) : 0;
+    const worstTradePct = pnlPcts.length > 0 ? Math.min(...pnlPcts) : 0;
+
+    const summary: BacktestSummary = {
+      initialCapital,
+      finalCapital: Number(finalCapital.toFixed(2)),
+      netPnlQuote: Number(netPnlQuote.toFixed(2)),
+      netPnlPct: Number(netPnlPct.toFixed(2)),
+      totalTrades: trades.length,
+      winTrades: wins,
+      lossTrades: losses,
+      winRate: Number(winRate.toFixed(1)),
+      profitFactor: Number(profitFactor.toFixed(2)),
+      maxDrawdownPct: Number(maxDrawdownPct.toFixed(2)),
+      avgBarsHeld,
+      bestTradePct: Number(bestTradePct.toFixed(2)),
+      worstTradePct: Number(worstTradePct.toFixed(2)),
+      totalFeesQuote: Number(totalFeesQuote.toFixed(2)),
+      grossPnlQuote: Number((netPnlQuote + totalFeesQuote).toFixed(2)),
+    };
+
+    const record: BacktestRecord = {
+      id: `bt_dual_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      symbol,
+      timeframe,
+      candleCount: candles.length,
+      spreadThreshold: 0,
+      isAutoCalibrated: false,
+      useRatchetSl: true,
+      macroGateMode,
+      enableUpsideFloor,
+      enableCircuitBreaker,
+      summary,
+      trades,
+      markers: markers.sort((a, b) => a.time - b.time),
+      candles,
+      evaluations,
+    };
+
+    if (opts.saveToHistory !== false) {
+      this.saveRecord(record);
+    }
+
+    return record;
+  }
+
+  /**
    * Run full-fidelity simulation for MA Fan Sniper Strategy
    */
   public static runMaFanSimulation(
@@ -625,7 +1204,7 @@ export class BacktestService {
       fastCutThresholdPct?: number;
       stagnationBars?: number;
       maxSlPct?: number;
-      tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid";
+      tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid";
       tradeDirection?: "long" | "short" | "both";
       exitInfoLag?: 0 | 1;
       warmupBars?: number;
@@ -645,6 +1224,25 @@ export class BacktestService {
         initialCapital: opts.initialCapital,
         costModel: opts.costModel,
         saveToHistory: opts.saveToHistory,
+      });
+    }
+
+    if (opts.tradeMode === "dual_hybrid") {
+      return BacktestService.runDualHybridSimulation(candles, {
+        symbol: opts.symbol,
+        timeframe: opts.timeframe,
+        initialCapital: opts.initialCapital,
+        costModel: opts.costModel,
+        saveToHistory: opts.saveToHistory,
+        tradeDirection: opts.tradeDirection,
+        macroGateMode: opts.macroGateMode,
+        enableUpsideFloor: opts.enableUpsideFloor,
+        enableCircuitBreaker: opts.enableCircuitBreaker,
+        enableFastCut: opts.enableFastCut,
+        fastCutThresholdPct: opts.fastCutThresholdPct,
+        maxSlPct: opts.maxSlPct,
+        precomputed: opts.precomputed,
+        candlesHtf: opts.candlesHtf,
       });
     }
 

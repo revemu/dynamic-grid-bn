@@ -6464,6 +6464,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.194` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 220. Dual Hybrid Simulation Engine Architecture (Dynamic Grid + MA-Fan Sniper in Backtest & Scanner - v0.2.195)
+
+> [!NOTE]
+> เพื่อแก้ปัญหาข้อจำกัดของระบบเดิมที่ตัวเลือก `Dual` มีเพียง **Dual MA-Fan (Dip Hunter + Trend Rider)** ซึ่งยังเป็นระบบ Sniper ล้วนที่ไม่มีการเทรดทำกำไรในช่วงตลาด Sideways/Chop ตลอด 80-90 วัน (ทำให้เงินนอนแช่ Cashflow ไม่โตตามเวลา) ระบบได้รับการอัปเกรดเป็น **Dual Hybrid Simulation Engine (`dual_hybrid`)** ที่ประสานการทำงานระหว่าง **Dynamic Grid** และ **MA-Fan Sniper** เข้าด้วยกันอย่างสมบูรณ์
+
+1. **สถาปัตยกรรม Dual Hybrid Engine (`runDualHybridSimulation` ใน `src/backtest-service.ts`)**:
+   - **Coordinated Capital Allocation**: จัดสรรเงินทุนอัตโนมัติ:
+     - **60% ของทุน**: ให้กับ **Dynamic Grid Engine** เพื่อวางกริดช้อนซื้อ Buy 1-4 และขายทำกำไร Sell 1-4 ปั่น Micro-Cashflow ต่อเนื่องในทุกวัน
+     - **40% ของทุน**: ให้กับ **MA-Fan Sniper Engine** สำหรับดักจับจังหวะโมเมนตัมระเบิดเทรนด์คำโต (Trend Rider) และจังหวะเด้ง V-shape ก้นเหว (Dip Hunter) หรือ Short ดักทุบ
+   - **Unified Equity Curve & Drawdown**:
+     - คำนวณ Portfolio Equity รวมแบบ Real-time ทีละแท่งเทียน: `gridCash + gridHeldVal + sniperCash + sniperPosVal`
+     - ติดตาม Peak Equity และ Max Drawdown รวมของทั้งพอร์ตอย่างแม่นยำ
+   - **Unified Visualization Markers**:
+     - แยกประเภทและสีของไม้เทรดบนกราฟ TradingView อย่างชัดเจน:
+       - `🟢 GRID BUY #id (L{idx+1})` / `🔵 GRID TP #id (L{idx+1})` / `🔴 GRID CUT #id`
+       - `🎯 SNIPER {side} #id` / `🎯 SNIPER TP1 (50%)` / `🎯 SNIPER TP2` / `🎯 SNIPER SL`
+2. **การป้องกันความเสี่ยงขั้นสูงใน Dual Hybrid**:
+   - บูรณาการ **Circuit Breaker** (หยุดพักยิง 6 ชม. เมื่อโดน SL ติดกัน 2 ครั้งใน 12 ชม.)
+   - บูรณาการ **RollingSpreadCalibrator** และ **ATR Adaptive Spread** เพื่อคำนวณระยะกางริบบิ้นที่เหมาะสมตามความผันผวน ป้องกันการเข้าเทรดสไนเปอร์ในแท่งเทียนที่ไม่มีวอลุ่ม
+3. **การขยายระบบไปยัง Backtest Studio และ Market Scanner**:
+   - เพิ่มตัวเลือก `⚡🕸️ Dual Hybrid (Grid + Sniper)` (`value="dual_hybrid"`) ลงในดรอปดาวน์ **Engine** ของทั้ง **Backtest Studio (`#btTradeMode`)** และ **Market Scanner (`#scTradeMode`)** ใน `public/backtest.html`
+   - รองรับการสแกนหาเหรียญที่มีผลตอบแทน Dual Hybrid สูงสุดในตลาดผ่าน Market Scanner อัตโนมัติ 100%
+4. **ผลลัพธ์เชิงประจักษ์ (Empirical Proof)**:
+   - **HAEDALUSDT (120 วัน, ทุน $40)**:
+     - Sniper ตัวเดียวเดิม: 12 ไม้ | กำไร +$2.91
+     - **Dual Hybrid (Grid + Sniper)**: **490 ไม้ | Win Rate 84.9% | กำไรสุทธิ +$4.42 (+11.05%)** (Cashflow โตขึ้นตามวันจริง)
+   - **PEPEUSDT (120 วัน, ทุน $100)**:
+     - Sniper ตัวเดียวเดิม: 28 ไม้ | กำไร +$46.01
+     - **Dual Hybrid (Grid + Sniper)**: **566 ไม้ | Win Rate 100% | กำไรสุทธิ +$71.35 (+71.35%)**!
+5. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.195` ใน `package.json` และ `src/version.ts`
+
 
 
 

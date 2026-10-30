@@ -954,7 +954,7 @@ export class MaFanCoreRules {
     enableNoFallingKnife?: boolean;
     circuitBreakerActive?: boolean;
     maxSlPct?: number;
-    tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid";
+    tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid";
     tradeDirection?: "long" | "short" | "both";
   }): EntryDecision {
     const tradeMode = opts.tradeMode ?? "dip_hunter";
@@ -979,7 +979,7 @@ export class MaFanCoreRules {
     }
 
     // B. Dual Mode: Trend Rider during strong trending markets, Dip/Peak Hunter during stretched exhaustion!
-    if (tradeMode === "dual") {
+    if (tradeMode === "dual" || tradeMode === "dual_hybrid") {
       const isExtremeExhaustion = opts.ribbon.fanSpreadPct >= opts.requiredSpreadPct * 1.15 || opts.exhaustion.rsi <= 32 || opts.exhaustion.rsi >= 68;
 
       if (isExtremeExhaustion) {
