@@ -24,6 +24,7 @@
   const chartContainer = document.getElementById("btChartContainer");
   const btnRunBacktest = document.getElementById("btnRunBacktest");
   const btnSyncLiveBotConfig = document.getElementById("btnSyncLiveBotConfig");
+  const btnApplyConfigToLiveBot = document.getElementById("btnApplyConfigToLiveBot");
   const btnOpenHistory = document.getElementById("btnOpenHistory");
   const btnCloseHistoryModal = document.getElementById("btnCloseHistoryModal");
   const historyModalBackdrop = document.getElementById("historyModalBackdrop");
@@ -1413,6 +1414,71 @@
     }
   }
 
+  // Apply Backtest Form Settings directly to Live Bot
+  async function applyBacktestConfigToLiveBot() {
+    const symbol = getSelectedSymbol();
+    const timeframe = inpTimeframe ? inpTimeframe.value : "5m";
+    const spreadVal = inpSpread ? inpSpread.value : "auto";
+    const isAutoSpread = spreadVal === "auto";
+    const budget = inpBudget ? Number(inpBudget.value) || 200 : 200;
+    const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
+    const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
+    const enableUpsideFloor = inpUpsideFloor ? inpUpsideFloor.value === "on" : true;
+    const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
+
+    const summaryMsg = `ยืนยันการนำ Config จาก Backtest ไปใช้กับบอทจริงหรือไม่?\n\n` +
+      `• คู่เหรียญ: ${symbol}\n` +
+      `• Timeframe: ${timeframe}\n` +
+      `• Min Spread: ${isAutoSpread ? "Auto Calibrate ⚡" : `${spreadVal}%`}\n` +
+      `• SL Mode: ${useRatchetSl ? "Ratchet SL (ยกตามฐาน)" : "Fixed SL"}\n` +
+      `• Circuit Breaker: ${enableCircuitBreaker ? "On (SL 2 ไม้ติด พัก 45m)" : "Off"}\n` +
+      `• Upside Floor: ${enableUpsideFloor ? "On (≥ 0.45% to EMA25)" : "Off"}\n` +
+      `• Macro Gate: ${macroGateMode === "noDeepBear" ? "No Deep Bear" : macroGateMode === "bullOnly" ? "Bull Only" : "Off"}\n` +
+      `• เงินทุนสูงสุด: $${budget}\n\n` +
+      `บอทจริงจะบันทึกและสลับไปใช้คอนฟิกนี้ทันที!`;
+
+    if (!confirm(summaryMsg)) return;
+
+    if (btnApplyConfigToLiveBot) {
+      btnApplyConfigToLiveBot.disabled = true;
+      btnApplyConfigToLiveBot.innerHTML = `<span>⏳ กำลังบันทึก...</span>`;
+    }
+
+    try {
+      const payload = {
+        symbol,
+        maFanExecutionTimeframe: timeframe,
+        maFanAutoCalibrateSpreadOnSwitch: isAutoSpread,
+        ...(isAutoSpread ? {} : { maFanManualSpreadPct: Number(spreadVal) }),
+        maFanMaxBudgetUsd: budget,
+        maFanUseRatchetSl: useRatchetSl,
+        maFanCircuitBreaker: enableCircuitBreaker,
+        maFanUpsideFloor: enableUpsideFloor,
+        maFanMacroGate: macroGateMode,
+      };
+
+      const res = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      alert(`✅ นำ Config จาก Backtest ไปปรับใช้กับบอทจริง (${symbol} ${timeframe}) เรียบร้อยแล้ว!`);
+    } catch (err) {
+      alert(`❌ ไม่สามารถส่ง Config ไปยังบอทจริงได้: ${err.message}`);
+    } finally {
+      if (btnApplyConfigToLiveBot) {
+        btnApplyConfigToLiveBot.disabled = false;
+        btnApplyConfigToLiveBot.innerHTML = `<span class="btn-run-icon">📤</span> ส่งไปใช้กับบอทจริง`;
+      }
+    }
+  }
+
   // Initialize event handlers
   function initEvents() {
     btnRunBacktest.addEventListener("click", runBacktest);
@@ -1421,6 +1487,10 @@
       btnSyncLiveBotConfig.addEventListener("click", () => {
         syncLiveBotConfigToForms("main", btnSyncLiveBotConfig);
       });
+    }
+
+    if (btnApplyConfigToLiveBot) {
+      btnApplyConfigToLiveBot.addEventListener("click", applyBacktestConfigToLiveBot);
     }
 
     btnOpenHistory.addEventListener("click", () => {
@@ -1662,18 +1732,47 @@
       btn.addEventListener("click", async () => {
         const sym = btn.getAttribute("data-sym");
         if (!sym) return;
-        if (!confirm(`ต้องการสลับคู่เทรดของบอทจริงเป็น ${sym} หรือไม่?`)) return;
+
+        const timeframe = scTimeframe ? scTimeframe.value : "5m";
+        const spreadVal = scSpread ? scSpread.value : "auto";
+        const isAutoSpread = spreadVal === "auto";
+        const useRatchetSl = scSlMode ? scSlMode.value === "ratchet" : true;
+        const enableCircuitBreaker = scCircuitBreaker ? scCircuitBreaker.value === "on" : true;
+        const enableUpsideFloor = scUpsideFloor ? scUpsideFloor.value === "on" : true;
+        const macroGateMode = scMacroGate ? scMacroGate.value : "off";
+
+        const confirmMsg = `ต้องการสลับบอทจริงไปเทรด ${sym} พร้อมนำ Config ที่สแกนไปใช้งานหรือไม่?\n\n` +
+          `• คู่เหรียญ: ${sym}\n` +
+          `• Timeframe: ${timeframe}\n` +
+          `• Min Spread: ${isAutoSpread ? "Auto Calibrate ⚡" : `${spreadVal}%`}\n` +
+          `• SL Mode: ${useRatchetSl ? "Ratchet SL" : "Fixed SL"}\n` +
+          `• Circuit Breaker: ${enableCircuitBreaker ? "On" : "Off"}\n` +
+          `• Upside Floor: ${enableUpsideFloor ? "On" : "Off"}\n` +
+          `• Macro Gate: ${macroGateMode}`;
+
+        if (!confirm(confirmMsg)) return;
 
         btn.disabled = true;
         btn.textContent = "⏳ กำลังสลับ...";
         try {
-          const res = await fetch("/api/db/settings", {
+          const payload = {
+            symbol: sym,
+            maFanExecutionTimeframe: timeframe,
+            maFanAutoCalibrateSpreadOnSwitch: isAutoSpread,
+            ...(isAutoSpread ? {} : { maFanManualSpreadPct: Number(spreadVal) }),
+            maFanUseRatchetSl: useRatchetSl,
+            maFanCircuitBreaker: enableCircuitBreaker,
+            maFanUpsideFloor: enableUpsideFloor,
+            maFanMacroGate: macroGateMode,
+          };
+
+          const res = await fetch("/api/config", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ symbol: sym }),
+            body: JSON.stringify(payload),
           });
           if (res.ok) {
-            alert(`✅ สลับคู่เทรดของบอทจริงเป็น ${sym} เรียบร้อยแล้ว!`);
+            alert(`✅ สลับคู่เทรดของบอทจริงเป็น ${sym} พร้อมอัปเดต Config ที่สแกนเรียบร้อยแล้ว!`);
           } else {
             const err = await res.json().catch(() => ({}));
             alert(`❌ ไม่สามารถสลับคู่เหรียญได้: ${err.error || "เกิดข้อผิดพลาด"}`);

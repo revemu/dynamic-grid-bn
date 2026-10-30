@@ -6365,6 +6365,20 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.189` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 214. Bidirectional Sync: Apply Backtest Config to Live Bot (`v0.2.190`)
+
+1. **ระบบส่งคอนฟิกจาก Backtest กลับไปยังบอทจริง (Reverse Sync)**:
+   - **Single Backtest Form (`btnApplyConfigToLiveBot`)**: เพิ่มปุ่ม **"📤 ส่งไปใช้กับบอทจริง"** (Emerald Glow)
+     - รวบรวมค่าปัจจุบันทั้งหมดในหน้าต่าง Backtest: `symbol`, `maFanExecutionTimeframe`, `maFanAutoCalibrateSpreadOnSwitch`, `maFanManualSpreadPct`, `maFanMaxBudgetUsd`, `maFanUseRatchetSl`, `maFanCircuitBreaker`, `maFanUpsideFloor`, `maFanMacroGate`
+     - แสดง Pop-up ยืนยันระบุรายการพารามิเตอร์ที่จะถูกปรับใช้บนบอทจริง
+     - เมื่อยืนยัน จะส่ง `POST /api/config` ไปอัปเดตรันไทม์และบันทึกลง `settings.db.json` ของเซิร์ฟเวอร์จริงทันที
+   - **Market Scanner Leaderboard Action Enhancement (`.btn-action-trade`)**:
+     - อัปเกรดปุ่ม **"⚡ สลับบอท"** ในตารางผลสแกน ให้ส่งทั้งเหรียญที่ชนะเลิศ และชุดพารามิเตอร์ที่ใช้สแกนทั้งหมด (`Timeframe`, `Min Spread`, `Ratchet SL`, `Circuit Breaker`, `Upside Floor`, `Macro Gate`) ไปอัปเดตบอทจริงในคลิกเดียว
+2. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.190` ใน `package.json` และ `src/version.ts`
+
 
 
 
