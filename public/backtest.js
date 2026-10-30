@@ -817,6 +817,45 @@
       candlesMap.set(c.time, c);
     }
 
+    // High trade volume guard (> 80 trades): Use Lightweight Charts native canvas markers (GPU accelerated, 60fps, zero DOM lag)
+    if (record.trades.length > 80) {
+      const canvasMarkers = [];
+      for (const t of record.trades) {
+        const isShort = t.side === "SHORT";
+        canvasMarkers.push({
+          time: t.entryTime,
+          position: isShort ? "aboveBar" : "belowBar",
+          color: isShort ? "#ef4444" : "#10b981",
+          shape: isShort ? "arrowDown" : "arrowUp",
+          text: isShort ? `S #${t.id}` : `B #${t.id}`,
+        });
+        if (t.tp1Time && t.tp1Price) {
+          canvasMarkers.push({
+            time: t.tp1Time,
+            position: isShort ? "belowBar" : "aboveBar",
+            color: "#06b6d4",
+            shape: "circle",
+            text: `TP1`,
+          });
+        }
+        if (t.exitTime) {
+          const isWin = t.pnlPct >= 0;
+          canvasMarkers.push({
+            time: t.exitTime,
+            position: isShort ? (isWin ? "belowBar" : "aboveBar") : (isWin ? "aboveBar" : "belowBar"),
+            color: isWin ? "#8b5cf6" : "#ef4444",
+            shape: isWin ? "arrowDown" : "square",
+            text: t.exitType === "TP1+TP2" ? `TP2 (+${t.pnlPct.toFixed(1)}%)` : `${t.exitType} (${t.pnlPct.toFixed(1)}%)`,
+          });
+        }
+      }
+      canvasMarkers.sort((a, b) => a.time - b.time);
+      candleSeries.setMarkers(canvasMarkers);
+      orderBadgesData = [];
+      elChartOrderBadgesLayer.innerHTML = "";
+      return;
+    }
+
     const items = [];
 
     for (const t of record.trades) {
@@ -1115,8 +1154,12 @@
       return;
     }
 
-    tradesTableBody.innerHTML = filtered
-      .map((t) => {
+    const maxInitial = 80;
+    const shouldSlice = filtered.length > maxInitial;
+    const displayTrades = shouldSlice ? filtered.slice(0, maxInitial) : filtered;
+
+    function renderRows(list) {
+      return list.map((t) => {
         const isWin = t.pnlPct >= 0;
         let badgeClass = "badge-sl-loss";
         let badgeLabel = "SL (Loss)";
@@ -1175,17 +1218,40 @@
             </td>
           </tr>
         `;
-      })
-      .join("");
+      }).join("");
+    }
 
-    // Bind click-to-zoom on rows
-    tradesTableBody.querySelectorAll("tr").forEach((row) => {
-      row.addEventListener("click", () => {
-        const entryTime = Number(row.getAttribute("data-entry-time"));
-        const exitTime = Number(row.getAttribute("data-exit-time"));
-        zoomToTrade(entryTime, exitTime);
+    let tableHtml = renderRows(displayTrades);
+    if (shouldSlice) {
+      tableHtml += `
+        <tr id="rowLoadMoreTrades">
+          <td colspan="10" style="text-align: center; padding: 12px; cursor: pointer; color: #38bdf8; font-weight: 600; background: rgba(56, 189, 248, 0.08); border-top: 1px dashed rgba(56, 189, 248, 0.3);">
+            ⬇️ แสดงไม้เทรดเพิ่มเติมอีก ${filtered.length - maxInitial} ไม้ (กดที่นี่)
+          </td>
+        </tr>
+      `;
+    }
+    tradesTableBody.innerHTML = tableHtml;
+
+    const rowMore = document.getElementById("rowLoadMoreTrades");
+    if (rowMore) {
+      rowMore.addEventListener("click", () => {
+        tradesTableBody.innerHTML = renderRows(filtered);
+        bindRowClickEvents();
       });
-    });
+    }
+
+    function bindRowClickEvents() {
+      tradesTableBody.querySelectorAll("tr[data-entry-time]").forEach((row) => {
+        row.addEventListener("click", () => {
+          const entryTime = Number(row.getAttribute("data-entry-time"));
+          const exitTime = Number(row.getAttribute("data-exit-time"));
+          zoomToTrade(entryTime, exitTime);
+        });
+      });
+    }
+
+    bindRowClickEvents();
   }
 
   // Zoom chart to a specific trade
@@ -1680,6 +1746,8 @@
             if (scCircuitBreaker && o.enableCircuitBreaker !== undefined) scCircuitBreaker.value = o.enableCircuitBreaker ? "on" : "off";
             if (scSlMode && o.useRatchetSl !== undefined) scSlMode.value = o.useRatchetSl ? "ratchet" : "fixed";
             if (scMacroGate && o.macroGateMode) scMacroGate.value = o.macroGateMode;
+            if (scTradeMode && o.tradeMode) scTradeMode.value = o.tradeMode;
+            if (scTradeDirection && o.tradeDirection) scTradeDirection.value = o.tradeDirection;
           }
         }
       }

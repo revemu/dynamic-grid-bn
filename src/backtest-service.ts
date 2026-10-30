@@ -604,6 +604,14 @@ export class BacktestService {
       gridCapitalPct?: number;
       sniperCapitalPct?: number;
       spreadThreshold?: number | "auto";
+      useAtrAdaptiveSpread?: boolean;
+      useRatchetSl?: boolean;
+      slBufferPct?: number;
+      atrMultiplier?: number;
+      trailingPullbackPct?: number;
+      tp1Ratio?: number;
+      supervisorTimeframe?: "15m" | "1h";
+      stagnationBars?: number;
       tradeDirection?: "long" | "short" | "both";
       macroGateMode?: "off" | "noDeepBear" | "bullOnly";
       enableUpsideFloor?: boolean;
@@ -638,6 +646,14 @@ export class BacktestService {
     const enableFastCut = opts.enableFastCut !== false;
     const fastCutThresholdPct = opts.fastCutThresholdPct ?? -0.80;
     const maxSlPct = opts.maxSlPct ?? 1.80;
+    const slBufferPct = opts.slBufferPct ?? 0.25;
+    const useRatchetSl = opts.useRatchetSl !== false;
+    const useAtrAdaptive = opts.useAtrAdaptiveSpread ?? true;
+    const atrMultiplier = opts.atrMultiplier ?? 1.25;
+    const trailingPullbackPct = opts.trailingPullbackPct ?? 0.45;
+    const tp1Ratio = Math.max(0.1, Math.min(0.9, opts.tp1Ratio ?? 0.50));
+    const supervisorTf = opts.supervisorTimeframe ?? "15m";
+    const stagnationBars = opts.stagnationBars ?? 6;
 
     // Precompute indicators for Sniper Engine
     const ribbonStates = opts.precomputed?.ribbonStates ?? RibbonEngine.computeAllRibbonStates(candles);
@@ -662,6 +678,7 @@ export class BacktestService {
       qty: number;
       buyPrice: number;
       entryTime: number;
+      entryIdx: number;
       targetPrice: number;
       costQuote: number;
     }> = [];
@@ -691,13 +708,15 @@ export class BacktestService {
     const isAuto = opts.spreadThreshold === "auto" || opts.spreadThreshold === undefined;
     let rollingCal: RollingSpreadCalibrator | null = null;
     let spread = 0.45;
+    let rollingSpreadSum = 0;
+    let rollingSpreadCount = 0;
     if (isAuto) {
       rollingCal = new RollingSpreadCalibrator(symbol, candles, candlesHtf, {
-        slBufferPct: 0.15,
-        trailingPullbackPct: 0.45,
-        tp1Ratio: 0.5,
+        slBufferPct,
+        trailingPullbackPct,
+        tp1Ratio,
         initialCapital: sniperInitialCap,
-        useRatchetSl: true,
+        useRatchetSl,
         costModel: opts.costModel,
         macroGateMode,
         enableUpsideFloor,
@@ -729,7 +748,7 @@ export class BacktestService {
       const channelSpan = ceiling - floor;
 
       // HTF Regime & Ribbon Evaluation for Sniper
-      const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, "15m", c.time, 0.5);
+      const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, c.time, tp1Ratio);
       const ribbon = ribbonStates[i]!;
       const exhaustion = exhaustionStates[i]!;
       const curAtr = atrs[i] ?? (c.close * 0.003);
@@ -737,15 +756,19 @@ export class BacktestService {
       let currentRollingSpread = spread;
       if (rollingCal) {
         currentRollingSpread = rollingCal.bestSpreadAt(i);
+        // Minimum spread floor 0.40% to prevent fee erosion from micro-spreads
+        if (currentRollingSpread < 0.40) currentRollingSpread = 0.40;
+        rollingSpreadSum += currentRollingSpread;
+        rollingSpreadCount++;
       }
       const activeBaseSpread = isAuto ? currentRollingSpread : spread;
       const currentSpread = MaFanCoreRules.computeEffectiveSpread({
         baseSpread: activeBaseSpread,
-        useAtrAdaptiveSpread: true,
+        useAtrAdaptiveSpread: useAtrAdaptive,
         isAutoCalibrated: isAuto,
         curAtr,
         closePrice: c.close,
-        atrMultiplier: 1.25,
+        atrMultiplier,
       });
       const reqSpread = currentSpread * htfRegime.spreadMultiplier;
       const isCircuitActive = enableCircuitBreaker && c.time < cooldownUntilTs;
@@ -804,7 +827,7 @@ export class BacktestService {
               exitType: "TP1+TP2",
               pnlQuote,
               pnlPct,
-              holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+              holdingBars: i - lot.entryIdx,
               costQuote: lot.costQuote + exitCost,
             });
 
@@ -843,7 +866,7 @@ export class BacktestService {
               exitType: "SL",
               pnlQuote,
               pnlPct,
-              holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+              holdingBars: i - lot.entryIdx,
               costQuote: lot.costQuote + exitCost,
             });
 
@@ -893,6 +916,7 @@ export class BacktestService {
                 qty: fillQty,
                 buyPrice,
                 entryTime: c.time,
+                entryIdx: i,
                 targetPrice: sellTargets[lvlIdx] ?? (buyPrice * 1.015),
                 costQuote: invest * costPerFill,
               });
@@ -927,8 +951,8 @@ export class BacktestService {
           currentSlPrice: sniperStopLossPrice,
           currentPrice: c.close,
           curAtr,
-          slBufferPct: 0.15,
-          useRatchetSl: true,
+          slBufferPct,
+          useRatchetSl,
           positionSide: sniperActiveSide,
         });
         if (liftedSl !== null) {
@@ -950,7 +974,7 @@ export class BacktestService {
           lowestPriceSinceEntry: lowestSinceEntry,
           ribbon,
           exhaustion,
-          trailingPullbackPct: 0.45,
+          trailingPullbackPct,
           isOverbought: exhaustion.isOverboughtExhaustion,
           isOversold: exhaustion.isOversoldExhaustion,
           barsHeld,
@@ -958,7 +982,7 @@ export class BacktestService {
           tp1MinProfitPct: 0.65,
           enableFastCut,
           fastCutThresholdPct,
-          stagnationBars: 6,
+          stagnationBars,
         });
 
         if (exitDecision.action === "TP2" || exitDecision.action === "SL") {
@@ -1026,7 +1050,7 @@ export class BacktestService {
           sniperTp1Hit = true;
           sniperTp1Price = exitDecision.exitPrice;
           sniperTp1Time = c.time;
-          const halfQty = sniperHeldQty * 0.5;
+          const halfQty = sniperHeldQty * tp1Ratio;
           let partialPnl = 0;
           if (sniperActiveSide === "LONG") {
             partialPnl = (halfQty * sniperTp1Price * (1 - costPerFill)) - (halfQty * sniperEntryPrice);
@@ -1045,7 +1069,7 @@ export class BacktestService {
             position: sniperActiveSide === "LONG" ? "aboveBar" : "belowBar",
             color: "#06b6d4",
             shape: "circle",
-            text: `🎯 SNIPER TP1 (50%) @ $${sniperTp1Price.toFixed(4)} (+${sniperTp1PnlPct.toFixed(2)}%)`,
+            text: `🎯 SNIPER TP1 (${Math.round(tp1Ratio * 100)}%) @ $${sniperTp1Price.toFixed(4)} (+${sniperTp1PnlPct.toFixed(2)}%)`,
           });
         }
       }
@@ -1062,7 +1086,7 @@ export class BacktestService {
           exhaustion,
           curAtr,
           requiredSpreadPct: reqSpread,
-          slBufferPct: 0.15,
+          slBufferPct,
           macroGateMode,
           isHtfBull: !!htfRegime.isBullish,
           htfRegime,
@@ -1150,9 +1174,11 @@ export class BacktestService {
       symbol,
       timeframe,
       candleCount: candles.length,
-      spreadThreshold: 0,
-      isAutoCalibrated: false,
-      useRatchetSl: true,
+      spreadThreshold: isAuto
+        ? (rollingSpreadCount > 0 ? Number((rollingSpreadSum / rollingSpreadCount).toFixed(2)) : spread)
+        : spread,
+      isAutoCalibrated: isAuto,
+      useRatchetSl,
       macroGateMode,
       enableUpsideFloor,
       enableCircuitBreaker,
@@ -1232,6 +1258,15 @@ export class BacktestService {
         symbol: opts.symbol,
         timeframe: opts.timeframe,
         initialCapital: opts.initialCapital,
+        spreadThreshold: opts.spreadThreshold,
+        useAtrAdaptiveSpread: opts.useAtrAdaptiveSpread,
+        useRatchetSl: opts.useRatchetSl,
+        slBufferPct: opts.slBufferPct,
+        atrMultiplier: opts.atrMultiplier,
+        trailingPullbackPct: opts.trailingPullbackPct,
+        tp1Ratio: opts.tp1Ratio,
+        supervisorTimeframe: opts.supervisorTimeframe,
+        stagnationBars: opts.stagnationBars,
         costModel: opts.costModel,
         saveToHistory: opts.saveToHistory,
         tradeDirection: opts.tradeDirection,

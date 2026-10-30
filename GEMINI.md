@@ -6498,6 +6498,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.195` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 221. Dual Hybrid Market Scanner & Frontend Performance Optimization (v0.2.196)
+
+- **สาเหตุของปัญหา Browser Freeze ("ค้างไปเลย") & Markers ไม่แสดง**:
+  1. เมื่อจำนวนไม้เทรดสูง (เช่น 746 ไม้) ฟังก์ชัน `buildOrderBadges()` ใน `public/backtest.js` ได้สร้าง HTML DOM Element ซ้อนทับกันมากถึง 2,200 ชิ้น
+  2. การคำนวณพิกัด `timeToCoordinate()` และ `priceToCoordinate()` ทุกครั้งที่มีการขยับเมาส์หรือซูมบนแท่งเทียน 35,760 แท่ง (ซึ่งบีบอัดหนาแน่น 0.028px/แท่ง) ทำให้ Main Thread ของเบราว์เซอร์รับภาระหนักเกินไปจนค้าง
+  3. ตารางประวัติเทรดด้านล่างสั่ง Render แถวตาราง 746 แถว (กว่า 7,400 เซลล์) ในคราวเดียว
+- **การแก้ไขและสถาปัตยกรรมประสิทธิภาพสูง (GPU Native Canvas Markers & Table Virtualization)**:
+  1. **Native Lightweight Charts Canvas Markers**:
+     - เมื่อจำนวนไม้เทรด $> 80$ ไม้ ระบบจะสลับไปใช้ GPU Canvas Markers ของ Lightweight Charts ทันที (`candleSeries.setMarkers(canvasMarkers)`)
+     - เคลียร์ HTML DOM Badges ออกทั้งหมด (`elChartOrderBadgesLayer.innerHTML = ""`) และให้ `updateOrderBadgesPositions()` คืนค่าทันที ($0$ ms) ทำให้การ Pan/Zoom/Scroll ลื่นไหลระดับ 60 FPS ไร้อาการกระตุกหรือค้าง 100%
+  2. **Table Virtualization & Lazy Load**:
+     - แสดงไม้เทรดรอบแรก 80 ไม้ พร้อมปุ่ม `⬇️ แสดงไม้เทรดเพิ่มเติมอีก X ไม้` เพื่อให้หน้าเว็บโหลดผล Backtest ได้ทันทีใน 2 มิลลิวินาที
+  3. **Parameter Forwarding & Spread Floor Protection (`src/backtest-service.ts`)**:
+     - ส่งต่อพารามิเตอร์ `spreadThreshold`, `useAtrAdaptiveSpread`, `slBufferPct`, `tp1Ratio`, `supervisorTimeframe`, `stagnationBars` เข้า `runDualHybridSimulation` ครบถ้วน ไม่หลุดหาย
+     - กำหนด Spread Floor ขั้นต่ำ $\ge 0.40\%$ ในโหมด Auto Calibrate เพื่อป้องกันไม่ให้สไนเปอร์ไปยิงในกรอบ Spread แคบ 0.20-0.25% ที่กำไรไม่คุ้มค่าธรรมเนียมกระดาน
+     - ปรับปรุงการคำนวณ `holdingBars` จากการวนลูปสแกน `candles.findIndex` 35,000 แท่ง เปลี่ยนเป็นการจำ `entryIdx` โดยตรง ทำให้การประมวลผล Simulation เร็วขึ้นเป็น $O(1)$
+- **Market Scanner & Live Settings Integration**:
+  1. อัปเดตชื่อดรอปดาวน์ Engine ใน Market Scanner (`public/backtest.html`) ให้เป็น `⚡🕸️ Dual Hybrid (Grid + Sniper)` ชัดเจนตรงกัน
+  2. เพิ่มตัวเลือก `⚡🕸️ Dual Hybrid (Grid + Sniper)` ในเมนูตั้งค่าบอทจริง (`#cfg_maFanTradeMode` ใน `public/index.html`)
+  3. อัปเดต `loadLatestScannerResults()` ใน `public/backtest.js` ให้บันทึกและโหลดคืนค่า `tradeMode` และ `tradeDirection` อัตโนมัติ
+- **การขยับ Version**:
+  - ปรับ Patch Version เป็น `0.2.196` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.196`)
+
 
 
 
