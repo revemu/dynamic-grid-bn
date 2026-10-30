@@ -690,6 +690,7 @@ export class BacktestService {
     // Sniper Subsystem State
     let sniperCash = sniperInitialCap;
     let sniperHeldQty = 0;
+    let sniperInitialInvest = 0;
     let sniperEntryPrice = 0;
     let sniperInitialSlPrice = 0;
     let sniperStopLossPrice = 0;
@@ -698,6 +699,8 @@ export class BacktestService {
     let sniperTp1Price = 0;
     let sniperTp1Time = 0;
     let sniperTp1PnlPct = 0;
+    let sniperTp1Proceeds = 0;
+    let sniperTp1Cost = 0;
     let sniperEntryIdx = 0;
     let highestSinceEntry = 0;
     let highestSinceTp1 = 0;
@@ -995,17 +998,22 @@ export class BacktestService {
         if (exitDecision.action === "TP2" || exitDecision.action === "SL") {
           const exitPrice = exitDecision.exitPrice;
           tradeCounter++;
-          let pnlQuote = 0;
-          if (sniperActiveSide === "LONG") {
-            pnlQuote = (sniperHeldQty * exitPrice * (1 - costPerFill)) - (sniperHeldQty * sniperEntryPrice);
-          } else {
-            pnlQuote = (sniperHeldQty * sniperEntryPrice) - (sniperHeldQty * exitPrice * (1 + costPerFill));
-          }
-          const invest = sniperHeldQty * sniperEntryPrice;
-          const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
-          sniperCash += (invest + pnlQuote);
+          let secondHalfProceeds = 0;
           const exitCost = sniperHeldQty * exitPrice * costPerFill;
-          totalFeesQuote += sniperTradeCost + exitCost;
+
+          if (sniperActiveSide === "LONG") {
+            secondHalfProceeds = sniperHeldQty * exitPrice * (1 - costPerFill);
+          } else {
+            secondHalfProceeds = (sniperHeldQty * sniperEntryPrice) + (sniperHeldQty * (sniperEntryPrice - exitPrice) * (1 - costPerFill));
+          }
+
+          const totalProceeds = sniperTp1Proceeds + secondHalfProceeds;
+          const totalInvest = sniperInitialInvest;
+          const pnlQuote = totalProceeds - totalInvest;
+          const pnlPct = totalInvest > 0 ? (pnlQuote / totalInvest) * 100 : 0;
+          sniperCash += secondHalfProceeds;
+          const tradeTotalCost = sniperTradeCost + sniperTp1Cost + exitCost;
+          totalFeesQuote += tradeTotalCost;
 
           if (pnlQuote >= 0) { grossProfit += pnlQuote; wins++; }
           else { grossLoss += Math.abs(pnlQuote); losses++; }
@@ -1031,7 +1039,7 @@ export class BacktestService {
             pnlQuote,
             pnlPct,
             holdingBars: barsHeld,
-            costQuote: sniperTradeCost + exitCost,
+            costQuote: tradeTotalCost,
           });
 
           markers.push({
@@ -1054,19 +1062,26 @@ export class BacktestService {
           lastSniperExitBar = i;
           sniperHeldQty = 0;
           sniperTp1Hit = false;
+          sniperTp1Proceeds = 0;
+          sniperTp1Cost = 0;
         } else if (exitDecision.action === "TP1" && !sniperTp1Hit) {
           sniperTp1Hit = true;
           sniperTp1Price = exitDecision.exitPrice;
           sniperTp1Time = c.time;
           const halfQty = sniperHeldQty * tp1Ratio;
+          let tp1Proceeds = 0;
           let partialPnl = 0;
           if (sniperActiveSide === "LONG") {
-            partialPnl = (halfQty * sniperTp1Price * (1 - costPerFill)) - (halfQty * sniperEntryPrice);
+            tp1Proceeds = halfQty * sniperTp1Price * (1 - costPerFill);
+            partialPnl = tp1Proceeds - (halfQty * sniperEntryPrice);
           } else {
-            partialPnl = (halfQty * sniperEntryPrice) - (halfQty * sniperTp1Price * (1 + costPerFill));
+            tp1Proceeds = (halfQty * sniperEntryPrice) + (halfQty * (sniperEntryPrice - sniperTp1Price) * (1 - costPerFill));
+            partialPnl = tp1Proceeds - (halfQty * sniperEntryPrice);
           }
+          sniperTp1Proceeds = tp1Proceeds;
+          sniperTp1Cost = halfQty * sniperTp1Price * costPerFill;
           sniperTp1PnlPct = (partialPnl / (halfQty * sniperEntryPrice)) * 100;
-          sniperCash += (halfQty * sniperEntryPrice + partialPnl);
+          sniperCash += tp1Proceeds;
           sniperHeldQty -= halfQty;
           highestSinceTp1 = c.high;
           lowestSinceTp1 = c.low;
@@ -1108,13 +1123,14 @@ export class BacktestService {
           sniperEntryPrice = modularDecision.entryPrice;
           sniperInitialSlPrice = modularDecision.stopLossPrice;
           sniperStopLossPrice = modularDecision.stopLossPrice;
-          sniperEntryPrice = modularDecision.entryPrice;
-          sniperStopLossPrice = modularDecision.stopLossPrice;
           sniperEntryIdx = i;
           const invest = sniperInitialCap;
+          sniperInitialInvest = invest;
           sniperHeldQty = (invest / sniperEntryPrice) * (1 - costPerFill);
           sniperCash -= invest;
           sniperTradeCost = invest * costPerFill;
+          sniperTp1Proceeds = 0;
+          sniperTp1Cost = 0;
           highestSinceEntry = c.high;
           lowestSinceEntry = c.low;
           highestSinceTp1 = 0;
@@ -1147,7 +1163,11 @@ export class BacktestService {
     // End of simulation liquidation
     const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
     const endGridVal = heldLots.reduce((s, l) => s + (l.qty * lastPrice * (1 - costPerFill)), 0);
-    const endSniperVal = sniperHeldQty > 0 ? sniperHeldQty * lastPrice * (1 - costPerFill) : 0;
+    const endSniperVal = sniperHeldQty > 0
+      ? (sniperActiveSide === "LONG"
+          ? sniperHeldQty * lastPrice * (1 - costPerFill)
+          : (sniperHeldQty * sniperEntryPrice) + (sniperHeldQty * (sniperEntryPrice - lastPrice) * (1 - costPerFill)))
+      : 0;
     const finalCapital = gridCash + endGridVal + sniperCash + endSniperVal;
     const netPnlQuote = finalCapital - initialCapital;
     const netPnlPct = (netPnlQuote / initialCapital) * 100;

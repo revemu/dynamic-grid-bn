@@ -6580,6 +6580,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **การขยับ Version**:
   - ปรับ Patch Version เป็น `0.2.198` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.198`)
 
+---
+
+## 224. Dual Hybrid Sniper PnL Accounting Fix & Accurate Lifecycle Win Rate (v0.2.199)
+
+- **สาเหตุของปัญหา**:
+  - ใน `runDualHybridSimulation` (`src/backtest-service.ts`):
+    - เมื่อไม้สไนเปอร์ชนเป้า `TP1` (ขาย 50% ทำกำไร +0.8% ถึง +1.0%) ตัวจำลองได้ทำการตัด `sniperHeldQty -= halfQty` และนำเงินสดเข้ากระเป๋า
+    - แต่เมื่อครึ่งหลัง (50% ที่เหลือ) ชน `TP2` หรือหลุดกลับมาชน `Breakeven Stop Loss` (`exitPrice = sniperEntryPrice`):
+      - โค้ดเดิมกลับคำนวณกำไร (`pnlQuote`) จากปริมาณที่เหลือของครึ่งหลังเท่านั้น
+      - ส่งผลให้กำไรของครึ่งแรกจาก TP1 หายไปจากบันทึก `trades.push` โดยสิ้นเชิง
+      - และเมื่อครึ่งหลังขายที่ราคาคุ้มทุน (0% gross) เมื่อหักค่าธรรมเนียมกระดาน (-0.09%) มันจึงติดลบ `-$0.017`
+      - ระบบจึงบันทึกไม้นั้นว่าเป็น **"ไม้แพ้ (Loss)"** (`losses++`) ทั้งที่แท้จริงแล้วไม้ทั้งไม้นั้นได้กำไรสุทธิเป็นบวก (Net Profit) จากการชน TP1 มาแล้ว
+      - ผู้ใช้จึงเห็นว่าสไนเปอร์ "เทรดขาดทุนเกือบทุกไม้ (แพ้ 46 จาก 49 ไม้)"
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. บันทึกและสะสม `sniperTp1Proceeds` และ `sniperTp1Cost` เมื่อชน TP1
+  2. เมื่อครึ่งหลังปิดออเดอร์ (`TP2` หรือ `SL`):
+     - คำนวณรายรับรวมทั้งไม้: `totalProceeds = sniperTp1Proceeds + secondHalfProceeds`
+     - คำนวณกำไรสุทธิแท้จริง: `pnlQuote = totalProceeds - sniperInitialInvest`
+     - รวมค่าธรรมเนียมทั้งวงจร: `tradeTotalCost = sniperTradeCost + sniperTp1Cost + exitCost`
+     - หาก `pnlQuote >= 0` ให้บันทึกเป็นไม้ชนะ (`wins++`) อย่างถูกต้อง 100%
+  3. รองรับการคำนวณมูลค่าคงเหลือปลายทาง (End-of-sim Liquidation) สำหรับทั้ง Long และ Two-Way Short ฝั่ง Futures อย่างแม่นยำ
+- **การขยับ Version**:
+  - ปรับ Patch Version เป็น `0.2.199` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.199`)
+
+
 
 
 
