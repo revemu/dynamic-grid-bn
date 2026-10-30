@@ -679,6 +679,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       enableLhDynamicEscape: this.cfg.enableLhDynamicEscape !== false,
       enableTwoStageCutLoss: this.cfg.enableTwoStageCutLoss !== false,
       cutLossStage2Multiplier: this.cfg.cutLossStage2Multiplier ?? 2.0,
+      enableBaseConfirmationFilter: this.cfg.enableBaseConfirmationFilter !== false,
       strategyType: (this.cfg as any).strategyType || this.strategyType || "dynamic_grid",
       swingMinRiskReward: (this.cfg as any).swingMinRiskReward ?? 2.0,
       swingStopLossBufferPct: (this.cfg as any).swingStopLossBufferPct ?? 0.5,
@@ -890,6 +891,15 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         if (key === "maxActiveMakerBuys") {
           this.cfg.maxActiveMakerBuys = Math.max(1, Math.min(5, parseInt(val, 10) || 2));
           this.needsBuyRebalance = true;
+          continue;
+        }
+        if (key === "enableBaseConfirmationFilter") {
+          this.cfg.enableBaseConfirmationFilter = Boolean(val);
+          if (!this.cfg.enableBaseConfirmationFilter) {
+            this.waitingForHigherLow = false;
+            this.isDowntrendDropPaused = false;
+            this.needsBuyRebalance = true;
+          }
           continue;
         }
         if (key === "buyLevelPcts" && Array.isArray(val)) {

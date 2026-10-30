@@ -6664,7 +6664,9 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ใน `src/strategy/index.ts`: ส่งแฟล็กเข้า `dowEngine.getStructure()` และยกเว้น `isGated` เมื่อ `enableBaseConfirmationFilter === false`
      - ใน `src/strategy/buy-sync.ts`: ปลดล็อก `isLlContinuationBreakdown` ให้วางไม้ซื้อตามเส้นกริดได้สมบูรณ์
 - **การขยับ Version**:
-  - ปรับ Patch Version เป็น `0.2.201` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.201`)
+  - ปรับ Patch Version เป็น `0.2.202` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.202`)
+  - อัปเดต `getRuntimeConfig()` ใน `src/strategy/index.ts` ให้คืนค่า `enableBaseConfirmationFilter` ผ่าน API `/api/config`
+  - เพิ่มการรีเซ็ต `waitingForHigherLow = false` และ `isDowntrendDropPaused = false` อัตโนมัติใน `updateRuntimeSettings()` เมื่อสลับเป็น Pure Grid
 
 
 
