@@ -171,6 +171,7 @@ export class MaFanCoreRules {
     enableUpsideFloor?: boolean;
     enableNoFallingKnife?: boolean;
     circuitBreakerActive?: boolean;
+    maxSlPct?: number;
   }): EntryDecision {
     const {
       candles,
@@ -212,7 +213,13 @@ export class MaFanCoreRules {
     const recentLows = candles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map((x) => x.low);
     const swingLow = recentLows.length > 0 ? Math.min(...recentLows) : closePrice;
     const slDist = Math.max(swingLow * (slBufferPct / 100), curAtr * 1.0);
-    const stopLossPrice = swingLow - slDist;
+    const rawStopLossPrice = swingLow - slDist;
+
+    // Hard Cap on Initial SL: Max SL distance cannot exceed maxSlPct (default: 1.80%)
+    // Guarantees Asymmetric Risk:Reward (losses never blow out to -3.0% to -4.5%)
+    const maxSlPct = opts.maxSlPct ?? 1.80;
+    const stopLossFloor = closePrice * (1 - maxSlPct / 100);
+    const stopLossPrice = Math.max(rawStopLossPrice, stopLossFloor);
 
     const rrCalc = MaFanCoreRules.computeRewardRisk({
       entryPrice: closePrice,
@@ -535,7 +542,11 @@ export class MaFanCoreRules {
     stopLossPrice: number;
     tp1Filled: boolean;
     highestPriceSinceTp1: number;
+    highestPriceSinceEntry?: number;
     ribbon: RibbonState;
+    prevRibbon?: RibbonState;
+    exhaustion?: ExhaustionState;
+    prevExhaustion?: ExhaustionState;
     trailingPullbackPct: number;
     breakevenFeeBufferPct?: number;
     isOverbought?: boolean;
@@ -544,6 +555,9 @@ export class MaFanCoreRules {
     cushionMode?: CushionMode;
     cushionThresholdPct?: number;
     tp1MinProfitPct?: number;
+    enableFastCut?: boolean;
+    fastCutThresholdPct?: number;
+    stagnationBars?: number;
   }): ExitDecision {
     const {
       highPrice,
@@ -553,11 +567,18 @@ export class MaFanCoreRules {
       stopLossPrice,
       tp1Filled,
       highestPriceSinceTp1,
+      highestPriceSinceEntry,
       ribbon,
+      prevRibbon,
+      exhaustion,
+      prevExhaustion,
       trailingPullbackPct,
       breakevenFeeBufferPct,
       isOverbought,
       barsHeld,
+      enableFastCut,
+      fastCutThresholdPct,
+      stagnationBars,
     } = opts;
 
     const beFeeBuffer = (breakevenFeeBufferPct ?? 0.05) / 100;
@@ -570,6 +591,40 @@ export class MaFanCoreRules {
         exitPrice: stopLossPrice,
         reason: tp1Filled ? "Breakeven Stop Loss Triggered" : "Stop Loss Triggered",
       };
+    }
+
+    // ── Priority 1.5: Fast Technical Invalidation & Stagnation Cut (Before TP1) ──
+    // Asymmetric Risk:Reward protection: cut fast when short-term momentum breaks down
+    if (!tp1Filled && enableFastCut !== false && barsHeld !== undefined && barsHeld >= 3) {
+      const curPnl = entryPrice > 0 ? ((closePrice - entryPrice) / entryPrice) * 100 : 0;
+      const hookDown = prevRibbon && ribbon.ema4 < prevRibbon.ema4;
+      const closeBelowEma4 = closePrice < ribbon.ema4;
+      const macdHistDown = exhaustion && prevExhaustion && exhaustion.macd.hist < prevExhaustion.macd.hist;
+      const fastCutThreshold = fastCutThresholdPct ?? -0.80;
+
+      // Rule A: Momentum Collapse Cut
+      if (closeBelowEma4 && hookDown && macdHistDown && curPnl <= fastCutThreshold) {
+        return {
+          action: "SL",
+          exitPrice: closePrice,
+          reason: `Fast Technical Cut: Momentum Collapse (Close < EMA4 & Hook Down & MACD Red @ ${curPnl.toFixed(2)}%)`,
+        };
+      }
+
+      // Rule B: Stagnation Cut (Held >= 6 bars, never popped to +0.70%, closed below EMA4, negative PnL)
+      const maxPop = highestPriceSinceEntry ? ((highestPriceSinceEntry - entryPrice) / entryPrice) * 100 : 0;
+      if (
+        barsHeld >= (stagnationBars ?? 6) &&
+        maxPop < 0.70 &&
+        closeBelowEma4 &&
+        curPnl < 0
+      ) {
+        return {
+          action: "SL",
+          exitPrice: closePrice,
+          reason: `Fast Stagnation Cut: Failed to pop +0.70% in ${barsHeld} bars (Close < EMA4 @ ${curPnl.toFixed(2)}%)`,
+        };
+      }
     }
 
     // ── Priority 2: TP2 Check (if TP1 was already filled) ───────────────────

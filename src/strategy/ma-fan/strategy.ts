@@ -297,8 +297,14 @@ export class MaFanStrategy {
           }
         }
 
-        // Evaluate Exits (Priority: TP2 -> SL -> TP1 & Trapped Rescue)
+        // Update highest price seen since entry (for stagnation exit)
+        pos.highestPriceSinceEntry = Math.max(pos.highestPriceSinceEntry ?? pos.entryPrice, refPrice);
+
+        // Evaluate Exits (Priority: TP2 -> SL / Fast Cut -> TP1 & Trapped Rescue)
         const exhaustion = ExhaustionEngine.evaluate(this.candles);
+        const prevRibbon = this.candles.length >= 2 ? RibbonEngine.computeRibbonState(this.candles.slice(0, -1)) : undefined;
+        const prevExhaustion = this.candles.length >= 2 ? ExhaustionEngine.evaluate(this.candles.slice(0, -1)) : undefined;
+
         const exitDecision = MaFanCoreRules.evaluateExits({
           highPrice: refPrice,
           lowPrice: refPrice,
@@ -307,13 +313,20 @@ export class MaFanStrategy {
           stopLossPrice: pos.stopLossPrice,
           tp1Filled: pos.tp1Filled,
           highestPriceSinceTp1: pos.highestPriceSinceTp1,
+          highestPriceSinceEntry: pos.highestPriceSinceEntry,
           ribbon,
+          prevRibbon,
+          exhaustion,
+          prevExhaustion,
           trailingPullbackPct: this.config.trailingPullbackPct,
           breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
           isOverbought: exhaustion.isOverboughtExhaustion,
           barsHeld,
           isHtfBull: !!htfRegime.isBullish,
           cushionMode: this.config.bullCushionEnabled ? "htfBull" : "off",
+          enableFastCut: this.config.fastTechnicalCutEnabled !== false,
+          fastCutThresholdPct: this.config.fastCutThresholdPct ?? -0.80,
+          stagnationBars: this.config.stagnationBars ?? 6,
         });
 
         // A. Take Profit 2 (Macro Runner / Trailing Stop)

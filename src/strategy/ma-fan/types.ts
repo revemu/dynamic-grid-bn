@@ -74,6 +74,10 @@ export interface MaFanConfig {
   macroGateMode?: "off" | "noDeepBear" | "bullOnly"; // Macro HTF Trend Gate
   upsideFloorEnabled?: boolean; // Require Spread >= 0.35% and Upside to EMA25 >= 0.45%
   circuitBreakerEnabled?: boolean; // 2 SLs within 12 hours -> 6-hour pause
+  maxSlPct?: number; // Hard cap on initial SL distance (default: 1.80%)
+  fastTechnicalCutEnabled?: boolean; // Early exit on momentum breakdown (default: true)
+  fastCutThresholdPct?: number; // PnL threshold for fast cut (default: -0.80%)
+  stagnationBars?: number; // Bars held without reaching +0.70% (default: 6)
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;
   startPaused?: boolean;
@@ -108,6 +112,7 @@ export interface MaFanPosition {
   tp1Price?: number;
   tp1Time?: number;
   highestPriceSinceTp1: number;
+  highestPriceSinceEntry?: number;
   htfRegimeAtEntry: HtfRegime;
   fanSpreadAtEntry: number;
 }

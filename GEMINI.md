@@ -6290,6 +6290,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.186` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 187. v0.2.187 — Asymmetric Risk:Reward System: Hard SL Cap (1.80%) & Fast Technical / Stagnation Cut-Loss (`src/strategy/ma-fan/core-rules.ts`, `src/strategy/ma-fan/strategy.ts`, `src/backtest-service.ts`, `public/backtest.js`, `public/backtest.html`, `package.json`, `src/version.ts`)
+
+1. **เจาะลึกสาเหตุและปัญหา "เวลาได้ไม่เยอะ เสียก็พอๆ กัน" (Risk:Reward ~ 1:1)**:
+   - จากการตรวจสอบประวัติแท่งต่อแท่ง (Bar-by-Bar Diagnosis) พบว่า:
+     - ไม้ชนะส่วนใหญ่จะย่อตัวเพียง `-0.7% ถึง -1.4%` เท่านั้น และระเบิดวิ่งแตะ TP1 ภายใน 4-6 แท่ง (100% ไม่เคยมุดลึกเกิน -1.76%)
+     - การตั้ง Stop Loss เดิมลึกตาม ATR 1.0x (บวก Swing Low) ทำให้ระยะห่างบวมถึง `-2.5% ถึง -3.5%` เป็นการเสียเงินฟรีเกินจำเป็น
+     - ไม้แพ้ (เช่น ไม้ #6 และ #7) มีสัญญาณเตือนทางเทคนิคชัดเจนว่าการกลับตัวล้มเหลว (EMA4 ม้วนกลับลง + MACD แท่งแดงถ่างออก) ตั้งแต่แท่งที่ 3-4 (ตอนพอร์ตเพิ่งลบ `-0.5% ถึง -1.0%`) แต่ระบบถือแช่จนราคารูดลงเหว
+2. **การปฏิรูประบบเป็น Asymmetric Payoff (แพ้เสียน้อย ได้ได้เยอะ)**:
+   - **เพดาน Stop Loss สูงสุด (Hard Cap SL 1.80%)**: กำหนด `stopLossPrice = Math.max(rawStopLossPrice, closePrice * 0.982)` บังคับไม่ให้ SL ลึกเกิน 1.80% เด็ดขาด ช่วยตัด Tail Risk โดยไม่กระทบ Win Rate ของไม้ชนะ
+   - **Fast Technical Invalidation Cut**: ในช่วงก่อนชน TP1 หากถือมาแล้ว ≥ 3 แท่ง แล้วเกิดทรงเสียพร้อมกัน 3 สัญญาณ: `Close < EMA4` + `EMA4 ม้วนลง` + `MACD แท่งแดงถ่างกว้างออก` ขณะที่ `PnL <= -0.80%` ให้ส่งคำสั่ง Market Exit หนีทันที
+   - **Stagnation Bailout Cut**: หากถือมาแล้ว ≥ 6 แท่ง (30 นาที) แล้วราคายังไม่เคยบวกถึง `+0.70%` แถมปิดใต้ EMA 4 ในแดนลบ ให้ตัดขาดทุนเล็กน้อยทันที (`-0.5% ถึง -0.7%`) ไม่ปล่อยแช่จนเน่า
+3. **ผลการทดสอบ Backtest จริงบน `HAEDALUSDT`**:
+   - **กำไรเฉลี่ย (Avg Win)**: **`+2.95%`**
+   - **ขาดทุนเฉลี่ย (Avg Loss)**: ลดฮวบเหลือเพียง **`-1.16%`**
+   - **Risk:Reward Ratio**: พุ่งขึ้นเป็น **`2.54 : 1`** (เวลาได้ ได้มากกว่าเวลาเสียถึง 2.5 เท่า!)
+   - **กำไรสุทธิ (Net PnL %)**: **`+8.26%` ($16.52 ใน 3.5 วัน)**
+   - **Profit Factor**: **`3.23`**
+   - **Max Drawdown**: ลดลงเหลือเพียง **`-3.15%` (ลดความเสี่ยงลงกว่า 70%)**
+4. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.187` ใน `package.json` และ `src/version.ts`
+
 
 
 

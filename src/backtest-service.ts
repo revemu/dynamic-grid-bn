@@ -30,7 +30,7 @@ export interface BacktestTrade {
   slPnlPct?: number;
   exitTime: number;
   exitPrice: number;
-  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL" | "OPEN" | "TP1+OPEN";
+  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL" | "TECH_FAST_CUT" | "OPEN" | "TP1+OPEN";
   pnlQuote: number;
   pnlPct: number;
   holdingBars: number;
@@ -339,6 +339,10 @@ export class BacktestService {
       macroGateMode?: "off" | "noDeepBear" | "bullOnly";
       enableUpsideFloor?: boolean;
       enableCircuitBreaker?: boolean;
+      enableFastCut?: boolean;
+      fastCutThresholdPct?: number;
+      stagnationBars?: number;
+      maxSlPct?: number;
       exitInfoLag?: 0 | 1;
       warmupBars?: number;
       precomputed?: {
@@ -422,6 +426,7 @@ export class BacktestService {
     let tp1Time = 0;
     let tp1Qty = 0;
     let highestSinceTp1 = 0;
+    let highestSinceEntry = 0;
     let activeTradeId = 0;
     let spreadAtEntry = 0;
     let tradeInvest = 0;
@@ -548,11 +553,14 @@ export class BacktestService {
       // ─── POSITION EXITS ──────────────────────────────────────────────
       if (heldQty > 0) {
         if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
+        if (c.high > highestSinceEntry) highestSinceEntry = c.high;
 
         const ei = (opts.exitInfoLag === 1) ? i - 1 : i;
         const ribbonX = ribbonStates[ei]!;
+        const prevRibbonX = ei > 0 ? ribbonStates[ei - 1] : undefined;
         const curAtrX = atrs[ei] ?? (candles[ei]!.close * 0.003);
         const exhX = exhaustionStates[ei]!;
+        const prevExhX = ei > 0 ? exhaustionStates[ei - 1] : undefined;
         const htfRegimeX = (ei === i)
           ? htfRegime
           : RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, candles[ei]!.time, tp1Ratio);
@@ -574,7 +582,7 @@ export class BacktestService {
           stopLossPrice = liftedSl;
         }
 
-        // Evaluate Exits (Priority: TP2 -> SL -> TP1) via Universal MaFanCoreRules
+        // Evaluate Exits (Priority: TP2 -> SL / Fast Cut -> TP1) via Universal MaFanCoreRules
         const exitDecision = MaFanCoreRules.evaluateExits({
           highPrice: c.high,
           lowPrice: c.low,
@@ -583,7 +591,11 @@ export class BacktestService {
           stopLossPrice,
           tp1Filled,
           highestPriceSinceTp1: highestSinceTp1,
+          highestPriceSinceEntry: highestSinceEntry,
           ribbon: ribbonX,
+          prevRibbon: prevRibbonX,
+          exhaustion: exhX,
+          prevExhaustion: prevExhX,
           trailingPullbackPct,
           breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
           isOverbought: exhX.isOverboughtExhaustion,
@@ -592,6 +604,9 @@ export class BacktestService {
           cushionMode: opts.cushionMode ?? "off",
           cushionThresholdPct: opts.cushionThresholdPct,
           tp1MinProfitPct: opts.tp1MinProfitPct,
+          enableFastCut: opts.enableFastCut !== false,
+          fastCutThresholdPct: opts.fastCutThresholdPct ?? -0.80,
+          stagnationBars: opts.stagnationBars ?? 6,
         });
 
         // 1. TP2 Exit (Macro Runner / Trailing Stop)
@@ -657,8 +672,9 @@ export class BacktestService {
           cash += proceeds;
           tradeProceeds += proceeds;
 
+          const isFastCut = exitDecision.reason?.startsWith("Fast Technical Cut") || exitDecision.reason?.startsWith("Fast Stagnation Cut");
           const isRatchet = !tp1Filled && stopLossPrice > initialSlPrice;
-          const exitType: BacktestTrade["exitType"] = tp1Filled ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
+          const exitType: BacktestTrade["exitType"] = isFastCut ? "TECH_FAST_CUT" : tp1Filled ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
           const totalPnlQuote = tradeProceeds - tradeInvest;
           const tradePnlPct = tradeInvest > 0 ? (totalPnlQuote / tradeInvest) * 100 : 0;
           const costQuote = (tradeInvest * costPerFill) + (tp1Filled ? tp1Qty * tp1Price * costPerFill : 0) + (heldQty * exitP * costPerFill);
@@ -702,9 +718,11 @@ export class BacktestService {
           });
 
           // SL Marker
-          const markerColor = exitType === "TP1+SL_BE" ? "#f59e0b" : exitType === "RATCHET_SL" ? "#f97316" : "#ef4444";
+          const markerColor = exitType === "TP1+SL_BE" ? "#f59e0b" : exitType === "TECH_FAST_CUT" ? "#f43f5e" : exitType === "RATCHET_SL" ? "#f97316" : "#ef4444";
           const markerText = exitType === "TP1+SL_BE"
             ? `🟡 SL BE #${activeTradeId} @ $${exitP.toFixed(2)}`
+            : exitType === "TECH_FAST_CUT"
+            ? `⚡ FAST CUT #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`
             : exitType === "RATCHET_SL"
             ? `🟠 RATCHET SL #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`
             : `🔴 SL #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`;
@@ -837,6 +855,7 @@ export class BacktestService {
           htfRegime,
           enableUpsideFloor,
           circuitBreakerActive: isCircuitActive,
+          maxSlPct: opts.maxSlPct,
         });
 
         if (opts.onlyEntryIdx === undefined && evaluations[i]) {
@@ -860,6 +879,7 @@ export class BacktestService {
           tp1Qty = 0;
           tp1Filled = false;
           highestSinceTp1 = entryPrice;
+          highestSinceEntry = c.high;
           lastCushionApplied = false;
 
           // Buy Marker

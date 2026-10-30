@@ -885,6 +885,17 @@
           badgeType: "SL",
           trade: t,
         });
+      } else if (t.exitType === "TECH_FAST_CUT") {
+        items.push({
+          tradeId: t.id,
+          action: "TECH_FAST_CUT",
+          text: "CUT",
+          time: t.exitTime,
+          price: t.exitPrice,
+          cssClass: "badge-sl-ratchet",
+          badgeType: "TECH_FAST_CUT",
+          trade: t,
+        });
       }
       // Note: for "OPEN" and "TP1+OPEN" trades, entry badge B (and TP1 if filled) are already added above
     }
@@ -937,7 +948,7 @@
       }
 
       const candle = candlesMap.get(item.time);
-      const isBelow = item.action === "BUY" || item.action === "SL" || item.action === "RATCHET_SL" || item.action === "SL_BE";
+      const isBelow = item.action === "BUY" || item.action === "SL" || item.action === "RATCHET_SL" || item.action === "SL_BE" || item.action === "TECH_FAST_CUT";
 
       let refPrice = item.price;
       if (candle) {
@@ -1111,6 +1122,9 @@
         } else if (t.exitType === "RATCHET_SL") {
           badgeClass = "badge-ratchet-sl";
           badgeLabel = "🛡️ Ratchet SL";
+        } else if (t.exitType === "TECH_FAST_CUT") {
+          badgeClass = "badge-ratchet-sl";
+          badgeLabel = "⚡ Fast Cut";
         } else if (t.exitType === "OPEN") {
           badgeClass = "badge-open";
           badgeLabel = "🟢 ถือค้าง (OPEN)";
