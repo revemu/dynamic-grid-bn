@@ -134,6 +134,14 @@
         </div>
 
         <div class="bt-input-group">
+          <label>ตัวกรองฐาน (HL Filter)</label>
+          <select id="btBaseConfirmation" title="ตัวกรองรอสร้างฐาน HL: ปิด = Pure Grid ช้อนซื้อทันทีแบบ Backtest | เปิด = บอทจริง พักการซื้อเมื่อหลุด Low เดิม">
+            <option value="off" selected>⚡ Off (Pure Grid - แนะนำสวิง)</option>
+            <option value="on">🛡️ On (รอสร้างฐาน HL - บอทจริง)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
           <label>โหมดกลยุทธ์ (Engine)</label>
           <select id="btTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
             <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
@@ -415,6 +423,13 @@
               </select>
             </div>
             <div class="scanner-ctrl-group">
+              <label>HL Filter</label>
+              <select id="scBaseConfirmation" title="ตัวกรองรอสร้างฐาน HL: ปิด = Pure Grid | เปิด = รอสร้างฐาน HL">
+                <option value="off" selected>⚡ Off (Pure Grid)</option>
+                <option value="on">🛡️ On (รอฐาน HL)</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
               <label>Engine</label>
               <select id="scTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
                 <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
@@ -487,6 +502,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.2.199"></script>
+  <script src="backtest.js?v=0.2.200"></script>
 </body>
 </html>

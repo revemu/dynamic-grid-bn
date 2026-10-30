@@ -51,6 +51,7 @@ export class DashboardServer {
     usdt: string[];
     usdc: string[];
   } | null = null;
+  private currentScanProgress: any = null;
 
   constructor(private readonly opts: DashboardServerOptions) {
     this.db = opts.db || getDatabase();
@@ -787,6 +788,10 @@ export class DashboardServer {
           }
           const costModel = { feePctPerSide, slippagePctPerFill };
 
+          const hlMode = parsed.enableBaseConfirmationFilter !== undefined ? Boolean(parsed.enableBaseConfirmationFilter) : false;
+          const hlModeStr = hlMode ? "ON (รอสร้างฐาน HL - บอทจริง)" : "OFF (Pure Grid - ดักเก็บทุกรอบ)";
+          console.log(`[Backtest] 🚀 Running Backtest: ${symbol} (${timeframe}, ${limit} bars, Engine: ${parsed.tradeMode || "dip_hunter"}, HL Filter: ${hlModeStr})...`);
+
           const [candles, candlesHtf] = await Promise.all([
             BacktestService.fetchBinanceCandles(symbol, timeframe, fetchLimit),
             BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, htfLimit).catch(() => []),
@@ -819,9 +824,12 @@ export class DashboardServer {
             maxSlPct,
             tradeMode: parsed.tradeMode || (liveCfg.maFanTradeMode as any) || "dip_hunter",
             tradeDirection: parsed.tradeDirection || (liveCfg.maFanTradeDirection as any) || "long",
+            enableBaseConfirmationFilter: hlMode,
             warmupBars: actualWarmup,
             trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
           });
+
+          console.log(`[Backtest] ✅ Simulation complete for ${symbol}: Net PnL ${(result.summary.netPnlPct >= 0 ? '+' : '')}${result.summary.netPnlPct.toFixed(2)}% | Win Rate ${result.summary.winRate.toFixed(1)}% | ${result.summary.totalTrades} trades`);
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: true, ...result }));
@@ -830,6 +838,12 @@ export class DashboardServer {
           res.end(JSON.stringify({ success: false, error: (e as Error).message }));
         }
       });
+      return;
+    }
+
+    if (pathname === "/api/backtest/scan/progress" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, progress: this.currentScanProgress }));
       return;
     }
 
@@ -852,6 +866,7 @@ export class DashboardServer {
           const fastCutThresholdPct = parsed.fastCutThresholdPct !== undefined ? Number(parsed.fastCutThresholdPct) : -0.80;
           const stagnationBars = parsed.stagnationBars !== undefined ? Number(parsed.stagnationBars) : 6;
           const maxSlPct = parsed.maxSlPct !== undefined ? Number(parsed.maxSlPct) : 1.80;
+          const enableBaseConfirmationFilter = parsed.enableBaseConfirmationFilter !== undefined ? Boolean(parsed.enableBaseConfirmationFilter) : false;
 
           let scanCostModel: { feePctPerSide: number; slippagePctPerFill: number } | undefined;
           if (parsed.feeTier === "zero" || parsed.feeTier === "none") {
@@ -861,6 +876,10 @@ export class DashboardServer {
           } else if (parsed.feeTier === "bnb") {
             scanCostModel = { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
           }
+
+          this.currentScanProgress = { index: 0, total: 0, symbol: "Starting...", candlesCount: 0 };
+          const hlModeStr = enableBaseConfirmationFilter ? "ON (รอสร้างฐาน HL - บอทจริง)" : "OFF (Pure Grid - ดักเก็บทุกรอบ)";
+          console.log(`[MarketScanner] 🚀 Starting Market Scan (Scope: ${scope}, TF: ${timeframe}, Limit: ${limit} bars, Engine: ${parsed.tradeMode || "dip_hunter"}, HL Filter: ${hlModeStr})...`);
 
           const results = await BacktestService.scanMarket({
             scope,
@@ -888,6 +907,11 @@ export class DashboardServer {
             maxSlPct,
             tradeMode: parsed.tradeMode || (liveCfg.maFanTradeMode as any) || "dip_hunter",
             tradeDirection: parsed.tradeDirection || (liveCfg.maFanTradeDirection as any) || "long",
+            enableBaseConfirmationFilter,
+            onProgress: (p) => {
+              this.currentScanProgress = p;
+              this.broadcast("scan_progress", p);
+            },
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -895,6 +919,8 @@ export class DashboardServer {
         } catch (e: any) {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        } finally {
+          this.currentScanProgress = null;
         }
       });
       return;

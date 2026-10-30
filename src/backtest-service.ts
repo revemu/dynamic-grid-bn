@@ -88,6 +88,8 @@ export interface MarketScanOptions {
   maxSlPct?: number;
   tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid";
   tradeDirection?: "long" | "short" | "both";
+  enableBaseConfirmationFilter?: boolean;
+  onProgress?: (info: { index: number; total: number; symbol: string; candlesCount: number; pnlPct?: number; winRate?: number; tradesCount?: number }) => void;
 }
 
 export interface BacktestMarker {
@@ -190,6 +192,8 @@ function ensureDbFile(): void {
 }
 
 export class BacktestService {
+  private static candleCache = new Map<string, { timestamp: number; candles: Candle[] }>();
+
   /**
    * Fetch historical candles from Binance Spot REST API
    */
@@ -199,12 +203,22 @@ export class BacktestService {
     limit: number = 1000
   ): Promise<Candle[]> {
     const cleanSym = symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+    const cacheKey = `${cleanSym}_${interval}`;
+    const cached = this.candleCache.get(cacheKey);
+    const nowMs = Date.now();
+
+    // In-memory candle cache: if we already fetched >= limit candles within 5 minutes, reuse instantly
+    if (cached && cached.candles.length >= limit && (nowMs - cached.timestamp < 300_000)) {
+      console.log(`[CandleFeed] ⚡ Cache HIT for ${cleanSym} (${interval}) -> using ${cached.candles.length} cached candles`);
+      return cached.candles.slice(-limit);
+    }
 
     // Quick single fetch if limit <= 1000
     if (limit <= 1000) {
       const clampedLimit = Math.min(1000, Math.max(50, limit));
       const url = `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=${interval}&limit=${clampedLimit}`;
 
+      console.log(`[CandleFeed] 📥 ${cleanSym} (${interval}): Fetching ${clampedLimit} candles from Binance...`);
       const res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
       if (!res.ok) {
         throw new Error(`Failed to fetch historical candles from Binance (HTTP ${res.status})`);
@@ -215,7 +229,6 @@ export class BacktestService {
         throw new Error(`No historical candles returned for ${cleanSym} on ${interval}`);
       }
 
-      const nowMs = Date.now();
       const candles: Candle[] = [];
       for (const k of raw) {
         const time = Math.floor(Number(k[0]) / 1000);
@@ -233,7 +246,10 @@ export class BacktestService {
         }
       }
 
-      return candles.sort((a, b) => a.time - b.time);
+      const sorted = candles.sort((a, b) => a.time - b.time);
+      this.candleCache.set(cacheKey, { timestamp: nowMs, candles: sorted });
+      console.log(`[CandleFeed] ✅ ${cleanSym} (${interval}): Loaded ${sorted.length} candles.`);
+      return sorted;
     }
 
     // Extended Multi-page fetch for up to 120+ days (up to 60,000 candles)
@@ -242,7 +258,13 @@ export class BacktestService {
     const maxCandles = Math.min(60000, Math.max(50, limit));
     const maxBatches = Math.ceil(maxCandles / 1000) + 3;
 
+    console.log(`[CandleFeed] 📥 ${cleanSym} (${interval}): Fetching ${maxCandles} candles from Binance (${maxBatches} batches max)...`);
+
     for (let batch = 0; batch < maxBatches && candlesMap.size < maxCandles; batch++) {
+      if (batch % 5 === 0 || batch === maxBatches - 1) {
+        console.log(`[CandleFeed] ${cleanSym} [Batch ${batch + 1}/${maxBatches}] Loaded ${candlesMap.size}/${maxCandles} candles...`);
+      }
+
       let url = `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=${interval}&limit=1000`;
       if (currentEndTime) {
         url += `&endTime=${currentEndTime}`;
@@ -250,18 +272,20 @@ export class BacktestService {
 
       let res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
       if (res.status === 429) {
-        await new Promise((r) => setTimeout(r, 1500));
+        console.warn(`[CandleFeed] ⚠️ Binance 429 Rate Limit for ${cleanSym}, pausing 1.8s before retry...`);
+        await new Promise((r) => setTimeout(r, 1800));
         res = await fetch(url, { headers: { "User-Agent": "dynamic-grid-bn/backtest" } });
       }
       if (!res.ok) {
-        if (candlesMap.size > 0) break; // Graceful fallback if we already got candles
+        if (candlesMap.size >= limit * 0.9) break; // Graceful fallback if we already got >= 90% of requested candles
+        console.warn(`[CandleFeed] ⚠️ Binance returned HTTP ${res.status} for ${cleanSym} (got ${candlesMap.size} candles)`);
+        if (candlesMap.size > 0) break;
         throw new Error(`Failed to fetch historical candles from Binance (HTTP ${res.status})`);
       }
 
       const raw = (await res.json()) as any[];
       if (!Array.isArray(raw) || raw.length === 0) break;
 
-      const nowMs = Date.now();
       let earliestOpenMs = Infinity;
 
       for (const k of raw) {
@@ -287,6 +311,9 @@ export class BacktestService {
         break;
       }
       currentEndTime = earliestOpenMs - 1;
+
+      // Gentle rate pacing to avoid hitting Binance 1200 weight/min limit
+      await new Promise((r) => setTimeout(r, 35));
     }
 
     if (candlesMap.size === 0) {
@@ -294,7 +321,10 @@ export class BacktestService {
     }
 
     const sorted = Array.from(candlesMap.values()).sort((a, b) => a.time - b.time);
-    return sorted.slice(-maxCandles);
+    const resultCandles = sorted.slice(-maxCandles);
+    this.candleCache.set(cacheKey, { timestamp: Date.now(), candles: resultCandles });
+    console.log(`[CandleFeed] ✅ ${cleanSym} (${interval}): Successfully loaded ${resultCandles.length} candles.`);
+    return resultCandles;
   }
 
   /**
@@ -330,6 +360,7 @@ export class BacktestService {
       maxInventoryQuote?: number;
       costModel?: { feePctPerSide: number; slippagePctPerFill: number };
       saveToHistory?: boolean;
+      enableBaseConfirmationFilter?: boolean;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -493,8 +524,12 @@ export class BacktestService {
       // 2. Evaluate Grid Buys (Tranche Size = 25% of Max Inventory)
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
       const trancheQuote = maxInventory / 4;
+      const isHlWaiting = opts.enableBaseConfirmationFilter === true && (
+        structure.gridZone?.canEstablishChannel === false ||
+        Boolean(structure.isDowntrendDropActive)
+      );
 
-      if (currentInventory + trancheQuote <= maxInventory && cash >= trancheQuote && heldLots.length < 4) {
+      if (!isHlWaiting && currentInventory + trancheQuote <= maxInventory && cash >= trancheQuote && heldLots.length < 4) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           const bl = buyLevels[lvlIdx];
           const alreadyFilledLevel = heldLots.some((l) => l.index === lvlIdx);
@@ -631,6 +666,7 @@ export class BacktestService {
         atrs: number[];
       };
       candlesHtf?: Candle[];
+      enableBaseConfirmationFilter?: boolean;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -892,7 +928,12 @@ export class BacktestService {
         // ── 2. EVALUATE GRID BUYS ──
         const trancheQuote = gridInitialCap / 4;
         const currentGridInv = heldLots.reduce((s, l) => s + (l.qty * l.buyPrice), 0);
-        if (currentGridInv + trancheQuote <= gridInitialCap && gridCash >= trancheQuote && heldLots.length < 4) {
+        const isHlWaiting = opts.enableBaseConfirmationFilter === true && (
+          structure.gridZone?.canEstablishChannel === false ||
+          Boolean(structure.isDowntrendDropActive)
+        );
+
+        if (!isHlWaiting && currentGridInv + trancheQuote <= gridInitialCap && gridCash >= trancheQuote && heldLots.length < 4) {
           const buyLevels = [
             floor + channelSpan * 0.45,
             floor + channelSpan * 0.33,
@@ -1269,6 +1310,7 @@ export class BacktestService {
       };
       onlyEntryIdx?: number;
       trimWarmupPrefix?: boolean;
+      enableBaseConfirmationFilter?: boolean;
     }
   ): BacktestRecord {
     if (opts.tradeMode === "dynamic_grid") {
@@ -1278,6 +1320,7 @@ export class BacktestService {
         initialCapital: opts.initialCapital,
         costModel: opts.costModel,
         saveToHistory: opts.saveToHistory,
+        enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
       });
     }
 
@@ -1306,6 +1349,7 @@ export class BacktestService {
         maxSlPct: opts.maxSlPct,
         precomputed: opts.precomputed,
         candlesHtf: opts.candlesHtf,
+        enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
       });
     }
 
@@ -2158,9 +2202,9 @@ export class BacktestService {
 
     const candidates = targetTickers.slice(0, maxPairs);
 
-    // 2. Run simulation in concurrent chunks of 5
+    // 2. Run simulation in concurrent chunks of 3 (gentle pacing to avoid Binance 429)
     const results: MarketScanResultItem[] = [];
-    const chunkSize = 5;
+    const chunkSize = 3;
 
     for (let i = 0; i < candidates.length; i += chunkSize) {
       const chunk = candidates.slice(i, i + chunkSize);
@@ -2218,6 +2262,7 @@ export class BacktestService {
               tradeDirection: opts.tradeDirection ?? "long",
               warmupBars: actualWarmup,
               trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
+              enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
             });
 
             results.push({
@@ -2239,8 +2284,19 @@ export class BacktestService {
               worstTradePct: rec.summary.worstTradePct,
               spreadThreshold: rec.spreadThreshold,
             });
-          } catch {
-            // Ignore individual pair fetch error during batch scan
+
+            console.log(`[MarketScanner] [${results.length}/${candidates.length}] ✅ ${sym}: Net PnL ${(rec.summary.netPnlPct >= 0 ? '+' : '')}${rec.summary.netPnlPct.toFixed(2)}% (${rec.summary.totalTrades} trades, WR ${rec.summary.winRate.toFixed(1)}%)`);
+            opts.onProgress?.({
+              index: results.length,
+              total: candidates.length,
+              symbol: sym,
+              candlesCount: candles.length,
+              pnlPct: rec.summary.netPnlPct,
+              winRate: rec.summary.winRate,
+              tradesCount: rec.summary.totalTrades,
+            });
+          } catch (err: any) {
+            console.warn(`[MarketScanner] ⚠️ Error scanning ${cand.symbol}:`, err?.message || err);
           }
         })
       );

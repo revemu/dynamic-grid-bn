@@ -48,6 +48,7 @@
   const inpTradeMode = document.getElementById("btTradeMode");
   const inpTradeDirection = document.getElementById("btTradeDirection");
   const inpBudget = document.getElementById("btBudget");
+  const inpBaseConfirmation = document.getElementById("btBaseConfirmation");
 
   function getSelectedSymbol() {
     if (!inpSymbol) return "BNBFDUSD";
@@ -1342,10 +1343,12 @@
     const maxSlPct = inpMaxSl ? Number(inpMaxSl.value) : 1.80;
     const tradeMode = inpTradeMode ? inpTradeMode.value : "dip_hunter";
     const tradeDirection = inpTradeDirection ? inpTradeDirection.value : "long";
+    const enableBaseConfirmationFilter = inpBaseConfirmation ? inpBaseConfirmation.value === "on" : false;
 
     const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
     loadingOverlay.style.display = "flex";
-    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection})...`;
+    const hlLabel = enableBaseConfirmationFilter ? "HL Base: ON (บอทจริง)" : "HL Base: OFF (Pure Grid)";
+    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection} / ${hlLabel})...`;
 
     try {
       const resp = await fetch("/api/backtest/run", {
@@ -1366,6 +1369,7 @@
           maxSlPct,
           tradeMode,
           tradeDirection,
+          enableBaseConfirmationFilter,
         }),
       });
 
@@ -1463,6 +1467,9 @@
       if (inpSlMode && data.record.useRatchetSl !== undefined) {
         inpSlMode.value = data.record.useRatchetSl ? "ratchet" : "fixed";
       }
+      if (inpBaseConfirmation && (data.record.enableBaseConfirmationFilter !== undefined || data.record.options?.enableBaseConfirmationFilter !== undefined)) {
+        inpBaseConfirmation.value = (data.record.enableBaseConfirmationFilter ?? data.record.options?.enableBaseConfirmationFilter) ? "on" : "off";
+      }
 
       displayRecord(data.record);
     } catch (err) {
@@ -1511,6 +1518,9 @@
         if (inpMacroGate && cfg.maFanMacroGate) inpMacroGate.value = cfg.maFanMacroGate;
         if (inpTradeMode && cfg.maFanTradeMode) inpTradeMode.value = cfg.maFanTradeMode;
         if (inpTradeDirection && cfg.maFanTradeDirection) inpTradeDirection.value = cfg.maFanTradeDirection;
+        if (inpBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
+          inpBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
+        }
         if (inpFastCut) inpFastCut.value = "on";
         if (inpMaxSl) inpMaxSl.value = "1.8";
         if (inpFeeTier) {
@@ -1530,6 +1540,9 @@
         if (scMacroGate && cfg.maFanMacroGate) scMacroGate.value = cfg.maFanMacroGate;
         if (scTradeMode && cfg.maFanTradeMode) scTradeMode.value = cfg.maFanTradeMode;
         if (scTradeDirection && cfg.maFanTradeDirection) scTradeDirection.value = cfg.maFanTradeDirection;
+        if (scBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
+          scBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
+        }
         if (scFastCut) scFastCut.value = "on";
         if (scMaxSl) scMaxSl.value = "1.8";
       }
@@ -1562,6 +1575,7 @@
     const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
     const enableUpsideFloor = inpUpsideFloor ? inpUpsideFloor.value === "on" : true;
     const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
+    const enableBaseConfirmationFilter = inpBaseConfirmation ? inpBaseConfirmation.value === "on" : true;
 
     const summaryMsg = `ยืนยันการนำ Config จาก Backtest ไปใช้กับบอทจริงหรือไม่?\n\n` +
       `• คู่เหรียญ: ${symbol}\n` +
@@ -1571,6 +1585,7 @@
       `• Circuit Breaker: ${enableCircuitBreaker ? "On (SL 2 ไม้ติด พัก 45m)" : "Off"}\n` +
       `• Upside Floor: ${enableUpsideFloor ? "On (≥ 0.45% to EMA25)" : "Off"}\n` +
       `• Macro Gate: ${macroGateMode === "noDeepBear" ? "No Deep Bear" : macroGateMode === "bullOnly" ? "Bull Only" : "Off"}\n` +
+      `• Base Filter (HL): ${enableBaseConfirmationFilter ? "On (รอสร้างฐาน HL - บอทจริง)" : "Off (Pure Grid - ดักเก็บทุกรอบ)"}\n` +
       `• เงินทุนสูงสุด: $${budget}\n\n` +
       `บอทจริงจะบันทึกและสลับไปใช้คอนฟิกนี้ทันที!`;
 
@@ -1592,6 +1607,7 @@
         maFanCircuitBreaker: enableCircuitBreaker,
         maFanUpsideFloor: enableUpsideFloor,
         maFanMacroGate: macroGateMode,
+        enableBaseConfirmationFilter,
       };
 
       const res = await fetch("/api/config", {
@@ -1735,6 +1751,8 @@
   const scMacroGate = document.getElementById("scMacroGate");
   const scTradeMode = document.getElementById("scTradeMode");
   const scTradeDirection = document.getElementById("scTradeDirection");
+  const scBaseConfirmation = document.getElementById("scBaseConfirmation");
+  const scannerProgressFill = document.getElementById("scannerProgressFill");
 
   function initScannerEvents() {
     loadLatestScannerResults();
@@ -1801,13 +1819,36 @@
         const maxSlPct = scMaxSl ? Number(scMaxSl.value) : (inpMaxSl ? Number(inpMaxSl.value) : 1.80);
         const tradeMode = scTradeMode ? scTradeMode.value : (inpTradeMode ? inpTradeMode.value : "dip_hunter");
         const tradeDirection = scTradeDirection ? scTradeDirection.value : (inpTradeDirection ? inpTradeDirection.value : "long");
+        const enableBaseConfirmationFilter = scBaseConfirmation ? scBaseConfirmation.value === "on" : false;
 
         btnStartScan.disabled = true;
-        if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
+        let pollInterval = null;
+        if (scannerProgressWrap) {
+          scannerProgressWrap.style.display = "block";
+          if (scannerProgressFill) scannerProgressFill.style.width = "0%";
+        }
         const scopeLabel = scope === "top100" ? "Top 100 USDT" : scope === "top50" ? "Top 50 USDT" : scope === "top20" ? "Top 20 USDT" : scope.toUpperCase();
         const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
-        if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scopeLabel}) บน ${timeframe} ย้อนหลัง ${limit.toLocaleString()} แท่ง (${dayEstimate})...`;
+        const hlLabel = enableBaseConfirmationFilter ? "HL Base: ON (บอทจริง)" : "HL Base: OFF (Pure Grid)";
+        if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scopeLabel}) บน ${timeframe} ย้อนหลัง ${limit.toLocaleString()} แท่ง (${dayEstimate}) [${hlLabel}]...`;
         if (scannerCountText) scannerCountText.textContent = "กำลังดาวน์โหลดแท่งเทียนและประมวลผล MA Fan Sniper แบบคู่ขนาน...";
+
+        pollInterval = setInterval(async () => {
+          try {
+            const pResp = await fetch("/api/backtest/scan/progress");
+            if (!pResp.ok) return;
+            const pData = await pResp.json();
+            if (pData && pData.progress) {
+              const { index, total, symbol, candlesCount } = pData.progress;
+              if (total > 0) {
+                const pct = Math.min(100, Math.round((index / total) * 100));
+                if (scannerProgressFill) scannerProgressFill.style.width = `${pct}%`;
+                if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญที่ ${index}/${total}: ${symbol} (${pct}%) [${hlLabel}]`;
+                if (scannerCountText) scannerCountText.textContent = `โหลดแท่งเทียนแล้ว ${candlesCount.toLocaleString()} แท่ง...`;
+              }
+            }
+          } catch (e) {}
+        }, 500);
 
         try {
           const res = await fetch("/api/backtest/scan", {
@@ -1828,6 +1869,7 @@
               maxSlPct,
               tradeMode,
               tradeDirection,
+              enableBaseConfirmationFilter,
             }),
           });
 
@@ -1841,11 +1883,15 @@
           if (scannerStatusText) {
             scannerStatusText.textContent = `สแกนตลาดเสร็จสมบูรณ์ (${data.results?.length || 0} คู่เหรียญ)`;
           }
+          if (scannerProgressFill) scannerProgressFill.style.width = "100%";
         } catch (err) {
           alert(`เกิดข้อผิดพลาดในการสแกนตลาด: ${err.message}`);
         } finally {
+          if (pollInterval) clearInterval(pollInterval);
           btnStartScan.disabled = false;
-          if (scannerProgressWrap) scannerProgressWrap.style.display = "none";
+          setTimeout(() => {
+            if (scannerProgressWrap) scannerProgressWrap.style.display = "none";
+          }, 1200);
         }
       });
     }
@@ -1940,6 +1986,7 @@
           if (scMacroGate && inpMacroGate) inpMacroGate.value = scMacroGate.value;
           if (scTradeMode && inpTradeMode) inpTradeMode.value = scTradeMode.value;
           if (scTradeDirection && inpTradeDirection) inpTradeDirection.value = scTradeDirection.value;
+          if (scBaseConfirmation && inpBaseConfirmation) inpBaseConfirmation.value = scBaseConfirmation.value;
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
           runBacktest();
         }
@@ -1960,6 +2007,7 @@
         const macroGateMode = scMacroGate ? scMacroGate.value : "off";
         const tradeMode = scTradeMode ? scTradeMode.value : "dip_hunter";
         const tradeDirection = scTradeDirection ? scTradeDirection.value : "long";
+        const enableBaseConfirmationFilter = scBaseConfirmation ? scBaseConfirmation.value === "on" : true;
 
         const confirmMsg = `ต้องการสลับบอทจริงไปเทรด ${sym} พร้อมนำ Config ที่สแกนไปใช้งานหรือไม่?\n\n` +
           `• คู่เหรียญ: ${sym}\n` +
@@ -1967,6 +2015,7 @@
           `• Min Spread: ${isAutoSpread ? "Auto Calibrate ⚡" : `${spreadVal}%`}\n` +
           `• Engine: ${tradeMode}\n` +
           `• Direction: ${tradeDirection}\n` +
+          `• Base Filter (HL): ${enableBaseConfirmationFilter ? "On (รอสร้างฐาน HL - บอทจริง)" : "Off (Pure Grid - ดักเก็บทุกรอบ)"}\n` +
           `• SL Mode: ${useRatchetSl ? "Ratchet SL" : "Fixed SL"}\n` +
           `• Circuit Breaker: ${enableCircuitBreaker ? "On" : "Off"}\n` +
           `• Upside Floor: ${enableUpsideFloor ? "On" : "Off"}\n` +
@@ -1988,6 +2037,7 @@
             maFanMacroGate: macroGateMode,
             maFanTradeMode: tradeMode,
             maFanTradeDirection: tradeDirection,
+            enableBaseConfirmationFilter,
           };
 
           const res = await fetch("/api/config", {

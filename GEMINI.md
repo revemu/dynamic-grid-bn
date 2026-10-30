@@ -6604,6 +6604,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **การขยับ Version**:
   - ปรับ Patch Version เป็น `0.2.199` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.199`)
 
+---
+
+## 225. Toggleable HL Base Confirmation Filter (Pure Grid vs Live Bot) & Candle Caching / Market Scanner Progress Telemetry (v0.2.200)
+
+- **สาเหตุและที่มาของความแตกต่างระหว่าง Live Bot กับ Backtest Studio**:
+  1. ในการทดสอบคู่เหรียญที่มีความผันผวนสูงและสวิงกว้างต่อเนื่อง (เช่น `INITUSDT`) บน Backtest Studio กลยุทธ์ Dynamic Grid สามารถทำกำไรได้ถึง `+121.57%` (Win Rate 100%, 436 ไม้)
+  2. ในขณะที่บอทจริง (Live Bot) บน `INITUSDT` เข้าสู่สถานะ `🛡️ รอสร้างฐาน HL (พักการซื้อ)` เป็นเวลานานและไม่ได้ส่งคำสั่งซื้อกริด
+  3. **สาเหตุหลัก**: บอทจริงมีระบบความปลอดภัย Dow Theory Base Confirmation (`waitingForHigherLow` / `isDowntrendDropActive` / `canEstablishChannel`) คอยสั่งยกเลิกออเดอร์ซื้อและระงับการวาง Buy Grid ชั่วคราวเมื่อราคาหลุดแนวรับ Break of Structure (BOS) เพื่อป้องกันการเข้าช้อนมีดบิน (Falling Knife) จนกว่ากราฟจะปิดแท่งยกฐานทำ Higher Low (HL) ยืนยัน
+  4. ผู้ใช้ต้องการให้สามารถ "เปิด/ปิด" ตัวกรองสร้างฐาน HL นี้ได้ทั้งในบอทจริง (เพื่อให้บอทจริงสามารถทำงานแบบ Pure Grid ช้อนซื้อตามกริดทุกรอบได้เหมือน Backtest) และต้องการให้เพิ่มตัวเลือกนี้ลงใน Backtest Studio และ Market Scanner เพื่อให้ผลการทดสอบจำลองทั้งสองโหมดได้อย่างสมจริง
+  5. ปัญหา Market Scanner ค้างหรือไม่แสดงสถานะบน Server: เกิดจากการยิง REST API ดาวน์โหลดแท่งเทียนย้อนหลัง 120 วัน (~34,560 แท่งต่อคู่) พร้อมกันหลายคู่โดยไม่มี Cache และไม่มี Rate Pacing จนถูก Binance API Rate Limiter (HTTP 429) รวมถึงเซิร์ฟเวอร์ไม่มีการ Log หรือส่งความคืบหน้า (Progress) กลับมายังหน้าต่าง Scanner
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **เพิ่มการตั้งค่า `enableBaseConfirmationFilter` ใน Strategy Config (`src/config.ts`)**:
+     - ค่าเริ่มต้น: `true` (คงระบบความปลอดภัยมาตรฐานของบอทจริง)
+     - เมื่อผู้ใช้สลับเป็น `false` (ปิดตัวกรอง / โหมด Pure Grid):
+       - ใน `src/strategy/index.ts`: ปลดล็อก `this.waitingForHigherLow = false`, ข้ามการตรวจ `dow?.isDowntrendDropActive` และใน `canBuy` ข้ามเงื่อนไข `!this.waitingForHigherLow` และ `gridZone?.canEstablishChannel !== false` ทั้งหมด
+       - ใน `src/strategy/buy-sync.ts`: ปิดการสั่งยกเลิก Rest Buy Orders เมื่อหลุดกรอบหรือตรวจพบ Downtrend Drop
+  2. **เพิ่ม UI ควบคุมบนหน้า Web Dashboard (`public/index.html` & `public/app.js`)**:
+     - เพิ่ม Toggle Switch `cfg_enableBaseConfirmationFilter` ในหน้าต่าง Settings Modal หมวด 2.3 (Safeguards & Protection)
+  3. **เพิ่มตัวเลือก HL Filter ใน Backtest Studio & Market Scanner (`public/backtest.html` & `public/backtest.js`)**:
+     - เพิ่ม Dropdown `btBaseConfirmation` และ `scBaseConfirmation`:
+       - `⚡ Off (Pure Grid - แนะนำสวิง)`: ซื้อทันทีตามระดับกริดแบบไม่รอฐาน HL (โหมดเดียวกับที่ INITUSDT ทำ +121.57%)
+       - `🛡️ On (รอสร้างฐาน HL - บอทจริง)`: ซื้อเฉพาะเมื่อกรอบและฐาน HL ผ่านการยืนยัน
+     - รองรับการซิงค์ไป-กลับระหว่างบอทจริงและ Backtest ผ่าน `btnSyncLiveBotConfig`, `btnApplyConfigToLiveBot` และปุ่ม "สลับบอท" ใน Scanner Table
+  4. **ระบบ In-Memory Candle Cache และ Polite Rate Pacing (`src/backtest-service.ts`)**:
+     - เพิ่ม `candleCache` (TTL 5 นาที) ลดการยิงซ้ำข้อมูลแท่งเทียนประวัติศาสตร์
+     - ปรับ `chunkSize` สแกนเหรียญจาก 5 เหลือ 3 พร้อมหน่วงเวลา (`pacing 35ms`) ป้องกัน Binance HTTP 429 Rate Limit
+     - เพิ่ม Console Log แสดงความคืบหน้า `[CandleFeed]` และ `[MarketScanner]` บนเซิร์ฟเวอร์
+  5. **ระบบ Real-time Scanner Progress Telemetry (`src/server.ts` & `public/backtest.js`)**:
+     - เพิ่ม Endpoint `GET /api/backtest/scan/progress` และ Event `scan_progress`
+     - หน้าต่าง Scanner Modal ทำการ Poll ความคืบหน้าแบบ Real-time พร้อมแสดงแถบ Progress Bar (0-100%) และข้อความบอกสถานะเหรียญและจำนวนแท่งเทียนที่กำลังประมวลผล
+- **การขยับ Version**:
+  - ปรับ Patch Version เป็น `0.2.200` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.200`)
+
+
 
 
 

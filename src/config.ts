@@ -150,6 +150,8 @@ export const defaultStrategyConfig = {
   liquidateOnTrendSupportBreak: false,
   /** When true, immediately liquidates inventory on Dow Theory confirmed DOWNTREND (LH+LL) to avoid taking full floor cut loss. Default false. */
   enableExitOnDowntrendRegime: false,
+  /** When true, pauses buying when price breaks below previous swing low (BOS) and waits for a Higher Low (HL) base formation before resuming. When false, acts as pure aggressive grid like Backtest. Default true. */
+  enableBaseConfirmationFilter: true,
   /** When true, only places sell orders strictly below descending Trendline Resistance. */
   enableSellBelowTrendResistance: false,
   /** When true, enables selling at the real frame (Real S/R Ceil) when it adjusts down, choosing the lower price between trendline and real ceiling. Default true. */
@@ -419,6 +421,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.enableExitOnTrendSupportBreak !== undefined) merged.enableExitOnTrendSupportBreak = Boolean(saved.enableExitOnTrendSupportBreak);
       if (saved.liquidateOnTrendSupportBreak !== undefined) merged.liquidateOnTrendSupportBreak = Boolean(saved.liquidateOnTrendSupportBreak);
       if (saved.enableExitOnDowntrendRegime !== undefined) merged.enableExitOnDowntrendRegime = Boolean(saved.enableExitOnDowntrendRegime);
+      if (saved.enableBaseConfirmationFilter !== undefined) merged.enableBaseConfirmationFilter = Boolean(saved.enableBaseConfirmationFilter);
       if (saved.buySizingMode === "EQUAL" || saved.buySizingMode === "PYRAMID") {
         merged.buySizingMode = saved.buySizingMode;
       }

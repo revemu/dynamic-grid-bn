@@ -106,9 +106,9 @@ export class BuyOrderSynchronizer {
           ? `Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) above Sell Level 1 ($${sellLevel1Price.toFixed(6)}) — buying paused to prevent churn in upper profit zone`
           : uptrendBroken
           ? `Trend support broken ($${activeUptrendLine?.currentLinePrice.toFixed(6)}) — buying paused, waiting to sell or cut loss`
-          : this.host.waitingForHigherLow
+          : (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.waitingForHigherLow)
           ? "Waiting for Higher Low — cancelled resting buy orders"
-          : this.host.isDowntrendDropPaused
+          : (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.isDowntrendDropPaused)
           ? "Active Downtrend Drop (LH+LL) — waiting for HL or Trendline Breakout"
           : "Buying paused by filters (Downtrend/Trendline/Lag Guard/Offload)";
         await cancelAllRestingOrders("BUY", pauseReason);

@@ -1201,6 +1201,17 @@
 
               <div class="form-group switch-group">
                 <div class="switch-label-group">
+                  <span class="switch-title">📍 รอสร้างฐาน Higher Low (HL) เมื่อหลุด Low เดิม (Base Confirmation Filter)</span>
+                  <span class="switch-desc">เปิด = ปลอดภัย ไม่รับมีดตก พักการซื้อเมื่อหลุด Low เดิมจนกว่าจะเกิดฐาน HL ยกตัวยืนยัน | ปิด = โหมด Pure Grid ช้อนซื้อทันทีทุกแนวรับเหมือน Backtest (แนะนำสำหรับเหรียญสวิงแรง)</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_enableBaseConfirmationFilter" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="form-group switch-group">
+                <div class="switch-label-group">
                   <span class="switch-title">พักการซื้อเมื่อเกิดโครงสร้างขาลง (Dow Downtrend Pause: LH + LL)</span>
                   <span class="switch-desc">หยุดเปิดไม้ซื้อชั่วคราวเมื่อโครงสร้างตลาดยืนยันขาลงชัดเจน</span>
                 </div>

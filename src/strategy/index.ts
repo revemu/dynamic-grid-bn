@@ -2923,8 +2923,13 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       (lowerBound > 0 ? lowerBound + span * 0.32 : refPrice);
 
     // If a new active downtrend drop (LH + LL or fresh LL breakdown) is detected and its trough
-    // has NOT already been resolved, enter the unified waitingForHigherLow state.
-    if (Boolean(dow?.isDowntrendDropActive) && !this.waitingForHigherLow) {
+    // has NOT already been resolved, enter the unified waitingForHigherLow state (unless bypassed by enableBaseConfirmationFilter === false).
+    if (this.cfg.enableBaseConfirmationFilter === false) {
+      if (this.waitingForHigherLow) {
+        this.waitingForHigherLow = false;
+        this.saveState();
+      }
+    } else if (Boolean(dow?.isDowntrendDropActive) && !this.waitingForHigherLow) {
       const activeDumpLow = dow?.downtrendDropLow ?? (lowerBound > 0 ? lowerBound : refPrice);
       const lastLl = dow?.waveCycle?.lastLl;
       const lastHl = dow?.waveCycle?.lastHl;
@@ -4345,7 +4350,11 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     }
 
     const isNearSqueeze = enableSqueezeExit && tlSpreadPct <= (squeezeSpreadThreshold + 0.25);
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !downtrendDropPaused && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !this.waitingForHigherLow && !isBelowFloor && !isWaterfallDropping && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && (gridZone?.canEstablishChannel !== false);
+    const allowBaseBypass = this.cfg.enableBaseConfirmationFilter === false;
+    const isHlWaiting = allowBaseBypass ? false : this.waitingForHigherLow;
+    const isDowntrendDrop = allowBaseBypass ? false : downtrendDropPaused;
+    const isChannelApproved = allowBaseBypass ? true : (gridZone?.canEstablishChannel !== false);
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !isDowntrendDrop && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !isHlWaiting && !isBelowFloor && !isWaterfallDropping && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && isChannelApproved;
 
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
