@@ -5355,7 +5355,7 @@
       setCheck("cfg_enableExitOnDowntrendRegime", Boolean(data.enableExitOnDowntrendRegime));
       setCheck("cfg_enableSellBelowTrendResistance", data.enableSellBelowTrendResistance !== false);
       setCheck("cfg_enableSellAtRealCeiling", data.enableSellAtRealCeiling !== false);
-      setCheck("cfg_enableBaseConfirmationFilter", data.enableBaseConfirmationFilter !== false);
+      setCheck("cfg_enableBaseConfirmationFilter", data.enableBaseConfirmationFilter !== undefined ? Boolean(data.enableBaseConfirmationFilter) : true);
       setVal("cfg_sellProfitMode", data.sellProfitMode || (data.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"));
       setCheck("cfg_enableTriangleSqueezeExit", data.enableTriangleSqueezeExit !== false);
       setVal("cfg_triangleSqueezeSpreadPct", data.triangleSqueezeSpreadPct ?? 1.5);
@@ -5635,7 +5635,7 @@
       enableExitOnDowntrendRegime: Boolean(document.getElementById("cfg_enableExitOnDowntrendRegime")?.checked),
       enableSellBelowTrendResistance: document.getElementById("cfg_enableSellBelowTrendResistance").checked,
       enableSellAtRealCeiling: document.getElementById("cfg_enableSellAtRealCeiling").checked,
-      enableBaseConfirmationFilter: document.getElementById("cfg_enableBaseConfirmationFilter") ? document.getElementById("cfg_enableBaseConfirmationFilter").checked : true,
+      enableBaseConfirmationFilter: Boolean(document.getElementById("cfg_enableBaseConfirmationFilter")?.checked),
       sellProfitMode: document.getElementById("cfg_sellProfitMode").value,
       enableTriangleSqueezeExit: document.getElementById("cfg_enableTriangleSqueezeExit").checked,
       triangleSqueezeSpreadPct: parseFloat(document.getElementById("cfg_triangleSqueezeSpreadPct").value),

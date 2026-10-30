@@ -431,6 +431,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     this.lastPeriodicSyncTs = 0;
     this.clearPositionState();
     this.waitingForHigherLow = false;
+    this.isDowntrendDropPaused = false;
     this.isFlatChannelShiftWaiting = false;
     this.lastEvaluatedFloor = undefined;
     this.lastEvaluatedCeil = undefined;
@@ -1730,7 +1731,13 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       if (typeof data.stuckSince === "number") {
         this.stuckSince = data.stuckSince;
       }
-      if (typeof data.waitingForHigherLow === "boolean") {
+      if (this.cfg.enableBaseConfirmationFilter === false) {
+        this.waitingForHigherLow = false;
+        this.isDowntrendDropPaused = false;
+        this.breakdownFloorPrice = undefined;
+        this.breakdownLowPrice = undefined;
+        this.breakdownTime = undefined;
+      } else if (typeof data.waitingForHigherLow === "boolean") {
         this.waitingForHigherLow = data.waitingForHigherLow;
       } else if (typeof data.brokenValleyPrice === "number") {
         this.waitingForHigherLow = true;

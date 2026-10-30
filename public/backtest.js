@@ -1631,11 +1631,14 @@
         maFanAutoCalibrateSpreadOnSwitch: isAutoSpread,
         ...(isAutoSpread ? {} : { maFanManualSpreadPct: Number(spreadVal) }),
         maFanMaxBudgetUsd: budget,
+        maxInventoryQuote: budget,
+        maxInventoryUsdso: budget,
         maFanUseRatchetSl: useRatchetSl,
         maFanCircuitBreaker: enableCircuitBreaker,
         maFanUpsideFloor: enableUpsideFloor,
         maFanMacroGate: macroGateMode,
         enableBaseConfirmationFilter,
+        ...(inpTradeMode && inpTradeMode.value ? { strategyType: inpTradeMode.value } : {}),
       };
 
       const res = await fetch("/api/config", {
@@ -1676,6 +1679,7 @@
       if (inpTradeDirection) inpTradeDirection.value = "long";
       if (inpFeeTier) inpFeeTier.value = "bnb";
       if (inpBudget && (!inpBudget.value || Number(inpBudget.value) < 100)) inpBudget.value = "100";
+      if (inpBaseConfirmation) inpBaseConfirmation.value = "off";
     }
 
     // 2. Market Scanner Form
@@ -1690,6 +1694,7 @@
       if (scFastCut) scFastCut.value = "on";
       if (scMaxSl) scMaxSl.value = "1.8";
       if (scTradeDirection) scTradeDirection.value = "long";
+      if (scBaseConfirmation) scBaseConfirmation.value = "off";
     }
   }
 
@@ -2066,6 +2071,9 @@
             maFanTradeMode: tradeMode,
             maFanTradeDirection: tradeDirection,
             enableBaseConfirmationFilter,
+            maxInventoryQuote: inpBudget ? Number(inpBudget.value) || 200 : 200,
+            maxInventoryUsdso: inpBudget ? Number(inpBudget.value) || 200 : 200,
+            ...(tradeMode ? { strategyType: tradeMode } : {}),
           };
 
           const res = await fetch("/api/config", {
@@ -2141,6 +2149,15 @@
         }
         if (inpSlMode && cfg.maFanUseRatchetSl !== undefined) {
           inpSlMode.value = cfg.maFanUseRatchetSl ? "ratchet" : "fixed";
+        }
+        if (inpBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
+          inpBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
+        }
+        if (scBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
+          scBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
+        }
+        if (inpTradeMode && (cfg.strategyType || cfg.strategyMode)) {
+          inpTradeMode.value = cfg.strategyType || cfg.strategyMode;
         }
       })
       .catch(() => {});

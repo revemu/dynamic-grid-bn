@@ -6668,6 +6668,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดต `getRuntimeConfig()` ใน `src/strategy/index.ts` ให้คืนค่า `enableBaseConfirmationFilter` ผ่าน API `/api/config`
   - เพิ่มการรีเซ็ต `waitingForHigherLow = false` และ `isDowntrendDropPaused = false` อัตโนมัติใน `updateRuntimeSettings()` เมื่อสลับเป็น Pure Grid
 
+---
+
+## 228. Symbol Switch State Isolation & Persistent Filter Config Preservation (v0.2.203)
+
+- **สาเหตุของปัญหา**:
+  1. เมื่อสลับเหรียญ บอทจะเรียก `updateSymbolInfo()` ซึ่งจะโหลด State เก่าของเหรียญนั้นที่เคยบันทึกไว้ใน DB (`data.states[symbolKey]`) ผ่าน `loadState()` ทำให้หากเหรียญนั้นเคยมีประวัติ `waitingForHigherLow: true` จะถูกดึงกลับมาทับและสั่งพักการซื้อทันที แม้ว่ากลยุทธ์จะตั้งเป็น Pure Grid (`enableBaseConfirmationFilter: false`)
+  2. ใน `public/app.js` ตอนเปิด Settings modal (`loadSettings()`) ค่า fallback เคยทำให้ Checkbox เด้งกลับมาติ๊กถูกเปิดรอฐาน HL อัตโนมัติเมื่อค่าไม่ตรง ทำให้ตอนบันทึกส่ง `true` ทับกลับไป
+  3. ใน `public/backtest.js` ไม่ได้ซิงค์ `enableBaseConfirmationFilter` และ `strategyType` ใน `DOMContentLoaded` และตอนกดส่งไปบอทจริงไม่ได้ส่ง `maxInventoryQuote` หรือ `strategyType` ไปด้วย
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **Strict Filter Enforcement in `loadState()` (`src/strategy/index.ts`)**:
+     - เมื่อ `this.cfg.enableBaseConfirmationFilter === false` บังคับให้ `waitingForHigherLow = false`, `isDowntrendDropPaused = false` และเคลียร์ `breakdownFloorPrice`, `breakdownLowPrice`, `breakdownTime` เสมอ ห้ามดึงประวัติหลุด Low เดิมใน DB กลับมาบล็อกการซื้อเด็ดขาด
+     - ใน `updateSymbolInfo()`: เคลียร์ `isDowntrendDropPaused = false` เพิ่มเติมจากเดิม
+  2. **Dashboard Settings Sync (`public/app.js`)**:
+     - ปรับ `loadSettings()` ให้ใช้ค่าบูลีนจริงของ `enableBaseConfirmationFilter` ไม่เด้งกลับมาติ๊กถูก
+     - ปรับ `saveSettings()` ให้อ่านค่า `checked` จาก DOM อย่างถูกต้อง
+  3. **Backtest Studio & Scanner Sync (`public/backtest.js`)**:
+     - ใน `DOMContentLoaded`: ดึงและซิงค์ `inpBaseConfirmation`, `scBaseConfirmation` และ `inpTradeMode` จาก `/api/config` ทันทีเมื่อเปิดหน้า
+     - ใน `applyOptimalPreset()`: กำหนดค่าเริ่มต้นของ HL Filter ให้เป็น `"off"`
+     - ใน `applyBacktestConfigToLiveBot()` และ Scanner `btn-action-trade`: เพิ่มการส่ง `maxInventoryQuote`, `maxInventoryUsdso` และ `strategyType` ให้ครบถ้วนตามโหมดจริง
+  4. **Bump Version**:
+     - ปรับ Version เป็น `0.2.203` ใน `package.json`, `src/version.ts`, และ `public/backtest.html`
+
 
 
 
