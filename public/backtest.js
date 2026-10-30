@@ -1212,7 +1212,7 @@
     const enableFastCut = inpFastCut ? inpFastCut.value === "on" : true;
     const maxSlPct = inpMaxSl ? Number(inpMaxSl.value) : 1.80;
 
-    const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
+    const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
     loadingOverlay.style.display = "flex";
     loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${useRatchetSl ? "Ratchet SL" : "Fixed SL"})...`;
 
@@ -1593,7 +1593,7 @@
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
         const scopeLabel = scope === "top100" ? "Top 100 USDT" : scope === "top50" ? "Top 50 USDT" : scope === "top20" ? "Top 20 USDT" : scope.toUpperCase();
-        const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
+        const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
         if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scopeLabel}) บน ${timeframe} ย้อนหลัง ${limit.toLocaleString()} แท่ง (${dayEstimate})...`;
         if (scannerCountText) scannerCountText.textContent = "กำลังดาวน์โหลดแท่งเทียนและประมวลผล MA Fan Sniper แบบคู่ขนาน...";
 

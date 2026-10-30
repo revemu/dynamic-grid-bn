@@ -6379,6 +6379,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
 2. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.190` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 215. 120-Day Deep Historical Backtest Support (`v0.2.191`)
+
+1. **ขยายเพดานแท่งเทียนเป็น 60,000 แท่ง (`src/backtest-service.ts`)**:
+   - ปรับขยายขีดจำกัด `maxCandles` จากเดิม 15,000 เป็น `60,000` แท่ง รองรับการดึงข้อมูลย้อนหลังระดับ 60 วัน, 90 วัน, และ 120 วัน ได้อย่างสมบูรณ์แบบ
+   - รองรับการแบ่งดึง Pagination คราวละ 1,000 แท่งต่อเนื่อง 35+ รอบโดยไม่ติด Rate Limit (ใช้ Binance API Weight เพียง ~70 จาก 1,200/นาที)
+2. **เพิ่มตัวเลือกใน Single Backtest Form และ Market Scanner Modal (`public/backtest.html`)**:
+   - เพิ่มตัวเลือกระยะเวลาย้อนหลัง:
+     - `📅 60 วัน (~17,280 แท่ง)`
+     - `📅 90 วัน (~25,920 แท่ง)`
+     - `📅 120 วัน (~34,560 แท่ง)`
+   - อัปเดตการแสดงผล Day Estimate ในแถบโหลดและสถานะสแกนเนอร์ (`public/backtest.js`) ให้แสดงผล `~60 วัน`, `~90 วัน`, `~120 วัน` อย่างถูกต้อง
+3. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.191` ใน `package.json` และ `src/version.ts`
+
 
 
 

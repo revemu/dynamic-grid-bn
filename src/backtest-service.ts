@@ -231,10 +231,10 @@ export class BacktestService {
       return candles.sort((a, b) => a.time - b.time);
     }
 
-    // Extended Multi-page fetch for 7, 15, 30 days (up to 15,000 candles)
+    // Extended Multi-page fetch for up to 120+ days (up to 60,000 candles)
     const candlesMap = new Map<number, Candle>();
     let currentEndTime: number | undefined = undefined;
-    const maxCandles = Math.min(15000, Math.max(50, limit));
+    const maxCandles = Math.min(60000, Math.max(50, limit));
     const maxBatches = Math.ceil(maxCandles / 1000) + 3;
 
     for (let batch = 0; batch < maxBatches && candlesMap.size < maxCandles; batch++) {
@@ -1085,7 +1085,7 @@ export class BacktestService {
   public static async scanMarket(opts: MarketScanOptions): Promise<MarketScanResultItem[]> {
     const scope = opts.scope || "top20";
     const timeframe = opts.timeframe || "5m";
-    const limit = Math.min(15000, Math.max(100, opts.limit || 1000));
+    const limit = Math.min(60000, Math.max(100, opts.limit || 1000));
 
     // 1. Fetch 24h ticker to get liquid symbols
     const tickerRes = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
