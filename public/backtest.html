@@ -133,6 +133,24 @@
         </div>
 
         <div class="bt-input-group">
+          <label>โหมดกลยุทธ์ (Engine)</label>
+          <select id="btTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
+            <option value="dip_hunter" selected>🎯 Dip/Peak Hunter (MA-Fan)</option>
+            <option value="trend_rider">🏄 Trend Rider (เกาะเทรนด์)</option>
+            <option value="dual">⚡ Dual (Hunter + Trend)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
+          <label>ทิศทางเทรด (Direction)</label>
+          <select id="btTradeDirection" title="เลือกทิศทางการเทรด Spot หรือ Perp Futures">
+            <option value="long" selected>🟢 Long Only (Spot/Perp)</option>
+            <option value="short">🔴 Short Only (Perp Futures)</option>
+            <option value="both">🔄 Two-Way Long + Short (Perp)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
           <label>เงินทุน ($)</label>
           <input type="number" id="btBudget" value="200" min="10" step="10" />
         </div>
@@ -385,6 +403,22 @@
                 <option value="noDeepBear" selected>🛡️ No Deep Bear (แนะนำ)</option>
                 <option value="off">🌐 Off (ทุกสภาวะ)</option>
                 <option value="bullOnly">🐂 Bull Only</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Engine</label>
+              <select id="scTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
+                <option value="dip_hunter" selected>🎯 Hunter</option>
+                <option value="trend_rider">🏄 Trend</option>
+                <option value="dual">⚡ Dual</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Direction</label>
+              <select id="scTradeDirection" title="เลือกทิศทางการเทรด Spot หรือ Perp">
+                <option value="long" selected>🟢 Long</option>
+                <option value="short">🔴 Short</option>
+                <option value="both">🔄 Two-Way</option>
               </select>
             </div>
             <button id="btnScannerSyncLiveConfig" class="btn-sync-config btn-scanner-sync" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่การตั้งค่า Market Scanner ทุกประการ">

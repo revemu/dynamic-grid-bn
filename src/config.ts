@@ -41,6 +41,8 @@ export const defaultStrategyConfig = {
   maFanBullCushion: false,
   maFanWaterfallGuard: true,
   maFanMacroGate: "noDeepBear" as "off" | "noDeepBear" | "bullOnly",
+  maFanTradeMode: "dip_hunter" as "dip_hunter" | "trend_rider" | "dual",
+  maFanTradeDirection: "long" as "long" | "short" | "both",
   maFanUpsideFloor: true,
   maFanCircuitBreaker: true,
   maFanCircuitBreakerUntil: 0,
@@ -389,6 +391,12 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.maFanWaterfallGuard !== undefined) merged.maFanWaterfallGuard = Boolean(saved.maFanWaterfallGuard);
       if (saved.maFanMacroGate !== undefined && ["off", "noDeepBear", "bullOnly"].includes(saved.maFanMacroGate)) {
         merged.maFanMacroGate = saved.maFanMacroGate;
+      }
+      if (saved.maFanTradeMode !== undefined && ["dip_hunter", "trend_rider", "dual"].includes(saved.maFanTradeMode)) {
+        merged.maFanTradeMode = saved.maFanTradeMode;
+      }
+      if (saved.maFanTradeDirection !== undefined && ["long", "short", "both"].includes(saved.maFanTradeDirection)) {
+        merged.maFanTradeDirection = saved.maFanTradeDirection;
       }
       if (saved.maFanUpsideFloor !== undefined) merged.maFanUpsideFloor = Boolean(saved.maFanUpsideFloor);
       if (saved.maFanCircuitBreaker !== undefined) merged.maFanCircuitBreaker = Boolean(saved.maFanCircuitBreaker);

@@ -817,6 +817,8 @@ export class DashboardServer {
             fastCutThresholdPct,
             stagnationBars,
             maxSlPct,
+            tradeMode: parsed.tradeMode || (liveCfg.maFanTradeMode as any) || "dip_hunter",
+            tradeDirection: parsed.tradeDirection || (liveCfg.maFanTradeDirection as any) || "long",
             warmupBars: actualWarmup,
             trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
           });
@@ -884,6 +886,8 @@ export class DashboardServer {
             fastCutThresholdPct,
             stagnationBars,
             maxSlPct,
+            tradeMode: parsed.tradeMode || (liveCfg.maFanTradeMode as any) || "dip_hunter",
+            tradeDirection: parsed.tradeDirection || (liveCfg.maFanTradeDirection as any) || "long",
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

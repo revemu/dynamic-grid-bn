@@ -249,8 +249,17 @@ export class MaFanStrategy {
       // ── 1. MANAGE ACTIVE POSITION EXITS ──────────────────────────────────────
       if (this.activePosition && this.activePosition.remainingQty > 0) {
         const pos = this.activePosition;
-        if (refPrice > pos.highestPriceSinceTp1) {
-          pos.highestPriceSinceTp1 = refPrice;
+        const isShort = pos.positionSide === "SHORT";
+        if (isShort) {
+          if (!pos.lowestPriceSinceTp1 || refPrice < pos.lowestPriceSinceTp1) {
+            pos.lowestPriceSinceTp1 = refPrice;
+          }
+          pos.lowestPriceSinceEntry = Math.min(pos.lowestPriceSinceEntry ?? pos.entryPrice, refPrice);
+        } else {
+          if (refPrice > pos.highestPriceSinceTp1) {
+            pos.highestPriceSinceTp1 = refPrice;
+          }
+          pos.highestPriceSinceEntry = Math.max(pos.highestPriceSinceEntry ?? pos.entryPrice, refPrice);
         }
 
         const entryTimeSec = Math.floor(pos.entryTime / 1000);
@@ -266,7 +275,7 @@ export class MaFanStrategy {
           this.evaluatedClosedCandleTime = this.lastClosedCandle.time;
         }
 
-        // Dynamic Ratchet SL: After entry, if price forms higher local base, lift SL
+        // Dynamic Ratchet SL: After entry, if price forms higher local base, lift/lower SL
         const liftedSl = MaFanCoreRules.evaluateRatchetSl({
           candles: this.candles,
           barsHeld,
@@ -275,12 +284,14 @@ export class MaFanStrategy {
           curAtr,
           slBufferPct: this.config.slBufferPct,
           useRatchetSl: this.config.useRatchetSl !== false,
+          positionSide: pos.positionSide ?? "LONG",
         });
 
         if (liftedSl !== null) {
           const roundedSl = this.executor.roundPrice(liftedSl);
-          if (roundedSl > pos.stopLossPrice) {
-            this.log(`🛡️ [RATCHET_SL] Lifting SL for ${this.symbol} from $${pos.stopLossPrice.toFixed(4)} to $${roundedSl.toFixed(4)}`);
+          const shouldUpdate = isShort ? roundedSl < pos.stopLossPrice : roundedSl > pos.stopLossPrice;
+          if (shouldUpdate) {
+            this.log(`🛡️ [RATCHET_SL] Moving SL for ${this.symbol} (${pos.positionSide || "LONG"}) from $${pos.stopLossPrice.toFixed(4)} to $${roundedSl.toFixed(4)}`);
             appendDecisionSnapshot({
               version: APP_VERSION_INFO.version,
               symbol: this.symbol,
@@ -290,15 +301,12 @@ export class MaFanStrategy {
               stopLossPrice: roundedSl,
               barsHeld,
               lastClosedCandleTime: this.lastClosedCandle?.time,
-              reason: `Lifting SL from $${pos.stopLossPrice.toFixed(4)} to $${roundedSl.toFixed(4)}`,
+              reason: `Moving SL from $${pos.stopLossPrice.toFixed(4)} to $${roundedSl.toFixed(4)}`,
             });
             pos.stopLossPrice = roundedSl;
             this.onStateUpdate?.(this.getState());
           }
         }
-
-        // Update highest price seen since entry (for stagnation exit)
-        pos.highestPriceSinceEntry = Math.max(pos.highestPriceSinceEntry ?? pos.entryPrice, refPrice);
 
         // Evaluate Exits (Priority: TP2 -> SL / Fast Cut -> TP1 & Trapped Rescue)
         const exhaustion = ExhaustionEngine.evaluate(this.candles);
@@ -306,6 +314,7 @@ export class MaFanStrategy {
         const prevExhaustion = this.candles.length >= 2 ? ExhaustionEngine.evaluate(this.candles.slice(0, -1)) : undefined;
 
         const exitDecision = MaFanCoreRules.evaluateExits({
+          positionSide: pos.positionSide ?? "LONG",
           highPrice: refPrice,
           lowPrice: refPrice,
           closePrice: refPrice,
@@ -314,6 +323,8 @@ export class MaFanStrategy {
           tp1Filled: pos.tp1Filled,
           highestPriceSinceTp1: pos.highestPriceSinceTp1,
           highestPriceSinceEntry: pos.highestPriceSinceEntry,
+          lowestPriceSinceTp1: pos.lowestPriceSinceTp1,
+          lowestPriceSinceEntry: pos.lowestPriceSinceEntry,
           ribbon,
           prevRibbon,
           exhaustion,
@@ -321,6 +332,7 @@ export class MaFanStrategy {
           trailingPullbackPct: this.config.trailingPullbackPct,
           breakevenFeeBufferPct: this.config.breakevenFeeBufferPct,
           isOverbought: exhaustion.isOverboughtExhaustion,
+          isOversold: exhaustion.isOversoldExhaustion,
           barsHeld,
           isHtfBull: !!htfRegime.isBullish,
           cushionMode: this.config.bullCushionEnabled ? "htfBull" : "off",
@@ -357,7 +369,7 @@ export class MaFanStrategy {
 
         // B. Stop Loss Exit
         if (exitDecision.action === "SL") {
-          this.log(`⚠️ Stop Loss triggered for ${this.symbol} at $${refPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)})`);
+          this.log(`⚠️ Stop Loss triggered for ${this.symbol} (${pos.positionSide || "LONG"}) at $${refPrice.toFixed(4)} (SL: $${pos.stopLossPrice.toFixed(4)})`);
           const ok = await this.executor.executeStopLoss(pos, refPrice);
           if (ok) {
             this.lossCount++;
@@ -413,8 +425,12 @@ export class MaFanStrategy {
               cushionEnabled: this.config.bullCushionEnabled,
               reason: exitDecision.reason,
             });
-            if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > pos.stopLossPrice) {
-              pos.stopLossPrice = this.executor.roundPrice(exitDecision.newStopLossPrice);
+            if (exitDecision.newStopLossPrice) {
+              const roundedNewSl = this.executor.roundPrice(exitDecision.newStopLossPrice);
+              const shouldUpdate = isShort ? roundedNewSl < pos.stopLossPrice : roundedNewSl > pos.stopLossPrice;
+              if (shouldUpdate) {
+                pos.stopLossPrice = roundedNewSl;
+              }
             }
             if (pos.remainingQty <= 0) {
               this.activePosition = null;
@@ -428,7 +444,7 @@ export class MaFanStrategy {
         return;
       }
 
-      // ── 2. SCAN FOR ENTRY (ELASTIC HOOK BUY) ──────────────────────────────────
+      // ── 2. SCAN FOR ENTRY (MODULAR ENGINE: DIP HUNTER / TREND RIDER / DUAL) ──
       if (!this.activePosition) {
         const entryOnClosedOnly = this.config.entryOnClosedOnly !== false;
 
@@ -448,7 +464,9 @@ export class MaFanStrategy {
 
         const isCircuitActive = this.config.circuitBreakerEnabled !== false && Date.now() < this.circuitBreakerCooldownUntil;
 
-        const entryDecision = MaFanCoreRules.evaluateEntry({
+        const modularDecision = MaFanCoreRules.evaluateModularEntry({
+          tradeMode: this.config.tradeMode ?? "dip_hunter",
+          tradeDirection: this.config.tradeDirection ?? "long",
           candles: this.candles,
           closePrice: evalPrice,
           ribbon,
@@ -457,62 +475,107 @@ export class MaFanStrategy {
           curAtr,
           slBufferPct: this.config.slBufferPct,
           waterfallGuardMode: this.config.waterfallGuardEnabled !== false ? "combined" : "off",
-          isHtfBull: htfRegime.isBullish,
+          isHtfBull: !!htfRegime.isBullish,
           macroGateMode: this.config.macroGateMode ?? "off",
           htfRegime,
           enableUpsideFloor: this.config.upsideFloorEnabled !== false,
           circuitBreakerActive: isCircuitActive,
         });
 
-        this.lastEntryChecklist = entryDecision.checklist ?? null;
+        this.lastEntryChecklist = modularDecision.checklist ?? null;
 
-        if (entryDecision.blockedBy === "WATERFALL_GUARD") {
-          this.log(`🛡️ [WATERFALL GUARD] Entry blocked: ${entryDecision.reason}`);
-        } else if (entryDecision.blockedBy === "MACRO_GATE") {
-          this.log(`🛡️ [MACRO GATE] Entry blocked: ${entryDecision.reason}`);
-        } else if (entryDecision.blockedBy === "CIRCUIT_BREAKER") {
-          this.log(`⏸️ [CIRCUIT BREAKER] Entry blocked: ${entryDecision.reason}`);
+        if (modularDecision.blockedBy === "WATERFALL_GUARD") {
+          this.log(`🛡️ [WATERFALL GUARD] Entry blocked: ${modularDecision.reason}`);
+        } else if (modularDecision.blockedBy === "MACRO_GATE") {
+          this.log(`🛡️ [MACRO GATE] Entry blocked: ${modularDecision.reason}`);
+        } else if (modularDecision.blockedBy === "CIRCUIT_BREAKER") {
+          this.log(`⏸️ [CIRCUIT BREAKER] Entry blocked: ${modularDecision.reason}`);
         }
 
-        if (entryDecision.shouldEnter) {
+        if (modularDecision.shouldEnter) {
           const budget = this.config.maxPositionBudgetUsd;
-          this.log(`🎯 Entry criteria met: Fan Spread=${entryDecision.fanSpreadPct.toFixed(2)}% (Req: ${requiredSpread.toFixed(2)}%), Hook=${ribbon.isHookUp}, Oversold=${exhaustion.isOversoldExhaustion}`);
+          const posSide = modularDecision.positionSide ?? (modularDecision.side === "BUY" ? "LONG" : "SHORT");
 
-          const newPos = await this.executor.executeBuy(
-            this.symbol,
-            refPrice,
-            budget,
-            entryDecision.swingLow,
-            htfRegime,
-            entryDecision.fanSpreadPct,
-            curAtr
-          );
+          if (posSide === "LONG") {
+            this.log(`🎯 Long Entry criteria met (${modularDecision.engineType || "dip_hunter"}): Fan Spread=${modularDecision.fanSpreadPct.toFixed(2)}% (Req: ${requiredSpread.toFixed(2)}%), Hook=${ribbon.isHookUp}`);
 
-          if (newPos) {
-            appendDecisionSnapshot({
-              version: APP_VERSION_INFO.version,
-              symbol: this.symbol,
-              kind: "ENTRY",
+            const newPos = await this.executor.executeBuy(
+              this.symbol,
               refPrice,
-              fillPrice: newPos.entryPrice,
-              qty: newPos.remainingQty,
-              entryPrice: newPos.entryPrice,
-              stopLossPrice: newPos.stopLossPrice,
-              barsHeld: 0,
-              lastClosedCandleTime: this.lastClosedCandle?.time,
-              ribbon,
-              atr: curAtr,
-              rsi: exhaustion.rsi,
-              htf: { isBullish: !!htfRegime.isBullish, isAboveEma200: !!htfRegime.isAboveEma200 },
-              effectiveSpreadThreshold: this.effectiveSpreadThreshold,
-              cushionEnabled: this.config.bullCushionEnabled,
-              rewardRisk: entryDecision.rewardRisk,
-              riskPct: entryDecision.riskPct,
-              rewardPct: entryDecision.rewardPct,
-              reason: `Spread ${entryDecision.fanSpreadPct.toFixed(2)}% >= ${requiredSpread.toFixed(2)}%`,
-            });
-            this.activePosition = newPos;
-            this.onStateUpdate?.(this.getState());
+              budget,
+              modularDecision.swingLow ?? (refPrice * 0.98),
+              htfRegime,
+              modularDecision.fanSpreadPct,
+              curAtr,
+              modularDecision.engineType
+            );
+
+            if (newPos) {
+              appendDecisionSnapshot({
+                version: APP_VERSION_INFO.version,
+                symbol: this.symbol,
+                kind: "ENTRY",
+                refPrice,
+                fillPrice: newPos.entryPrice,
+                qty: newPos.remainingQty,
+                entryPrice: newPos.entryPrice,
+                stopLossPrice: newPos.stopLossPrice,
+                barsHeld: 0,
+                lastClosedCandleTime: this.lastClosedCandle?.time,
+                ribbon,
+                atr: curAtr,
+                rsi: exhaustion.rsi,
+                htf: { isBullish: !!htfRegime.isBullish, isAboveEma200: !!htfRegime.isAboveEma200 },
+                effectiveSpreadThreshold: this.effectiveSpreadThreshold,
+                cushionEnabled: this.config.bullCushionEnabled,
+                rewardRisk: modularDecision.rewardRisk,
+                riskPct: modularDecision.riskPct,
+                rewardPct: modularDecision.rewardPct,
+                reason: `${modularDecision.engineType || "dip_hunter"} Long: Spread ${modularDecision.fanSpreadPct.toFixed(2)}% >= ${requiredSpread.toFixed(2)}%`,
+              });
+              this.activePosition = newPos;
+              this.onStateUpdate?.(this.getState());
+            }
+          } else if (posSide === "SHORT") {
+            this.log(`🎯 Short Entry criteria met (${modularDecision.engineType || "peak_hunter"}): Fan Spread=${modularDecision.fanSpreadPct.toFixed(2)}% (Req: ${requiredSpread.toFixed(2)}%), Hook=${ribbon.isHookDown}`);
+
+            const newPos = await this.executor.executeShort(
+              this.symbol,
+              refPrice,
+              budget,
+              modularDecision.swingHigh ?? (refPrice * 1.02),
+              htfRegime,
+              modularDecision.fanSpreadPct,
+              curAtr,
+              modularDecision.engineType
+            );
+
+            if (newPos) {
+              appendDecisionSnapshot({
+                version: APP_VERSION_INFO.version,
+                symbol: this.symbol,
+                kind: "ENTRY",
+                refPrice,
+                fillPrice: newPos.entryPrice,
+                qty: newPos.remainingQty,
+                entryPrice: newPos.entryPrice,
+                stopLossPrice: newPos.stopLossPrice,
+                barsHeld: 0,
+                lastClosedCandleTime: this.lastClosedCandle?.time,
+                ribbon,
+                atr: curAtr,
+                rsi: exhaustion.rsi,
+                htf: { isBullish: !!htfRegime.isBullish, isAboveEma200: !!htfRegime.isAboveEma200 },
+                effectiveSpreadThreshold: this.effectiveSpreadThreshold,
+                cushionEnabled: this.config.bullCushionEnabled,
+                rewardRisk: modularDecision.rewardRisk,
+                riskPct: modularDecision.riskPct,
+                rewardPct: modularDecision.rewardPct,
+                reason: `${modularDecision.engineType || "peak_hunter"} Short: Spread ${modularDecision.fanSpreadPct.toFixed(2)}% >= ${requiredSpread.toFixed(2)}%`,
+              });
+              this.activePosition = newPos;
+              this.onStateUpdate?.(this.getState());
+            }
           }
         }
       }
@@ -542,7 +605,9 @@ export class MaFanStrategy {
 
     const isCircuitActive = this.config.circuitBreakerEnabled !== false && Date.now() < this.circuitBreakerCooldownUntil;
 
-    const res = MaFanCoreRules.evaluateEntry({
+    const res = MaFanCoreRules.evaluateModularEntry({
+      tradeMode: this.config.tradeMode ?? "dip_hunter",
+      tradeDirection: this.config.tradeDirection ?? "long",
       candles: this.candles,
       closePrice: evalPrice,
       ribbon: this.currentRibbon,

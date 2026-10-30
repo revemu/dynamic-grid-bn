@@ -92,6 +92,20 @@ export interface PlaceOrderParams {
   qty: number;
   clientOrderId?: string;
   expireHours?: number;
+  positionSide?: "LONG" | "SHORT" | "BOTH";
+  reduceOnly?: boolean;
+}
+
+export interface ExchangePosition {
+  symbol: string;
+  positionSide: "LONG" | "SHORT" | "BOTH";
+  positionAmt: number;
+  entryPrice: number;
+  markPrice: number;
+  unrealizedProfit: number;
+  liquidationPrice: number;
+  leverage: number;
+  marginType: "ISOLATED" | "CROSS";
 }
 
 export interface ExchangeTrade {
@@ -135,4 +149,10 @@ export interface IExchangeClient {
   createUserDataStream?(): Promise<string>;
   keepAliveUserDataStream?(listenKey: string): Promise<void>;
   closeUserDataStream?(listenKey: string): Promise<void>;
+}
+
+export interface IPerpExchangeClient extends IExchangeClient {
+  getPositions?(symbol?: string): Promise<ExchangePosition[]>;
+  setLeverage?(symbol: string, leverage: number): Promise<void>;
+  setMarginType?(symbol: string, marginType: "ISOLATED" | "CROSS"): Promise<void>;
 }

@@ -5422,6 +5422,8 @@
       setVal("cfg_swingBearishReversalMinProfitPct", data.swingBearishReversalMinProfitPct ?? 0.35);
 
       // MA Fan Sniper settings
+      setVal("cfg_maFanTradeMode", data.maFanTradeMode || "dip_hunter");
+      setVal("cfg_maFanTradeDirection", data.maFanTradeDirection || "long");
       setVal("cfg_maFanExecutionTimeframe", data.maFanExecutionTimeframe || "5m");
       setVal("cfg_maFanSupervisorTimeframe", data.maFanSupervisorTimeframe || "15m");
       setVal("cfg_maFanMaxBudgetUsd", data.maFanMaxBudgetUsd ?? 200);
@@ -5694,6 +5696,8 @@
       swingBearishReversalMinProfitPct: parseFloat(document.getElementById("cfg_swingBearishReversalMinProfitPct")?.value) || 0.35,
 
       // MA Fan Strategy
+      maFanTradeMode: document.getElementById("cfg_maFanTradeMode") ? document.getElementById("cfg_maFanTradeMode").value : "dip_hunter",
+      maFanTradeDirection: document.getElementById("cfg_maFanTradeDirection") ? document.getElementById("cfg_maFanTradeDirection").value : "long",
       maFanExecutionTimeframe: document.getElementById("cfg_maFanExecutionTimeframe") ? document.getElementById("cfg_maFanExecutionTimeframe").value : "5m",
       maFanSupervisorTimeframe: document.getElementById("cfg_maFanSupervisorTimeframe") ? document.getElementById("cfg_maFanSupervisorTimeframe").value : "15m",
       maFanMaxBudgetUsd: parseFloat(document.getElementById("cfg_maFanMaxBudgetUsd")?.value) || 200,

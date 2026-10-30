@@ -6410,6 +6410,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.192` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 217. Perpetual Futures Support & Two-Way Modular Engine (Dip/Peak Hunter + Trend Rider) (`v0.2.193`)
+
+1. **สถาปัตยกรรม Perp Futures และ Multi-Exchange Layer (`src/exchange/types.ts`)**:
+   - เพิ่ม `positionSide?: "LONG" | "SHORT" | "BOTH"` และ `reduceOnly?: boolean` ใน `PlaceOrderParams`
+   - เพิ่ม Interface `IPerpExchangeClient extends IExchangeClient` พร้อมเมธอดมาตรฐาน `getPositions()`, `setLeverage()`, `setMarginType()`
+   - รองรับการเตรียมความพร้อมสำหรับ **Hyperliquid (HYPE L1 DEX)** และ Binance Futures ควบคู่ไปกับ Spot
+2. **ระบบกลยุทธ์สองฝั่ง (Two-Way Modular Core Engine in `src/strategy/ma-fan/core-rules.ts`)**:
+   - **Peak Hunter (Short Entry)**: ดักจับจุดกลับตัวขาลงเมื่อเส้น EMA กางออกเป็นพัดหงาย (Spread >= Threshold), เกิดแท่ง Hook ม้วนลง, Exhaustion Overbought (RSI/MACD), มีระยะวิ่งลงถึง EMA 25 (`downsideRoomPct >= 0.50%`), Upper Wick Rejection และมี Macro Gate บล็อกไม่ให้ Short สวนเทรนด์ใหญ่ขาขึ้น
+   - **Trend Rider Entry (`evaluateTrendRiderEntry`)**: ระบบเกาะแนวโน้มตามโมเมนตัมแบบ Dynamic Retest บนเส้น EMA 16 และ EMA 25 รองรับทั้ง Long และ Short
+   - **Universal Modular Dispatcher (`evaluateModularEntry`)**: รวมศูนย์การตัดสินใจระหว่าง `dip_hunter`, `trend_rider`, และ `dual` (ทำงานประสานร่วมกัน)
+   - **Ratchet Stop Loss & Exits สำหรับ Short**: ปรับเลื่อน SL ลงตามกำไร (Ratchet Downward), ล็อก Breakeven SL ใต้ราคา Entry เมื่อถึง TP1 (EMA 25) และรัน Runner ผ่าน Trailing Exit จากจุดต่ำสุด (`lowestPriceSinceTp1`)
+3. **การแก้ไขบั๊ก Phantom Drawdown และผลการทดสอบ Deep 120-Day Backtest (`src/backtest-service.ts`)**:
+   - **แก้ไขบั๊ก Phantom Peak ในการคำนวณมูลค่าพอร์ตฝั่ง Short**: เดิมคำนวณ `posVal = tradeInvest + (heldQty * (entryPrice - c.close))` ทำให้เมื่อปิด TP1 50% เงินสด 50% ถูกคืนเข้ากระเป๋า แต่ `tradeInvest` ยังคงนับเต็ม 100% ส่งผลให้กราฟพอร์ตเกิดยอดเทียมกระโดด +50% แล้วตกฮวบตอนปิดออเดอร์ (เกิด Max DD เทียม -45.73%)
+   - **ผลลัพธ์หลังแก้ไข**: คำนวณเป็น `posVal = (heldQty * entryPrice) + (heldQty * (entryPrice - c.close))` ทำให้ Max Drawdown ลดฮวบเหลือเพียง **-4.89%**!
+   - **ผลการจำลอง 120 วันบน HAEDALUSDT (35,000 แท่ง 5m)**:
+     - **Long Only Dip Hunter (Spot)**: 15 ไม้ (Win Rate 53.3%), กำไรสุทธิ **+$62.95 (+6.29%)**, Profit Factor 2.05, Max DD -4.12%
+     - **Two-Way Long & Short (Dip & Peak Hunter + Macro Gate)**: 23 ไม้ (Win Rate 47.8%), กำไรสุทธิ **+$48.60 (+4.86%)**, Profit Factor 1.54, Max DD **-4.89%** โดยทุกไม้แพ้ถูกจำกัดความเสียหายไม่เกิน -1.48%
+4. **การเชื่อมต่อระบบเทรดจริงและหน้าแดชบอร์ด (`executor.ts`, `strategy.ts`, `strategy-adapter.ts`, `public/`)**:
+   - เพิ่ม `executeShort` ใน `executor.ts` รองรับการส่งคำสั่งเปิด Short (`side: "SELL"`, `positionSide: "SHORT"`) และปิดทำกำไร/คัตลอส (`side: "BUY"`, `reduceOnly: true`)
+   - ใน `strategy.ts`: บันทึก `lowestPriceSinceTp1` / `lowestPriceSinceEntry`, ปรับปรุง Ratchet SL ให้รองรับฝั่ง Short และส่งผ่านคำสั่งเข้า `evaluateModularEntry`
+   - ใน `strategy-adapter.ts` และ `config.ts`: รองรับ `maFanTradeMode` และ `maFanTradeDirection`
+   - ใน `public/index.html` และ `public/app.js`: เพิ่มเมนูเลือก Strategy Engine และ Trading Direction ในหน้าต่าง Settings Modal ให้ตรงกับหน้า Backtest
+5. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.193` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

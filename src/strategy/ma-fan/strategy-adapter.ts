@@ -74,6 +74,8 @@ export class MaFanTradingStrategy implements IStrategy {
       waterfallGuardEnabled: this.cfg.maFanWaterfallGuard !== false,
       entryOnClosedOnly: this.cfg.maFanEntryOnClosedOnly ?? true,
       macroGateMode: (this.cfg.maFanMacroGate as "off" | "noDeepBear" | "bullOnly") || "off",
+      tradeMode: this.cfg.maFanTradeMode ?? "dip_hunter",
+      tradeDirection: this.cfg.maFanTradeDirection ?? "long",
       upsideFloorEnabled: this.cfg.maFanUpsideFloor !== false,
       circuitBreakerEnabled: this.cfg.maFanCircuitBreaker !== false,
       maxPositionBudgetUsd: this.cfg.maFanMaxBudgetUsd ?? 200,
@@ -467,6 +469,14 @@ export class MaFanTradingStrategy implements IStrategy {
     if (s.maFanCircuitBreaker !== undefined) {
       this.cfg.maFanCircuitBreaker = s.maFanCircuitBreaker;
       this.maFan.config.circuitBreakerEnabled = s.maFanCircuitBreaker;
+    }
+    if (s.maFanTradeMode !== undefined) {
+      this.cfg.maFanTradeMode = s.maFanTradeMode;
+      this.maFan.config.tradeMode = s.maFanTradeMode;
+    }
+    if (s.maFanTradeDirection !== undefined) {
+      this.cfg.maFanTradeDirection = s.maFanTradeDirection;
+      this.maFan.config.tradeDirection = s.maFanTradeDirection;
     }
 
     this.maFan.config.manualSpreadPct = this.cfg.maFanManualSpreadPct;

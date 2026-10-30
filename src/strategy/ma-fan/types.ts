@@ -78,6 +78,8 @@ export interface MaFanConfig {
   fastTechnicalCutEnabled?: boolean; // Early exit on momentum breakdown (default: true)
   fastCutThresholdPct?: number; // PnL threshold for fast cut (default: -0.80%)
   stagnationBars?: number; // Bars held without reaching +0.70% (default: 6)
+  tradeMode?: "dip_hunter" | "trend_rider" | "dual"; // Trade mode (default: "dip_hunter")
+  tradeDirection?: "long" | "short" | "both"; // Trade direction (default: "long" for spot, "both" for perp)
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;
   startPaused?: boolean;
@@ -102,6 +104,7 @@ export interface CalibrationResult {
 
 export interface MaFanPosition {
   symbol: string;
+  positionSide?: "LONG" | "SHORT";
   entryPrice: number;
   entryTime: number;
   totalQty: number;
@@ -113,13 +116,16 @@ export interface MaFanPosition {
   tp1Time?: number;
   highestPriceSinceTp1: number;
   highestPriceSinceEntry?: number;
+  lowestPriceSinceTp1?: number;
+  lowestPriceSinceEntry?: number;
   htfRegimeAtEntry: HtfRegime;
   fanSpreadAtEntry: number;
 }
 
 export interface MaFanTradeLog {
   id: string;
-  type: "BUY_HOOK" | "TP1_EMA25" | "TP2_RUNNER" | "STOP_LOSS";
+  type: "BUY_HOOK" | "SELL_PEAK" | "TREND_LONG" | "TREND_SHORT" | "TP1_EMA25" | "TP2_RUNNER" | "STOP_LOSS" | "TECH_FAST_CUT";
+  side?: "LONG" | "SHORT";
   symbol: string;
   price: number;
   qty: number;

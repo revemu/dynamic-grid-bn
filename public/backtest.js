@@ -45,6 +45,8 @@
   const inpUpsideFloor = document.getElementById("btUpsideFloor");
   const inpFastCut = document.getElementById("btFastCut");
   const inpMaxSl = document.getElementById("btMaxSl");
+  const inpTradeMode = document.getElementById("btTradeMode");
+  const inpTradeDirection = document.getElementById("btTradeDirection");
   const inpBudget = document.getElementById("btBudget");
 
   function getSelectedSymbol() {
@@ -818,15 +820,16 @@
     const items = [];
 
     for (const t of record.trades) {
-      // 1. Entry Badge (B)
+      // 1. Entry Badge (B for Long, S for Short)
+      const isShort = t.side === "SHORT";
       items.push({
         tradeId: t.id,
-        action: "BUY",
-        text: "B",
+        action: isShort ? "SHORT" : "BUY",
+        text: isShort ? "S" : "B",
         time: t.entryTime,
         price: t.entryPrice,
-        cssClass: "badge-buy",
-        badgeType: "BUY",
+        cssClass: isShort ? "badge-sell" : "badge-buy",
+        badgeType: isShort ? "SHORT" : "BUY",
         trade: t,
       });
 
@@ -1143,7 +1146,10 @@
           <tr data-trade-id="${t.id}" data-entry-time="${t.entryTime}" data-exit-time="${t.exitTime}">
             <td>#${t.id}</td>
             <td>
-              <span style="color: #34d399;">$${fmtPrice(t.entryPrice)}</span>
+              ${t.side === "SHORT"
+                ? '<span style="display:inline-block; padding: 1px 4px; border-radius: 3px; font-size: 10px; font-weight: 700; background: rgba(239, 68, 68, 0.2); color: #f87171; margin-right: 4px;">SHORT</span>'
+                : '<span style="display:inline-block; padding: 1px 4px; border-radius: 3px; font-size: 10px; font-weight: 700; background: rgba(16, 185, 129, 0.2); color: #34d399; margin-right: 4px;">LONG</span>'}
+              <span style="color: ${t.side === "SHORT" ? "#f87171" : "#34d399"};">$${fmtPrice(t.entryPrice)}</span>
               <div style="font-size: 10px; color: #94a3b8;">${fmtDateTime(t.entryTime)}</div>
             </td>
             <td>${t.fanSpreadAtEntry ? t.fanSpreadAtEntry.toFixed(2) + "%" : "--"}</td>
@@ -1211,10 +1217,12 @@
     const enableUpsideFloor = inpUpsideFloor ? inpUpsideFloor.value === "on" : true;
     const enableFastCut = inpFastCut ? inpFastCut.value === "on" : true;
     const maxSlPct = inpMaxSl ? Number(inpMaxSl.value) : 1.80;
+    const tradeMode = inpTradeMode ? inpTradeMode.value : "dip_hunter";
+    const tradeDirection = inpTradeDirection ? inpTradeDirection.value : "long";
 
     const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
     loadingOverlay.style.display = "flex";
-    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${useRatchetSl ? "Ratchet SL" : "Fixed SL"})...`;
+    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection})...`;
 
     try {
       const resp = await fetch("/api/backtest/run", {
@@ -1233,6 +1241,8 @@
           enableUpsideFloor,
           enableFastCut,
           maxSlPct,
+          tradeMode,
+          tradeDirection,
         }),
       });
 
@@ -1376,6 +1386,8 @@
         if (inpCircuitBreaker) inpCircuitBreaker.value = cfg.maFanCircuitBreaker !== false ? "on" : "off";
         if (inpUpsideFloor) inpUpsideFloor.value = cfg.maFanUpsideFloor !== false ? "on" : "off";
         if (inpMacroGate && cfg.maFanMacroGate) inpMacroGate.value = cfg.maFanMacroGate;
+        if (inpTradeMode && cfg.maFanTradeMode) inpTradeMode.value = cfg.maFanTradeMode;
+        if (inpTradeDirection && cfg.maFanTradeDirection) inpTradeDirection.value = cfg.maFanTradeDirection;
         if (inpFastCut) inpFastCut.value = "on";
         if (inpMaxSl) inpMaxSl.value = "1.8";
         if (inpFeeTier) {
@@ -1393,6 +1405,8 @@
         if (scCircuitBreaker) scCircuitBreaker.value = cfg.maFanCircuitBreaker !== false ? "on" : "off";
         if (scUpsideFloor) scUpsideFloor.value = cfg.maFanUpsideFloor !== false ? "on" : "off";
         if (scMacroGate && cfg.maFanMacroGate) scMacroGate.value = cfg.maFanMacroGate;
+        if (scTradeMode && cfg.maFanTradeMode) scTradeMode.value = cfg.maFanTradeMode;
+        if (scTradeDirection && cfg.maFanTradeDirection) scTradeDirection.value = cfg.maFanTradeDirection;
         if (scFastCut) scFastCut.value = "on";
         if (scMaxSl) scMaxSl.value = "1.8";
       }
@@ -1544,6 +1558,8 @@
   const scCircuitBreaker = document.getElementById("scCircuitBreaker");
   const scSlMode = document.getElementById("scSlMode");
   const scMacroGate = document.getElementById("scMacroGate");
+  const scTradeMode = document.getElementById("scTradeMode");
+  const scTradeDirection = document.getElementById("scTradeDirection");
 
   function initScannerEvents() {
     loadLatestScannerResults();
@@ -1589,6 +1605,8 @@
         const enableUpsideFloor = scUpsideFloor ? scUpsideFloor.value === "on" : (inpUpsideFloor ? inpUpsideFloor.value === "on" : true);
         const enableFastCut = scFastCut ? scFastCut.value === "on" : (inpFastCut ? inpFastCut.value === "on" : true);
         const maxSlPct = scMaxSl ? Number(scMaxSl.value) : (inpMaxSl ? Number(inpMaxSl.value) : 1.80);
+        const tradeMode = scTradeMode ? scTradeMode.value : (inpTradeMode ? inpTradeMode.value : "dip_hunter");
+        const tradeDirection = scTradeDirection ? scTradeDirection.value : (inpTradeDirection ? inpTradeDirection.value : "long");
 
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
@@ -1614,6 +1632,8 @@
               enableUpsideFloor,
               enableFastCut,
               maxSlPct,
+              tradeMode,
+              tradeDirection,
             }),
           });
 
@@ -1722,6 +1742,8 @@
           if (scCircuitBreaker && inpCircuitBreaker) inpCircuitBreaker.value = scCircuitBreaker.value;
           if (scSlMode && inpSlMode) inpSlMode.value = scSlMode.value;
           if (scMacroGate && inpMacroGate) inpMacroGate.value = scMacroGate.value;
+          if (scTradeMode && inpTradeMode) inpTradeMode.value = scTradeMode.value;
+          if (scTradeDirection && inpTradeDirection) inpTradeDirection.value = scTradeDirection.value;
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
           runBacktest();
         }
@@ -1740,11 +1762,15 @@
         const enableCircuitBreaker = scCircuitBreaker ? scCircuitBreaker.value === "on" : true;
         const enableUpsideFloor = scUpsideFloor ? scUpsideFloor.value === "on" : true;
         const macroGateMode = scMacroGate ? scMacroGate.value : "off";
+        const tradeMode = scTradeMode ? scTradeMode.value : "dip_hunter";
+        const tradeDirection = scTradeDirection ? scTradeDirection.value : "long";
 
         const confirmMsg = `ต้องการสลับบอทจริงไปเทรด ${sym} พร้อมนำ Config ที่สแกนไปใช้งานหรือไม่?\n\n` +
           `• คู่เหรียญ: ${sym}\n` +
           `• Timeframe: ${timeframe}\n` +
           `• Min Spread: ${isAutoSpread ? "Auto Calibrate ⚡" : `${spreadVal}%`}\n` +
+          `• Engine: ${tradeMode}\n` +
+          `• Direction: ${tradeDirection}\n` +
           `• SL Mode: ${useRatchetSl ? "Ratchet SL" : "Fixed SL"}\n` +
           `• Circuit Breaker: ${enableCircuitBreaker ? "On" : "Off"}\n` +
           `• Upside Floor: ${enableUpsideFloor ? "On" : "Off"}\n` +
@@ -1764,6 +1790,8 @@
             maFanCircuitBreaker: enableCircuitBreaker,
             maFanUpsideFloor: enableUpsideFloor,
             maFanMacroGate: macroGateMode,
+            maFanTradeMode: tradeMode,
+            maFanTradeDirection: tradeDirection,
           };
 
           const res = await fetch("/api/config", {

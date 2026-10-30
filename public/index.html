@@ -1859,6 +1859,30 @@
             </div>
             <div class="settings-grid">
               <div class="form-group">
+                <label for="cfg_maFanTradeMode">
+                  กลยุทธโมดูล (Strategy Engine)
+                  <span class="help-tip" title="เลือกรูปแบบ Engine: Dip & Peak Hunter หรือ Trend Rider หรือ Dual ทำงานประสานกัน">ℹ️</span>
+                </label>
+                <select id="cfg_maFanTradeMode" class="form-select">
+                  <option value="dip_hunter">🎯 Dip &amp; Peak Hunter (Mean Reversion)</option>
+                  <option value="trend_rider">🏄 Trend Rider (Momentum Dynamic Retest)</option>
+                  <option value="dual">⚔️ Dual Cooperative (ทำงานประสานร่วมกัน)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_maFanTradeDirection">
+                  ทิศทางการเทรด (Trading Direction)
+                  <span class="help-tip" title="Spot: แนะนำ Long Only | Perp/Futures: รองรับ Two-Way Long & Short หรือ Directional Short">ℹ️</span>
+                </label>
+                <select id="cfg_maFanTradeDirection" class="form-select">
+                  <option value="long">🟢 Long Only (Spot แนะนำ)</option>
+                  <option value="short">🔴 Short Only (ขาลง)</option>
+                  <option value="both">🔄 Two-Way Long &amp; Short (Perp รองรับสองฝั่ง)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
                 <label for="cfg_maFanExecutionTimeframe">
                   Timeframe ส่งคำสั่งเทรด (Execution TF)
                   <span class="help-tip" title="แนะนำ 5m สำหรับสายเทรดสั้นจบไว (1-2 ชม.) หรือ 15m สำหรับรอบใหญ่คำโต (4-6 ชม.)">ℹ️</span>

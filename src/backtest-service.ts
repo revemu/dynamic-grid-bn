@@ -15,6 +15,7 @@ export const STABLE_TOKENS = new Set([
 
 export interface BacktestTrade {
   id: number;
+  side?: "LONG" | "SHORT";
   entryTime: number; // Unix seconds
   entryPrice: number;
   stopLossPrice: number;
@@ -83,6 +84,8 @@ export interface MarketScanOptions {
   fastCutThresholdPct?: number;
   stagnationBars?: number;
   maxSlPct?: number;
+  tradeMode?: "dip_hunter" | "trend_rider" | "dual";
+  tradeDirection?: "long" | "short" | "both";
 }
 
 export interface BacktestMarker {
@@ -347,6 +350,8 @@ export class BacktestService {
       fastCutThresholdPct?: number;
       stagnationBars?: number;
       maxSlPct?: number;
+      tradeMode?: "dip_hunter" | "trend_rider" | "dual";
+      tradeDirection?: "long" | "short" | "both";
       exitInfoLag?: 0 | 1;
       warmupBars?: number;
       precomputed?: {
@@ -429,14 +434,19 @@ export class BacktestService {
     let tp1Price = 0;
     let tp1Time = 0;
     let tp1Qty = 0;
+    let activeSide: "LONG" | "SHORT" = "LONG";
     let highestSinceTp1 = 0;
     let highestSinceEntry = 0;
+    let lowestSinceTp1 = 0;
+    let lowestSinceEntry = 0;
     let activeTradeId = 0;
     let spreadAtEntry = 0;
     let tradeInvest = 0;
     let tradeProceeds = 0;
     let lastCushionApplied = false;
     let rrAtEntry: number | undefined = undefined;
+    const tradeMode = opts.tradeMode ?? "dip_hunter";
+    const tradeDirection = opts.tradeDirection ?? "long";
 
     const trades: BacktestTrade[] = [];
     const markers: BacktestMarker[] = [];
@@ -549,7 +559,12 @@ export class BacktestService {
         };
       }
 
-      const currentEquity = cash + (heldQty > 0 ? heldQty * c.close : 0);
+      const posVal = heldQty > 0
+        ? (activeSide === "LONG"
+            ? heldQty * c.close
+            : (heldQty * entryPrice) + (heldQty * (entryPrice - c.close)))
+        : 0;
+      const currentEquity = cash + posVal;
       if (currentEquity > peakEquity) peakEquity = currentEquity;
       const dd = peakEquity > 0 ? ((peakEquity - currentEquity) / peakEquity) * 100 : 0;
       if (dd > maxDrawdownPct) maxDrawdownPct = dd;
@@ -558,6 +573,8 @@ export class BacktestService {
       if (heldQty > 0) {
         if (c.high > highestSinceTp1) highestSinceTp1 = c.high;
         if (c.high > highestSinceEntry) highestSinceEntry = c.high;
+        if (lowestSinceTp1 === 0 || c.low < lowestSinceTp1) lowestSinceTp1 = c.low;
+        if (lowestSinceEntry === 0 || c.low < lowestSinceEntry) lowestSinceEntry = c.low;
 
         const ei = (opts.exitInfoLag === 1) ? i - 1 : i;
         const ribbonX = ribbonStates[ei]!;
@@ -581,9 +598,14 @@ export class BacktestService {
           curAtr: curAtrX,
           slBufferPct,
           useRatchetSl,
+          positionSide: activeSide,
         });
-        if (liftedSl !== null && liftedSl > stopLossPrice) {
-          stopLossPrice = liftedSl;
+        if (liftedSl !== null) {
+          if (activeSide === "LONG" && liftedSl > stopLossPrice) {
+            stopLossPrice = liftedSl;
+          } else if (activeSide === "SHORT" && liftedSl < stopLossPrice) {
+            stopLossPrice = liftedSl;
+          }
         }
 
         // Evaluate Exits (Priority: TP2 -> SL / Fast Cut -> TP1) via Universal MaFanCoreRules
@@ -596,6 +618,9 @@ export class BacktestService {
           tp1Filled,
           highestPriceSinceTp1: highestSinceTp1,
           highestPriceSinceEntry: highestSinceEntry,
+          lowestPriceSinceTp1: lowestSinceTp1,
+          lowestPriceSinceEntry: lowestSinceEntry,
+          positionSide: activeSide,
           ribbon: ribbonX,
           prevRibbon: prevRibbonX,
           exhaustion: exhX,
@@ -603,6 +628,7 @@ export class BacktestService {
           trailingPullbackPct,
           breakevenFeeBufferPct: opts.breakevenFeeBufferPct,
           isOverbought: exhX.isOverboughtExhaustion,
+          isOversold: exhX.isOversoldExhaustion,
           barsHeld,
           isHtfBull: !!htfRegimeX.isBullish,
           cushionMode: opts.cushionMode ?? "off",
@@ -616,7 +642,9 @@ export class BacktestService {
         // 1. TP2 Exit (Macro Runner / Trailing Stop)
         if (exitDecision.action === "TP2") {
           const exitP = exitDecision.exitPrice;
-          const proceeds = heldQty * exitP * (1 - costPerFill);
+          const proceeds = activeSide === "LONG"
+            ? heldQty * exitP * (1 - costPerFill)
+            : (heldQty * entryPrice) + (heldQty * (entryPrice - exitP) * (1 - costPerFill));
           cash += proceeds;
           tradeProceeds += proceeds;
 
@@ -632,18 +660,22 @@ export class BacktestService {
             losses++;
           }
 
+          const tp1PnlCalc = activeSide === "LONG" ? ((tp1Price - entryPrice) / entryPrice) * 100 : ((entryPrice - tp1Price) / entryPrice) * 100;
+          const tp2PnlCalc = activeSide === "LONG" ? ((exitP - entryPrice) / entryPrice) * 100 : ((entryPrice - exitP) / entryPrice) * 100;
+
           trades.push({
             id: activeTradeId,
+            side: activeSide,
             entryTime: candles[entryIdx]!.time,
             entryPrice,
             stopLossPrice,
             fanSpreadAtEntry: spreadAtEntry,
             tp1Time,
             tp1Price,
-            tp1PnlPct: ((tp1Price - entryPrice) / entryPrice) * 100,
+            tp1PnlPct: tp1PnlCalc,
             tp2Time: c.time,
             tp2Price: exitP,
-            tp2PnlPct: ((exitP - entryPrice) / entryPrice) * 100,
+            tp2PnlPct: tp2PnlCalc,
             exitTime: c.time,
             exitPrice: exitP,
             exitType: "TP1+TP2",
@@ -658,10 +690,10 @@ export class BacktestService {
           // TP2 Marker
           markers.push({
             time: c.time,
-            position: "aboveBar",
+            position: activeSide === "LONG" ? "aboveBar" : "belowBar",
             color: "#a855f7",
-            shape: "arrowDown",
-            text: `🟣 TP2 #${activeTradeId} @ $${exitP.toFixed(2)} (+${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
+            shape: activeSide === "LONG" ? "arrowDown" : "arrowUp",
+            text: `🟣 TP2 #${activeTradeId} (${activeSide}) @ $${exitP.toFixed(2)} (+${tp2PnlCalc.toFixed(2)}%)`,
           });
 
           heldQty = 0;
@@ -672,12 +704,14 @@ export class BacktestService {
         // 2. Stop Loss Exit
         if (exitDecision.action === "SL") {
           const exitP = exitDecision.exitPrice;
-          const proceeds = heldQty * exitP * (1 - costPerFill);
+          const proceeds = activeSide === "LONG"
+            ? heldQty * exitP * (1 - costPerFill)
+            : (heldQty * entryPrice) + (heldQty * (entryPrice - exitP) * (1 - costPerFill));
           cash += proceeds;
           tradeProceeds += proceeds;
 
           const isFastCut = exitDecision.reason?.startsWith("Fast Technical Cut") || exitDecision.reason?.startsWith("Fast Stagnation Cut");
-          const isRatchet = !tp1Filled && stopLossPrice > initialSlPrice;
+          const isRatchet = !tp1Filled && (activeSide === "LONG" ? stopLossPrice > initialSlPrice : stopLossPrice < initialSlPrice);
           const exitType: BacktestTrade["exitType"] = isFastCut ? "TECH_FAST_CUT" : tp1Filled ? "TP1+SL_BE" : isRatchet ? "RATCHET_SL" : "SL";
           const totalPnlQuote = tradeProceeds - tradeInvest;
           const tradePnlPct = tradeInvest > 0 ? (totalPnlQuote / tradeInvest) * 100 : 0;
@@ -698,18 +732,22 @@ export class BacktestService {
             }
           }
 
+          const tp1PnlCalc = tp1Filled ? (activeSide === "LONG" ? ((tp1Price - entryPrice) / entryPrice) * 100 : ((entryPrice - tp1Price) / entryPrice) * 100) : undefined;
+          const slPnlCalc = activeSide === "LONG" ? ((exitP - entryPrice) / entryPrice) * 100 : ((entryPrice - exitP) / entryPrice) * 100;
+
           trades.push({
             id: activeTradeId,
+            side: activeSide,
             entryTime: candles[entryIdx]!.time,
             entryPrice,
             stopLossPrice,
             fanSpreadAtEntry: spreadAtEntry,
             tp1Time: tp1Filled ? tp1Time : undefined,
             tp1Price: tp1Filled ? tp1Price : undefined,
-            tp1PnlPct: tp1Filled ? ((tp1Price - entryPrice) / entryPrice) * 100 : undefined,
+            tp1PnlPct: tp1PnlCalc,
             slTime: c.time,
             slPrice: exitP,
-            slPnlPct: ((exitP - entryPrice) / entryPrice) * 100,
+            slPnlPct: slPnlCalc,
             exitTime: c.time,
             exitPrice: exitP,
             exitType,
@@ -724,18 +762,18 @@ export class BacktestService {
           // SL Marker
           const markerColor = exitType === "TP1+SL_BE" ? "#f59e0b" : exitType === "TECH_FAST_CUT" ? "#f43f5e" : exitType === "RATCHET_SL" ? "#f97316" : "#ef4444";
           const markerText = exitType === "TP1+SL_BE"
-            ? `🟡 SL BE #${activeTradeId} @ $${exitP.toFixed(2)}`
+            ? `🟡 SL BE #${activeTradeId} (${activeSide}) @ $${exitP.toFixed(2)}`
             : exitType === "TECH_FAST_CUT"
-            ? `⚡ FAST CUT #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`
+            ? `⚡ FAST CUT #${activeTradeId} (${activeSide}) @ $${exitP.toFixed(2)} (${slPnlCalc.toFixed(2)}%)`
             : exitType === "RATCHET_SL"
-            ? `🟠 RATCHET SL #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`
-            : `🔴 SL #${activeTradeId} @ $${exitP.toFixed(2)} (${(((exitP - entryPrice) / entryPrice) * 100).toFixed(2)}%)`;
+            ? `🟠 RATCHET SL #${activeTradeId} (${activeSide}) @ $${exitP.toFixed(2)} (${slPnlCalc.toFixed(2)}%)`
+            : `🔴 SL #${activeTradeId} (${activeSide}) @ $${exitP.toFixed(2)} (${slPnlCalc.toFixed(2)}%)`;
 
           markers.push({
             time: c.time,
-            position: "belowBar",
+            position: activeSide === "LONG" ? "belowBar" : "aboveBar",
             color: markerColor,
-            shape: "arrowDown",
+            shape: activeSide === "LONG" ? "arrowDown" : "arrowUp",
             text: markerText,
           });
 
@@ -749,40 +787,50 @@ export class BacktestService {
           tp1Price = exitDecision.exitPrice;
           tp1Time = c.time;
           tp1Qty = heldQty * activeTp1RatioX;
-          const tp1Proceeds = tp1Qty * tp1Price * (1 - costPerFill);
+          const tp1Proceeds = activeSide === "LONG"
+            ? tp1Qty * tp1Price * (1 - costPerFill)
+            : (tp1Qty * entryPrice) + (tp1Qty * (entryPrice - tp1Price) * (1 - costPerFill));
           cash += tp1Proceeds;
           tradeProceeds += tp1Proceeds;
           heldQty -= tp1Qty;
           tp1Filled = true;
           highestSinceTp1 = c.high;
+          lowestSinceTp1 = c.low;
           if (exitDecision.cushionApplied) {
             lastCushionApplied = true;
           }
           if (exitDecision.newStopLossPrice) {
-            stopLossPrice = Math.max(stopLossPrice, exitDecision.newStopLossPrice);
+            stopLossPrice = activeSide === "LONG"
+              ? Math.max(stopLossPrice, exitDecision.newStopLossPrice)
+              : Math.min(stopLossPrice, exitDecision.newStopLossPrice);
           }
+
+          const tp1PnlCalc = activeSide === "LONG" ? ((tp1Price - entryPrice) / entryPrice) * 100 : ((entryPrice - tp1Price) / entryPrice) * 100;
 
           // TP1 Marker
           markers.push({
             time: c.time,
-            position: "aboveBar",
+            position: activeSide === "LONG" ? "aboveBar" : "belowBar",
             color: "#38bdf8",
             shape: "circle",
-            text: `🔵 TP1 (${(activeTp1RatioX * 100).toFixed(0)}%) #${activeTradeId} @ $${tp1Price.toFixed(2)} (+${(((tp1Price - entryPrice) / entryPrice) * 100).toFixed(2)}%)`,
+            text: `🔵 TP1 (${(activeTp1RatioX * 100).toFixed(0)}%) #${activeTradeId} (${activeSide}) @ $${tp1Price.toFixed(2)} (+${tp1PnlCalc.toFixed(2)}%)`,
           });
 
           // Intra-candle Breakeven SL check:
-          // Controlled by intrabarMode ("closeBased" | "pessimistic" | "optimistic")
           let hitIntrabarBe = false;
-          if (intrabarMode === "closeBased") {
-            hitIntrabarBe = c.close <= stopLossPrice;
-          } else if (intrabarMode === "pessimistic") {
-            hitIntrabarBe = c.low <= stopLossPrice;
+          if (activeSide === "LONG") {
+            hitIntrabarBe = intrabarMode === "closeBased" ? c.close <= stopLossPrice : intrabarMode === "pessimistic" ? c.low <= stopLossPrice : false;
+          } else {
+            hitIntrabarBe = intrabarMode === "closeBased" ? c.close >= stopLossPrice : intrabarMode === "pessimistic" ? c.high >= stopLossPrice : false;
           }
 
-          if (exitDecision.newStopLossPrice && exitDecision.newStopLossPrice > entryPrice && hitIntrabarBe) {
+          const isBeTrigger = exitDecision.newStopLossPrice && (activeSide === "LONG" ? exitDecision.newStopLossPrice > entryPrice : exitDecision.newStopLossPrice < entryPrice) && hitIntrabarBe;
+
+          if (isBeTrigger) {
             const exitP = stopLossPrice;
-            const beProceeds = heldQty * exitP * (1 - costPerFill);
+            const beProceeds = activeSide === "LONG"
+              ? heldQty * exitP * (1 - costPerFill)
+              : (heldQty * entryPrice) + (heldQty * (entryPrice - exitP) * (1 - costPerFill));
             cash += beProceeds;
             tradeProceeds += beProceeds;
 
@@ -799,18 +847,21 @@ export class BacktestService {
               losses++;
             }
 
+            const slPnlCalc = activeSide === "LONG" ? ((exitP - entryPrice) / entryPrice) * 100 : ((entryPrice - exitP) / entryPrice) * 100;
+
             trades.push({
               id: activeTradeId,
+              side: activeSide,
               entryTime: candles[entryIdx]!.time,
               entryPrice,
               stopLossPrice,
               fanSpreadAtEntry: spreadAtEntry,
               tp1Time,
               tp1Price,
-              tp1PnlPct: ((tp1Price - entryPrice) / entryPrice) * 100,
+              tp1PnlPct: tp1PnlCalc,
               slTime: c.time,
               slPrice: exitP,
-              slPnlPct: ((exitP - entryPrice) / entryPrice) * 100,
+              slPnlPct: slPnlCalc,
               exitTime: c.time,
               exitPrice: exitP,
               exitType,
@@ -824,10 +875,10 @@ export class BacktestService {
 
             markers.push({
               time: c.time,
-              position: "belowBar",
+              position: activeSide === "LONG" ? "belowBar" : "aboveBar",
               color: "#f59e0b",
-              shape: "arrowDown",
-              text: `🟡 SL BE #${activeTradeId} @ $${exitP.toFixed(2)}`,
+              shape: activeSide === "LONG" ? "arrowDown" : "arrowUp",
+              text: `🟡 SL BE #${activeTradeId} (${activeSide}) @ $${exitP.toFixed(2)}`,
             });
 
             heldQty = 0;
@@ -837,13 +888,13 @@ export class BacktestService {
         }
       }
 
-      // ─── POSITION ENTRY (SNIPER HOOK) ────────────────────────────────
+      // ─── POSITION ENTRY (MODULAR TWO-WAY ENGINE) ──────────────────────
       if (heldQty === 0 && cash >= 10) {
         if (opts.onlyEntryIdx !== undefined && i !== opts.onlyEntryIdx) {
           continue;
         }
 
-        const entryDecision = MaFanCoreRules.evaluateEntry({
+        const entryDecision = MaFanCoreRules.evaluateModularEntry({
           candles,
           currentIndex: i,
           closePrice: c.close,
@@ -860,6 +911,8 @@ export class BacktestService {
           enableUpsideFloor,
           circuitBreakerActive: isCircuitActive,
           maxSlPct: opts.maxSlPct,
+          tradeMode,
+          tradeDirection,
         });
 
         if (opts.onlyEntryIdx === undefined && evaluations[i]) {
@@ -874,6 +927,7 @@ export class BacktestService {
           initialSlPrice = entryDecision.stopLossPrice;
           stopLossPrice = initialSlPrice;
           rrAtEntry = entryDecision.rewardRisk;
+          activeSide = entryDecision.positionSide ?? "LONG";
 
           const invest = cash * 0.98;
           heldQty = (invest / entryPrice) * (1 - costPerFill);
@@ -884,15 +938,25 @@ export class BacktestService {
           tp1Filled = false;
           highestSinceTp1 = entryPrice;
           highestSinceEntry = c.high;
+          lowestSinceTp1 = entryPrice;
+          lowestSinceEntry = c.low;
           lastCushionApplied = false;
 
-          // Buy Marker
+          // Buy / Short Marker
+          const isShort = activeSide === "SHORT";
+          const markerColor = isShort ? "#ef4444" : "#10b981";
+          const markerShape = isShort ? "arrowDown" : "arrowUp";
+          const markerPos = isShort ? "aboveBar" : "belowBar";
+          const markerPrefix = isShort
+            ? (entryDecision.engineType === "TREND_RIDER_SHORT" ? "📉 TREND SHORT" : "🔴 PEAK SHORT")
+            : (entryDecision.engineType === "TREND_RIDER_LONG" ? "📈 TREND LONG" : "🟢 BUY");
+
           markers.push({
             time: c.time,
-            position: "belowBar",
-            color: "#10b981",
-            shape: "arrowUp",
-            text: `🟢 BUY #${activeTradeId} @ $${entryPrice.toFixed(2)} (Spread: ${spreadAtEntry.toFixed(2)}%)`,
+            position: markerPos,
+            color: markerColor,
+            shape: markerShape,
+            text: `${markerPrefix} #${activeTradeId} @ $${entryPrice.toFixed(2)} (Spread: ${spreadAtEntry.toFixed(2)}%)`,
           });
         } else if (opts.onlyEntryIdx !== undefined && i === opts.onlyEntryIdx) {
           break;
@@ -904,21 +968,25 @@ export class BacktestService {
     if (heldQty > 0 && entryIdx >= 0 && candles.length > 0) {
       const lastCandle = candles[candles.length - 1]!;
       const currentPrice = lastCandle.close;
-      const unrealizedProceeds = heldQty * currentPrice * (1 - costPerFill);
+      const unrealizedProceeds = activeSide === "LONG"
+        ? heldQty * currentPrice * (1 - costPerFill)
+        : (heldQty * entryPrice) + (heldQty * (entryPrice - currentPrice) * (1 - costPerFill));
       const totalPnlQuote = (tradeProceeds + unrealizedProceeds) - tradeInvest;
       const tradePnlPct = tradeInvest > 0 ? (totalPnlQuote / tradeInvest) * 100 : 0;
       const barsHeld = candles.length - 1 - entryIdx;
       const costQuote = (tradeInvest * costPerFill) + (tp1Filled ? tp1Qty * tp1Price * costPerFill : 0) + (heldQty * currentPrice * costPerFill);
+      const tp1PnlCalc = tp1Filled ? (activeSide === "LONG" ? ((tp1Price - entryPrice) / entryPrice) * 100 : ((entryPrice - tp1Price) / entryPrice) * 100) : undefined;
 
       trades.push({
         id: activeTradeId,
+        side: activeSide,
         entryTime: candles[entryIdx]!.time,
         entryPrice,
         stopLossPrice,
         fanSpreadAtEntry: spreadAtEntry,
         tp1Time: tp1Filled ? tp1Time : undefined,
         tp1Price: tp1Filled ? tp1Price : undefined,
-        tp1PnlPct: tp1Filled ? ((tp1Price - entryPrice) / entryPrice) * 100 : undefined,
+        tp1PnlPct: tp1PnlCalc,
         exitTime: lastCandle.time,
         exitPrice: currentPrice,
         exitType: tp1Filled ? "TP1+OPEN" : "OPEN",
@@ -932,7 +1000,13 @@ export class BacktestService {
     }
 
     // Performance Summary Calculations
-    const finalCapital = cash + (heldQty > 0 ? heldQty * candles[candles.length - 1]!.close * (1 - costPerFill) : 0);
+    const lastPrice = candles.length > 0 ? candles[candles.length - 1]!.close : 0;
+    const endPositionVal = heldQty > 0
+      ? (activeSide === "LONG"
+          ? heldQty * lastPrice * (1 - costPerFill)
+          : (heldQty * entryPrice) + (heldQty * (entryPrice - lastPrice) * (1 - costPerFill)))
+      : 0;
+    const finalCapital = cash + endPositionVal;
     const netPnlQuote = finalCapital - initialCapital;
     const netPnlPct = (netPnlQuote / initialCapital) * 100;
     const closedTrades = trades.filter((t) => t.exitType !== "OPEN" && t.exitType !== "TP1+OPEN");
@@ -1190,6 +1264,8 @@ export class BacktestService {
               fastCutThresholdPct: opts.fastCutThresholdPct ?? -0.80,
               stagnationBars: opts.stagnationBars ?? 6,
               maxSlPct: opts.maxSlPct ?? 1.80,
+              tradeMode: opts.tradeMode ?? "dip_hunter",
+              tradeDirection: opts.tradeDirection ?? "long",
               warmupBars: actualWarmup,
               trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
             });

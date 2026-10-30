@@ -105,7 +105,8 @@ export class MaFanOrderExecutor {
     swingLowPrice: number,
     htfRegime: HtfRegime,
     fanSpreadPct: number,
-    curAtr?: number
+    curAtr?: number,
+    engineType: "DIP_HUNTER" | "PEAK_HUNTER" | "TREND_RIDER_LONG" | "TREND_RIDER_SHORT" | "dip_hunter" | "trend_rider" = "dip_hunter"
   ): Promise<MaFanPosition | null> {
     const rawQty = budgetUsd / entryPrice;
     const qty = this.roundQty(rawQty);
@@ -126,7 +127,9 @@ export class MaFanOrderExecutor {
     const slDist = Math.max(swingLowPrice * (this.slBufferPct / 100), (curAtr ?? 0) * 1.0);
     const stopLossPrice = this.roundPrice(swingLowPrice - slDist);
 
-    this.log(`🟢 [BUY_SNIPER] ${symbol} | Price: $${entryPrice.toFixed(4)} | Qty: ${qty} | SL: $${stopLossPrice.toFixed(4)} (Buffer: $${slDist.toFixed(4)}) | Spread: ${fanSpreadPct.toFixed(2)}% | DryRun: ${this.dryRun}`);
+    const isTrendRider = engineType === "trend_rider" || engineType === "TREND_RIDER_LONG";
+    const logPrefix = isTrendRider ? "📈 [TREND_RIDER_LONG]" : "🟢 [BUY_SNIPER]";
+    this.log(`${logPrefix} ${symbol} | Price: $${entryPrice.toFixed(4)} | Qty: ${qty} | SL: $${stopLossPrice.toFixed(4)} (Buffer: $${slDist.toFixed(4)}) | Spread: ${fanSpreadPct.toFixed(2)}% | DryRun: ${this.dryRun}`);
 
     let fillPrice = entryPrice;
     let netReceivedQty = qty;
@@ -176,6 +179,7 @@ export class MaFanOrderExecutor {
 
     const position: MaFanPosition = {
       symbol,
+      positionSide: "LONG",
       entryPrice: fillPrice,
       entryTime: Date.now(),
       totalQty: finalHoldingQty,
@@ -184,17 +188,21 @@ export class MaFanOrderExecutor {
       isBreakevenLocked: false,
       tp1Filled: false,
       highestPriceSinceTp1: fillPrice,
+      highestPriceSinceEntry: fillPrice,
+      lowestPriceSinceTp1: fillPrice,
+      lowestPriceSinceEntry: fillPrice,
       htfRegimeAtEntry: htfRegime,
       fanSpreadAtEntry: fanSpreadPct,
     };
 
     const trade: MaFanTradeLog = {
       id: `mf_buy_${Date.now()}`,
-      type: "BUY_HOOK",
+      type: isTrendRider ? "TREND_LONG" : "BUY_HOOK",
+      side: "LONG",
       symbol,
       price: fillPrice,
       qty: finalHoldingQty,
-      reason: `Fan Spread ${fanSpreadPct.toFixed(2)}% + Hook`,
+      reason: isTrendRider ? "Trend Rider Long Retest" : `Fan Spread ${fanSpreadPct.toFixed(2)}% + Hook`,
       time: Date.now(),
     };
 
@@ -205,36 +213,145 @@ export class MaFanOrderExecutor {
   }
 
   /**
+   * Execute Sniper SHORT / Peak Hunter order
+   */
+  public async executeShort(
+    symbol: string,
+    entryPrice: number,
+    budgetUsd: number,
+    swingHighPrice: number,
+    htfRegime: HtfRegime,
+    fanSpreadPct: number,
+    curAtr?: number,
+    engineType: "DIP_HUNTER" | "PEAK_HUNTER" | "TREND_RIDER_LONG" | "TREND_RIDER_SHORT" | "dip_hunter" | "trend_rider" = "dip_hunter"
+  ): Promise<MaFanPosition | null> {
+    const rawQty = budgetUsd / entryPrice;
+    const qty = this.roundQty(rawQty);
+
+    if (qty <= 0) {
+      this.log(`⚠️ Calculated short qty is 0, skipping short.`);
+      return null;
+    }
+
+    const minNotional = (this.symbolInfo?.minNotional && this.symbolInfo.minNotional > 0) ? this.symbolInfo.minNotional : 5.0;
+    const notional = qty * entryPrice;
+    if (notional < minNotional) {
+      this.log(`⚠️ Order value $${notional.toFixed(2)} is below minimum allowed ($${minNotional.toFixed(2)}), skipping short.`);
+      return null;
+    }
+
+    // Dynamic ATR SL Buffer: protect from extreme wicks above recent swing high
+    const slDist = Math.max(swingHighPrice * (this.slBufferPct / 100), (curAtr ?? 0) * 1.0);
+    const stopLossPrice = this.roundPrice(swingHighPrice + slDist);
+
+    const isTrendRider = engineType === "trend_rider" || engineType === "TREND_RIDER_SHORT";
+    const logPrefix = isTrendRider ? "📉 [TREND_RIDER_SHORT]" : "🔴 [PEAK_HUNTER_SHORT]";
+    this.log(`${logPrefix} ${symbol} | Price: $${entryPrice.toFixed(4)} | Qty: ${qty} | SL: $${stopLossPrice.toFixed(4)} (Buffer: $${slDist.toFixed(4)}) | Spread: ${fanSpreadPct.toFixed(2)}% | DryRun: ${this.dryRun}`);
+
+    let fillPrice = entryPrice;
+    let netReceivedQty = qty;
+    let exchangeOrderId: string | number | undefined;
+    let executedFee: number | undefined;
+    let executedFeeAsset: string | undefined;
+
+    if (!this.dryRun) {
+      try {
+        const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
+        const res = await this.client.placeOrder({
+          symbol,
+          side: "SELL",
+          positionSide: "SHORT",
+          type: orderType,
+          price: entryPrice,
+          qty,
+        });
+        if (res.price && res.price > 0) fillPrice = res.price;
+        if (res.orderId) exchangeOrderId = res.orderId;
+
+        if (Array.isArray(res.fills) && res.fills.length > 0) {
+          let totalFee = 0;
+          for (const f of res.fills) {
+            totalFee += Number(f.commission || 0);
+            if (f.commissionAsset) executedFeeAsset = f.commissionAsset;
+          }
+          if (totalFee > 0) executedFee = totalFee;
+        }
+      } catch (err: any) {
+        this.log(`❌ Short order execution failed: ${err.message}`);
+        return null;
+      }
+    }
+
+    const finalHoldingQty = this.roundQty(netReceivedQty);
+
+    const position: MaFanPosition = {
+      symbol,
+      positionSide: "SHORT",
+      entryPrice: fillPrice,
+      entryTime: Date.now(),
+      totalQty: finalHoldingQty,
+      remainingQty: finalHoldingQty,
+      stopLossPrice,
+      isBreakevenLocked: false,
+      tp1Filled: false,
+      highestPriceSinceTp1: fillPrice,
+      highestPriceSinceEntry: fillPrice,
+      lowestPriceSinceTp1: fillPrice,
+      lowestPriceSinceEntry: fillPrice,
+      htfRegimeAtEntry: htfRegime,
+      fanSpreadAtEntry: fanSpreadPct,
+    };
+
+    const trade: MaFanTradeLog = {
+      id: `mf_short_${Date.now()}`,
+      type: isTrendRider ? "TREND_SHORT" : "SELL_PEAK",
+      side: "SHORT",
+      symbol,
+      price: fillPrice,
+      qty: finalHoldingQty,
+      reason: isTrendRider ? "Trend Rider Short Retest" : `Fan Spread ${fanSpreadPct.toFixed(2)}% + Peak Hook`,
+      time: Date.now(),
+    };
+
+    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, finalHoldingQty, undefined, exchangeOrderId, executedFee, executedFeeAsset);
+    this.onTrade?.(orderRecord || trade);
+
+    return position;
+  }
+
+  /**
    * Execute Take Profit 1 (Mean Reversion at EMA 25)
-   * Sells partial position and locks Stop Loss to Breakeven (+fee buffer)
+   * Sells/buys partial position and locks Stop Loss to Breakeven (+/- fee buffer)
    */
   public async executeTp1(
     position: MaFanPosition,
     currentPrice: number,
     tp1Ratio: number
   ): Promise<boolean> {
+    const isShort = position.positionSide === "SHORT";
+    const exitSide = isShort ? "BUY" : "SELL";
     const minNotional = (this.symbolInfo?.minNotional && this.symbolInfo.minNotional > 0) ? this.symbolInfo.minNotional : 5.0;
-    let sellQty = this.roundQty(position.totalQty * tp1Ratio);
-    if (sellQty <= 0) return false;
+    let exitQty = this.roundQty(position.totalQty * tp1Ratio);
+    if (exitQty <= 0) return false;
 
-    // 🛡️ BALANCE GUARD: Check live wallet free balance before placing TP1
-    if (!this.dryRun) {
+    // 🛡️ BALANCE GUARD: Check live wallet free balance before placing TP1 (for spot LONG only)
+    if (!this.dryRun && !isShort) {
       const available = await this.getAvailableBaseBalance(position.symbol);
-      if (available > 0 && available < sellQty) {
-        this.log(`ℹ️ [TP1 BALANCE GUARD] Available wallet balance ${available} is less than planned sell ${sellQty}. Adjusting sell qty to ${available}`);
-        sellQty = this.roundQty(available);
+      if (available > 0 && available < exitQty) {
+        this.log(`ℹ️ [TP1 BALANCE GUARD] Available wallet balance ${available} is less than planned sell ${exitQty}. Adjusting sell qty to ${available}`);
+        exitQty = this.roundQty(available);
       }
     }
 
     // 🛡️ Min Notional Dust Guard: Check if remaining runner would be below minimum exchange size (< $5.10)
-    const remainingQty = this.roundQty(position.remainingQty - sellQty);
+    const remainingQty = this.roundQty(position.remainingQty - exitQty);
     const remainingValue = remainingQty * currentPrice;
     if (remainingQty > 0 && remainingValue < minNotional * 1.05) {
       this.log(`ℹ️ [MIN_NOTIONAL GUARD] Remaining runner ${remainingQty} ($${remainingValue.toFixed(2)}) is below exchange min notional ($${minNotional.toFixed(2)}). Liquidating 100% at TP1 to prevent dust lockup.`);
-      sellQty = position.remainingQty;
+      exitQty = position.remainingQty;
     }
 
-    this.log(`🎯 [TP1_EMA25] ${position.symbol} | Target: $${currentPrice.toFixed(4)} | Selling: ${sellQty} | DryRun: ${this.dryRun}`);
+    this.log(`🎯 [TP1_EMA25] ${position.symbol} (${position.positionSide || "LONG"}) | Target: $${currentPrice.toFixed(4)} | Qty: ${exitQty} | DryRun: ${this.dryRun}`);
 
     let fillPrice = currentPrice;
     let exchangeOrderId: string | number | undefined;
@@ -246,10 +363,12 @@ export class MaFanOrderExecutor {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
         const res = await this.client.placeOrder({
           symbol: position.symbol,
-          side: "SELL",
+          side: exitSide,
+          positionSide: isShort ? "SHORT" : undefined,
+          reduceOnly: isShort ? true : undefined,
           type: orderType,
           price: currentPrice,
-          qty: sellQty,
+          qty: exitQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
         if (res.orderId) exchangeOrderId = res.orderId;
@@ -267,18 +386,26 @@ export class MaFanOrderExecutor {
       }
     }
 
-    const pnl = (fillPrice - position.entryPrice) * sellQty;
-    const pnlPct = ((fillPrice - position.entryPrice) / position.entryPrice) * 100;
+    const pnl = isShort
+      ? (position.entryPrice - fillPrice) * exitQty
+      : (fillPrice - position.entryPrice) * exitQty;
+    const pnlPct = isShort
+      ? ((position.entryPrice - fillPrice) / position.entryPrice) * 100
+      : ((fillPrice - position.entryPrice) / position.entryPrice) * 100;
 
-    position.remainingQty = Math.max(0, this.roundQty(position.remainingQty - sellQty));
+    position.remainingQty = Math.max(0, this.roundQty(position.remainingQty - exitQty));
     position.tp1Filled = true;
     position.tp1Price = fillPrice;
     position.tp1Time = Date.now();
-    position.highestPriceSinceTp1 = fillPrice;
-
-    // 🛡️ INSTANT BREAKEVEN LOCK-IN: Shift remaining position's Stop Loss to Entry + fee buffer
-    const breakevenSl = this.roundPrice(position.entryPrice * (1 + this.breakevenFeeBufferPct / 100));
-    position.stopLossPrice = Math.max(position.stopLossPrice, breakevenSl);
+    if (isShort) {
+      position.lowestPriceSinceTp1 = fillPrice;
+      const breakevenSl = this.roundPrice(position.entryPrice * (1 - this.breakevenFeeBufferPct / 100));
+      position.stopLossPrice = Math.min(position.stopLossPrice, breakevenSl);
+    } else {
+      position.highestPriceSinceTp1 = fillPrice;
+      const breakevenSl = this.roundPrice(position.entryPrice * (1 + this.breakevenFeeBufferPct / 100));
+      position.stopLossPrice = Math.max(position.stopLossPrice, breakevenSl);
+    }
     position.isBreakevenLocked = true;
 
     this.log(`🛡️ [BREAKEVEN_LOCKED] SL for remaining ${position.remainingQty} moved to $${position.stopLossPrice.toFixed(4)} (Risk-Free Mode Active)`);
@@ -286,16 +413,17 @@ export class MaFanOrderExecutor {
     const trade: MaFanTradeLog = {
       id: `mf_tp1_${Date.now()}`,
       type: "TP1_EMA25",
+      side: position.positionSide || "LONG",
       symbol: position.symbol,
       price: fillPrice,
-      qty: sellQty,
+      qty: exitQty,
       pnl,
       pnlPct,
       reason: "EMA 25 Mean Reversion Reached",
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
+    const orderRecord = this.recordDbOrder(trade, exitSide, fillPrice, exitQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -309,26 +437,28 @@ export class MaFanOrderExecutor {
     currentPrice: number,
     reason: string
   ): Promise<boolean> {
-    let sellQty = this.roundQty(position.remainingQty);
-    if (sellQty <= 0) return false;
+    const isShort = position.positionSide === "SHORT";
+    const exitSide = isShort ? "BUY" : "SELL";
+    let exitQty = this.roundQty(position.remainingQty);
+    if (exitQty <= 0) return false;
 
-    // 🛡️ BALANCE GUARD: Check actual wallet free balance before placing TP2 (Runner Full Liquidation)
-    if (!this.dryRun) {
+    // 🛡️ BALANCE GUARD: Check actual wallet free balance before placing TP2 (for spot LONG only)
+    if (!this.dryRun && !isShort) {
       const available = await this.getAvailableBaseBalance(position.symbol);
       if (available <= 0) {
         this.log(`⚠️ [TP2 BALANCE GUARD] Wallet free balance is 0 for ${position.symbol}. Position appears to be already sold or liquidated.`);
         position.remainingQty = 0;
         return true;
       }
-      if (available < sellQty) {
-        this.log(`ℹ️ [TP2 BALANCE GUARD] Adjusting TP2 sell qty from ${sellQty} to available wallet balance ${available} (deducting fees/dust)`);
-        sellQty = this.roundQty(available);
+      if (available < exitQty) {
+        this.log(`ℹ️ [TP2 BALANCE GUARD] Adjusting TP2 sell qty from ${exitQty} to available wallet balance ${available} (deducting fees/dust)`);
+        exitQty = this.roundQty(available);
       }
     }
 
-    if (sellQty <= 0) return false;
+    if (exitQty <= 0) return false;
 
-    this.log(`🚀 [TP2_RUNNER] ${position.symbol} | Price: $${currentPrice.toFixed(4)} | Qty: ${sellQty} | Reason: ${reason} | DryRun: ${this.dryRun}`);
+    this.log(`🚀 [TP2_RUNNER] ${position.symbol} (${position.positionSide || "LONG"}) | Price: $${currentPrice.toFixed(4)} | Qty: ${exitQty} | Reason: ${reason} | DryRun: ${this.dryRun}`);
 
     let fillPrice = currentPrice;
     let exchangeOrderId: string | number | undefined;
@@ -340,10 +470,12 @@ export class MaFanOrderExecutor {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
         const res = await this.client.placeOrder({
           symbol: position.symbol,
-          side: "SELL",
+          side: exitSide,
+          positionSide: isShort ? "SHORT" : undefined,
+          reduceOnly: isShort ? true : undefined,
           type: orderType,
           price: currentPrice,
-          qty: sellQty,
+          qty: exitQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
         if (res.orderId) exchangeOrderId = res.orderId;
@@ -361,24 +493,29 @@ export class MaFanOrderExecutor {
       }
     }
 
-    const pnl = (fillPrice - position.entryPrice) * sellQty;
-    const pnlPct = ((fillPrice - position.entryPrice) / position.entryPrice) * 100;
+    const pnl = isShort
+      ? (position.entryPrice - fillPrice) * exitQty
+      : (fillPrice - position.entryPrice) * exitQty;
+    const pnlPct = isShort
+      ? ((position.entryPrice - fillPrice) / position.entryPrice) * 100
+      : ((fillPrice - position.entryPrice) / position.entryPrice) * 100;
 
     position.remainingQty = 0;
 
     const trade: MaFanTradeLog = {
       id: `mf_tp2_${Date.now()}`,
       type: "TP2_RUNNER",
+      side: position.positionSide || "LONG",
       symbol: position.symbol,
       price: fillPrice,
-      qty: sellQty,
+      qty: exitQty,
       pnl,
       pnlPct,
       reason,
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
+    const orderRecord = this.recordDbOrder(trade, exitSide, fillPrice, exitQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
     this.onTrade?.(orderRecord || trade);
 
     return true;
@@ -391,26 +528,28 @@ export class MaFanOrderExecutor {
     position: MaFanPosition,
     currentPrice: number
   ): Promise<boolean> {
-    let sellQty = this.roundQty(position.remainingQty);
-    if (sellQty <= 0) return false;
+    const isShort = position.positionSide === "SHORT";
+    const exitSide = isShort ? "BUY" : "SELL";
+    let exitQty = this.roundQty(position.remainingQty);
+    if (exitQty <= 0) return false;
 
-    // 🛡️ BALANCE GUARD: Check actual wallet free balance before placing SL
-    if (!this.dryRun) {
+    // 🛡️ BALANCE GUARD: Check actual wallet free balance before placing SL (for spot LONG only)
+    if (!this.dryRun && !isShort) {
       const available = await this.getAvailableBaseBalance(position.symbol);
       if (available <= 0) {
         this.log(`⚠️ [SL BALANCE GUARD] Wallet free balance is 0 for ${position.symbol}. Position appears to be already sold or closed.`);
         position.remainingQty = 0;
         return true;
       }
-      if (available < sellQty) {
-        this.log(`ℹ️ [SL BALANCE GUARD] Adjusting SL sell qty from ${sellQty} to available wallet balance ${available}`);
-        sellQty = this.roundQty(available);
+      if (available < exitQty) {
+        this.log(`ℹ️ [SL BALANCE GUARD] Adjusting SL sell qty from ${exitQty} to available wallet balance ${available}`);
+        exitQty = this.roundQty(available);
       }
     }
 
-    if (sellQty <= 0) return false;
+    if (exitQty <= 0) return false;
 
-    this.log(`🔴 [STOP_LOSS] ${position.symbol} | Trigger: $${currentPrice.toFixed(4)} | SL Price: $${position.stopLossPrice.toFixed(4)} | Qty: ${sellQty} | Breakeven Locked: ${position.isBreakevenLocked}`);
+    this.log(`🔴 [STOP_LOSS] ${position.symbol} (${position.positionSide || "LONG"}) | Trigger: $${currentPrice.toFixed(4)} | SL Price: $${position.stopLossPrice.toFixed(4)} | Qty: ${exitQty} | Breakeven Locked: ${position.isBreakevenLocked}`);
 
     let fillPrice = currentPrice;
     let exchangeOrderId: string | number | undefined;
@@ -422,10 +561,12 @@ export class MaFanOrderExecutor {
         const orderType = this.client.exchangeName === "dreamdex" ? "IOC" : "MARKET";
         const res = await this.client.placeOrder({
           symbol: position.symbol,
-          side: "SELL",
+          side: exitSide,
+          positionSide: isShort ? "SHORT" : undefined,
+          reduceOnly: isShort ? true : undefined,
           type: orderType,
           price: currentPrice,
-          qty: sellQty,
+          qty: exitQty,
         });
         if (res.price && res.price > 0) fillPrice = res.price;
         if (res.orderId) exchangeOrderId = res.orderId;
@@ -443,24 +584,29 @@ export class MaFanOrderExecutor {
       }
     }
 
-    const pnl = (fillPrice - position.entryPrice) * sellQty;
-    const pnlPct = ((fillPrice - position.entryPrice) / position.entryPrice) * 100;
+    const pnl = isShort
+      ? (position.entryPrice - fillPrice) * exitQty
+      : (fillPrice - position.entryPrice) * exitQty;
+    const pnlPct = isShort
+      ? ((position.entryPrice - fillPrice) / position.entryPrice) * 100
+      : ((fillPrice - position.entryPrice) / position.entryPrice) * 100;
 
     position.remainingQty = 0;
 
     const trade: MaFanTradeLog = {
       id: `mf_sl_${Date.now()}`,
       type: "STOP_LOSS",
+      side: position.positionSide || "LONG",
       symbol: position.symbol,
       price: fillPrice,
-      qty: sellQty,
+      qty: exitQty,
       pnl,
       pnlPct,
-      reason: position.isBreakevenLocked ? "Breakeven SL Hit (Protected)" : "Swing Low SL Hit",
+      reason: position.isBreakevenLocked ? "Breakeven SL Hit (Protected)" : (isShort ? "Swing High SL Hit" : "Swing Low SL Hit"),
       time: Date.now(),
     };
 
-    const orderRecord = this.recordDbOrder(trade, "SELL", fillPrice, sellQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
+    const orderRecord = this.recordDbOrder(trade, exitSide, fillPrice, exitQty, pnl, exchangeOrderId, executedFee, executedFeeAsset);
     this.onTrade?.(orderRecord || trade);
 
     return true;
