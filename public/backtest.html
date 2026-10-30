@@ -65,7 +65,8 @@
         <div class="bt-input-group">
           <label>Min Fan Spread</label>
           <select id="btSpread">
-            <option value="auto" selected>⚡ Auto Calibrate (Sweet Spot)</option>
+            <option value="0.50" selected>⚡ ≥ 0.50% (แนะนำ - Sweet Spot)</option>
+            <option value="auto">Auto Calibrate</option>
             <option value="0.25">≥ 0.25% (มาตรฐาน)</option>
             <option value="0.35">≥ 0.35% (ตึงปานกลาง)</option>
             <option value="0.45">≥ 0.45% (ตึงมาก)</option>
@@ -362,9 +363,11 @@
             <div class="scanner-ctrl-group">
               <label>Min Spread</label>
               <select id="scSpread">
-                <option value="auto" selected>Auto Calibrate</option>
+                <option value="0.50" selected>⚡ ≥ 0.50% (แนะนำ)</option>
+                <option value="auto">Auto Calibrate</option>
                 <option value="0.25">≥ 0.25%</option>
                 <option value="0.35">≥ 0.35%</option>
+                <option value="0.45">≥ 0.45%</option>
               </select>
             </div>
             <div class="scanner-ctrl-group">
@@ -484,6 +487,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.2.197"></script>
+  <script src="backtest.js?v=0.2.198"></script>
 </body>
 </html>

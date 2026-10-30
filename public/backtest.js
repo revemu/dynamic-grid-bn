@@ -822,30 +822,46 @@
       const canvasMarkers = [];
       for (const t of record.trades) {
         const isShort = t.side === "SHORT";
+        const isGrid = t.subsystem === "GRID" || t.exitType === "GRID_TP" || t.exitType === "GRID_CUT";
+
         canvasMarkers.push({
           time: t.entryTime,
           position: isShort ? "aboveBar" : "belowBar",
-          color: isShort ? "#ef4444" : "#10b981",
+          color: isGrid ? "#10b981" : (isShort ? "#ef4444" : "#f59e0b"),
           shape: isShort ? "arrowDown" : "arrowUp",
-          text: isShort ? `S #${t.id}` : `B #${t.id}`,
+          text: isGrid ? `🕸️ B #${t.id}` : (isShort ? `🎯 S #${t.id}` : `🎯 B #${t.id}`),
         });
-        if (t.tp1Time && t.tp1Price) {
+
+        // TP1 Marker (Sniper Only!)
+        if (!isGrid && t.tp1Time && t.tp1Price) {
           canvasMarkers.push({
             time: t.tp1Time,
             position: isShort ? "belowBar" : "aboveBar",
             color: "#06b6d4",
             shape: "circle",
-            text: `TP1`,
+            text: `🎯 TP1`,
           });
         }
+
         if (t.exitTime) {
           const isWin = t.pnlPct >= 0;
+          let exitText = "";
+          let exitColor = isWin ? "#8b5cf6" : "#ef4444";
+          let exitShape = isWin ? "arrowDown" : "square";
+
+          if (isGrid) {
+            exitColor = isWin ? "#3b82f6" : "#ef4444";
+            exitText = isWin ? `🕸️ TP (+${t.pnlPct.toFixed(1)}%)` : `🕸️ CUT (${t.pnlPct.toFixed(1)}%)`;
+          } else {
+            exitText = t.exitType === "TP1+TP2" ? `🎯 TP2 (+${t.pnlPct.toFixed(1)}%)` : `🎯 ${t.exitType} (${t.pnlPct.toFixed(1)}%)`;
+          }
+
           canvasMarkers.push({
             time: t.exitTime,
             position: isShort ? (isWin ? "belowBar" : "aboveBar") : (isWin ? "aboveBar" : "belowBar"),
-            color: isWin ? "#8b5cf6" : "#ef4444",
-            shape: isWin ? "arrowDown" : "square",
-            text: t.exitType === "TP1+TP2" ? `TP2 (+${t.pnlPct.toFixed(1)}%)` : `${t.exitType} (${t.pnlPct.toFixed(1)}%)`,
+            color: exitColor,
+            shape: exitShape,
+            text: exitText,
           });
         }
       }
@@ -859,12 +875,14 @@
     const items = [];
 
     for (const t of record.trades) {
-      // 1. Entry Badge (B for Long, S for Short)
       const isShort = t.side === "SHORT";
+      const isGrid = t.subsystem === "GRID" || t.exitType === "GRID_TP" || t.exitType === "GRID_CUT";
+
+      // 1. Entry Badge (B for Long, S for Short)
       items.push({
         tradeId: t.id,
         action: isShort ? "SHORT" : "BUY",
-        text: isShort ? "S" : "B",
+        text: isGrid ? "B" : (isShort ? "S" : "B"),
         time: t.entryTime,
         price: t.entryPrice,
         cssClass: isShort ? "badge-sell" : "badge-buy",
@@ -872,8 +890,8 @@
         trade: t,
       });
 
-      // 2. TP1 Badge (TP1) if hit
-      if (t.tp1Time && t.tp1Price) {
+      // 2. TP1 Badge (Sniper Only!)
+      if (!isGrid && t.tp1Time && t.tp1Price) {
         items.push({
           tradeId: t.id,
           action: "TP1",
@@ -886,8 +904,30 @@
         });
       }
 
-      // 3. Exit Badge (TP2, SL_BE, RATCHET_SL, SL)
-      if (t.exitType === "TP1+TP2") {
+      // 3. Exit Badge
+      if (t.exitType === "GRID_TP") {
+        items.push({
+          tradeId: t.id,
+          action: "GRID_TP",
+          text: "TP",
+          time: t.exitTime,
+          price: t.exitPrice,
+          cssClass: "badge-tp2",
+          badgeType: "GRID_TP",
+          trade: t,
+        });
+      } else if (t.exitType === "GRID_CUT") {
+        items.push({
+          tradeId: t.id,
+          action: "GRID_CUT",
+          text: "CUT",
+          time: t.exitTime,
+          price: t.exitPrice,
+          cssClass: "badge-sl-fixed",
+          badgeType: "GRID_CUT",
+          trade: t,
+        });
+      } else if (t.exitType === "TP1+TP2") {
         items.push({
           tradeId: t.id,
           action: "TP2",
@@ -1161,33 +1201,50 @@
     function renderRows(list) {
       return list.map((t) => {
         const isWin = t.pnlPct >= 0;
+        const isGrid = t.subsystem === "GRID" || t.exitType === "GRID_TP" || t.exitType === "GRID_CUT";
+        const sysBadge = isGrid
+          ? `<div style="display:inline-block; padding: 1px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); margin-top: 3px;">🕸️ GRID</div>`
+          : `<div style="display:inline-block; padding: 1px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); margin-top: 3px;">🎯 SNIPER</div>`;
+
         let badgeClass = "badge-sl-loss";
         let badgeLabel = "SL (Loss)";
-        if (t.exitType === "TP1+TP2") {
+        if (t.exitType === "GRID_TP") {
           badgeClass = "badge-tp-full";
-          badgeLabel = "TP1 + TP2";
+          badgeLabel = "🕸️ Grid TP";
+        } else if (t.exitType === "GRID_CUT") {
+          badgeClass = "badge-sl-loss";
+          badgeLabel = "🕸️ Grid Cut";
+        } else if (t.exitType === "TP1+TP2") {
+          badgeClass = "badge-tp-full";
+          badgeLabel = "🎯 TP1 + TP2";
         } else if (t.exitType === "TP1+SL_BE") {
           badgeClass = "badge-tp-be";
-          badgeLabel = "TP1 + SL Breakeven";
+          badgeLabel = "🎯 TP1 + SL BE";
         } else if (t.exitType === "RATCHET_SL") {
           badgeClass = "badge-ratchet-sl";
-          badgeLabel = "🛡️ Ratchet SL";
+          badgeLabel = "🎯 Ratchet SL";
         } else if (t.exitType === "TECH_FAST_CUT") {
           badgeClass = "badge-ratchet-sl";
           badgeLabel = "⚡ Fast Cut";
+        } else if (t.exitType === "SL") {
+          badgeClass = "badge-sl-loss";
+          badgeLabel = "🎯 Stop Loss";
         } else if (t.exitType === "OPEN") {
           badgeClass = "badge-open";
-          badgeLabel = "🟢 ถือค้าง (OPEN)";
+          badgeLabel = isGrid ? "🕸️ ถือค้าง (GRID)" : "🟢 ถือค้าง (OPEN)";
         } else if (t.exitType === "TP1+OPEN") {
           badgeClass = "badge-open-tp1";
-          badgeLabel = "🔵 TP1 + ถือต่อ (OPEN)";
+          badgeLabel = "🔵 TP1 + ถือต่อ";
         }
 
         const isStillOpen = t.exitType?.includes("OPEN");
 
         return `
           <tr data-trade-id="${t.id}" data-entry-time="${t.entryTime}" data-exit-time="${t.exitTime}">
-            <td>#${t.id}</td>
+            <td>
+              <div style="font-weight: 700;">#${t.id}</div>
+              ${sysBadge}
+            </td>
             <td>
               ${t.side === "SHORT"
                 ? '<span style="display:inline-block; padding: 1px 4px; border-radius: 3px; font-size: 10px; font-weight: 700; background: rgba(239, 68, 68, 0.2); color: #f87171; margin-right: 4px;">SHORT</span>'
@@ -1565,7 +1622,7 @@
     if (target === "main" || target === "both") {
       if (inpTradeMode) inpTradeMode.value = engine;
       if (inpTimeframe) inpTimeframe.value = "5m";
-      if (inpSpread) inpSpread.value = "auto";
+      if (inpSpread) inpSpread.value = "0.50";
       if (inpSlMode) inpSlMode.value = "ratchet";
       if (inpMacroGate) inpMacroGate.value = "noDeepBear";
       if (inpCircuitBreaker) inpCircuitBreaker.value = "on";
@@ -1574,13 +1631,14 @@
       if (inpMaxSl) inpMaxSl.value = "1.8";
       if (inpTradeDirection) inpTradeDirection.value = "long";
       if (inpFeeTier) inpFeeTier.value = "bnb";
+      if (inpBudget && (!inpBudget.value || Number(inpBudget.value) < 100)) inpBudget.value = "100";
     }
 
     // 2. Market Scanner Form
     if (target === "scanner" || target === "both") {
       if (scTradeMode) scTradeMode.value = engine;
       if (scTimeframe) scTimeframe.value = "5m";
-      if (scSpread) scSpread.value = "auto";
+      if (scSpread) scSpread.value = "0.50";
       if (scSlMode) scSlMode.value = "ratchet";
       if (scMacroGate) scMacroGate.value = "noDeepBear";
       if (scCircuitBreaker) scCircuitBreaker.value = "on";

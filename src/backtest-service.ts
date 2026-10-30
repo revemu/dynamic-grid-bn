@@ -16,6 +16,7 @@ export const STABLE_TOKENS = new Set([
 
 export interface BacktestTrade {
   id: number;
+  subsystem?: "GRID" | "SNIPER";
   side?: "LONG" | "SHORT";
   entryTime: number; // Unix seconds
   entryPrice: number;
@@ -32,7 +33,7 @@ export interface BacktestTrade {
   slPnlPct?: number;
   exitTime: number;
   exitPrice: number;
-  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL" | "TECH_FAST_CUT" | "OPEN" | "TP1+OPEN";
+  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL" | "TECH_FAST_CUT" | "OPEN" | "TP1+OPEN" | "GRID_TP" | "GRID_CUT";
   pnlQuote: number;
   pnlPct: number;
   holdingBars: number;
@@ -419,17 +420,15 @@ export class BacktestService {
 
           trades.push({
             id: lot.id,
+            subsystem: "GRID",
             side: "LONG",
             entryTime: lot.entryTime,
             entryPrice: lot.buyPrice,
             stopLossPrice: cutLossPrice,
             fanSpreadAtEntry: 0,
-            tp1Time: c.time,
-            tp1Price: exitPrice,
-            tp1PnlPct: pnlPct,
             exitTime: c.time,
             exitPrice,
-            exitType: "TP1+TP2",
+            exitType: "GRID_TP",
             pnlQuote,
             pnlPct,
             holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
@@ -462,6 +461,7 @@ export class BacktestService {
 
           trades.push({
             id: lot.id,
+            subsystem: "GRID",
             side: "LONG",
             entryTime: lot.entryTime,
             entryPrice: lot.buyPrice,
@@ -469,7 +469,7 @@ export class BacktestService {
             fanSpreadAtEntry: 0,
             exitTime: c.time,
             exitPrice,
-            exitType: "SL",
+            exitType: "GRID_CUT",
             pnlQuote,
             pnlPct,
             holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
@@ -505,13 +505,17 @@ export class BacktestService {
             const fillQty = (invest / buyPrice) * (1 - costPerFill);
             cash -= invest;
 
+            const rawTarget = sellTargets[lvlIdx] ?? (buyPrice * 1.015);
+            const minTarget = buyPrice * 1.0085; // Min profit hurdle >= 0.85% to comfortably exceed roundtrip fees
+            const targetPrice = Math.max(rawTarget, minTarget);
+
             heldLots.push({
               id: tradeCounter,
               index: lvlIdx,
               qty: fillQty,
               buyPrice,
               entryTime: c.time,
-              targetPrice: sellTargets[lvlIdx] ?? (buyPrice * 1.015),
+              targetPrice,
               costQuote: invest * costPerFill,
             });
 
@@ -814,17 +818,15 @@ export class BacktestService {
 
             trades.push({
               id: lot.id,
+              subsystem: "GRID",
               side: "LONG",
               entryTime: lot.entryTime,
               entryPrice: lot.buyPrice,
               stopLossPrice: cutLossPrice,
               fanSpreadAtEntry: 0,
-              tp1Time: c.time,
-              tp1Price: exitPrice,
-              tp1PnlPct: pnlPct,
               exitTime: c.time,
               exitPrice,
-              exitType: "TP1+TP2",
+              exitType: "GRID_TP",
               pnlQuote,
               pnlPct,
               holdingBars: i - lot.entryIdx,
@@ -856,6 +858,7 @@ export class BacktestService {
 
             trades.push({
               id: lot.id,
+              subsystem: "GRID",
               side: "LONG",
               entryTime: lot.entryTime,
               entryPrice: lot.buyPrice,
@@ -863,7 +866,7 @@ export class BacktestService {
               fanSpreadAtEntry: 0,
               exitTime: c.time,
               exitPrice,
-              exitType: "SL",
+              exitType: "GRID_CUT",
               pnlQuote,
               pnlPct,
               holdingBars: i - lot.entryIdx,
@@ -910,6 +913,10 @@ export class BacktestService {
               const fillQty = (invest / buyPrice) * (1 - costPerFill);
               gridCash -= invest;
 
+              const rawTarget = sellTargets[lvlIdx] ?? (buyPrice * 1.015);
+              const minTarget = buyPrice * 1.0085; // Min profit hurdle >= 0.85% to comfortably exceed roundtrip fees
+              const targetPrice = Math.max(rawTarget, minTarget);
+
               heldLots.push({
                 id: tradeCounter,
                 index: lvlIdx,
@@ -917,7 +924,7 @@ export class BacktestService {
                 buyPrice,
                 entryTime: c.time,
                 entryIdx: i,
-                targetPrice: sellTargets[lvlIdx] ?? (buyPrice * 1.015),
+                targetPrice,
                 costQuote: invest * costPerFill,
               });
 
@@ -1009,6 +1016,7 @@ export class BacktestService {
 
           trades.push({
             id: tradeCounter,
+            subsystem: "SNIPER",
             side: sniperActiveSide,
             entryTime: candles[sniperEntryIdx].time,
             entryPrice: sniperEntryPrice,
@@ -1583,6 +1591,7 @@ export class BacktestService {
 
           trades.push({
             id: activeTradeId,
+            subsystem: "SNIPER",
             side: activeSide,
             entryTime: candles[entryIdx]!.time,
             entryPrice,
@@ -1655,6 +1664,7 @@ export class BacktestService {
 
           trades.push({
             id: activeTradeId,
+            subsystem: "SNIPER",
             side: activeSide,
             entryTime: candles[entryIdx]!.time,
             entryPrice,
@@ -1769,6 +1779,7 @@ export class BacktestService {
 
             trades.push({
               id: activeTradeId,
+              subsystem: "SNIPER",
               side: activeSide,
               entryTime: candles[entryIdx]!.time,
               entryPrice,
@@ -1897,6 +1908,7 @@ export class BacktestService {
 
       trades.push({
         id: activeTradeId,
+        subsystem: "SNIPER",
         side: activeSide,
         entryTime: candles[entryIdx]!.time,
         entryPrice,

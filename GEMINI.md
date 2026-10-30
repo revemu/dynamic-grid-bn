@@ -6547,6 +6547,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **การขยับ Version**:
   - ปรับ Patch Version เป็น `0.2.197` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.197`)
 
+---
+
+## 223. Subsystem Separation in Trade Rounds, Single Bar TP Stacking Fix & Best Preset Defaults (v0.2.198)
+
+- **Subsystem Identification & Visual Separation (`BacktestTrade.subsystem`)**:
+  - เพิ่มฟิลด์ `subsystem?: "GRID" | "SNIPER"` ใน `BacktestTrade` (`src/backtest-service.ts`)
+  - อัปเดต `runDynamicGridSimulation` และ `runDualHybridSimulation` ให้ระบุ `subsystem: "GRID"` สำหรับทุกคำสั่งซื้อ-ขายของกริด และ `subsystem: "SNIPER"` สำหรับคำสั่งสไนเปอร์
+  - ในตารางรายการไม้เทรด (`renderTradesTable` ใน `public/backtest.js`): เพิ่มแถบป้าย Subsystem ใต้หมายเลขไม้ชัดเจน:
+    - `🕸️ GRID` (สีฟ้าสว่างไฮไลต์) สำหรับไม้กริด
+    - `🎯 SNIPER` (สีทองอำพันไฮไลต์) สำหรับไม้สไนเปอร์
+  - ป้ายกำกับประเภทการปิดออเดอร์ (Exit Type Badges):
+    - ฝั่ง Grid: `🕸️ Grid TP` หรือ `🕸️ Grid Cut` หรือ `🕸️ ถือค้าง (GRID)`
+    - ฝั่ง Sniper: `🎯 TP1 + TP2`, `🎯 TP1 + SL BE`, `🎯 Ratchet SL`, `🎯 Fast Cut`, `🎯 Stop Loss`
+- **Elimination of Fake Stacked TP1/TP2 Markers & Single Bar Anomaly**:
+  - **สาเหตุของปัญหา**:
+    - ใน `runDualHybridSimulation` และ `runDynamicGridSimulation` โค้ดเดิมบันทึกการขายของกริดด้วย `exitType: "TP1+TP2"` และ `tp1Time: c.time` เสมือนเป็น Sniper Exit
+    - เมื่อไม้กริดที่ทยอยสะสมมาถูกปิดทำกำไรพร้อมกันบนแท่งเทียนแท่งเดียวที่มีการดีดตัว ทำให้เกิดหมุด `TP1` 4 ตัว และ `TP2` 3 ตัวซ้อนกันในแนวดิ่งบนแท่งเทียนนั้น (ตามรูปภาพของผู้ใช้)
+  - **การแก้ไข**:
+    - แก้ไขให้ไม้ Grid บันทึก `exitType: "GRID_TP"` หรือ `"GRID_CUT"` โดยตัดฟิลด์ `tp1Time` และ `tp1Price` ทิ้งทั้งหมด
+    - ใน `public/backtest.js`: แสดงหมุด `TP1` เฉพาะไม้ที่เป็น Sniper เท่านั้น และสำหรับไม้ Grid จะวาดหมุด `🕸️ TP (+...%)` หรือ `🕸️ CUT (...%)` เพียงหมุดเดียว ไม่มีการแสดง `TP1` ปลอมซ้อนกันอีกต่อไป
+- **Enforcement of Min Grid Profit Hurdle (`minTarget >= buyPrice * 1.0085`)**:
+  - **สาเหตุของปัญหา**:
+    - เมื่อกรอบราคาแคบ (เช่น ความกว้างกรอบเพียง 1.3%) ระยะห่างระหว่าง Buy Level 1 ไปยัง Sell Target 1 อาจมีเพียง 0.13% ทำให้ขายได้กำไรเพียง +$0.02 แต่ต้องเสียค่าธรรมเนียมเทรด -$0.03 ส่งผลให้เกิด Micro-Churn และ Fee Erosion กัดกินเงินทุน (-$20 ใน 746 ไม้)
+  - **การแก้ไข**:
+    - กำหนด Profit Hurdle ใน `runDynamicGridSimulation` และ `runDualHybridSimulation`:
+      `const minTarget = buyPrice * 1.0085; targetPrice = Math.max(rawTarget, minTarget);`
+    - รับประกันว่าทุกไม้ของ Grid จะต้องตั้งเป้าขายทำกำไรอย่างน้อย $+0.85\%$ ขึ้นไปเสมอ ครอบคลุมค่าธรรมเนียมซื้อ-ขายไป-กลับ (~0.17%) ได้อย่างปลอดภัย 100%
+- **Best Preset Default Alignment (Spread $\ge 0.50\%$ & Budget \$100)**:
+  - ปรับตัวเลือกเริ่มต้นของ Min Fan Spread ใน `#btSpread` และ `#scSpread` ให้เป็น `⚡ ≥ 0.50% (แนะนำ - Sweet Spot)`
+  - ปรับปรุงฟังก์ชัน `applyOptimalPreset()` ให้ตั้งค่า Spread เป็น `0.50` และรับประกันเงินทุนเริ่มต้นอย่างน้อย `$100` เพื่อให้ผลการทดสอบ Backtest สอดคล้องกับ Performance ที่แท้จริง (ลด Over-trading และค่าธรรมเนียมสูญเปล่า)
+- **การขยับ Version**:
+  - ปรับ Patch Version เป็น `0.2.198` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.198`)
+
+
 
 
 
