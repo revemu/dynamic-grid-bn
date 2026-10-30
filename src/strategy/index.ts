@@ -2769,18 +2769,16 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         }
       }
 
-      // Enforce max channel width ceiling on locked channel so it never exceeds maxChannelWidthPct
-      const maxChannelWidthPct = this.cfg.maxChannelWidthPct ?? 5.0;
-      const currentFloor = this.lastDynamicBounds.lowerBound;
-      const maxAllowedSpan = currentFloor * (maxChannelWidthPct / 100);
-      if (currentFloor > 0 && this.lastDynamicBounds.upperBound - currentFloor > maxAllowedSpan) {
-        const clampedCeiling = currentFloor + maxAllowedSpan;
+      // Restore locked ceiling to macro real ceiling if it was artificially compressed below liveRealCeil
+      const liveRealCeil = dow?.gridZone?.upperBound ?? dow?.upperBound ?? this.confirmedChannel?.upperBound;
+      if (liveRealCeil && liveRealCeil > 0 && this.lastDynamicBounds.upperBound < liveRealCeil * 0.999) {
         this.log(
-          `🔒 [LOCKED CHANNEL MAX CLAMP] Clamping locked ceiling from $${this.lastDynamicBounds.upperBound.toFixed(6)} down to $${clampedCeiling.toFixed(6)} (Max width: ${maxChannelWidthPct}%)`,
+          `🔄 [RESTORE LOCKED CEIL] Restoring locked ceiling from $${this.lastDynamicBounds.upperBound.toFixed(6)} back to real ceiling $${liveRealCeil.toFixed(6)} to preserve original channel structure`,
         );
-        this.lastDynamicBounds.upperBound = clampedCeiling;
-        this.lastDynamicBounds.centerPrice = (currentFloor + clampedCeiling) / 2;
-        const dSpan = clampedCeiling - currentFloor;
+        this.lastDynamicBounds.upperBound = liveRealCeil;
+        const currentFloor = this.lastDynamicBounds.lowerBound;
+        this.lastDynamicBounds.centerPrice = (currentFloor + liveRealCeil) / 2;
+        const dSpan = liveRealCeil - currentFloor;
         const enableCollapse = this.cfg.enableNarrowChannelCollapse !== false;
         const narrowThresh = this.cfg.narrowChannelThresholdPct ?? 1.20;
         const isNarrowChannel = enableCollapse && currentFloor > 0 && ((dSpan / currentFloor) * 100) < narrowThresh;
@@ -2789,11 +2787,12 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         const curBuyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
         const curSellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
         this.lastDynamicBounds.sellLevels = isNarrowChannel
-          ? [clampedCeiling * (1 - sellBufferFrac)]
+          ? [liveRealCeil * (1 - sellBufferFrac)]
           : curSellPcts.map((pct) => currentFloor + dSpan * (pct / 100));
         this.lastDynamicBounds.buyLevels = isNarrowChannel
           ? [currentFloor * (1 + buyBufferFrac)]
           : curBuyPcts.map((pct) => currentFloor + dSpan * (pct / 100));
+        this.needsBuyRebalance = true;
       }
 
       lowerBound = this.lastDynamicBounds.lowerBound;

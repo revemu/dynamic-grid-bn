@@ -6741,3 +6741,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่มการส่ง `enableWaterfallKnifeGuard: enableBaseConfirmationFilter` อัตโนมัติใน `public/backtest.js` เมื่อกด Apply Config ไปยังบอทจริง
   4. **Bump Version**:
      - อัปเดต Version เป็น `0.2.204` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.204`)
+
+
+---
+
+## 230. Elimination of Locked Channel Ceiling Clamp & Real Ceiling Restoration (v0.2.205)
+
+- **สาเหตุของปัญหา**:
+  1. เมื่อบอทใช้โหมดคำนวณกรอบ `DONCHIAN_ATR` (Donchian 48 แท่ง = 12 ชม.) กรอบ Donchian จริงที่คำนวณได้มีความกว้าง 12.90% (Floor: $0.20259, Ceil: $0.22873)
+  2. ขณะที่ยังถือเงินสด 100% บอทวางออเดอร์ Buy Levels 1-4 ตามสัดส่วนของกรอบ 12.90% นี้
+  3. แต่ใน `settings.db.json` มีการตั้งค่า `maxChannelWidthPct = 6.0%`
+  4. ทันทีที่ออเดอร์ Buy Level 2 ถูกจับคู่สำเร็จ (ถือ 39.5 INIT @ $0.21122) ระบบเข้าสู่บล็อก `lockChannelInPosition` ใน `src/strategy/index.ts`
+  5. โค้ดเก่า `LOCKED CHANNEL MAX CLAMP` ได้บังคับบีบเพดานกรอบลงมา: `clampedCeiling = 0.20259 * 1.06 = $0.2147454`
+  6. ส่งผลให้เพดานถูกกดจาก $0.22873 ลงมาอยู่ที่ $0.21475, Buy Levels ทั้งหมดถูกดันต่ำลงมา, และ Sell Target 1 ถูกดึงลงมาอยู่ที่ $0.20928 ซึ่งต่ำกว่าทุนเฉลี่ย $0.21122
+  7. ใน Backtest ไม่มีตรรกะ Clamp นี้เลย ทำให้กรอบใน Backtest คงที่ 12.90% ตลอดรอบ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.205)**:
+  1. **Remove `LOCKED CHANNEL MAX CLAMP` (`src/strategy/index.ts`)**:
+     - ยกเลิกการบังคับบีบลดเพดานกรอบด้วย `maxChannelWidthPct` ในขณะถือครอง Position เพื่อรักษากฎเหล็กของ Position Lock: *"Zero sliding down of lowerBound or upperBound!"*
+  2. **Automatic Real Ceiling Restoration (`src/strategy/index.ts`)**:
+     - เพิ่มตรรกะตรวจจับ หากเพดานของ Position ที่กำลังถือครองอยู่ถูกบีบต่ำกว่า Macro Real Ceiling (`upperBound < liveRealCeil * 0.999`) ระบบจะทำการกู้คืนเพดานกลับไปที่ `liveRealCeil` ($0.22873) ทันที
+     - ปรับตำแหน่ง Sell Targets ทั้งหมดให้อยู่เหนือราคาต้นทุนเฉลี่ยตามกรอบจริง
+     - ตั้งค่า `this.needsBuyRebalance = true` เพื่อให้ออเดอร์ Limit Buy ที่เหลือปรับกลับมาวางตามระดับกรอบเดิม (เช่น $0.20782, $0.20468)
+  3. **Bump Version**:
+     - ปรับ Version เป็น `0.2.205` ใน `package.json`, `src/version.ts`, และ `public/backtest.html`
