@@ -825,6 +825,12 @@ export class DashboardServer {
             tradeMode: parsed.tradeMode || (liveCfg.maFanTradeMode as any) || "dip_hunter",
             tradeDirection: parsed.tradeDirection || (liveCfg.maFanTradeDirection as any) || "long",
             enableBaseConfirmationFilter: hlMode,
+            channelMode: parsed.channelMode || (liveCfg.channelMode as any) || "DONCHIAN_ATR",
+            donchianPeriod: parsed.donchianPeriod !== undefined ? Number(parsed.donchianPeriod) : (Number(liveCfg.donchianPeriod) || 48),
+            minChannelWidthPct: parsed.minChannelWidthPct !== undefined ? Number(parsed.minChannelWidthPct) : (Number(liveCfg.minChannelWidthPct) || 6.0),
+            maxChannelWidthPct: parsed.maxChannelWidthPct !== undefined ? Number(parsed.maxChannelWidthPct) : (Number(liveCfg.maxChannelWidthPct) || 20.0),
+            floorBufferPct: parsed.floorBufferPct !== undefined ? Number(parsed.floorBufferPct) : (Number(liveCfg.floorBufferPct) || 0.0),
+            maxInventoryQuote: parsed.budget ? Number(parsed.budget) : (Number(liveCfg.maxInventoryQuote) || budget),
             warmupBars: actualWarmup,
             trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
           });

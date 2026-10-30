@@ -1537,7 +1537,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
    * Multi-Pillar Active Inventory Reconcile.
    * Compares physical assets (wallet balance + resting limit sells) with strategy lots.
    */
-  public async reconcileInventory(): Promise<void> {
+  public async reconcileInventory(forceAdopt = false): Promise<void> {
     if (this.cfg.dryRun) return;
     try {
       const minReserveBase = this.getEffectiveGasReserveBase();
@@ -1560,13 +1560,14 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         }
       } else if (maxAllowedTradingBase > memoryHeld + dustThreshold) {
         // 2. Adopt Unallocated Trading Inventory: If physical trading capacity exceeds memory lots, adopt difference into lots
-        // SAFETY GUARD: NEVER adopt unallocated inventory when paused, during downtrend pause, or when below floor!
-        // This prevents re-adopting wallet balance and triggering repetitive cut-loss dump loops.
+        // SAFETY GUARD: NEVER auto-adopt unallocated inventory when paused, during downtrend pause, or when below floor UNLESS forceAdopt is true!
         if (
-          this.isPaused ||
-          this.waitingForHigherLow ||
-          this.isDowntrendDropPaused ||
-          (this.lastRefPrice && this.lastEvaluatedFloor && this.lastRefPrice < this.lastEvaluatedFloor)
+          !forceAdopt && (
+            this.isPaused ||
+            this.waitingForHigherLow ||
+            this.isDowntrendDropPaused ||
+            (this.lastRefPrice && this.lastEvaluatedFloor && this.lastRefPrice < this.lastEvaluatedFloor)
+          )
         ) {
           // Skip adopting during breakdown recovery, downtrend pause, or when below floor to protect remaining wallet assets
           return;

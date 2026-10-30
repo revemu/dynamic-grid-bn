@@ -1199,6 +1199,7 @@ export class OrderExecutor {
 
     if (this.host.openOrders.length > 0) {
       await this.cancelAllRestingOrders(undefined, `Cancelling open orders before ${actionLabel}`);
+      await this.host.refreshWalletBalances();
     }
 
     const held = this.lotTracker.baseHeld();
@@ -1300,12 +1301,20 @@ export class OrderExecutor {
     }
 
     try {
+      let orderType: "MARKET" | "IOC" = "IOC";
       let limitPrice = price;
-      const slippagePct = slippagePctVal / 100;
-      if (action === "CUT") {
-        limitPrice = price * (1 - slippagePct);
+      const slippagePct = Math.max(0.005, slippagePctVal / 100);
+
+      // On Binance Spot, MARKET sell is natively supported and guaranteed to execute 100% immediately for MANUAL & CUT
+      if (this.host.binance.exchangeName === "binance" && (action === "MANUAL" || action === "CUT")) {
+        orderType = "MARKET";
+        limitPrice = price;
+      } else if (action === "CUT") {
+        // Stop-loss exit on DEX: allow wider 1.5% slippage to guarantee fill during breakdowns
+        const cutSlippage = Math.max(0.015, slippagePct);
+        limitPrice = price * (1 - cutSlippage);
         limitPrice = roundToTick(limitPrice, this.host.tickSize || 0.0001);
-      } else if (action === "MANUAL" && (this.host.binance.exchangeName === "dreamdex" || this.host.cfg.orderExecutionMode === "IOC_BRACKET")) {
+      } else if (action === "MANUAL") {
         let currentBestBid = 0;
         if (this.host.binance.exchangeName === "dreamdex") {
           try {
@@ -1325,12 +1334,9 @@ export class OrderExecutor {
             }
           } catch {}
         }
-        const effectiveBid = currentBestBid > 0 ? currentBestBid : (price > 0 ? price : 0);
-        if (effectiveBid > 0) {
-          limitPrice = effectiveBid;
-        } else {
-          limitPrice = (price > 0 ? price : targetPrice) * (1 - slippagePct);
-        }
+        const effectiveBid = currentBestBid > 0 ? currentBestBid : (price > 0 ? price : targetPrice);
+        // Emergency exit: apply at least 1.0% slippage below best bid so IOC never expires unfilled
+        limitPrice = effectiveBid * (1 - Math.max(0.01, slippagePct));
         limitPrice = roundToTick(limitPrice, this.host.tickSize || 0.0001);
       } else if (action === "SELL") {
         let currentBestBid = 0;
@@ -1368,8 +1374,8 @@ export class OrderExecutor {
       const res = await this.host.binance.placeOrder({
         symbol: this.host.symbol,
         side: "SELL",
-        type: "IOC",
-        price: limitPrice,
+        type: orderType,
+        price: orderType === "MARKET" ? undefined : limitPrice,
         qty: executeQty,
         clientOrderId: exitClientOrderId,
       });
@@ -1385,8 +1391,10 @@ export class OrderExecutor {
 
       if (filledQty <= 0 && !isConfirmedSuccess) {
         this.host.log(
-          `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${executeQty}). Keeping inventory lots intact.`,
+          `⚠️ [${orderType} UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${executeQty}). Keeping inventory lots intact.`,
         );
+        this.host.handledExitOrderIds.delete(exitClientOrderId);
+        if (orderIdStr) this.host.handledExitOrderIds.delete(orderIdStr);
         await this.host.refreshWalletBalances();
         this.host.saveState();
         return false;

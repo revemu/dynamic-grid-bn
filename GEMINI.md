@@ -6814,3 +6814,39 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - Activity Feed & Trades Table: แสดงป้ายแท็กกำกับค่าธรรมเนียม `🏷️ Fee -$X.XXXX` บนทุกรายการซื้อขาย และปรับป้าย Tx ให้แสดง `#<OrderId>` สำหรับคำสั่งเทรดบน Binance
   6. **Bump Version**:
      - ปรับ Version เป็น `0.2.207` ใน `package.json` และ `src/version.ts`
+
+---
+
+## 233. Backtest Settle Open Trades, Dynamic Bounds & Robust Live Reconcile / Market Sell (v0.2.208)
+
+- **สาเหตุของปัญหา**:
+  1. **Backtest Win Rate 100% แต่ Net PnL ติดลบ**:
+     - ใน `src/backtest-service.ts`: เมื่อสิ้นสุดแท่งเทียนแท่งสุดท้าย (End of Simulation) ไม้ที่ยังไม่ได้ขายออก (`heldLots` และ Sniper Open Position) ถูกนำมาตีมูลค่าเข้า `finalCapital` ทำให้ยอดเงินสุทธิลดลงตามราคาสุดท้าย (Net PnL ติดลบ) แต่ไม่ได้นำไม้เหล่านี้ไปบันทึกเป็น Trade ใน `trades` array
+     - ส่งผลให้ในตารางบันทึกเฉพาะ 22 ไม้ที่เป็นบวก ทำให้ `losses = 0`, `winRate = 100%`, และ `profitFactor = 99.00` ขัดแย้งกับตัวเลขผลตอบแทนสุทธิ
+  2. **Backtest ซื้อขายไม่ตรงกับบอทจริง (Drift ตามเวลา)**:
+     - ใน Backtest เดิม ขาดการส่งค่าคอนฟิกกรอบ Donchian ATR 48b / ความกว้าง 6%-20% ตามที่บอทจริงใช้งาน โดยระบบไปเรียก Dow Swings แบบ Default 20b
+     - ปุ่ม "ใช้ Config บอท" ในหน้าเว็บ `public/backtest.js` ก่อนหน้านี้ไม่ได้ตรวจสอบกรณีที่บอทจริงรันโหมด `dynamic_grid` ทำให้ค่า Timeframe และ Budget ไม่ได้ซิงค์มาเป็น 15M และ $50
+  3. **การขายฉุกเฉิน / Cut Loss ล้มเหลวและบอทไม่ Reconcile**:
+     - สำหรับคำสั่งขายล้างพอร์ต (Manual Sell All / Emergency Exit) และ Cut Loss บน Binance Spot: ระบบเดิมส่งคำสั่งขายแบบ IOC Limit โดยไม่มี Slippage ในโหมด `MAKER_LIMIT` หรือ Slippage แคบเกินไป (0.35%) ทำให้เมื่อราคาตลาดทิ้งตัวลงเร็ว ออเดอร์จะ Expire ทันทีโดยไม่จับคู่
+     - ใน `reconcileInventory`: หากบอท Pause อยู่ หรือราคาอยู่ต่ำกว่า Floor ระบบจะ Skip การ Reconcile ทันที ทำให้เหรียญที่เหลือในกระเป๋าไม่ถูกดึงเข้ามาคำนวณ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.208)**:
+  1. **Backtest Open Trades Settlement at End of Simulation (`src/backtest-service.ts`)**:
+     - ใน `runDynamicGridSimulation` และ `runDualHybridSimulation`: เมื่อสิ้นสุดการทดสอบ จะทำการคำนวณและปิดไม้ที่ยังถือค้างอยู่ (`heldLots` และ Sniper Position) ณ ราคาแท่งสุดท้าย โดยบันทึกประเภทเป็น `exitType: "OPEN"` เข้าตาราง `trades`
+     - หาก PnL ของไม้ค้างติดลบ จะเพิ่มยอด `losses++` และสะสมเข้า `grossLoss` ทำให้สถิติ Win Rate, Loss Trades, Profit Factor และ Net PnL สอดคล้องกัน 100% ในทุกกรณี
+  2. **Dynamic Channel Bounds Alignment in Backtest (`src/backtest-service.ts` & `src/server.ts`)**:
+     - ส่งค่าคอนฟิกกรอบราคาจริงจากบอท (`channelMode: "DONCHIAN_ATR"`, `donchianLookback: 48`, `minChannelWidthPct: 6.0%`, `maxChannelWidthPct: 20.0%`, `floorBufferPct: 0.0%`, `maxInventoryQuote`) เข้าสู่ Backtest Simulation Engine
+     - คำนวณกรอบราคาแบบ Dynamic Trailing ตามแท่งเทียนที่ปิดสมบูรณ์ (`useOnlyClosedCandles: true`) ซึ่งตอบโจทย์การเทรดเหรียญที่แกว่งในกรอบกว้าง (Sideways / Mean-reversion) ตามที่ผู้ใช้สังเกตเห็น
+  3. **One-Click Live Bot Config Sync (`syncLiveBotConfigToForms` in `public/backtest.js`)**:
+     - ปรับปรุงปุ่ม "ใช้ Config บอท" ให้ตรวจสอบ `cfg.strategyType === "dynamic_grid"`:
+       - ตั้งค่า Timeframe ให้ตรงกับ Macro Candles ของบอทจริง (15M)
+       - ตั้งค่า Budget ให้ตรงกับงบเทรดจริง ($50)
+       - สลับ Trade Mode เข้า `dynamic_grid` โดยอัตโนมัติ
+  4. **Binance Spot Native MARKET Sell for Emergency Manual & Cut Loss (`src/strategy/order-executor.ts`)**:
+     - บนกระดาน Binance Spot: เมื่อเกิดคำสั่ง `action === "MANUAL"` (ขายล้างพอร์ต) หรือ `action === "CUT"` (Cut Loss) ระบบจะส่งคำสั่งประเภท `type: "MARKET"` โดยตรง ทำให้จับคู่ขายได้ 100% ทันที ไม่ติดปัญหา IOC Expired จากความผันผวนของ Order Book
+     - บนกระดาน DEX (DreamDEX): ขยาย Slippage ของคำสั่งขายฉุกเฉินและ Cut Loss เป็น 1.0% - 1.5% ใต้ Best Bid เพื่อป้องกัน IOC Unfilled
+     - อัปเดตยอด Balance ในกระเป๋าทันทีหลังจากยกเลิกออเดอร์เดิม (`refreshWalletBalances` after `cancelAllRestingOrders`)
+  5. **Force Inventory Reconcile on User Command (`src/strategy/index.ts` & `src/index.ts`)**:
+     - เพิ่มพารามิเตอร์ `forceAdopt?: boolean` ให้กับ `reconcileInventory()`: เมื่อผู้ใช้กด "Reconcile จาก Binance" หรือเรียก API ซิงค์ประวัติ บอทจะบังคับ Reconcile เหรียญที่เหลือในกระเป๋าเข้าสู่ Lots เสมอแม้บอทจะอยู่ในสถานะ Pause หรือราคาอยู่ต่ำกว่า Floor
+     - การหดลดจำนวนไม้ (Downward Clamping) จะทำงานตลอดเวลาเพื่อล้าง Ghost Lots ทันทีหากเหรียญในกระเป๋าถูกขายออกไปแล้ว
+  6. **Bump Version**:
+     - ปรับ Version เป็น `0.2.208` ใน `package.json` และ `src/version.ts`

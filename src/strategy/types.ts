@@ -230,6 +230,7 @@ export interface IStrategy {
   getLots(): Lot[];
   refreshWalletBalances(): Promise<any>;
   syncOnChainOrders(): Promise<void>;
+  reconcileInventory?(forceAdopt?: boolean): Promise<void>;
 
   // Symbol & Exchange switching
   setSwitchingSymbol(val: boolean): void;

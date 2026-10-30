@@ -1536,16 +1536,26 @@
       // 1. Sync to Main Form
       if (target === "main" || target === "both") {
         if (cfg.symbol) setSymbolValue(cfg.symbol);
-        if (inpTimeframe && cfg.maFanExecutionTimeframe) inpTimeframe.value = cfg.maFanExecutionTimeframe;
+        const isDynamicGrid = cfg.strategyType === "dynamic_grid" || cfg.strategyMode === "dynamic_grid";
+        if (inpTimeframe) {
+          inpTimeframe.value = isDynamicGrid
+            ? (cfg.macroInterval || cfg.dowTimeframe || "15m")
+            : (cfg.maFanExecutionTimeframe || "5m");
+        }
         if (inpSpread) {
           inpSpread.value = cfg.maFanAutoCalibrateSpreadOnSwitch !== false ? "auto" : String(cfg.maFanManualSpreadPct || 0.25);
         }
-        if (inpBudget && cfg.maFanMaxBudgetUsd) inpBudget.value = String(cfg.maFanMaxBudgetUsd);
+        if (inpBudget) {
+          const b = isDynamicGrid ? (cfg.maxInventoryQuote || 50) : (cfg.maFanMaxBudgetUsd || 200);
+          inpBudget.value = String(b);
+        }
         if (inpSlMode) inpSlMode.value = cfg.maFanUseRatchetSl !== false ? "ratchet" : "fixed";
         if (inpCircuitBreaker) inpCircuitBreaker.value = cfg.maFanCircuitBreaker !== false ? "on" : "off";
         if (inpUpsideFloor) inpUpsideFloor.value = cfg.maFanUpsideFloor !== false ? "on" : "off";
         if (inpMacroGate && cfg.maFanMacroGate) inpMacroGate.value = cfg.maFanMacroGate;
-        if (inpTradeMode && cfg.maFanTradeMode) inpTradeMode.value = cfg.maFanTradeMode;
+        if (inpTradeMode) {
+          inpTradeMode.value = isDynamicGrid ? "dynamic_grid" : (cfg.maFanTradeMode || "dip_hunter");
+        }
         if (inpTradeDirection && cfg.maFanTradeDirection) inpTradeDirection.value = cfg.maFanTradeDirection;
         if (inpBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
           inpBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";

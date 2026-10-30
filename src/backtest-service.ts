@@ -361,6 +361,11 @@ export class BacktestService {
       costModel?: { feePctPerSide: number; slippagePctPerFill: number };
       saveToHistory?: boolean;
       enableBaseConfirmationFilter?: boolean;
+      channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
+      donchianPeriod?: number;
+      minChannelWidthPct?: number;
+      maxChannelWidthPct?: number;
+      floorBufferPct?: number;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -402,7 +407,14 @@ export class BacktestService {
       const c = candles[i];
       dow.addCandle(c);
 
-      const structure = dow.getStructure(c.close, undefined, { useOnlyClosedCandles: true });
+      const structure = dow.getStructure(c.close, undefined, {
+        useOnlyClosedCandles: true,
+        mode: opts.channelMode ?? "DONCHIAN_ATR",
+        donchianLookback: opts.donchianPeriod ?? 48,
+        minChannelWidthPct: opts.minChannelWidthPct ?? 6.0,
+        maxChannelWidthPct: opts.maxChannelWidthPct ?? 20.0,
+        floorBufferPct: opts.floorBufferPct ?? 0.0,
+      });
       const floor = structure.bottomBound;
       const ceiling = structure.upperBound;
       const center = structure.centerPrice;
@@ -425,7 +437,8 @@ export class BacktestService {
         floor + channelSpan * 0.92,
       ];
 
-      const cutLossPrice = floor * 0.985; // 1.5% below floor
+      const floorBuf = opts.floorBufferPct ?? 0.0;
+      const cutLossPrice = floorBuf > 0 ? floor * (1 - floorBuf / 100) : floor * 0.985;
 
       // 1. Evaluate Sells & Cut Losses for Open Lots
       const remainingLots: typeof heldLots = [];
@@ -574,10 +587,54 @@ export class BacktestService {
       if (dd > maxDrawdownPct) maxDrawdownPct = dd;
     }
 
-    // End of simulation
+    // End of simulation - settle any open remaining lots to align Net PnL, Win Rate, and Loss Trades
     const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
-    const endPositionVal = heldLots.reduce((sum, l) => sum + (l.qty * lastPrice * (1 - costPerFill)), 0);
-    const finalCapital = cash + endPositionVal;
+    const lastTime = candles.length > 0 ? candles[candles.length - 1].time : Date.now();
+    for (const lot of heldLots) {
+      const exitPrice = lastPrice;
+      const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+      const invest = lot.qty * lot.buyPrice;
+      const pnlQuote = proceeds - invest;
+      const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+      cash += proceeds;
+      const exitCost = lot.qty * exitPrice * costPerFill;
+      totalFeesQuote += lot.costQuote + exitCost;
+
+      if (pnlQuote >= 0) {
+        grossProfit += pnlQuote;
+        wins++;
+      } else {
+        grossLoss += Math.abs(pnlQuote);
+        losses++;
+      }
+
+      trades.push({
+        id: lot.id,
+        subsystem: "GRID",
+        side: "LONG",
+        entryTime: lot.entryTime,
+        entryPrice: lot.buyPrice,
+        stopLossPrice: lot.buyPrice * 0.985,
+        fanSpreadAtEntry: 0,
+        exitTime: lastTime,
+        exitPrice,
+        exitType: "OPEN",
+        pnlQuote,
+        pnlPct,
+        holdingBars: candles.length - 1 - (candles.findIndex((x) => x.time === lot.entryTime) || 0),
+        costQuote: lot.costQuote + exitCost,
+      });
+
+      markers.push({
+        time: lastTime,
+        position: "aboveBar",
+        color: pnlQuote >= 0 ? "#10b981" : "#ef4444",
+        shape: "circle",
+        text: `📦 [OPEN POSITION] #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (${pnlQuote >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)`,
+      });
+    }
+
+    const finalCapital = cash;
     const netPnlQuote = finalCapital - initialCapital;
     const netPnlPct = (netPnlQuote / initialCapital) * 100;
     const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0;
@@ -1201,15 +1258,86 @@ export class BacktestService {
       if (dd > maxDrawdownPct) maxDrawdownPct = dd;
     }
 
-    // End of simulation liquidation
+    // End of simulation liquidation & open positions settlement
     const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
-    const endGridVal = heldLots.reduce((s, l) => s + (l.qty * lastPrice * (1 - costPerFill)), 0);
-    const endSniperVal = sniperHeldQty > 0
-      ? (sniperActiveSide === "LONG"
-          ? sniperHeldQty * lastPrice * (1 - costPerFill)
-          : (sniperHeldQty * sniperEntryPrice) + (sniperHeldQty * (sniperEntryPrice - lastPrice) * (1 - costPerFill)))
-      : 0;
-    const finalCapital = gridCash + endGridVal + sniperCash + endSniperVal;
+    const lastTime = candles.length > 0 ? candles[candles.length - 1].time : Date.now();
+
+    if (sniperHeldQty > 0) {
+      const exitPrice = lastPrice;
+      const proceeds = sniperActiveSide === "LONG"
+        ? sniperHeldQty * exitPrice * (1 - costPerFill)
+        : (sniperHeldQty * sniperEntryPrice) + (sniperHeldQty * (sniperEntryPrice - lastPrice) * (1 - costPerFill));
+      const invest = sniperHeldQty * sniperEntryPrice;
+      const pnlQuote = proceeds - invest;
+      const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+      sniperCash += proceeds;
+      const exitCost = sniperHeldQty * exitPrice * costPerFill;
+      totalFeesQuote += (sniperHeldQty * sniperEntryPrice * costPerFill) + exitCost;
+
+      if (pnlQuote >= 0) {
+        grossProfit += pnlQuote;
+        wins++;
+      } else {
+        grossLoss += Math.abs(pnlQuote);
+        losses++;
+      }
+
+      const entryTime = candles[sniperEntryIdx]?.time || candles[0].time;
+      trades.push({
+        id: ++tradeCounter,
+        subsystem: "SNIPER",
+        side: sniperActiveSide,
+        entryTime,
+        entryPrice: sniperEntryPrice,
+        stopLossPrice: sniperStopLossPrice,
+        fanSpreadAtEntry: 0,
+        exitTime: lastTime,
+        exitPrice,
+        exitType: "OPEN",
+        pnlQuote,
+        pnlPct,
+        holdingBars: candles.length - 1 - sniperEntryIdx,
+        costQuote: (sniperHeldQty * sniperEntryPrice * costPerFill) + exitCost,
+      });
+    }
+
+    for (const lot of heldLots) {
+      const exitPrice = lastPrice;
+      const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+      const invest = lot.qty * lot.buyPrice;
+      const pnlQuote = proceeds - invest;
+      const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+      gridCash += proceeds;
+      const exitCost = lot.qty * exitPrice * costPerFill;
+      totalFeesQuote += lot.costQuote + exitCost;
+
+      if (pnlQuote >= 0) {
+        grossProfit += pnlQuote;
+        wins++;
+      } else {
+        grossLoss += Math.abs(pnlQuote);
+        losses++;
+      }
+
+      trades.push({
+        id: lot.id,
+        subsystem: "GRID",
+        side: "LONG",
+        entryTime: lot.entryTime,
+        entryPrice: lot.buyPrice,
+        stopLossPrice: lot.buyPrice * 0.985,
+        fanSpreadAtEntry: 0,
+        exitTime: lastTime,
+        exitPrice,
+        exitType: "OPEN",
+        pnlQuote,
+        pnlPct,
+        holdingBars: candles.length - 1 - (candles.findIndex((x) => x.time === lot.entryTime) || 0),
+        costQuote: lot.costQuote + exitCost,
+      });
+    }
+
+    const finalCapital = gridCash + sniperCash;
     const netPnlQuote = finalCapital - initialCapital;
     const netPnlPct = (netPnlQuote / initialCapital) * 100;
     const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0;
@@ -1311,6 +1439,12 @@ export class BacktestService {
       onlyEntryIdx?: number;
       trimWarmupPrefix?: boolean;
       enableBaseConfirmationFilter?: boolean;
+      channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
+      donchianPeriod?: number;
+      minChannelWidthPct?: number;
+      maxChannelWidthPct?: number;
+      floorBufferPct?: number;
+      maxInventoryQuote?: number;
     }
   ): BacktestRecord {
     if (opts.tradeMode === "dynamic_grid") {
@@ -1318,9 +1452,15 @@ export class BacktestService {
         symbol: opts.symbol,
         timeframe: opts.timeframe,
         initialCapital: opts.initialCapital,
+        maxInventoryQuote: opts.maxInventoryQuote ?? opts.initialCapital,
         costModel: opts.costModel,
         saveToHistory: opts.saveToHistory,
         enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
+        channelMode: opts.channelMode,
+        donchianPeriod: opts.donchianPeriod,
+        minChannelWidthPct: opts.minChannelWidthPct,
+        maxChannelWidthPct: opts.maxChannelWidthPct,
+        floorBufferPct: opts.floorBufferPct,
       });
     }
 

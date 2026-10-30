@@ -748,6 +748,9 @@ async function main(): Promise<void> {
         res = { success: false, synced: 0, error: `Trade reconciliation not supported for exchange: ${exchange.exchangeName}` };
       }
       grid.reloadState();
+      await grid.refreshWalletBalances();
+      await grid.reconcileInventory?.(true);
+      grid.saveState(true);
       grid.emitTelemetryTick();
       return res;
     },
