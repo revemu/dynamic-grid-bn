@@ -23,6 +23,7 @@
   // Elements
   const chartContainer = document.getElementById("btChartContainer");
   const btnRunBacktest = document.getElementById("btnRunBacktest");
+  const btnSyncLiveBotConfig = document.getElementById("btnSyncLiveBotConfig");
   const btnOpenHistory = document.getElementById("btnOpenHistory");
   const btnCloseHistoryModal = document.getElementById("btnCloseHistoryModal");
   const historyModalBackdrop = document.getElementById("historyModalBackdrop");
@@ -1350,9 +1351,77 @@
     }
   }
 
+  // Synchronize Live Bot Configuration to Forms (Main & Scanner)
+  async function syncLiveBotConfigToForms(target = "both", triggerBtn = null) {
+    try {
+      if (triggerBtn) {
+        triggerBtn.disabled = true;
+        triggerBtn.innerHTML = `<span>⏳ กำลังดึงค่า...</span>`;
+      }
+
+      const res = await fetch("/api/config");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const cfg = await res.json();
+
+      // 1. Sync to Main Form
+      if (target === "main" || target === "both") {
+        if (cfg.symbol) setSymbolValue(cfg.symbol);
+        if (inpTimeframe && cfg.maFanExecutionTimeframe) inpTimeframe.value = cfg.maFanExecutionTimeframe;
+        if (inpSpread) {
+          inpSpread.value = cfg.maFanAutoCalibrateSpreadOnSwitch !== false ? "auto" : String(cfg.maFanManualSpreadPct || 0.25);
+        }
+        if (inpBudget && cfg.maFanMaxBudgetUsd) inpBudget.value = String(cfg.maFanMaxBudgetUsd);
+        if (inpSlMode) inpSlMode.value = cfg.maFanUseRatchetSl !== false ? "ratchet" : "fixed";
+        if (inpCircuitBreaker) inpCircuitBreaker.value = cfg.maFanCircuitBreaker !== false ? "on" : "off";
+        if (inpUpsideFloor) inpUpsideFloor.value = cfg.maFanUpsideFloor !== false ? "on" : "off";
+        if (inpMacroGate && cfg.maFanMacroGate) inpMacroGate.value = cfg.maFanMacroGate;
+        if (inpFastCut) inpFastCut.value = "on";
+        if (inpMaxSl) inpMaxSl.value = "1.8";
+        if (inpFeeTier) {
+          inpFeeTier.value = (cfg.symbol && cfg.symbol.endsWith("FDUSD")) ? "zero" : "bnb";
+        }
+      }
+
+      // 2. Sync to Market Scanner
+      if (target === "scanner" || target === "both") {
+        if (scTimeframe && cfg.maFanExecutionTimeframe) scTimeframe.value = cfg.maFanExecutionTimeframe;
+        if (scSpread) {
+          scSpread.value = cfg.maFanAutoCalibrateSpreadOnSwitch !== false ? "auto" : String(cfg.maFanManualSpreadPct || 0.25);
+        }
+        if (scSlMode) scSlMode.value = cfg.maFanUseRatchetSl !== false ? "ratchet" : "fixed";
+        if (scCircuitBreaker) scCircuitBreaker.value = cfg.maFanCircuitBreaker !== false ? "on" : "off";
+        if (scUpsideFloor) scUpsideFloor.value = cfg.maFanUpsideFloor !== false ? "on" : "off";
+        if (scMacroGate && cfg.maFanMacroGate) scMacroGate.value = cfg.maFanMacroGate;
+        if (scFastCut) scFastCut.value = "on";
+        if (scMaxSl) scMaxSl.value = "1.8";
+      }
+
+      if (triggerBtn) {
+        triggerBtn.innerHTML = `<span>✅ ซิงค์สำเร็จ!</span>`;
+        setTimeout(() => {
+          triggerBtn.disabled = false;
+          triggerBtn.innerHTML = `<span class="btn-run-icon">🔄</span> ${target === "scanner" ? "ใช้ Config บอท" : "ใช้ Config เดียวกับบอท"}`;
+        }, 1500);
+      }
+      return cfg;
+    } catch (err) {
+      alert(`❌ ไม่สามารถดึงคอนฟิกจากบอทได้: ${err.message}`);
+      if (triggerBtn) {
+        triggerBtn.disabled = false;
+        triggerBtn.innerHTML = `<span class="btn-run-icon">🔄</span> ${target === "scanner" ? "ใช้ Config บอท" : "ใช้ Config เดียวกับบอท"}`;
+      }
+    }
+  }
+
   // Initialize event handlers
   function initEvents() {
     btnRunBacktest.addEventListener("click", runBacktest);
+
+    if (btnSyncLiveBotConfig) {
+      btnSyncLiveBotConfig.addEventListener("click", () => {
+        syncLiveBotConfigToForms("main", btnSyncLiveBotConfig);
+      });
+    }
 
     btnOpenHistory.addEventListener("click", () => {
       loadHistoryList();
@@ -1389,6 +1458,7 @@
   const scannerModalBackdrop = document.getElementById("scannerModalBackdrop");
   const btnCloseScannerModal = document.getElementById("btnCloseScannerModal");
   const btnStartScan = document.getElementById("btnStartScan");
+  const btnScannerSyncLiveConfig = document.getElementById("btnScannerSyncLiveConfig");
   const scannerProgressWrap = document.getElementById("scannerProgressWrap");
   const scannerStatusText = document.getElementById("scannerStatusText");
   const scannerCountText = document.getElementById("scannerCountText");
@@ -1426,6 +1496,12 @@
         if (e.target === scannerModalBackdrop) {
           scannerModalBackdrop.style.display = "none";
         }
+      });
+    }
+
+    if (btnScannerSyncLiveConfig) {
+      btnScannerSyncLiveConfig.addEventListener("click", () => {
+        syncLiveBotConfigToForms("scanner", btnScannerSyncLiveConfig);
       });
     }
 

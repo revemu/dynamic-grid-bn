@@ -6341,6 +6341,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.188` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 213. One-Click Live Bot Config Sync for Backtest & Market Scanner (`v0.2.189`)
+
+1. **เพิ่มปุ่มซิงค์คอนฟิกจากบอทจริง (One-Click Sync)**:
+   - **ฟอร์ม Backtest หลัก (`btnSyncLiveBotConfig`)**: เพิ่มปุ่ม **"🔄 ใช้ Config เดียวกับบอท"** วางข้างปุ่มรัน Backtest เมื่อกดจะเรียก `GET /api/config` ดึงค่าของบอทจริงมาใส่ฟอร์มครบทุกตัวเลือก:
+     - `Symbol`: เหรียญที่บอทรันอยู่ (เช่น `HAEDALUSDT`)
+     - `Timeframe`: ตาม `maFanExecutionTimeframe` (`5m`)
+     - `Min Spread`: `Auto Calibrate`
+     - `SL Mode`: `Ratchet SL`
+     - `Circuit Breaker`: `On`
+     - `Upside Floor`: `On`
+     - `Macro Gate`: `Off`
+     - `Fast Cut`: `On`
+     - `Max SL Cap`: `1.80%`
+     - `Budget`: ตาม `maFanMaxBudgetUsd`
+     - `Fee Tier`: หากเป็นคู่ FDUSD ตั้งเป็น `0% Zero Fee` อื่นๆ ตั้งเป็น `BNB Fee (0.075%)`
+   - **Market Scanner Modal (`btnScannerSyncLiveConfig`)**: เพิ่มปุ่ม **"🔄 ใช้ Config บอท"** ในแถบเครื่องมือของ Scanner เมื่อกดจะปรับตัวเลือกการสแกนทุกอย่างให้ตรงกับบอทจริงทันที
+2. **การปรับแต่ง UI & Visual Feedback**:
+   - ออกแบบปุ่มด้วยสไตล์ Cyan Neon Glow (`.btn-sync-config`) โดดเด่นและกลมกลืนกับธีม TradingView Dashboard
+   - เมื่อกดปุ่ม ปุ่มจะเปลี่ยนสถานะเป็น `⏳ กำลังดึงค่า...` และเมื่อซิงค์สำเร็จจะเปลี่ยนเป็น `✅ ซิงค์สำเร็จ!` ชั่วคราว 1.5 วินาที พร้อมใช้งานได้ทันที
+3. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.189` ใน `package.json` และ `src/version.ts`
+
 
 
 

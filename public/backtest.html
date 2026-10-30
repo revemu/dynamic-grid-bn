@@ -138,6 +138,10 @@
           <span class="btn-run-icon">🚀</span> รัน Backtest
         </button>
 
+        <button id="btnSyncLiveBotConfig" class="btn-sync-config" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่ฟอร์ม Backtest ทุกประการ">
+          <span class="btn-run-icon">🔄</span> ใช้ Config เดียวกับบอท
+        </button>
+
         <button id="btnOpenScanner" class="btn-scanner" title="สแกนคู่เหรียญทั้งหมดเพื่อจัดอันดับกำไร">
           <span class="btn-run-icon">⚡</span> Market Scanner
         </button>
@@ -373,6 +377,9 @@
                 <option value="bullOnly">🐂 Bull Only</option>
               </select>
             </div>
+            <button id="btnScannerSyncLiveConfig" class="btn-sync-config btn-scanner-sync" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่การตั้งค่า Market Scanner ทุกประการ">
+              <span class="btn-run-icon">🔄</span> ใช้ Config บอท
+            </button>
             <button id="btnStartScan" class="btn-run btn-start-scan">
               <span>🚀 เริ่มสแกนตลาด</span>
             </button>
@@ -422,6 +429,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.2.188"></script>
+  <script src="backtest.js?v=0.2.189"></script>
 </body>
 </html>
