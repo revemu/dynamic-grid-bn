@@ -135,11 +135,11 @@
         <div class="bt-input-group">
           <label>โหมดกลยุทธ์ (Engine)</label>
           <select id="btTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
-            <option value="dip_hunter" selected>🎯 Dip/Peak Hunter (MA-Fan)</option>
-            <option value="trend_rider">🏄 Trend Rider (เกาะเทรนด์)</option>
+            <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
             <option value="dual">⚡ Dual MA-Fan (Hunter + Trend)</option>
+            <option value="dip_hunter">🎯 Dip/Peak Hunter (MA-Fan)</option>
+            <option value="trend_rider">🏄 Trend Rider (เกาะเทรนด์)</option>
             <option value="dynamic_grid">🕸️ Dynamic Grid (Dow 4-Levels)</option>
-            <option value="dual_hybrid">⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
           </select>
         </div>
 
@@ -161,8 +161,12 @@
           <span class="btn-run-icon">🚀</span> รัน Backtest
         </button>
 
+        <button id="btnResetBestPreset" class="btn-sync-config" title="รีเซ็ตค่าคอนฟิกทั้งหมดเป็นค่าแนะนำที่ดีที่สุด (Optimal Preset)">
+          <span class="btn-run-icon">⚡</span> ค่าแนะนำ (Best)
+        </button>
+
         <button id="btnSyncLiveBotConfig" class="btn-sync-config" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่ฟอร์ม Backtest ทุกประการ">
-          <span class="btn-run-icon">🔄</span> ใช้ Config เดียวกับบอท
+          <span class="btn-run-icon">🔄</span> ใช้ Config บอท
         </button>
 
         <button id="btnApplyConfigToLiveBot" class="btn-apply-live" title="นำค่าการตั้งค่าจาก Backtest ไปบันทึกและเปิดใช้งานบนบอทจริงทันที">
@@ -410,11 +414,11 @@
             <div class="scanner-ctrl-group">
               <label>Engine</label>
               <select id="scTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
-                <option value="dip_hunter" selected>🎯 Dip/Peak Hunter</option>
-                <option value="trend_rider">🏄 Trend Rider</option>
+                <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
                 <option value="dual">⚡ Dual MA-Fan</option>
+                <option value="dip_hunter">🎯 Dip/Peak Hunter</option>
+                <option value="trend_rider">🏄 Trend Rider</option>
                 <option value="dynamic_grid">🕸️ Dynamic Grid</option>
-                <option value="dual_hybrid">⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
               </select>
             </div>
             <div class="scanner-ctrl-group">
@@ -425,6 +429,9 @@
                 <option value="both">🔄 Two-Way</option>
               </select>
             </div>
+            <button id="btnScannerResetBestPreset" class="btn-sync-config btn-scanner-sync" title="รีเซ็ตการตั้งค่าสแกนเนอร์เป็นค่าแนะนำที่ดีที่สุด (Optimal Preset)">
+              <span class="btn-run-icon">⚡</span> ค่าแนะนำ
+            </button>
             <button id="btnScannerSyncLiveConfig" class="btn-sync-config btn-scanner-sync" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่การตั้งค่า Market Scanner ทุกประการ">
               <span class="btn-run-icon">🔄</span> ใช้ Config บอท
             </button>
@@ -477,6 +484,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.2.196"></script>
+  <script src="backtest.js?v=0.2.197"></script>
 </body>
 </html>

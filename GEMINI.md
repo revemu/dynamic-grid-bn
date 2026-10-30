@@ -6523,6 +6523,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **การขยับ Version**:
   - ปรับ Patch Version เป็น `0.2.196` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.196`)
 
+---
+
+## 222. Optimal Presets Auto-Tuning Engine & Best Default Enforcement (v0.2.197)
+
+- **Auto-Preset on Engine Change (`public/backtest.js`)**:
+  - เมื่อผู้ใช้เลือกหรือสลับ Engine (`#btTradeMode` ในหน้า Backtest หรือ `#scTradeMode` ใน Market Scanner) ระบบจะตรวจจับ `change` event แล้วเรียกฟังก์ชัน `applyOptimalPreset()` เพื่อปรับค่าคอนฟิกทั้งหมดให้กลายเป็นค่าแนะนำที่ดีที่สุดทันทีโดยไม่ต้องไล่ตั้งทีละช่อง:
+    - Timeframe: `5m` (สมดุลรอบเร็ว สัญญาณหลอกต่ำ)
+    - Min Fan Spread: `auto` (Auto Calibrate Sweet Spot)
+    - Macro Gate (1H): `🛡️ No Deep Bear` (ตัดไม้แพ้ช่วงทุบหนัก 55%)
+    - Circuit Breaker: `on` (SL 2 ไม้ติด พัก 6 ชม.)
+    - Upside Floor: `on` (กรองระยะวิ่งถึง EMA25 $\ge 0.50\%$)
+    - Fast Cut: `on` (ตัดขาดทุนไวที่ -0.8% หรือนิ่ง 6 แท่ง)
+    - Max SL Cap: `1.80%` (คุมความเสี่ยง Asymmetric R:R)
+    - โหมด Stop Loss: `🛡️ Ratchet SL` (ยกฐาน SL ตาม EMA)
+    - ทิศทางเทรด: `🟢 Long Only` (สำหรับ Spot)
+    - ค่าธรรมเนียม: `BNB Fee` (0.075% + 0.01% Slip)
+- **Quick Preset Reset Buttons (`public/backtest.html`)**:
+  - เพิ่มปุ่ม `⚡ ค่าแนะนำ (Best)` ในแถบควบคุม Backtest Studio (`#btnResetBestPreset`)
+  - เพิ่มปุ่ม `⚡ ค่าแนะนำ` ในแถบควบคุม Market Scanner (`#btnScannerResetBestPreset`) เพื่อให้ผู้ใช้กดรีเซ็ตค่ากลับเป็นค่าที่ดีที่สุดได้ทุกเมื่อ
+- **Default Strategy to Dual Hybrid**:
+  - ตั้งค่าเริ่มต้นของทั้งหน้า Backtest Studio และ Market Scanner ให้เลือก `⚡🕸️ Dual Hybrid (Grid + Sniper)` เป็นตัวเลือกหลักทันทีตั้งแต่เปิดหน้าเว็บ
+- **การขยับ Version**:
+  - ปรับ Patch Version เป็น `0.2.197` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.197`)
+
 
 
 

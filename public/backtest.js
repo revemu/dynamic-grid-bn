@@ -1559,9 +1559,60 @@
     }
   }
 
+  // Apply optimal best-known presets for the selected engine
+  function applyOptimalPreset(engine = "dual_hybrid", target = "both") {
+    // 1. Main Backtest Form
+    if (target === "main" || target === "both") {
+      if (inpTradeMode) inpTradeMode.value = engine;
+      if (inpTimeframe) inpTimeframe.value = "5m";
+      if (inpSpread) inpSpread.value = "auto";
+      if (inpSlMode) inpSlMode.value = "ratchet";
+      if (inpMacroGate) inpMacroGate.value = "noDeepBear";
+      if (inpCircuitBreaker) inpCircuitBreaker.value = "on";
+      if (inpUpsideFloor) inpUpsideFloor.value = "on";
+      if (inpFastCut) inpFastCut.value = "on";
+      if (inpMaxSl) inpMaxSl.value = "1.8";
+      if (inpTradeDirection) inpTradeDirection.value = "long";
+      if (inpFeeTier) inpFeeTier.value = "bnb";
+    }
+
+    // 2. Market Scanner Form
+    if (target === "scanner" || target === "both") {
+      if (scTradeMode) scTradeMode.value = engine;
+      if (scTimeframe) scTimeframe.value = "5m";
+      if (scSpread) scSpread.value = "auto";
+      if (scSlMode) scSlMode.value = "ratchet";
+      if (scMacroGate) scMacroGate.value = "noDeepBear";
+      if (scCircuitBreaker) scCircuitBreaker.value = "on";
+      if (scUpsideFloor) scUpsideFloor.value = "on";
+      if (scFastCut) scFastCut.value = "on";
+      if (scMaxSl) scMaxSl.value = "1.8";
+      if (scTradeDirection) scTradeDirection.value = "long";
+    }
+  }
+
   // Initialize event handlers
   function initEvents() {
     btnRunBacktest.addEventListener("click", runBacktest);
+
+    // Auto-tune optimal preset on engine dropdown change
+    if (inpTradeMode) {
+      inpTradeMode.addEventListener("change", (e) => {
+        applyOptimalPreset(e.target.value, "main");
+      });
+    }
+
+    const btnResetBestPreset = document.getElementById("btnResetBestPreset");
+    if (btnResetBestPreset) {
+      btnResetBestPreset.addEventListener("click", () => {
+        const currentEngine = inpTradeMode ? inpTradeMode.value : "dual_hybrid";
+        applyOptimalPreset(currentEngine, "main");
+        btnResetBestPreset.innerHTML = `<span>⚡ คืนค่าแล้ว!</span>`;
+        setTimeout(() => {
+          btnResetBestPreset.innerHTML = `<span class="btn-run-icon">⚡</span> ค่าแนะนำ (Best)`;
+        }, 1200);
+      });
+    }
 
     if (btnSyncLiveBotConfig) {
       btnSyncLiveBotConfig.addEventListener("click", () => {
@@ -1654,6 +1705,25 @@
     if (btnScannerSyncLiveConfig) {
       btnScannerSyncLiveConfig.addEventListener("click", () => {
         syncLiveBotConfigToForms("scanner", btnScannerSyncLiveConfig);
+      });
+    }
+
+    // Auto-tune optimal preset on scanner engine dropdown change
+    if (scTradeMode) {
+      scTradeMode.addEventListener("change", (e) => {
+        applyOptimalPreset(e.target.value, "scanner");
+      });
+    }
+
+    const btnScannerResetBestPreset = document.getElementById("btnScannerResetBestPreset");
+    if (btnScannerResetBestPreset) {
+      btnScannerResetBestPreset.addEventListener("click", () => {
+        const currentEngine = scTradeMode ? scTradeMode.value : "dual_hybrid";
+        applyOptimalPreset(currentEngine, "scanner");
+        btnScannerResetBestPreset.innerHTML = `<span>⚡ คืนค่าแล้ว!</span>`;
+        setTimeout(() => {
+          btnScannerResetBestPreset.innerHTML = `<span class="btn-run-icon">⚡</span> ค่าแนะนำ`;
+        }, 1200);
       });
     }
 
@@ -1887,6 +1957,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     initChart();
     initEvents();
+    applyOptimalPreset("dual_hybrid", "both");
     loadHistoryList();
     loadDynamicSymbols();
 
