@@ -6717,3 +6717,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 
 
+
+
+---
+
+## 229. Waterfall Knife Guard Bypass in Pure Grid Mode & Settings UI Toggle (v0.2.204)
+
+- **สาเหตุของปัญหา**:
+  1. ผู้ใช้ตั้งค่า Pure Grid (`enableBaseConfirmationFilter: false`) เพื่อให้บอทดักตั้ง Limit Buy ล่วงหน้าเหมือน Backtest 100% แต่เมื่อราคาเหรียญทุบเร็วและแรง (เช่น INIT รูดลง 4 แท่งแดงติดกัน -1.98%) ฟังก์ชัน `evaluateWaterfallDrop(refPrice)` จะตรวจจับเป็น `Waterfall Knife` และตั้ง `isWaterfallDropping = true`
+  2. ใน `src/strategy/index.ts` ตัวแปร `canBuy` มีเงื่อนไข `!isWaterfallDropping` ส่งผลให้ `canBuy` กลายเป็น `false`
+  3. เมื่อ `canBuy` เป็น `false` ใน `src/strategy/buy-sync.ts` จะเรียก `cancelAllRestingOrders("BUY", "Buying paused by filters (Downtrend/Trendline/Lag Guard/Offload)")` ทันที ทำให้ออเดอร์ซื้อที่ตั้งรออยู่ถูกยกเลิกทั้งหมด
+  4. นอกจากนี้ เมื่อราคาไหลหลุด Buy Level 1 ($0.21435) และ Buy Level 2 ($0.21122) ลงมาต่ำกว่าราคาตลาด ออเดอร์ซื้อเป้าหมายถัดไปจะขยับลงไปเป็น Buy Level 3 ($0.20782) ตามหลัก Maker Limit ทำให้ข้อความแบนเนอร์เปลี่ยนเป้าหมาย สร้างภาพลวงตาเหมือนกรอบเลื่อนลง ทั้งที่กรอบ Channel (Floor/Ceil/Center) อยู่ที่เดิม
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.204)**:
+  1. **Waterfall Knife Guard Bypass for Pure Grid (`src/strategy/index.ts`)**:
+     - ใน `evaluateWaterfallDrop(refPrice)`: เพิ่มเงื่อนไข bypass ทันทีถ้า `this.cfg.enableWaterfallKnifeGuard === false || this.cfg.enableBaseConfirmationFilter === false` ให้คืนค่า `{ isDropping: false, reason: "" }`
+     - ใน `step()`: เพิ่ม `const isWaterfall = (allowBaseBypass || this.cfg.enableWaterfallKnifeGuard === false) ? false : isWaterfallDropping;` และใช้ `!isWaterfall` ใน `canBuy` เพื่อไม่ให้ Waterfall ปิดกั้นการซื้อเมื่ออยู่ในโหมด Pure Grid
+  2. **Intra-Candle Waterfall & Continuation Breakdown Bypass (`src/strategy/buy-sync.ts`)**:
+     - ใน `eligibleBuyIndices` และ `ineligibleOpenBuys`: ป้องกันไม่ให้ Intra-candle waterfall, buy cooldown, หรือ continuation breakdown มายกเลิกหรือบล็อกออเดอร์ Limit Buy เมื่อเปิดใช้งานโหมด Pure Grid (`enableBaseConfirmationFilter === false`) หรือปิด `enableWaterfallKnifeGuard === false`
+  3. **Config & Settings UI Toggle (`src/config.ts`, `public/index.html`, `public/app.js`)**:
+     - เพิ่ม `enableWaterfallKnifeGuard` ใน `loadConfigFromDatabase()` ของ `src/config.ts`
+     - เพิ่มสวิตช์เปิด-ปิด `🌊 ตรวจจับมีดตกและแท่งแดงรัว (Waterfall Knife Guard)` ในหน้าต่าง Settings Modal (`public/index.html`)
+     - ผูกค่า `cfg_enableWaterfallKnifeGuard` ใน `loadSettings()` และ `saveSettings()` ใน `public/app.js`
+     - เพิ่มการส่ง `enableWaterfallKnifeGuard: enableBaseConfirmationFilter` อัตโนมัติใน `public/backtest.js` เมื่อกด Apply Config ไปยังบอทจริง
+  4. **Bump Version**:
+     - อัปเดต Version เป็น `0.2.204` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.204`)

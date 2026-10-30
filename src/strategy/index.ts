@@ -681,6 +681,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       enableTwoStageCutLoss: this.cfg.enableTwoStageCutLoss !== false,
       cutLossStage2Multiplier: this.cfg.cutLossStage2Multiplier ?? 2.0,
       enableBaseConfirmationFilter: this.cfg.enableBaseConfirmationFilter !== false,
+      enableWaterfallKnifeGuard: this.cfg.enableWaterfallKnifeGuard !== false,
       strategyType: (this.cfg as any).strategyType || this.strategyType || "dynamic_grid",
       swingMinRiskReward: (this.cfg as any).swingMinRiskReward ?? 2.0,
       swingStopLossBufferPct: (this.cfg as any).swingStopLossBufferPct ?? 0.5,
@@ -899,6 +900,13 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           if (!this.cfg.enableBaseConfirmationFilter) {
             this.waitingForHigherLow = false;
             this.isDowntrendDropPaused = false;
+            this.needsBuyRebalance = true;
+          }
+          continue;
+        }
+        if (key === "enableWaterfallKnifeGuard") {
+          this.cfg.enableWaterfallKnifeGuard = Boolean(val);
+          if (!this.cfg.enableWaterfallKnifeGuard) {
             this.needsBuyRebalance = true;
           }
           continue;
@@ -4377,7 +4385,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     const isHlWaiting = allowBaseBypass ? false : this.waitingForHigherLow;
     const isDowntrendDrop = allowBaseBypass ? false : downtrendDropPaused;
     const isChannelApproved = allowBaseBypass ? true : (gridZone?.canEstablishChannel !== false);
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !isDowntrendDrop && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !isHlWaiting && !isBelowFloor && !isWaterfallDropping && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && isChannelApproved;
+    const isWaterfall = (allowBaseBypass || this.cfg.enableWaterfallKnifeGuard === false) ? false : isWaterfallDropping;
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !isDowntrendDrop && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !isHlWaiting && !isBelowFloor && !isWaterfall && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && isChannelApproved;
 
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
@@ -4518,7 +4527,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
    * Pauses buy execution while rapid downward momentum is ongoing until a green candle or rejection wick forms.
    */
   public evaluateWaterfallDrop(refPrice: number): { isDropping: boolean; reason: string } {
-    if (this.cfg.enableWaterfallKnifeGuard === false) {
+    if (this.cfg.enableWaterfallKnifeGuard === false || this.cfg.enableBaseConfirmationFilter === false) {
       return { isDropping: false, reason: "" };
     }
     const microCandles = this.localTrendEngine?.getClosedCandles() ?? [];

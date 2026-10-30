@@ -5356,6 +5356,7 @@
       setCheck("cfg_enableSellBelowTrendResistance", data.enableSellBelowTrendResistance !== false);
       setCheck("cfg_enableSellAtRealCeiling", data.enableSellAtRealCeiling !== false);
       setCheck("cfg_enableBaseConfirmationFilter", data.enableBaseConfirmationFilter !== undefined ? Boolean(data.enableBaseConfirmationFilter) : true);
+      setCheck("cfg_enableWaterfallKnifeGuard", data.enableWaterfallKnifeGuard !== undefined ? Boolean(data.enableWaterfallKnifeGuard) : true);
       setVal("cfg_sellProfitMode", data.sellProfitMode || (data.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW"));
       setCheck("cfg_enableTriangleSqueezeExit", data.enableTriangleSqueezeExit !== false);
       setVal("cfg_triangleSqueezeSpreadPct", data.triangleSqueezeSpreadPct ?? 1.5);
@@ -5636,6 +5637,7 @@
       enableSellBelowTrendResistance: document.getElementById("cfg_enableSellBelowTrendResistance").checked,
       enableSellAtRealCeiling: document.getElementById("cfg_enableSellAtRealCeiling").checked,
       enableBaseConfirmationFilter: Boolean(document.getElementById("cfg_enableBaseConfirmationFilter")?.checked),
+      enableWaterfallKnifeGuard: Boolean(document.getElementById("cfg_enableWaterfallKnifeGuard")?.checked),
       sellProfitMode: document.getElementById("cfg_sellProfitMode").value,
       enableTriangleSqueezeExit: document.getElementById("cfg_enableTriangleSqueezeExit").checked,
       triangleSqueezeSpreadPct: parseFloat(document.getElementById("cfg_triangleSqueezeSpreadPct").value),

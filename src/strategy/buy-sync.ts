@@ -326,7 +326,7 @@ export class BuyOrderSynchronizer {
         if (this.host.cfg.enableBaseConfirmationFilter !== false && isLlContinuationBreakdown && structuralBreakdownLow && lvl < structuralBreakdownLow.price * 1.0005) {
           return false;
         }
-        if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && lvl < this.host.lastBuyFillPrice * 0.999) {
+        if (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.cfg.enableWaterfallKnifeGuard !== false && this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && lvl < this.host.lastBuyFillPrice * 0.999) {
           return false;
         }
         // In MAKER_LIMIT mode: buy orders must strictly be placed below current market price!
@@ -425,9 +425,9 @@ export class BuyOrderSynchronizer {
       for (const o of ineligibleOpenBuys) {
         const ordNotional = (o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty);
         let cancelReason = `Level allocation target fulfilled (${o.levelDesc}) — releasing locked budget ($${ordNotional.toFixed(2)}) for remaining eligible levels`;
-        if (isLlContinuationBreakdown && structuralBreakdownLow && o.price < structuralBreakdownLow.price * 1.0005) {
+        if (this.host.cfg.enableBaseConfirmationFilter !== false && isLlContinuationBreakdown && structuralBreakdownLow && o.price < structuralBreakdownLow.price * 1.0005) {
           cancelReason = `Dow continuation breakdown: price ($${refPrice.toFixed(4)}) breaking below support ($${structuralBreakdownLow.price.toFixed(4)}) after LH — cancelling buys below broken support`;
-        } else if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && o.price < this.host.lastBuyFillPrice * 0.999) {
+        } else if (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.cfg.enableWaterfallKnifeGuard !== false && this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && o.price < this.host.lastBuyFillPrice * 0.999) {
           cancelReason = isIntraCandleWaterfallActive
             ? `Intra-candle waterfall guard: price dumping post-buy — cancelling deep buy (${o.levelDesc}) until candle stabilizes`
             : `Buy fill cooldown: waiting ${Math.ceil((buyFillCooldownMs - (Date.now() - this.host.lastBuyFillTime)) / 1000)}s before placing deep buy (${o.levelDesc})`;

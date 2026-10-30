@@ -1398,6 +1398,7 @@
           tradeMode,
           tradeDirection,
           enableBaseConfirmationFilter,
+        enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
         }),
       });
 
@@ -1638,6 +1639,7 @@
         maFanUpsideFloor: enableUpsideFloor,
         maFanMacroGate: macroGateMode,
         enableBaseConfirmationFilter,
+        enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
         ...(inpTradeMode && inpTradeMode.value ? { strategyType: inpTradeMode.value } : {}),
       };
 
@@ -1903,6 +1905,7 @@
               tradeMode,
               tradeDirection,
               enableBaseConfirmationFilter,
+        enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
             }),
           });
 
@@ -2071,6 +2074,7 @@
             maFanTradeMode: tradeMode,
             maFanTradeDirection: tradeDirection,
             enableBaseConfirmationFilter,
+        enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
             maxInventoryQuote: inpBudget ? Number(inpBudget.value) || 200 : 200,
             maxInventoryUsdso: inpBudget ? Number(inpBudget.value) || 200 : 200,
             ...(tradeMode ? { strategyType: tradeMode } : {}),

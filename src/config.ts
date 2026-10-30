@@ -422,6 +422,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.liquidateOnTrendSupportBreak !== undefined) merged.liquidateOnTrendSupportBreak = Boolean(saved.liquidateOnTrendSupportBreak);
       if (saved.enableExitOnDowntrendRegime !== undefined) merged.enableExitOnDowntrendRegime = Boolean(saved.enableExitOnDowntrendRegime);
       if (saved.enableBaseConfirmationFilter !== undefined) merged.enableBaseConfirmationFilter = Boolean(saved.enableBaseConfirmationFilter);
+      if (saved.enableWaterfallKnifeGuard !== undefined) merged.enableWaterfallKnifeGuard = Boolean(saved.enableWaterfallKnifeGuard);
       if (saved.buySizingMode === "EQUAL" || saved.buySizingMode === "PYRAMID") {
         merged.buySizingMode = saved.buySizingMode;
       }
