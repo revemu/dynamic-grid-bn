@@ -1118,14 +1118,42 @@
         <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
         <div class="cot-row"><span class="cot-label">เวลาตัดขาดทุน:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
       `;
-    } else {
-      actionTitle = `🔴 ตัดขาดทุนก้นเหว (Fixed SL) ไม้ #${t.id}`;
+    } else if (item.action === "GRID_TP") {
+      actionTitle = `🟣 ขายทำกำไรกริด (GRID TP) ไม้ #${t.id}`;
+      actionColor = "#c084fc";
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาขาย (Take Profit):</span><span class="cot-val" style="color: #c084fc;">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">กำไรสุทธิ:</span><span class="cot-val text-win">+${t.pnlPct.toFixed(2)}% (+$${Math.abs(t.pnlQuote).toFixed(2)})</span></div>
+        <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาปิดรอบ:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
+      `;
+    } else if (item.action === "GRID_CUT") {
+      actionTitle = `🔴 ตัดขาดทุนกริดหลุดพื้น (GRID CUT) ไม้ #${t.id}`;
       actionColor = "#ef4444";
       bodyHtml = `
-        <div class="cot-row"><span class="cot-label">ราคาตัดขาดทุน:</span><span class="cot-val" style="color: #f87171;">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">ราคาตัดขาดทุน (หลุดพื้น):</span><span class="cot-val" style="color: #f87171;">$${fmtPrice(t.exitPrice)}</span></div>
         <div class="cot-row"><span class="cot-label">ขาดทุนสุทธิ:</span><span class="cot-val text-loss">${t.pnlPct.toFixed(2)}% (-$${Math.abs(t.pnlQuote).toFixed(2)})</span></div>
         <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
         <div class="cot-row"><span class="cot-label">เวลาตัดขาดทุน:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
+      `;
+    } else if (item.action === "TECH_FAST_CUT") {
+      actionTitle = `⚡ Fast Cut (ตัดขาดทุนด่วน) ไม้ #${t.id}`;
+      actionColor = "#f59e0b";
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาตัดขาดทุนด่วน:</span><span class="cot-val" style="color: #fbbf24;">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">ขาดทุนสุทธิ:</span><span class="cot-val text-loss">${t.pnlPct.toFixed(2)}% (-$${Math.abs(t.pnlQuote).toFixed(2)})</span></div>
+        <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาตัดขาดทุน:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
+      `;
+    } else {
+      const isWin = (t.pnlPct ?? 0) >= 0;
+      actionTitle = isWin ? `🟢 ปิดทำกำไร ไม้ #${t.id}` : `🔴 ตัดขาดทุนก้นเหว (Fixed SL) ไม้ #${t.id}`;
+      actionColor = isWin ? "#10b981" : "#ef4444";
+      bodyHtml = `
+        <div class="cot-row"><span class="cot-label">ราคาปิด:</span><span class="cot-val" style="color: ${actionColor};">$${fmtPrice(t.exitPrice)}</span></div>
+        <div class="cot-row"><span class="cot-label">${isWin ? "กำไรสุทธิ:" : "ขาดทุนสุทธิ:"}</span><span class="cot-val ${isWin ? "text-win" : "text-loss"}">${isWin ? "+" : ""}${t.pnlPct.toFixed(2)}% (${isWin ? "+" : "-"}$${Math.abs(t.pnlQuote).toFixed(2)})</span></div>
+        <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars} แท่ง (~${t.holdingBars * 5} นาที)</span></div>
+        <div class="cot-row"><span class="cot-label">เวลาปิดไม้:</span><span class="cot-val">${fmtDateTime(t.exitTime)}</span></div>
       `;
     }
 

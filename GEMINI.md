@@ -6637,6 +6637,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **การขยับ Version**:
   - ปรับ Patch Version เป็น `0.2.200` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.200`)
 
+---
+
+## 226. Dynamic Grid Tooltip Badge Action Fix & Pure Grid Regime Gate Unblocking (v0.2.201)
+
+- **สาเหตุของปัญหา**:
+  1. **Tooltip แสดงผลผิดเป็นขาดทุน (Fixed SL)**:
+     - ใน Backtest Studio เมื่อผู้ใช้นำเมาส์ไปชี้ที่หมุด Take Profit (สีม่วง `TP`) ของไม้ Dynamic Grid (เช่น ไม้ #73 ที่ทำกำไรจริง `+2.59% / +$1.29`)
+     - กล่องข้อความ Tooltip กลับแสดงหัวข้อว่า `🔴 ตัดขาดทุนก้นเหว (Fixed SL) ไม้ #73` และแสดงตัวเลข `ขาดทุนสุทธิ: 2.59% (-$1.29)`
+     - **สาเหตุ**: ฟังก์ชัน `showOrderTooltip(item, e)` ใน `public/backtest.js` ขาดเงื่อนไขตรวจสอบ `item.action === "GRID_TP"` และ `"GRID_CUT"` ทำให้หลุดเข้าไปในบล็อก `else` สุดท้าย ซึ่งฮาร์ดโค้ดข้อความ Fixed SL พร้อมใช้ `Math.abs(t.pnlQuote)` และใส่เครื่องหมายลบ `-$` บังคับตัวเลขกำไรให้กลายเป็นลบ
+  2. **บอทจริงติดค้างสถานะ WAITING_FOR_BASE_CONFIRMATION ในโหมด Pure Grid**:
+     - แม้ว่าจะส่งค่าคอนฟิก `enableBaseConfirmationFilter: false` ไปยังเซิร์ฟเวอร์แล้ว บอทจริงยังคงขึ้นป้ายเตือนพักการซื้อและยังไม่ส่งคำสั่งซื้อลงกระดาน
+     - **สาเหตุ**:
+       - `RegimeChannelGate` (Pillar 2: Base Confirmation Protocol ใน `src/market-structure/regime-gate.ts`) ยังไม่ได้เชื่อมต่อแฟล็ก `enableBaseConfirmationFilter` เข้าไป ทำให้เมื่อราคาหลุด Low เดิม ตัว Gate ยังคงส่งสถานะ `canEstablishChannel: false` และ `gateStatus = "WAITING_FOR_BASE_CONFIRMATION"` ออกมา
+       - ใน `src/strategy/index.ts`: ตัวแปร `isGated` ยังคงดักจับ `gateStatus !== "VALID_CHANNEL"` อยู่
+       - ใน `src/strategy/buy-sync.ts`: เงื่อนไข `isLlContinuationBreakdown` ยังคงบล็อกการวางไม้ซื้อใต้ Low เดิม
+- **การแก้ไขและสถาปัตยกรรมใหม่**:
+  1. **แก้ไข `public/backtest.js` (`showOrderTooltip`)**:
+     - เพิ่มเงื่อนไขรองรับ `item.action === "GRID_TP"`: แสดงหัวข้อ `🟣 ขายทำกำไรกริด (GRID TP)` และตัวเลข `กำไรสุทธิ: +X.XX% (+X.XX)` สีเขียวถูกต้อง 100%
+     - เพิ่มเงื่อนไขรองรับ `item.action === "GRID_CUT"`: แสดงหัวข้อ `🔴 ตัดขาดทุนกริดหลุดพื้น (GRID CUT)`
+     - เพิ่มเงื่อนไขรองรับ `item.action === "TECH_FAST_CUT"`: แสดงหัวข้อ `⚡ Fast Cut (ตัดขาดทุนด่วน)`
+     - ในบล็อก `else` ตรวจสอบ `t.pnlPct >= 0` เพื่อแสดงป้ายกำไร/ขาดทุนตามข้อเท็จจริง
+  2. **ปลดล็อก Pure Grid 100% ใน Strategy และ Market Structure**:
+     - ใน `src/market-structure/types.ts`: เพิ่ม `enableBaseConfirmationFilter?: boolean` ลงใน `ChannelOptions`
+     - ใน `src/market-structure/regime-gate.ts`: เมื่อ `enableBaseConfirmationFilter === false` จะข้ามการตรวจสอบ Pillar 2 (`isBreakingLow`) ทันที
+     - ใน `src/strategy/index.ts`: ส่งแฟล็กเข้า `dowEngine.getStructure()` และยกเว้น `isGated` เมื่อ `enableBaseConfirmationFilter === false`
+     - ใน `src/strategy/buy-sync.ts`: ปลดล็อก `isLlContinuationBreakdown` ให้วางไม้ซื้อตามเส้นกริดได้สมบูรณ์
+- **การขยับ Version**:
+  - ปรับ Patch Version เป็น `0.2.201` ใน `package.json`, `src/version.ts`, และ `public/backtest.html` (`backtest.js?v=0.2.201`)
+
+
 
 
 

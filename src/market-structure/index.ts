@@ -369,6 +369,7 @@ export class DowStructureEngine {
       isDowntrendDropActive,
       minFloorProximityPct: options?.minFloorProximityPct ?? 1.5,
       enableTrendGating: options?.enableTrendGating !== false,
+      enableBaseConfirmationFilter: options?.enableBaseConfirmationFilter,
     });
 
     // 8. Grid Zone

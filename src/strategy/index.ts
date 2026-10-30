@@ -2578,6 +2578,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         htfStructure,
         minFloorProximityPct: this.cfg.minFloorProximityPct,
         enableTrendGating: this.cfg.enableTrendChannelGating,
+        enableBaseConfirmationFilter: this.cfg.enableBaseConfirmationFilter,
       });
       gridZone = dow?.gridZone;
 
@@ -2669,6 +2670,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         htfStructure,
         minFloorProximityPct: this.cfg.minFloorProximityPct,
         enableTrendGating: this.cfg.enableTrendChannelGating,
+        enableBaseConfirmationFilter: this.cfg.enableBaseConfirmationFilter,
       });
 
       dow = liveDow ?? this.confirmedChannel!.dow;
@@ -3573,7 +3575,12 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
 
     const gateStatus = gridZone?.gateStatus ?? dow?.gridZone?.gateStatus;
     const gateReason = gridZone?.gateReason ?? dow?.gridZone?.gateReason;
-    const isGated = Boolean(gateStatus && gateStatus !== "VALID_CHANNEL");
+    const allowBaseBypass = this.cfg.enableBaseConfirmationFilter === false;
+    const isGated = Boolean(
+      gateStatus &&
+      gateStatus !== "VALID_CHANNEL" &&
+      !(allowBaseBypass && gateStatus === "WAITING_FOR_BASE_CONFIRMATION")
+    );
 
     let botActionState: {
       code: string;
@@ -3603,7 +3610,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           severity: "info",
         };
       }
-    } else if (this.waitingForHigherLow) {
+    } else if (this.waitingForHigherLow && !allowBaseBypass) {
       const dumpFloor = this.breakdownFloorPrice ?? lowerBound;
       const dumpLow = this.breakdownLowPrice ?? effectiveMid;
       const isFlatWait = this.isFlatChannelShiftWaiting;
@@ -4350,7 +4357,6 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     }
 
     const isNearSqueeze = enableSqueezeExit && tlSpreadPct <= (squeezeSpreadThreshold + 0.25);
-    const allowBaseBypass = this.cfg.enableBaseConfirmationFilter === false;
     const isHlWaiting = allowBaseBypass ? false : this.waitingForHigherLow;
     const isDowntrendDrop = allowBaseBypass ? false : downtrendDropPaused;
     const isChannelApproved = allowBaseBypass ? true : (gridZone?.canEstablishChannel !== false);

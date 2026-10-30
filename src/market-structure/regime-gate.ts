@@ -40,6 +40,7 @@ export interface ChannelGateParams {
   isDowntrendDropActive?: boolean;
   minFloorProximityPct?: number; // e.g. 1.5% for BTC, 3.5% for SOMI
   enableTrendGating?: boolean;
+  enableBaseConfirmationFilter?: boolean;
 }
 
 export class RegimeChannelGate {
@@ -124,7 +125,8 @@ export class RegimeChannelGate {
     }
 
     // ── Pillar 2: Base Confirmation Protocol (Active Dump / Breaking Lows) ──
-    const isBreakingLow = Boolean(
+    const allowBaseBypass = params.enableBaseConfirmationFilter === false;
+    const isBreakingLow = !allowBaseBypass && Boolean(
       isDowntrendDropActive ||
       (lastCanonicalLow && price < lastCanonicalLow.price * 0.9995)
     );

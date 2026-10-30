@@ -323,7 +323,7 @@ export class BuyOrderSynchronizer {
         if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && lvl < activeUptrendLine.currentLinePrice * 0.998) {
           return false;
         }
-        if (isLlContinuationBreakdown && structuralBreakdownLow && lvl < structuralBreakdownLow.price * 1.0005) {
+        if (this.host.cfg.enableBaseConfirmationFilter !== false && isLlContinuationBreakdown && structuralBreakdownLow && lvl < structuralBreakdownLow.price * 1.0005) {
           return false;
         }
         if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && lvl < this.host.lastBuyFillPrice * 0.999) {

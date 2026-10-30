@@ -173,4 +173,5 @@ export interface ChannelOptions {
   };
   minFloorProximityPct?: number;        // minimum safe % distance from current price to floor (e.g. 1.5% for BTC, 3.5% for SOMI)
   enableTrendGating?: boolean;           // enforce trend & regime gate checks for channel creation (default true)
+  enableBaseConfirmationFilter?: boolean; // when false, bypasses Higher Low base confirmation and acts as pure grid
 }
