@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, RollingSpreadCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState, WaterfallGuardMode } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
+import { DowStructureEngine } from "./market-structure.js";
 
 export const STABLE_TOKENS = new Set([
   "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
@@ -84,7 +85,7 @@ export interface MarketScanOptions {
   fastCutThresholdPct?: number;
   stagnationBars?: number;
   maxSlPct?: number;
-  tradeMode?: "dip_hunter" | "trend_rider" | "dual";
+  tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid";
   tradeDirection?: "long" | "short" | "both";
 }
 
@@ -317,6 +318,280 @@ export class BacktestService {
   }
 
   /**
+   * Run full-fidelity simulation for Dynamic Grid (Dow Market Structure 4-Channel Grid)
+   */
+  public static runDynamicGridSimulation(
+    candles: Candle[],
+    opts: {
+      symbol: string;
+      timeframe?: string;
+      initialCapital?: number;
+      maxInventoryQuote?: number;
+      costModel?: { feePctPerSide: number; slippagePctPerFill: number };
+      saveToHistory?: boolean;
+    }
+  ): BacktestRecord {
+    const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
+    const timeframe = opts.timeframe || "5m";
+    const initialCapital = opts.initialCapital ?? 200;
+    const maxInventory = opts.maxInventoryQuote ?? initialCapital;
+    const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+    const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
+
+    const dow = new DowStructureEngine(3, true, 20.0, 300);
+    const warmup = Math.min(100, Math.floor(candles.length / 4));
+    for (let k = 0; k < warmup; k++) {
+      dow.addCandle(candles[k]);
+    }
+
+    let cash = initialCapital;
+    let heldLots: Array<{
+      id: number;
+      index: number;
+      qty: number;
+      buyPrice: number;
+      entryTime: number;
+      targetPrice: number;
+      costQuote: number;
+    }> = [];
+
+    const trades: BacktestTrade[] = [];
+    const markers: BacktestMarker[] = [];
+    let grossProfit = 0;
+    let grossLoss = 0;
+    let wins = 0;
+    let losses = 0;
+    let peakEquity = initialCapital;
+    let maxDrawdownPct = 0;
+    let tradeCounter = 0;
+    let totalFeesQuote = 0;
+
+    for (let i = warmup; i < candles.length; i++) {
+      const c = candles[i];
+      dow.addCandle(c);
+
+      const structure = dow.getStructure(c.close, undefined, { useOnlyClosedCandles: true });
+      const floor = structure.bottomBound;
+      const ceiling = structure.upperBound;
+      const center = structure.centerPrice;
+      const channelSpan = ceiling - floor;
+      if (channelSpan <= 0) continue;
+
+      // 4 Buy Levels: Level 1 (45%), Level 2 (33%), Level 3 (20%), Level 4 (8% above floor)
+      const buyLevels = [
+        floor + channelSpan * 0.45,
+        floor + channelSpan * 0.33,
+        floor + channelSpan * 0.20,
+        floor + channelSpan * 0.08,
+      ];
+
+      // 4 Sell Targets: Target 1 (55%), Target 2 (68%), Target 3 (80%), Target 4 (92% above floor)
+      const sellTargets = [
+        floor + channelSpan * 0.55,
+        floor + channelSpan * 0.68,
+        floor + channelSpan * 0.80,
+        floor + channelSpan * 0.92,
+      ];
+
+      const cutLossPrice = floor * 0.985; // 1.5% below floor
+
+      // 1. Evaluate Sells & Cut Losses for Open Lots
+      const remainingLots: typeof heldLots = [];
+      for (const lot of heldLots) {
+        // Take Profit Hit
+        if (c.high >= lot.targetPrice) {
+          const exitPrice = lot.targetPrice;
+          const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+          const invest = lot.qty * lot.buyPrice;
+          const pnlQuote = proceeds - invest;
+          const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+          cash += proceeds;
+          const exitCost = lot.qty * exitPrice * costPerFill;
+          totalFeesQuote += lot.costQuote + exitCost;
+
+          if (pnlQuote >= 0) {
+            grossProfit += pnlQuote;
+            wins++;
+          } else {
+            grossLoss += Math.abs(pnlQuote);
+            losses++;
+          }
+
+          trades.push({
+            id: lot.id,
+            side: "LONG",
+            entryTime: lot.entryTime,
+            entryPrice: lot.buyPrice,
+            stopLossPrice: cutLossPrice,
+            fanSpreadAtEntry: 0,
+            tp1Time: c.time,
+            tp1Price: exitPrice,
+            tp1PnlPct: pnlPct,
+            exitTime: c.time,
+            exitPrice,
+            exitType: "TP1+TP2",
+            pnlQuote,
+            pnlPct,
+            holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+            costQuote: lot.costQuote + exitCost,
+          });
+
+          markers.push({
+            time: c.time,
+            position: "aboveBar",
+            color: "#a855f7",
+            shape: "arrowDown",
+            text: `🟣 GRID SELL #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+          });
+          continue;
+        }
+
+        // Cut Loss Hit
+        if (c.low <= cutLossPrice) {
+          const exitPrice = cutLossPrice;
+          const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+          const invest = lot.qty * lot.buyPrice;
+          const pnlQuote = proceeds - invest;
+          const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+          cash += proceeds;
+          const exitCost = lot.qty * exitPrice * costPerFill;
+          totalFeesQuote += lot.costQuote + exitCost;
+
+          grossLoss += Math.abs(pnlQuote);
+          losses++;
+
+          trades.push({
+            id: lot.id,
+            side: "LONG",
+            entryTime: lot.entryTime,
+            entryPrice: lot.buyPrice,
+            stopLossPrice: cutLossPrice,
+            fanSpreadAtEntry: 0,
+            exitTime: c.time,
+            exitPrice,
+            exitType: "SL",
+            pnlQuote,
+            pnlPct,
+            holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+            costQuote: lot.costQuote + exitCost,
+          });
+
+          markers.push({
+            time: c.time,
+            position: "belowBar",
+            color: "#ef4444",
+            shape: "arrowDown",
+            text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
+          });
+          continue;
+        }
+
+        remainingLots.push(lot);
+      }
+      heldLots = remainingLots;
+
+      // 2. Evaluate Grid Buys (Tranche Size = 25% of Max Inventory)
+      const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+      const trancheQuote = maxInventory / 4;
+
+      if (currentInventory + trancheQuote <= maxInventory && cash >= trancheQuote && heldLots.length < 4) {
+        for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
+          const bl = buyLevels[lvlIdx];
+          const alreadyFilledLevel = heldLots.some((l) => l.index === lvlIdx);
+          if (!alreadyFilledLevel && c.low <= bl && c.close >= cutLossPrice) {
+            tradeCounter++;
+            const buyPrice = bl;
+            const invest = trancheQuote;
+            const fillQty = (invest / buyPrice) * (1 - costPerFill);
+            cash -= invest;
+
+            heldLots.push({
+              id: tradeCounter,
+              index: lvlIdx,
+              qty: fillQty,
+              buyPrice,
+              entryTime: c.time,
+              targetPrice: sellTargets[lvlIdx] ?? (buyPrice * 1.015),
+              costQuote: invest * costPerFill,
+            });
+
+            markers.push({
+              time: c.time,
+              position: "belowBar",
+              color: "#10b981",
+              shape: "arrowUp",
+              text: `🟢 GRID BUY #${tradeCounter} (L${lvlIdx + 1}) @ $${buyPrice.toFixed(4)}`,
+            });
+            break;
+          }
+        }
+      }
+
+      // Equity curve & drawdown
+      const currentInvVal = heldLots.reduce((sum, l) => sum + (l.qty * c.close), 0);
+      const curEquity = cash + currentInvVal;
+      if (curEquity > peakEquity) peakEquity = curEquity;
+      const dd = peakEquity > 0 ? ((peakEquity - curEquity) / peakEquity) * 100 : 0;
+      if (dd > maxDrawdownPct) maxDrawdownPct = dd;
+    }
+
+    // End of simulation
+    const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
+    const endPositionVal = heldLots.reduce((sum, l) => sum + (l.qty * lastPrice * (1 - costPerFill)), 0);
+    const finalCapital = cash + endPositionVal;
+    const netPnlQuote = finalCapital - initialCapital;
+    const netPnlPct = (netPnlQuote / initialCapital) * 100;
+    const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0;
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0;
+    const avgBarsHeld = trades.length > 0 ? Math.round(trades.reduce((a, b) => a + b.holdingBars, 0) / trades.length) : 0;
+    const pnlPcts = trades.map((t) => t.pnlPct);
+    const bestTradePct = pnlPcts.length > 0 ? Math.max(...pnlPcts) : 0;
+    const worstTradePct = pnlPcts.length > 0 ? Math.min(...pnlPcts) : 0;
+
+    const summary: BacktestSummary = {
+      initialCapital,
+      finalCapital: Number(finalCapital.toFixed(2)),
+      netPnlQuote: Number(netPnlQuote.toFixed(2)),
+      netPnlPct: Number(netPnlPct.toFixed(2)),
+      totalTrades: trades.length,
+      winTrades: wins,
+      lossTrades: losses,
+      winRate: Number(winRate.toFixed(1)),
+      profitFactor: Number(profitFactor.toFixed(2)),
+      maxDrawdownPct: Number(maxDrawdownPct.toFixed(2)),
+      avgBarsHeld,
+      bestTradePct: Number(bestTradePct.toFixed(2)),
+      worstTradePct: Number(worstTradePct.toFixed(2)),
+      totalFeesQuote: Number(totalFeesQuote.toFixed(2)),
+      grossPnlQuote: Number((netPnlQuote + totalFeesQuote).toFixed(2)),
+    };
+
+    const record: BacktestRecord = {
+      id: `bt_grid_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      symbol,
+      timeframe,
+      candleCount: candles.length,
+      spreadThreshold: 0,
+      isAutoCalibrated: false,
+      useRatchetSl: false,
+      macroGateMode: "off",
+      enableUpsideFloor: false,
+      enableCircuitBreaker: false,
+      summary,
+      trades,
+      markers: markers.sort((a, b) => a.time - b.time),
+      candles,
+    };
+
+    if (opts.saveToHistory !== false) {
+      this.saveRecord(record);
+    }
+
+    return record;
+  }
+
+  /**
    * Run full-fidelity simulation for MA Fan Sniper Strategy
    */
   public static runMaFanSimulation(
@@ -350,7 +625,7 @@ export class BacktestService {
       fastCutThresholdPct?: number;
       stagnationBars?: number;
       maxSlPct?: number;
-      tradeMode?: "dip_hunter" | "trend_rider" | "dual";
+      tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid";
       tradeDirection?: "long" | "short" | "both";
       exitInfoLag?: 0 | 1;
       warmupBars?: number;
@@ -363,6 +638,16 @@ export class BacktestService {
       trimWarmupPrefix?: boolean;
     }
   ): BacktestRecord {
+    if (opts.tradeMode === "dynamic_grid") {
+      return BacktestService.runDynamicGridSimulation(candles, {
+        symbol: opts.symbol,
+        timeframe: opts.timeframe,
+        initialCapital: opts.initialCapital,
+        costModel: opts.costModel,
+        saveToHistory: opts.saveToHistory,
+      });
+    }
+
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
     const timeframe = opts.timeframe || "5m";
     const initialCapital = opts.initialCapital ?? 200;

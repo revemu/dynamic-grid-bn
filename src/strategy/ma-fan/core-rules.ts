@@ -212,7 +212,7 @@ export class MaFanCoreRules {
     const isCircuitBlocked = !!opts.circuitBreakerActive;
     const circuitBlockReason = isCircuitBlocked ? "⏸️ Risk Circuit Breaker Active (SL 2 ไม้ติด)" : "";
 
-    // ─── SHORT PEAK HUNTER LOGIC ─────────────────────────────────────────
+    // ─── SHORT PEAK HUNTER & BEARISH RETEST LOGIC ───────────────────────
     if (side === "SHORT") {
       const downsideRequiredPct = enableUpsideFloor ? 0.50 : 0.30;
       const downsidePct = closePrice > 0 ? ((closePrice - ribbon.ema25) / closePrice) * 100 : 0;
@@ -229,30 +229,8 @@ export class MaFanCoreRules {
       const isAboveMajorEma = (ribbon.ema75 > 0 && closePrice > ribbon.ema75) || (ribbon.ema200 > 0 && closePrice > ribbon.ema200);
       const passesNoRisingKnife = !enableNoFallingKnife || !isAboveMajorEma || !prevCandle || (curCandle !== undefined && curCandle.high <= prevCandle.high);
 
-      // Dynamic SL for SHORT: Look back 11 bars for swing high
-      const recentHighs = candles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map((x) => x.high);
-      const swingHigh = recentHighs.length > 0 ? Math.max(...recentHighs) : closePrice;
-      const slDist = Math.max(swingHigh * (slBufferPct / 100), curAtr * 1.0);
-      const rawStopLossPrice = swingHigh + slDist;
-      const stopLossCeiling = closePrice * (1 + maxSlPct / 100);
-      const stopLossPrice = Math.min(rawStopLossPrice, stopLossCeiling);
-
-      const rrCalc = MaFanCoreRules.computeRewardRisk({
-        entryPrice: closePrice,
-        ema25: ribbon.ema25,
-        stopLossPrice,
-        positionSide: "SHORT",
-      });
-
-      // Macro Gate for Short: In bullOnly mode or when HTF is Bullish, shorting is blocked to prevent fighting an uptrend
-      let isMacroBlocked = false;
-      let macroBlockReason = "";
-      if (macroMode === "bullOnly" || (macroMode !== "off" && isHtfBull)) {
-        isMacroBlocked = true;
-        macroBlockReason = "ตลาด HTF เป็นกระทิง (ห้าม Short สวนแนวโน้มใหญ่)";
-      }
-
-      const qualified =
+      // 1. Peak Hunter Qualification (Counter-Trend Spike on Pumps)
+      const isPeakHunterQualified =
         ribbon.isFanningUp &&
         isStretched &&
         ribbon.isHookDown &&
@@ -261,17 +239,69 @@ export class MaFanCoreRules {
         hasUpperWickAbsorption &&
         passesNoRisingKnife;
 
+      // 2. Bearish Retest Short Qualification (Downtrend dynamic resistance rejection)
+      // Strictly require Macro Downtrend alignment (prevent shorting into HTF bull runs)
+      const isDowntrend =
+        (opts.htfRegime?.isDeepBear ?? false) ||
+        (!isHtfBull && closePrice < ribbon.ema75 && (ribbon.ema75 < ribbon.ema200 || ribbon.ema200 === 0));
+      const last3Highs = candles.slice(Math.max(0, currentIndex - 2), currentIndex + 1).map((c) => c.high);
+      const maxHigh3 = Math.max(...last3Highs);
+      const touchedDynamicResistance = maxHigh3 >= ribbon.ema16 * 0.998 || maxHigh3 >= ribbon.ema25 * 0.996;
+      const isRedCandle = curCandle ? curCandle.close < curCandle.open : false;
+      const closesBelowEma4 = curCandle ? closePrice < ribbon.ema4 : false;
+      const healthyRetestRsi = exhaustion.rsi >= 35 && exhaustion.rsi <= 60;
+      const isBearishRetestQualified =
+        isDowntrend &&
+        touchedDynamicResistance &&
+        isRedCandle &&
+        closesBelowEma4 &&
+        hasUpperWickAbsorption &&
+        healthyRetestRsi &&
+        ribbon.fanSpreadPct >= 0.35;
+
+      const qualified = isPeakHunterQualified || isBearishRetestQualified;
+      const engineType = isBearishRetestQualified ? "TREND_RIDER_SHORT" : "PEAK_HUNTER";
+
+      // Dynamic SL for SHORT: Look back 6-8 bars for swing high
+      const lookbackSl = isBearishRetestQualified ? 6 : 10;
+      const recentHighs = candles.slice(Math.max(0, currentIndex - lookbackSl), currentIndex + 1).map((x) => x.high);
+      const swingHigh = recentHighs.length > 0 ? Math.max(...recentHighs) : closePrice;
+      const slDist = Math.max(swingHigh * (slBufferPct / 100), curAtr * 0.85);
+      const rawStopLossPrice = swingHigh + slDist;
+      const stopLossCeiling = closePrice * (1 + maxSlPct / 100);
+      const stopLossPrice = Math.min(rawStopLossPrice, stopLossCeiling);
+
+      // Target Price for R:R computation
+      const targetPrice = isBearishRetestQualified
+        ? Math.min(ribbon.ema75, closePrice * 0.990)
+        : ribbon.ema25;
+
+      const rrCalc = MaFanCoreRules.computeRewardRisk({
+        entryPrice: closePrice,
+        ema25: targetPrice,
+        stopLossPrice,
+        positionSide: "SHORT",
+      });
+
+      // Macro Gate for Short: In bullOnly mode or when HTF is Bullish (unless Bearish Retest in local downtrend)
+      let isMacroBlocked = false;
+      let macroBlockReason = "";
+      if (macroMode === "bullOnly" || (macroMode !== "off" && isHtfBull && !isBearishRetestQualified)) {
+        isMacroBlocked = true;
+        macroBlockReason = "ตลาด HTF เป็นกระทิง (ห้าม Short สวนแนวโน้มใหญ่)";
+      }
+
       if (!qualified) {
         return {
           shouldEnter: false,
           side: "SELL",
           positionSide: "SHORT",
-          engineType: "PEAK_HUNTER",
+          engineType,
           entryPrice: 0,
           stopLossPrice: 0,
           swingHigh,
           fanSpreadPct: ribbon.fanSpreadPct,
-          reason: "รอเงื่อนไข Peak Hunter (Short)",
+          reason: "รอเงื่อนไข Short (Peak Hunter หรือ Bearish Retest)",
         };
       }
 
@@ -280,7 +310,7 @@ export class MaFanCoreRules {
           shouldEnter: false,
           side: "SELL",
           positionSide: "SHORT",
-          engineType: "PEAK_HUNTER",
+          engineType,
           entryPrice: closePrice,
           stopLossPrice,
           swingHigh,
@@ -298,7 +328,7 @@ export class MaFanCoreRules {
           shouldEnter: false,
           side: "SELL",
           positionSide: "SHORT",
-          engineType: "PEAK_HUNTER",
+          engineType,
           entryPrice: closePrice,
           stopLossPrice,
           swingHigh,
@@ -316,7 +346,7 @@ export class MaFanCoreRules {
           shouldEnter: false,
           side: "SELL",
           positionSide: "SHORT",
-          engineType: "PEAK_HUNTER",
+          engineType,
           entryPrice: closePrice,
           stopLossPrice,
           swingHigh,
@@ -333,7 +363,7 @@ export class MaFanCoreRules {
         shouldEnter: true,
         side: "SELL",
         positionSide: "SHORT",
-        engineType: "PEAK_HUNTER",
+        engineType,
         entryPrice: closePrice,
         stopLossPrice,
         swingHigh,
@@ -341,7 +371,9 @@ export class MaFanCoreRules {
         riskPct: rrCalc.riskPct,
         rewardPct: rrCalc.rewardPct,
         rewardRisk: rrCalc.rr,
-        reason: `Peak Hunter Short: Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Overbought RSI, Upper Wick ${upperWickPct.toFixed(1)}%`,
+        reason: isBearishRetestQualified
+          ? `Bearish Retest Short: Retest EMA16/25 rejected, Red Candle, Upper Wick ${upperWickPct.toFixed(1)}%, RSI ${exhaustion.rsi.toFixed(1)}`
+          : `Peak Hunter Short: Spread ${ribbon.fanSpreadPct.toFixed(2)}% >= ${requiredSpreadPct.toFixed(2)}%, Overbought RSI, Upper Wick ${upperWickPct.toFixed(1)}%`,
       };
     }
 
@@ -922,7 +954,7 @@ export class MaFanCoreRules {
     enableNoFallingKnife?: boolean;
     circuitBreakerActive?: boolean;
     maxSlPct?: number;
-    tradeMode?: "dip_hunter" | "trend_rider" | "dual";
+    tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid";
     tradeDirection?: "long" | "short" | "both";
   }): EntryDecision {
     const tradeMode = opts.tradeMode ?? "dip_hunter";
@@ -1193,10 +1225,10 @@ export class MaFanCoreRules {
         }
       }
 
-      // ── Priority 3: TP1 at EMA 25 & Trapped Breakeven Rescue (SHORT) ────────
+      // ── Priority 3: TP1 at EMA 25 & Asymmetric Profit Target (SHORT) ────────
       if (!tp1Filled) {
-        const isTrapped = (barsHeld !== undefined && barsHeld >= 3) && (ribbon.ema25 >= entryPrice * 0.9985);
-        const minProfitFrac = Math.max((opts.tp1MinProfitPct ?? 0.20) / 100, beFeeBuffer);
+        const isTrapped = (barsHeld !== undefined && barsHeld >= 5) && (ribbon.ema25 >= entryPrice * 0.9985);
+        const minProfitFrac = Math.max((opts.tp1MinProfitPct ?? 0.85) / 100, beFeeBuffer);
         const minProfitPrice = isTrapped
           ? entryPrice * (1 - beFeeBuffer)
           : entryPrice * (1 - minProfitFrac);
@@ -1221,7 +1253,7 @@ export class MaFanCoreRules {
               ? "Trapped Short Breakeven Rescue"
               : cushionApplied
               ? "TP1 Mean Reversion (Bear Cushion Active)"
-              : "TP1 Mean Reversion at EMA 25 (SHORT)",
+              : `TP1 Profit Target (+${tp1ProfitPct.toFixed(2)}%)`,
           };
         }
       }

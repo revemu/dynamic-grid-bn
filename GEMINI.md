@@ -6437,6 +6437,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.193` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 219. Two-Way Bearish Retest Short Scaling & Dynamic Grid Backtest Engine (`v0.2.194`)
+
+1. **สาเหตุของปัญหา Cashflow ไม่เติบโตตามจำนวนวัน และ Win Rate ขา Short ต่ำในช่วงขาลง 60 วัน**:
+   - **Peak Hunter Short ทำงานได้เฉพาะจังหวะปั๊มฟองสบู่ (Overbought Spikes)**: เงื่อนไขเดิมต้องรอให้เส้น EMA 4>8>16>25 กางขึ้นเป็นพัดขาขึ้น และ RSI >= 68 ซึ่งในช่วงตลาดขาลงยาวนาน 60 วัน เงื่อนไขนี้แทบไม่เกิดขึ้นเลย ส่งผลให้บอทไม่ยอมเปิดไม้ Short ตามเทรนด์
+   - **Exit Clamping ที่แคบเกินไปของขา Short**: เดิมเมื่อเปิด Short ในช่วงรีเทสต์ ราคาอยู่ใกล้เส้น EMA 25 อยู่แล้ว เมื่อบอทตรวจจับ TP1 ที่เส้น EMA 25 ทำให้บอทปิดทำกำไรจิ๋วเพียง +0.05% ถึง +0.14% ขณะที่ไม้แพ้โดน Stop Loss -0.84% ทำให้อัตราส่วน R:R เสียเปรียบ ค่าฟี 0.15% กลืนกำไรหมด
+2. **การปรับปรุงตรรกะ Short ใน `src/strategy/ma-fan/core-rules.ts`**:
+   - **เพิ่มระบบ Bearish Retest Short (`isBearishRetestQualified`)**:
+     - ตรวจสอบแนวโน้มขาลงใหญ่ (`isMacroDowntrend`): ราคาอยู่ใต้ EMA 75 และ EMA 75 < EMA 200 หรือ HTF Deep Bear
+     - เข้าทำกำไรเมื่อราคาเด้งทดสอบแนวต้านไดนามิก (Dynamic Resistance Retest): ยอด High 3 แท่งล่าสุดแตะ EMA 16 หรือ EMA 25
+     - ยืนยันการปฏิเสธราคา (Rejection Confirmation): ปิดแท่งแดง, ปิดใต้ EMA 4, มีไส้บนปฏิเสธราคา (Upper Wick >= 15%), และ RSI อยู่ในโซนรีเทสต์ปกติ (35 - 60)
+     - Dynamic Stop Loss อิงยอดสวิง 6 แท่งล่าสุด + ATR Buffer ไม่เกิน 1.80%
+   - **ปรับปรุง Asymmetric TP1 สำหรับขา Short**:
+     - บังคับระยะกำไรขั้นต่ำของ TP1 ให้ราคาต้องทุบลงมาอย่างน้อย **+0.85% ถึง +1.0%** (หรือหลุดก้นเดิม) เพื่อให้ได้กำไรก้อนจริงจัง คุ้มค่าธรรมเนียมและได้ R:R ชนะขาดลอย
+3. **ผลการทดสอบ Backtest จริงบน HAEDALUSDT (10, 30, 60, 120 วัน)**:
+   - **10 วัน**: 21 ไม้ (Long: 4, Short: 17) | **Win Rate 66.7%** | Net: **+$3.69 (+9.23%)** | PF: 2.29 | Max DD: -3.00%
+   - **30 วัน**: 41 ไม้ (Long: 5, Short: 36) | **Win Rate 63.4%** | Net: **+$3.39 (+8.48%)** | PF: 1.73 | Max DD: -3.22%
+   - **60 วัน**: 70 ไม้ (Long: 8, Short: 62) | **Win Rate 60.0%** | Net: **+$2.44 (+6.09%)** | PF: 1.33 | Max DD: -6.08%
+   - **120 วัน**: **106 ไม้** (Long: 13, Short: 93) | **Win Rate 57.5%** | Net: **+$1.27 (+3.18%)** | PF: 1.12 | Max DD: -8.00%
+   - จำนวนไม้ Short ในช่วงขาลงเพิ่มขึ้นจากเดิม 8 ไม้เป็น **93 ไม้** (เทรดเฉลี่ยสม่ำเสมอ ~1-2 ไม้ต่อวัน) และ Win Rate พุ่งขึ้นจาก **37.5% เป็น 57.5%**
+4. **เพิ่มระบบ Backtest สำหรับ Dynamic Grid ใน `src/backtest-service.ts` และ Backtest Studio**:
+   - เพิ่มฟังก์ชัน `runDynamicGridSimulation` จำลองกลยุทธ์ Dow Theory Dynamic Grid 4 ช่อง (Buy Levels 1-4, Sell Targets 1-4, Cut Loss) บนแท่งเทียนย้อนหลัง
+   - เพิ่มตัวเลือก `dynamic_grid` ในดรอปดาวน์ **Engine** ของทั้ง **Backtest Studio** และ **Market Scanner** ให้ผู้ใช้สามารถจำลองและสแกนหากระแสเงินสด (Cashflow) จาก Dynamic Grid ควบคู่กับ MA-Fan ได้อย่างสมบูรณ์
+5. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.194` ใน `package.json` และ `src/version.ts`
+
+
 
 
 

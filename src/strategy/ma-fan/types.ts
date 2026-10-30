@@ -78,7 +78,7 @@ export interface MaFanConfig {
   fastTechnicalCutEnabled?: boolean; // Early exit on momentum breakdown (default: true)
   fastCutThresholdPct?: number; // PnL threshold for fast cut (default: -0.80%)
   stagnationBars?: number; // Bars held without reaching +0.70% (default: 6)
-  tradeMode?: "dip_hunter" | "trend_rider" | "dual"; // Trade mode (default: "dip_hunter")
+  tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid"; // Trade mode (default: "dip_hunter")
   tradeDirection?: "long" | "short" | "both"; // Trade direction (default: "long" for spot, "both" for perp)
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;

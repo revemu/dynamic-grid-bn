@@ -41,7 +41,7 @@ export const defaultStrategyConfig = {
   maFanBullCushion: false,
   maFanWaterfallGuard: true,
   maFanMacroGate: "noDeepBear" as "off" | "noDeepBear" | "bullOnly",
-  maFanTradeMode: "dip_hunter" as "dip_hunter" | "trend_rider" | "dual",
+  maFanTradeMode: "dip_hunter" as "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid",
   maFanTradeDirection: "long" as "long" | "short" | "both",
   maFanUpsideFloor: true,
   maFanCircuitBreaker: true,
@@ -392,7 +392,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.maFanMacroGate !== undefined && ["off", "noDeepBear", "bullOnly"].includes(saved.maFanMacroGate)) {
         merged.maFanMacroGate = saved.maFanMacroGate;
       }
-      if (saved.maFanTradeMode !== undefined && ["dip_hunter", "trend_rider", "dual"].includes(saved.maFanTradeMode)) {
+      if (saved.maFanTradeMode !== undefined && ["dip_hunter", "trend_rider", "dual", "dynamic_grid"].includes(saved.maFanTradeMode)) {
         merged.maFanTradeMode = saved.maFanTradeMode;
       }
       if (saved.maFanTradeDirection !== undefined && ["long", "short", "both"].includes(saved.maFanTradeDirection)) {
