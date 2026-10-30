@@ -6764,3 +6764,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตั้งค่า `this.needsBuyRebalance = true` เพื่อให้ออเดอร์ Limit Buy ที่เหลือปรับกลับมาวางตามระดับกรอบเดิม (เช่น $0.20782, $0.20468)
   3. **Bump Version**:
      - ปรับ Version เป็น `0.2.205` ใน `package.json`, `src/version.ts`, และ `public/backtest.html`
+
+
+---
+
+## 231. Sell Order Resize Loop Resolution & Final Exit Tranche Math (v0.2.206)
+
+- **สาเหตุของปัญหา**:
+  1. ใน `src/strategy/sell-sync.ts` ฟังก์ชัน `getCustomSellQty` และ `getCustomSellQty2` มีบั๊ก `if (isLast) return currentHeld;` โดยส่งคืนจำนวนเหรียญทั้งหมดในพอร์ต (`currentHeld`) สำหรับไม้ขายสุดท้าย แทนที่จะส่งคืนเฉพาะส่วนที่เหลือหลังจากหักไม้อื่นๆ
+  2. เมื่อมีคำสั่งขายไม้อื่นวางอยู่แล้ว (เช่น Sell Target 1 วางขายไปแล้ว 44.8 INIT จากทั้งหมด 89.6 INIT) ระบบจะพยายามส่งคำสั่ง Sell Target 2 ด้วยขนาด 89.6 INIT
+  3. `order-executor.ts` มี `INVENTORY GUARD` ป้องกันการขายเกิน จึง Clamp ขนาดออเดอร์กลับลงมาเหลือ 44.8 INIT
+  4. ใน Tick ถัดไป `sell-sync.ts` ตรวจพบว่าขนาดออเดอร์ในกระดาน (44.8 INIT) ไม่ตรงกับเป้าหมายที่คำนวณได้ผิดพลาด (89.6 INIT) จึงสั่ง Cancel และสร้างใหม่วนลูปไม่สิ้นสุด (Churning Loop) ทุกวินาที
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.206)**:
+  1. **Correct Tranche Allocation for Final Exit Level (`src/strategy/sell-sync.ts`)**:
+     - แก้ไข `getCustomSellQty` และ `getCustomSellQty2`: คำนวณขนาดไม้สุดท้ายจาก `currentHeld - priorQty` หรือสัดส่วนน้ำหนักจริง ป้องกันการส่งคืนจำนวนเหรียญทั้งพอร์ต
+  2. **Inventory Clamp Protection in `sell-sync.ts`**:
+     - คำนวณ `maxAchievableQty = Math.max(0, this.lotTracker.baseHeld() - otherOpenSellsQty)` ก่อนเปรียบเทียบขนาดออเดอร์เสมอ
+     - บังคับ `targetSellQty = Math.min(targetSellQty, maxAchievableQty)` เพื่อให้ตรงกับขนาดที่ `order-executor.ts` วางได้จริง 100% ทำให้ไม่เกิดการยกเลิก/ตั้งใหม่ซ้ำซ้อน
+  3. **Bump Version**:
+     - ปรับ Version เป็น `0.2.206` ใน `package.json`, `src/version.ts`, และ `public/backtest.html`

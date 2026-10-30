@@ -492,8 +492,17 @@ export class SellOrderSynchronizer {
         const totalSellWeight = activeSellIndices.reduce((sum, idx) => sum + (this.host.cfg.sellLevelWeights?.[idx] ?? 0), 0);
         const getCustomSellQty = (idx: number, isLast: boolean, currentHeld: number): number => {
           if (totalSellWeight > 0 && (this.host.cfg.sellLevelWeights?.[idx] ?? 0) > 0) {
-            if (isLast) return currentHeld;
+            if (isLast) {
+              const priorWeight = activeSellIndices
+                .filter((x) => x !== idx)
+                .reduce((sum, x) => sum + (this.host.cfg.sellLevelWeights?.[x] ?? 0), 0);
+              const priorQty = currentHeld * (priorWeight / totalSellWeight);
+              return Math.max(0, currentHeld - priorQty);
+            }
             return currentHeld * ((this.host.cfg.sellLevelWeights?.[idx] ?? 0) / totalSellWeight);
+          }
+          if (isLast && numActive > 1) {
+            return Math.max(0, currentHeld - (trancheQty * (numActive - 1)));
           }
           return trancheQty;
         };
@@ -621,8 +630,14 @@ export class SellOrderSynchronizer {
             effLvlPrice = Math.max(effLvlPrice, minMakerPrice);
           }
 
+          const otherOpenSellsQty = this.host.openOrders
+            .filter((o) => !o.isBid && o !== currentOpenSellAtLvl)
+            .reduce((sum, o) => sum + o.qty, 0);
+          const maxAchievableQty = Math.max(0, this.lotTracker.baseHeld() - otherOpenSellsQty);
+          desiredSellQty = Math.min(desiredSellQty, maxAchievableQty);
+
           if (currentOpenSellAtLvl) {
-            const qtyDiffRatio = Math.abs(currentOpenSellAtLvl.qty - desiredSellQty) / desiredSellQty;
+            const qtyDiffRatio = Math.abs(currentOpenSellAtLvl.qty - desiredSellQty) / Math.max(0.000001, desiredSellQty);
             const priceDiffRatio = Math.abs(currentOpenSellAtLvl.price - effLvlPrice) / effLvlPrice;
             const shiftTol = this.host.cfg.minChannelShiftPct ? this.host.cfg.minChannelShiftPct / 100 : 0.008;
             const isCexExchange = this.host.binance.exchangeName !== "dreamdex";
@@ -643,7 +658,7 @@ export class SellOrderSynchronizer {
               );
             }
             continue;
-          } else if (isEligibleForNewOrder) {
+          } else if (isEligibleForNewOrder && desiredSellQty >= (this.host.minQty || 0.001)) {
             await placeRestingOrder(
               false,
               effLvlPrice,
@@ -758,8 +773,17 @@ export class SellOrderSynchronizer {
     const totalSellWeight2 = activeSellIndices.reduce((sum, idx) => sum + (this.host.cfg.sellLevelWeights?.[idx] ?? 0), 0);
     const getCustomSellQty2 = (idx: number, isLast: boolean, currentHeld: number): number => {
       if (totalSellWeight2 > 0 && (this.host.cfg.sellLevelWeights?.[idx] ?? 0) > 0) {
-        if (isLast) return currentHeld;
+        if (isLast) {
+          const priorWeight = activeSellIndices
+            .filter((x) => x !== idx)
+            .reduce((sum, x) => sum + (this.host.cfg.sellLevelWeights?.[x] ?? 0), 0);
+          const priorQty = currentHeld * (priorWeight / totalSellWeight2);
+          return Math.max(0, currentHeld - priorQty);
+        }
         return currentHeld * ((this.host.cfg.sellLevelWeights?.[idx] ?? 0) / totalSellWeight2);
+      }
+      if (isLast && numActiveLevels > 1) {
+        return Math.max(0, currentHeld - (trancheQty * (numActiveLevels - 1)));
       }
       return trancheQty;
     };
@@ -859,13 +883,19 @@ export class SellOrderSynchronizer {
         desiredSellQty = Math.max(trancheQty, this.lotTracker.baseHeld() - (trancheQty * (numActiveLevels - 1)));
       }
 
+      const otherOpenSellsQty = this.host.openOrders
+        .filter((o) => !o.isBid && o !== currentOpenSellAtLvl)
+        .reduce((sum, o) => sum + o.qty, 0);
+      const maxAchievableQty = Math.max(0, this.lotTracker.baseHeld() - otherOpenSellsQty);
+      let targetSellQty = desiredSellQty >= (this.host.minQty || 0.001) ? desiredSellQty : trancheQty;
+      targetSellQty = Math.min(targetSellQty, maxAchievableQty);
+
       if (currentOpenSellAtLvl) {
         const priceDiffRatio = Math.abs(currentOpenSellAtLvl.price - lvlPrice) / lvlPrice;
         const shiftTol = this.host.cfg.minChannelShiftPct ? this.host.cfg.minChannelShiftPct / 100 : 0.008;
         const isPriceShifted = priceDiffRatio > shiftTol;
 
         const isCexExchange = this.host.binance.exchangeName !== "dreamdex";
-        const targetSellQty = desiredSellQty >= (this.host.minQty || 0.001) ? desiredSellQty : trancheQty;
         const currentQtyDiffRatio = Math.abs(currentOpenSellAtLvl.qty - targetSellQty) / Math.max(0.000001, targetSellQty);
         const currentQtyTol = this.host.cfg.orderQtyTolerancePct ? this.host.cfg.orderQtyTolerancePct / 100 : 0.05;
         const needsQtyResize = (doSellRebalance || hasMissingEligibleSellOrders || (isCexExchange && currentQtyDiffRatio > 0.10)) && currentQtyDiffRatio > currentQtyTol;
@@ -892,16 +922,16 @@ export class SellOrderSynchronizer {
         continue;
       }
 
-      if (desiredSellQty < (this.host.minQty || 0.001)) continue;
+      if (targetSellQty < (this.host.minQty || 0.001)) continue;
 
       const isEligibleForNewOrder = lvlPrice > minAllowedSellPrice;
       if (isEligibleForNewOrder) {
         await placeRestingOrder(
           false,
           lvlPrice,
-          desiredSellQty,
+          targetSellQty,
           targetHoldingFraction,
-          desiredSellQty * lvlPrice,
+          targetSellQty * lvlPrice,
           sellNames[i] || `Sell Target ${i + 1}`,
         );
       }
