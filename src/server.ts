@@ -753,6 +753,10 @@ export class DashboardServer {
           const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "off";
           const enableUpsideFloor = parsed.enableUpsideFloor !== undefined ? Boolean(parsed.enableUpsideFloor) : (liveCfg.maFanUpsideFloor !== false);
           const enableCircuitBreaker = parsed.enableCircuitBreaker !== undefined ? Boolean(parsed.enableCircuitBreaker) : (liveCfg.maFanCircuitBreaker !== false);
+          const enableFastCut = parsed.enableFastCut !== undefined ? Boolean(parsed.enableFastCut) : true;
+          const fastCutThresholdPct = parsed.fastCutThresholdPct !== undefined ? Number(parsed.fastCutThresholdPct) : -0.80;
+          const stagnationBars = parsed.stagnationBars !== undefined ? Number(parsed.stagnationBars) : 6;
+          const maxSlPct = parsed.maxSlPct !== undefined ? Number(parsed.maxSlPct) : 1.80;
 
           const isAutoSpread = spreadThreshold === "auto";
           const warmupPrefixBars = isAutoSpread ? 1200 : 0;
@@ -809,6 +813,10 @@ export class DashboardServer {
             macroGateMode,
             enableUpsideFloor,
             enableCircuitBreaker,
+            enableFastCut,
+            fastCutThresholdPct,
+            stagnationBars,
+            maxSlPct,
             warmupBars: actualWarmup,
             trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
           });
@@ -838,6 +846,10 @@ export class DashboardServer {
           const macroGateMode = parsed.macroGateMode || liveCfg.maFanMacroGate || "off";
           const enableUpsideFloor = parsed.enableUpsideFloor !== undefined ? Boolean(parsed.enableUpsideFloor) : (liveCfg.maFanUpsideFloor !== false);
           const enableCircuitBreaker = parsed.enableCircuitBreaker !== undefined ? Boolean(parsed.enableCircuitBreaker) : (liveCfg.maFanCircuitBreaker !== false);
+          const enableFastCut = parsed.enableFastCut !== undefined ? Boolean(parsed.enableFastCut) : true;
+          const fastCutThresholdPct = parsed.fastCutThresholdPct !== undefined ? Number(parsed.fastCutThresholdPct) : -0.80;
+          const stagnationBars = parsed.stagnationBars !== undefined ? Number(parsed.stagnationBars) : 6;
+          const maxSlPct = parsed.maxSlPct !== undefined ? Number(parsed.maxSlPct) : 1.80;
 
           let scanCostModel: { feePctPerSide: number; slippagePctPerFill: number } | undefined;
           if (parsed.feeTier === "zero" || parsed.feeTier === "none") {
@@ -868,6 +880,10 @@ export class DashboardServer {
             macroGateMode,
             enableUpsideFloor,
             enableCircuitBreaker,
+            enableFastCut,
+            fastCutThresholdPct,
+            stagnationBars,
+            maxSlPct,
           });
 
           res.writeHead(200, { "Content-Type": "application/json" });

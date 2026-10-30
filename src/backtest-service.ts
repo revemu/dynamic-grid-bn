@@ -79,6 +79,10 @@ export interface MarketScanOptions {
   macroGateMode?: "off" | "noDeepBear" | "bullOnly";
   enableUpsideFloor?: boolean;
   enableCircuitBreaker?: boolean;
+  enableFastCut?: boolean;
+  fastCutThresholdPct?: number;
+  stagnationBars?: number;
+  maxSlPct?: number;
 }
 
 export interface BacktestMarker {
@@ -1169,6 +1173,10 @@ export class BacktestService {
               macroGateMode: opts.macroGateMode ?? "off",
               enableUpsideFloor: opts.enableUpsideFloor !== false,
               enableCircuitBreaker: opts.enableCircuitBreaker !== false,
+              enableFastCut: opts.enableFastCut !== false,
+              fastCutThresholdPct: opts.fastCutThresholdPct ?? -0.80,
+              stagnationBars: opts.stagnationBars ?? 6,
+              maxSlPct: opts.maxSlPct ?? 1.80,
               warmupBars: actualWarmup,
               trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
             });

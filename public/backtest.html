@@ -113,6 +113,23 @@
         </div>
 
         <div class="bt-input-group">
+          <label>Fast Cut</label>
+          <select id="btFastCut" title="ตัดขาดทุนไวเมื่อหลุด EMA4 + MACD ถดถอยที่ -0.8% หรือแท่งแช่นิ่ง 6 แท่ง">
+            <option value="on" selected>✂️ On (-0.8% & 6b)</option>
+            <option value="off">❌ Off (SL ปกติเท่านั้น)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
+          <label>Max SL Cap</label>
+          <select id="btMaxSl" title="เพดานตัดขาดทุนสูงสุดต่อไม้เพื่อคุม Asymmetric R:R">
+            <option value="1.8" selected>🎯 1.80% (Hard SL Cap)</option>
+            <option value="2.5">2.50%</option>
+            <option value="3.0">3.00%</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
           <label>เงินทุน ($)</label>
           <input type="number" id="btBudget" value="200" min="10" step="10" />
         </div>
@@ -316,7 +333,44 @@
               <label>Upside Floor</label>
               <select id="scUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.45% และ Spread ≥ 0.35%">
                 <option value="on" selected>🎯 On (≥ 0.45%)</option>
-                <option value="off">❌ Off (ปิด)</option>
+                <option value="off">❌ Off</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Fast Cut</label>
+              <select id="scFastCut" title="ตัดขาดทุนไวเมื่อหลุด EMA4 + MACD ถดถอยที่ -0.8% หรือแท่งแช่นิ่ง 6 แท่ง">
+                <option value="on" selected>✂️ On (-0.8% & 6b)</option>
+                <option value="off">❌ Off</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Max SL Cap</label>
+              <select id="scMaxSl" title="เพดานตัดขาดทุนสูงสุดต่อไม้เพื่อคุม Asymmetric R:R">
+                <option value="1.8" selected>🎯 1.80% Cap</option>
+                <option value="2.5">2.50%</option>
+                <option value="3.0">3.00%</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Circuit Breaker</label>
+              <select id="scCircuitBreaker" title="หยุดพักบอทเมื่อชน SL 2 ไม้ติด">
+                <option value="on" selected>⏸️ 2 Losses พัก 45m</option>
+                <option value="off">❌ Off</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>SL Mode</label>
+              <select id="scSlMode" title="รูปแบบการตั้ง Stop Loss">
+                <option value="ratchet" selected>🛡️ Ratchet SL</option>
+                <option value="fixed">⚓ Fixed SL</option>
+              </select>
+            </div>
+            <div class="scanner-ctrl-group">
+              <label>Macro Gate</label>
+              <select id="scMacroGate" title="ตัวกรองแนวโน้มใหญ่ (1H)">
+                <option value="off" selected>🌐 Off (ทุกสภาวะ)</option>
+                <option value="noDeepBear">🛡️ No Deep Bear</option>
+                <option value="bullOnly">🐂 Bull Only</option>
               </select>
             </div>
             <button id="btnStartScan" class="btn-run btn-start-scan">
@@ -368,6 +422,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.2.187"></script>
+  <script src="backtest.js?v=0.2.188"></script>
 </body>
 </html>

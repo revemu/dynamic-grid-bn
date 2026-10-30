@@ -6313,6 +6313,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.187` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 212. Backtest Market Scanner & Single Form Full Options Parity (`v0.2.188`)
+
+1. **อัปเดต Live Bot Config บนเซิร์ฟเวอร์จริง (`http://210.246.253.13:3334/api/config`)**:
+   - ปรับการตั้งค่าบนบอท Binance Spot จริงให้ตรงกับการทดสอบที่ดีที่สุด:
+     - `maFanUpsideFloor: true` (กรองระยะวิ่งถึง EMA25 $\ge 0.45\%$)
+     - `maFanCircuitBreaker: true` (ระบบตัดวงจรพัก 45m เมื่อชน SL 2 ไม้ติด)
+     - `maFanUseRatchetSl: true` (ยก SL ตามฐานสวิง HL ล่าสุด)
+     - `maFanEntryOnClosedOnly: true` (เข้าออเดอร์เมื่อแท่งปิดสมบูรณ์เท่านั้น)
+     - Core Rules มีทั้ง 4 Pillars of Confluence และ Asymmetric Risk:Reward (Hard SL Cap 1.80%, Fast Cut -0.80%, Stagnation Cut 6 แท่ง)
+2. **ยกระดับ Market Scanner และ Backtest Form สู่ความสมบูรณ์แบบ (Full Parity)**:
+   - **Market Scanner Modal (`public/backtest.html`)**:
+     - เพิ่ม Dropdown: `Fast Cut` (✂️ On / ❌ Off)
+     - เพิ่ม Dropdown: `Max SL Cap` (🎯 1.80% / 2.50% / 3.00%)
+     - เพิ่ม Dropdown: `Circuit Breaker` (⏸️ On / ❌ Off)
+     - เพิ่ม Dropdown: `SL Mode` (🛡️ Ratchet SL / ⚓ Fixed SL)
+     - เพิ่ม Dropdown: `Macro Gate` (🌐 Off / 🛡️ No Deep Bear / 🐂 Bull Only)
+   - **Single Backtest Form (`public/backtest.html`)**:
+     - เพิ่ม `Fast Cut` (`#btFastCut`) และ `Max SL Cap` (`#btMaxSl`) ให้ผู้ใช้ปรับแต่งและทดสอบเปรียบเทียบไม้ต่อไม้ได้จากหน้าจอ
+   - **Backtest Engine & API (`src/backtest-service.ts` & `src/server.ts`)**:
+     - อัปเดต `MarketScanOptions` และ endpoints `/api/backtest/scan`, `/api/backtest/run` ให้รับและส่งต่อตัวเลือกทั้งหมดเข้าสู่ตัวจำลอง
+     - เก็บ State ตัวเลือกทั้งหมดลงในฐานข้อมูลแคชสแกนล่าสุด (`/api/backtest/scan/latest`) และโหลดกลับขึ้นมาเมื่อเปิดหน้าต่าง Scanner
+   - **One-Click Chart Sync (`public/backtest.js`)**:
+     - เมื่อผู้ใช้กดปุ่ม **"📊 ดูกราฟ"** ในตาราง Leaderboard ระบบจะซิงค์ค่า Timeframe, Candles, Min Spread, Upside Floor, Fast Cut, Max SL, Circuit Breaker, SL Mode, Macro Gate จากหน้าสแกนมาใส่ฟอร์มหลักทั้งหมด แล้วรัน Backtest แสดงกราฟแท่งเทียนและ Badge การเข้าออกให้ทันที
+3. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.188` ใน `package.json` และ `src/version.ts`
+
 
 
 

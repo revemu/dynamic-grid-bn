@@ -41,6 +41,8 @@
   const inpMacroGate = document.getElementById("btMacroGate");
   const inpCircuitBreaker = document.getElementById("btCircuitBreaker");
   const inpUpsideFloor = document.getElementById("btUpsideFloor");
+  const inpFastCut = document.getElementById("btFastCut");
+  const inpMaxSl = document.getElementById("btMaxSl");
   const inpBudget = document.getElementById("btBudget");
 
   function getSelectedSymbol() {
@@ -1205,6 +1207,8 @@
     const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
     const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
     const enableUpsideFloor = inpUpsideFloor ? inpUpsideFloor.value === "on" : true;
+    const enableFastCut = inpFastCut ? inpFastCut.value === "on" : true;
+    const maxSlPct = inpMaxSl ? Number(inpMaxSl.value) : 1.80;
 
     const dayEstimate = limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน")));
     loadingOverlay.style.display = "flex";
@@ -1225,6 +1229,8 @@
           macroGateMode,
           enableCircuitBreaker,
           enableUpsideFloor,
+          enableFastCut,
+          maxSlPct,
         }),
       });
 
@@ -1393,6 +1399,11 @@
   const scLimit = document.getElementById("scLimit");
   const scSpread = document.getElementById("scSpread");
   const scUpsideFloor = document.getElementById("scUpsideFloor");
+  const scFastCut = document.getElementById("scFastCut");
+  const scMaxSl = document.getElementById("scMaxSl");
+  const scCircuitBreaker = document.getElementById("scCircuitBreaker");
+  const scSlMode = document.getElementById("scSlMode");
+  const scMacroGate = document.getElementById("scMacroGate");
 
   function initScannerEvents() {
     loadLatestScannerResults();
@@ -1425,11 +1436,13 @@
         const limit = Number(scLimit?.value) || 1000;
         const spread = scSpread?.value || "auto";
         const budget = Number(inpBudget?.value) || 200;
-        const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
+        const useRatchetSl = scSlMode ? scSlMode.value === "ratchet" : (inpSlMode ? inpSlMode.value === "ratchet" : true);
         const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
-        const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
-        const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
+        const macroGateMode = scMacroGate ? scMacroGate.value : (inpMacroGate ? inpMacroGate.value : "off");
+        const enableCircuitBreaker = scCircuitBreaker ? scCircuitBreaker.value === "on" : (inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true);
         const enableUpsideFloor = scUpsideFloor ? scUpsideFloor.value === "on" : (inpUpsideFloor ? inpUpsideFloor.value === "on" : true);
+        const enableFastCut = scFastCut ? scFastCut.value === "on" : (inpFastCut ? inpFastCut.value === "on" : true);
+        const maxSlPct = scMaxSl ? Number(scMaxSl.value) : (inpMaxSl ? Number(inpMaxSl.value) : 1.80);
 
         btnStartScan.disabled = true;
         if (scannerProgressWrap) scannerProgressWrap.style.display = "block";
@@ -1453,6 +1466,8 @@
               macroGateMode,
               enableCircuitBreaker,
               enableUpsideFloor,
+              enableFastCut,
+              maxSlPct,
             }),
           });
 
@@ -1488,8 +1503,17 @@
             scannerStatusText.textContent = `ผลสแกนล่าสุดที่บันทึกไว้ (${dateStr})`;
           }
           if (data.scan.options) {
-            if (scScope && data.scan.options.scope) scScope.value = data.scan.options.scope;
-            if (scTimeframe && data.scan.options.timeframe) scTimeframe.value = data.scan.options.timeframe;
+            const o = data.scan.options;
+            if (scScope && o.scope) scScope.value = o.scope;
+            if (scTimeframe && o.timeframe) scTimeframe.value = o.timeframe;
+            if (scLimit && o.limit) scLimit.value = String(o.limit);
+            if (scSpread && o.spreadThreshold !== undefined) scSpread.value = String(o.spreadThreshold);
+            if (scUpsideFloor && o.enableUpsideFloor !== undefined) scUpsideFloor.value = o.enableUpsideFloor ? "on" : "off";
+            if (scFastCut && o.enableFastCut !== undefined) scFastCut.value = o.enableFastCut ? "on" : "off";
+            if (scMaxSl && o.maxSlPct !== undefined) scMaxSl.value = String(o.maxSlPct);
+            if (scCircuitBreaker && o.enableCircuitBreaker !== undefined) scCircuitBreaker.value = o.enableCircuitBreaker ? "on" : "off";
+            if (scSlMode && o.useRatchetSl !== undefined) scSlMode.value = o.useRatchetSl ? "ratchet" : "fixed";
+            if (scMacroGate && o.macroGateMode) scMacroGate.value = o.macroGateMode;
           }
         }
       }
@@ -1547,6 +1571,11 @@
           if (scLimit && inpLimit) inpLimit.value = scLimit.value;
           if (scSpread && inpSpread) inpSpread.value = scSpread.value;
           if (scUpsideFloor && inpUpsideFloor) inpUpsideFloor.value = scUpsideFloor.value;
+          if (scFastCut && inpFastCut) inpFastCut.value = scFastCut.value;
+          if (scMaxSl && inpMaxSl) inpMaxSl.value = scMaxSl.value;
+          if (scCircuitBreaker && inpCircuitBreaker) inpCircuitBreaker.value = scCircuitBreaker.value;
+          if (scSlMode && inpSlMode) inpSlMode.value = scSlMode.value;
+          if (scMacroGate && inpMacroGate) inpMacroGate.value = scMacroGate.value;
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
           runBacktest();
         }
