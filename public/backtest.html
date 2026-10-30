@@ -92,9 +92,9 @@
 
         <div class="bt-input-group">
           <label>Macro Gate (1H)</label>
-          <select id="btMacroGate" title="ตัวกรองแนวโน้มใหญ่ ป้องกันตลาดขาลงลึก">
-            <option value="off" selected>🌐 Off (ปิด - เทรดทุกสภาวะ)</option>
-            <option value="noDeepBear">🛡️ No Deep Bear (กรองขาลงลึก)</option>
+          <select id="btMacroGate" title="ตัวกรองแนวโน้มใหญ่ ป้องกันตลาดขาลงลึก (จากผลทดสอบ 120 วัน)">
+            <option value="noDeepBear" selected>🛡️ No Deep Bear (แนะนำ - คัดไม้แพ้ 55%)</option>
+            <option value="off">🌐 Off (ปิด - เทรดทุกสภาวะ)</option>
             <option value="bullOnly">🐂 Bull Only (กระทิงเท่านั้น)</option>
           </select>
         </div>
@@ -109,8 +109,8 @@
 
         <div class="bt-input-group">
           <label>Upside Floor</label>
-          <select id="btUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.45% และ Spread ≥ 0.35%">
-            <option value="on" selected>🎯 On (กรองระยะวิ่ง ≥ 0.45%)</option>
+          <select id="btUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.50% และ Spread ≥ 0.35%">
+            <option value="on" selected>🎯 On (กรองระยะวิ่ง ≥ 0.50%)</option>
             <option value="off">❌ Off (ปิดตัวกรอง)</option>
           </select>
         </div>
@@ -345,8 +345,8 @@
             </div>
             <div class="scanner-ctrl-group">
               <label>Upside Floor</label>
-              <select id="scUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.45% และ Spread ≥ 0.35%">
-                <option value="on" selected>🎯 On (≥ 0.45%)</option>
+              <select id="scUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.50% และ Spread ≥ 0.35%">
+                <option value="on" selected>🎯 On (≥ 0.50%)</option>
                 <option value="off">❌ Off</option>
               </select>
             </div>
@@ -381,9 +381,9 @@
             </div>
             <div class="scanner-ctrl-group">
               <label>Macro Gate</label>
-              <select id="scMacroGate" title="ตัวกรองแนวโน้มใหญ่ (1H)">
-                <option value="off" selected>🌐 Off (ทุกสภาวะ)</option>
-                <option value="noDeepBear">🛡️ No Deep Bear</option>
+              <select id="scMacroGate" title="ตัวกรองแนวโน้มใหญ่ (1H) จากผลทดสอบ 120 วัน">
+                <option value="noDeepBear" selected>🛡️ No Deep Bear (แนะนำ)</option>
+                <option value="off">🌐 Off (ทุกสภาวะ)</option>
                 <option value="bullOnly">🐂 Bull Only</option>
               </select>
             </div>
@@ -439,6 +439,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.2.191"></script>
+  <script src="backtest.js?v=0.2.192"></script>
 </body>
 </html>

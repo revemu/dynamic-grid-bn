@@ -6395,6 +6395,21 @@ When investigating live production behavior, debugging issues, or analyzing trad
 3. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.191` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 216. 120-Day Deep Historical Strategy Tuning (`v0.2.192`)
+
+1. **อัปเดต Live Bot Config บนเซิร์ฟเวอร์จริง (`http://210.246.253.13:3334/api/config`)**:
+   - ปรับการตั้งค่าบอทจริงเป็น `maFanMacroGate: "noDeepBear"` ตามผลลัพธ์การทดลอง 120 วันที่ดีที่สุด
+   - คงค่า `maFanUpsideFloor: true`, `maFanCircuitBreaker: true`, `maFanUseRatchetSl: true`
+2. **การปรับจูนกลยุทธ์ใน Source Code (`src/` & `public/`)**:
+   - **`src/config.ts`**: ปรับค่าเริ่มต้นของ `maFanMacroGate` เป็น `"noDeepBear"`
+   - **`src/strategy/ma-fan/core-rules.ts`**: ปรับเพิ่มระยะเพดานวิ่งถึง EMA25 (`upsideRequiredPct`) จาก `0.45%` เป็น **`0.50%`** เพื่อรับประกันว่าทุกไม้ที่เข้าซื้อมีกำไรส่วนเกินคุ้มค่าธรรมเนียมจริง
+   - **`src/backtest-service.ts`**: ปรับปรุงการจัดเก็บประวัติ Backtest Database (`saveRecord`) โดยตัดแต่งแท่งเทียนที่เกิน 3,000 แท่งก่อนบันทึกลง JSON ป้องกันปัญหา V8 String Length เกินขีดจำกัด เมื่อรันสแกนลึก 120 วัน
+   - **`public/backtest.html`**: ตั้งค่าเริ่มต้นของตัวเลือก `Macro Gate` เป็น `🛡️ No Deep Bear (แนะนำ - คัดไม้แพ้ 55%)` ทั้งบนฟอร์มหลักและหน้าต่าง Market Scanner
+3. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.192` ใน `package.json` และ `src/version.ts`
+
 
 
 

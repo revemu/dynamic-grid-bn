@@ -40,7 +40,7 @@ export const defaultStrategyConfig = {
   maFanUseRatchetSl: true,
   maFanBullCushion: false,
   maFanWaterfallGuard: true,
-  maFanMacroGate: "off" as "off" | "noDeepBear" | "bullOnly",
+  maFanMacroGate: "noDeepBear" as "off" | "noDeepBear" | "bullOnly",
   maFanUpsideFloor: true,
   maFanCircuitBreaker: true,
   maFanCircuitBreakerUntil: 0,

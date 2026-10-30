@@ -1010,10 +1010,23 @@ export class BacktestService {
       const data = JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
       if (!Array.isArray(data.records)) data.records = [];
 
-      // Prepend newest run, limit stored history to last 30 runs
-      data.records.unshift(record);
-      if (data.records.length > 30) {
-        data.records = data.records.slice(0, 30);
+      // For persistent history storage, cap stored candles to latest 3,000 bars
+      // to prevent file explosion and V8 string length exhaustion on deep 120-day runs
+      let recordToSave = record;
+      if (record.candles && record.candles.length > 3000) {
+        const trimmedCandles = record.candles.slice(-3000);
+        const trimmedEvaluations = record.evaluations ? record.evaluations.slice(-3000) : undefined;
+        recordToSave = {
+          ...record,
+          candles: trimmedCandles,
+          evaluations: trimmedEvaluations,
+        };
+      }
+
+      // Prepend newest run, limit stored history to last 20 runs
+      data.records.unshift(recordToSave);
+      if (data.records.length > 20) {
+        data.records = data.records.slice(0, 20);
       }
 
       fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), "utf8");

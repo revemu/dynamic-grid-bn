@@ -190,7 +190,7 @@ export class MaFanCoreRules {
     const isStretched = ribbon.fanSpreadPct >= requiredSpreadPct;
     // Require adequate upside room from closePrice to EMA25 to avoid entering when fees eat gross profit
     const enableUpsideFloor = opts.enableUpsideFloor !== false;
-    const upsideRequiredPct = enableUpsideFloor ? 0.45 : 0.30;
+    const upsideRequiredPct = enableUpsideFloor ? 0.50 : 0.30;
     const upsidePct = closePrice > 0 ? ((ribbon.ema25 - closePrice) / ribbon.ema25) * 100 : 0;
     const hasUpsideRoomToEma25 = closePrice <= ribbon.ema25 * (1 - (upsideRequiredPct / 100));
     const passesSpreadFloor = !enableUpsideFloor || ribbon.fanSpreadPct >= 0.35;
