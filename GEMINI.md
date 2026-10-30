@@ -6251,6 +6251,23 @@ When investigating live production behavior, debugging issues, or analyzing trad
 5. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.184` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 185. v0.2.185 — Fix Backtest Evaluations Array Sparse Null Bug & Defensive Chart Rendering (`src/backtest-service.ts`, `public/backtest.js`, `package.json`, `src/version.ts`)
+
+1. **สาเหตุของข้อผิดพลาด `Cannot read properties of null (reading 'time')` บน Backtest Studio**:
+   - ใน `src/backtest-service.ts`: โค้ดที่สร้างอ็อบเจกต์การประเมินอินดิเคเตอร์ `evaluations[i]` ถูกวางไว้ด้านในบล็อก `if (heldQty === 0 && cash >= 10)` ซึ่งเป็นบล็อกตรวจสอบการเปิดสถานะใหม่
+   - ส่งผลให้ในแท่งเทียนใดก็ตามที่บอทกำลังถือครอง Position อยู่ (`heldQty > 0`) โค้ดส่วนนี้จะถูกข้าม ทำให้ตำแหน่ง `evaluations[i]` ในอาร์เรย์กลายเป็นช่องว่าง `undefined`
+   - เมื่อ Backend แปลงอาร์เรย์เป็น JSON ส่งกลับมายังเบราว์เซอร์ ช่องว่าง `undefined` จึงกลายเป็น `null`
+   - เมื่อหน้าเว็บ `public/backtest.js` นำ `record.evaluations` มา map เพื่อวาดเส้น EMA บนกราฟ การเรียก `e.time` บนสมาชิกที่เป็น `null` จึงเกิด TypeError `Cannot read properties of null (reading 'time')`
+2. **การแก้ไขและการจัดโครงสร้างใหม่**:
+   - **Backend (`src/backtest-service.ts`)**: ย้ายการคำนวณ Spread และการสร้าง `evaluations[i]` ขึ้นมาไว้ระดับบนสุดของ Loop แท่งเทียน (ก่อนเข้าสู่บล็อก Position Exits และ Position Entry) เพื่อรับประกันว่าทุกแท่งเทียนตั้งแต่อดีตจนถึงปัจจุบันมีข้อมูลอินดิเคเตอร์ครบถ้วน 100% ไม่มีช่องว่าง `null` แม้แต่แท่งเดียว
+   - **Frontend (`public/backtest.js`)**: เพิ่มฟังก์ชัน `getWarmOrCalc(field, period)` ที่วนลูปตามแท่งเทียน `record.candles` โดยตรง และดึงเวลาจาก `c.time` เสมอ พร้อมตรวจสอบ `ev && ev[field] !== undefined` ป้องกันไม่ให้เกิด Error กรณีข้อมูลอินดิเคเตอร์มีค่าสูญหาย
+3. **การยืนยันสถานะบอทจริง (Live Bot Immunity)**:
+   - ตรวจสอบสถานะบอทจริงผ่าน `http://210.246.253.13:3334/api/state`: บอทจริงไม่ได้ใช้อาร์เรย์ `evaluations` และทำงานคำนวณ Spread อัตโนมัติทุกแท่งเทียนที่ปิดสมบูรณ์อย่างราบรื่นตามปกติ (ล่าสุดปรับ Sweet Spot เป็น `1.80%`, HTF Bear = `2.25%` และไม่เข้าซื้อในจังหวะเสี่ยง)
+4. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.185` ใน `package.json` และ `src/version.ts`
+
 
 
 

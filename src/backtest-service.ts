@@ -492,6 +492,51 @@ export class BacktestService {
       const activeTp1Ratio = Math.max(0.1, Math.min(0.9, htfRegime.recommendedTp1Ratio ?? tp1Ratio));
 
       // Current portfolio equity
+      // Dynamic Rolling Auto-Calibration on every single bar (100% Causal Walk-Forward)
+      if (rollingCal) {
+        currentRollingSpread = rollingCal.bestSpreadAt(i);
+        rollingSpreadSum += currentRollingSpread;
+        rollingSpreadCount++;
+      }
+
+      const activeBaseSpread = isAuto ? currentRollingSpread : spread;
+      const currentSpread = MaFanCoreRules.computeEffectiveSpread({
+        baseSpread: activeBaseSpread,
+        useAtrAdaptiveSpread: useAtrAdaptive,
+        isAutoCalibrated: isAuto,
+        curAtr,
+        closePrice: c.close,
+        atrMultiplier,
+      });
+
+      // Apply Higher Timeframe (HTF 15m) Spread Multiplier (aligns with Live Bot)
+      const requiredSpread = currentSpread * htfRegime.spreadMultiplier;
+      const exhaustion = exhaustionStates[i]!;
+      const isCircuitActive = enableCircuitBreaker && c.time < cooldownUntilTs;
+
+      // Populate evaluations unconditionally for EVERY candle so chart lines & inspector never have null holes
+      if (opts.onlyEntryIdx === undefined) {
+        evaluations[i] = {
+          time: c.time,
+          fanSpreadPct: ribbon.fanSpreadPct,
+          isFanningDown: ribbon.isFanningDown,
+          isHookUp: ribbon.isHookUp,
+          rsi: exhaustion.rsi,
+          isOversoldExhaustion: exhaustion.isOversoldExhaustion,
+          ema4: ribbon.ema4,
+          ema8: ribbon.ema8,
+          ema16: ribbon.ema16,
+          ema25: ribbon.ema25,
+          ema75: ribbon.ema75,
+          ema200: ribbon.ema200,
+          requiredSpreadPct: Number(requiredSpread.toFixed(2)),
+          spreadMultiplier: htfRegime.spreadMultiplier,
+          isDeepBear: htfRegime.isDeepBear,
+          isMacroBlocked: false,
+          isCircuitBreakerActive: isCircuitActive,
+        };
+      }
+
       const currentEquity = cash + (heldQty > 0 ? heldQty * c.close : 0);
       if (currentEquity > peakEquity) peakEquity = currentEquity;
       const dd = peakEquity > 0 ? ((peakEquity - currentEquity) / peakEquity) * 100 : 0;
@@ -767,34 +812,11 @@ export class BacktestService {
         }
       }
 
-      // Dynamic Rolling Auto-Calibration on every single bar (100% Causal Walk-Forward)
-      if (rollingCal) {
-        currentRollingSpread = rollingCal.bestSpreadAt(i);
-        rollingSpreadSum += currentRollingSpread;
-        rollingSpreadCount++;
-      }
-
       // ─── POSITION ENTRY (SNIPER HOOK) ────────────────────────────────
       if (heldQty === 0 && cash >= 10) {
         if (opts.onlyEntryIdx !== undefined && i !== opts.onlyEntryIdx) {
           continue;
         }
-
-        const activeBaseSpread = isAuto ? currentRollingSpread : spread;
-        const currentSpread = MaFanCoreRules.computeEffectiveSpread({
-          baseSpread: activeBaseSpread,
-          useAtrAdaptiveSpread: useAtrAdaptive,
-          isAutoCalibrated: isAuto,
-          curAtr,
-          closePrice: c.close,
-          atrMultiplier,
-        });
-
-        // Apply Higher Timeframe (HTF 15m) Spread Multiplier (aligns with Live Bot)
-        const requiredSpread = currentSpread * htfRegime.spreadMultiplier;
-
-        const exhaustion = exhaustionStates[i]!;
-        const isCircuitActive = enableCircuitBreaker && c.time < cooldownUntilTs;
 
         const entryDecision = MaFanCoreRules.evaluateEntry({
           candles,
@@ -814,26 +836,8 @@ export class BacktestService {
           circuitBreakerActive: isCircuitActive,
         });
 
-        if (opts.onlyEntryIdx === undefined) {
-          evaluations[i] = {
-            time: c.time,
-            fanSpreadPct: ribbon.fanSpreadPct,
-            isFanningDown: ribbon.isFanningDown,
-            isHookUp: ribbon.isHookUp,
-            rsi: exhaustion.rsi,
-            isOversoldExhaustion: exhaustion.isOversoldExhaustion,
-            ema4: ribbon.ema4,
-            ema8: ribbon.ema8,
-            ema16: ribbon.ema16,
-            ema25: ribbon.ema25,
-            ema75: ribbon.ema75,
-            ema200: ribbon.ema200,
-            requiredSpreadPct: Number(requiredSpread.toFixed(2)),
-            spreadMultiplier: htfRegime.spreadMultiplier,
-            isDeepBear: htfRegime.isDeepBear,
-            isMacroBlocked: entryDecision.blockedBy === "MACRO_GATE",
-            isCircuitBreakerActive: isCircuitActive,
-          };
+        if (opts.onlyEntryIdx === undefined && evaluations[i]) {
+          evaluations[i]!.isMacroBlocked = entryDecision.blockedBy === "MACRO_GATE";
         }
 
         if (entryDecision.shouldEnter) {
