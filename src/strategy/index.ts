@@ -553,6 +553,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           orderId: idStr,
           logPrefix: "[WS] BINANCE ",
           dryRun: false,
+          fee: report.commissionAmount,
+          feeAsset: report.commissionAsset,
         });
       } else {
         this.processSellFill({
@@ -562,6 +564,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           orderId: idStr,
           logPrefix: "[WS] BINANCE ",
           dryRun: false,
+          fee: report.commissionAmount,
+          feeAsset: report.commissionAsset,
         });
       }
 
@@ -1732,6 +1736,40 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       const gasSpentQuote = data.totalGasSpentQuote ?? data.totalGasSpentUsdso;
       if (typeof gasSpentQuote === "number" && Number.isFinite(gasSpentQuote)) {
         this.totalGasSpentQuote = gasSpentQuote;
+      }
+
+      // ── Resilient CEX Trading Fee Recovery from DB Trades Ledger ───────────
+      if (!isDex && this.totalGasSpentQuote <= 0) {
+        const histTrades = this.db.getTrades(5000, symbolKey);
+        let totalHistFeeQuote = 0;
+        for (const t of histTrades) {
+          const rawFee = Number(t.fee || 0);
+          const feeAsset = (t.feeAsset || "").toUpperCase();
+          const notional = Number(t.notionalQuote || t.notionalUsdso || t.notional || (t.qty && t.price ? t.qty * t.price : 0));
+          const quoteSym = (this.quoteAsset || "USDT").toUpperCase();
+          const baseSym = (this.baseAsset || "").toUpperCase();
+          let tradeFeeQuote = 0;
+          if (rawFee > 0) {
+            if (feeAsset === quoteSym || ["USDT", "USDSO", "FDUSD", "USDC", "USD"].includes(feeAsset)) {
+              tradeFeeQuote = rawFee;
+            } else if (feeAsset === baseSym && t.price) {
+              tradeFeeQuote = rawFee * t.price;
+            } else if (feeAsset === "BNB" && notional > 0) {
+              tradeFeeQuote = notional * 0.00075;
+            } else if (notional > 0) {
+              tradeFeeQuote = notional * 0.00075;
+            }
+          } else if (!t.dryRun && notional > 0 && !(t.symbol || "").toUpperCase().endsWith("FDUSD")) {
+            tradeFeeQuote = notional * 0.00075;
+          }
+          totalHistFeeQuote += tradeFeeQuote;
+        }
+        if (totalHistFeeQuote > 0) {
+          this.totalGasSpentQuote = totalHistFeeQuote;
+          this.totalGasDeductedQuote = totalHistFeeQuote;
+          this.realizedPnl = this.tradeRealizedPnl - this.totalGasDeductedQuote;
+          this.log(`🏷️ [FEE SYNC] Backfilled total CEX trading fees = $${totalHistFeeQuote.toFixed(4)} ${this.quoteAsset} from ${histTrades.length} historical trades.`);
+        }
       }
       if (typeof data.totalTxCount === "number") {
         this.totalTxCount = data.totalTxCount;

@@ -1753,8 +1753,7 @@ export class BotDatabase {
         }
 
         const proceeds = matchedQty * price;
-        const feeQuote = (feeAsset === "USDT" || feeAsset === "FDUSD" || feeAsset === "USDSO") ? fee : 0;
-        const pnl = matchedQty > 0 ? (proceeds - totalCost - feeQuote) : 0;
+        const pnl = matchedQty > 0 ? (proceeds - totalCost) : 0;
 
         trade.pnlQuote = pnl;
         trade.pnl = pnl;
@@ -1788,19 +1787,48 @@ export class BotDatabase {
   public recalculateAllRealizedPnl(): void {
     if (!this.data || !this.data.state) return;
     let totalTradePnl = 0;
+    let totalCexFees = 0;
     for (const o of this.data.orders) {
-      if (o.status === "FILLED" && o.side === "SELL") {
-        const p = Number(
-          o.pnlQuote !== undefined
-            ? o.pnlQuote
-            : o.pnlUsdso !== undefined
-            ? o.pnlUsdso
-            : (o.pnl || 0),
-        );
-        if (Number.isFinite(p)) totalTradePnl += p;
+      if (o.status === "FILLED" || o.fillTime !== undefined) {
+        if (o.side === "SELL") {
+          const p = Number(
+            o.pnlQuote !== undefined
+              ? o.pnlQuote
+              : o.pnlUsdso !== undefined
+              ? o.pnlUsdso
+              : (o.pnl || 0),
+          );
+          if (Number.isFinite(p)) totalTradePnl += p;
+        }
+
+        // Tally CEX trading fees across fills
+        const rawFee = Number(o.fee || 0);
+        const feeAsset = (o.feeAsset || "").toUpperCase();
+        const notional = Number(o.notionalQuote || o.notionalUsdso || o.notional || (o.qty && o.price ? o.qty * o.price : 0));
+        if (rawFee > 0) {
+          if (["USDT", "USDSO", "FDUSD", "USDC", "USD"].includes(feeAsset)) {
+            totalCexFees += rawFee;
+          } else if (feeAsset === (o.baseAsset || "").toUpperCase() && o.price) {
+            totalCexFees += rawFee * o.price;
+          } else if (feeAsset === "BNB" && notional > 0) {
+            totalCexFees += notional * 0.00075;
+          } else if (notional > 0) {
+            totalCexFees += notional * 0.00075;
+          }
+        } else if (!o.dryRun && notional > 0 && !(o.symbol || "").toUpperCase().endsWith("FDUSD")) {
+          const isSomnia = Boolean(o.explorerUrl?.includes("somnia") || (o.txHash && typeof o.txHash === "string" && o.txHash.startsWith("0x")));
+          if (!isSomnia) {
+            totalCexFees += notional * 0.00075;
+          }
+        }
       }
     }
-    const totalGasQuote = this.data.state.totalGasDeductedQuote ?? this.data.state.totalGasDeductedUsdso ?? 0;
+    let totalGasQuote = this.data.state.totalGasDeductedQuote ?? this.data.state.totalGasDeductedUsdso ?? 0;
+    if (totalGasQuote <= 0 && totalCexFees > 0) {
+      totalGasQuote = totalCexFees;
+      this.data.state.totalGasDeductedQuote = totalCexFees;
+      this.data.state.totalGasSpentQuote = totalCexFees;
+    }
     this.data.state.tradeRealizedPnl = totalTradePnl;
     this.data.state.realizedPnl = totalTradePnl - totalGasQuote;
     this.data.state.lastUpdated = Date.now();

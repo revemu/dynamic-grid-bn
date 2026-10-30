@@ -484,6 +484,54 @@ export class OrderExecutor {
   }
 
   /**
+   * Helper to compute CEX spot fee in quote currency (USDT) and base currency deduction (if fee was paid in base asset).
+   */
+  public calculateSpotFeeQuote(opts: {
+    fee?: number;
+    feeAsset?: string | null;
+    price: number;
+    qty: number;
+    dryRun?: boolean;
+    isIoc?: boolean;
+  }): { feeQuote: number; feeBase: number; feeAsset: string } {
+    const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
+    if (isDex || opts.dryRun) {
+      return { feeQuote: 0, feeBase: 0, feeAsset: "" };
+    }
+    const fillNotional = opts.price * opts.qty;
+    const isZeroFeeMaker = (this.host.quoteAsset.toUpperCase() === "FDUSD" && !opts.isIoc);
+    if (isZeroFeeMaker) {
+      return { feeQuote: 0, feeBase: 0, feeAsset: "FDUSD" };
+    }
+
+    const rawFee = Number(opts.fee || 0);
+    const feeAssetUpper = (opts.feeAsset || "").toUpperCase();
+    const quoteSym = (this.host.quoteAsset || "USDT").toUpperCase();
+    const baseSym = (this.host.baseAsset || "").toUpperCase();
+
+    let feeQuote = 0;
+    let feeBase = 0;
+
+    if (rawFee > 0) {
+      if (feeAssetUpper === quoteSym || ["USDT", "USDSO", "FDUSD", "USDC", "USD"].includes(feeAssetUpper)) {
+        feeQuote = rawFee;
+      } else if (feeAssetUpper === baseSym && opts.price > 0) {
+        feeQuote = rawFee * opts.price;
+        feeBase = rawFee;
+      } else if (feeAssetUpper === "BNB" && fillNotional > 0) {
+        feeQuote = fillNotional * 0.00075;
+      } else if (fillNotional > 0) {
+        feeQuote = fillNotional * 0.00075;
+      }
+      return { feeQuote, feeBase, feeAsset: opts.feeAsset || quoteSym };
+    }
+
+    // Default CEX fee rate (0.075% BNB discount tier or standard)
+    feeQuote = fillNotional * 0.00075;
+    return { feeQuote, feeBase: 0, feeAsset: "BNB" };
+  }
+
+  /**
    * Shared helper: Process a confirmed BUY fill (gas compensation, lot creation, emit, log)
    */
   public processBuyFill(opts: {
@@ -498,6 +546,8 @@ export class OrderExecutor {
     targetPrice?: number;
     slippagePct?: number;
     limitPrice?: number;
+    fee?: number;
+    feeAsset?: string | null;
   }): void {
     const { price, qty, levelDesc, orderId, txHash, logPrefix = "", dryRun, isIoc = false, targetPrice, slippagePct, limitPrice } = opts;
     const fillNotional = price * qty;
@@ -507,19 +557,28 @@ export class OrderExecutor {
     const isSomiBase = isDex && this.host.baseAsset.toUpperCase() === "SOMI";
 
     let spotTradingFeeBase = 0;
+    let spotTradingFeeQuote = 0;
     let compBase = 0;
     let gasLossQuote = 0;
     let feeLog = "";
 
     if (!isDex) {
-      const isZeroFeeMaker = (this.host.quoteAsset.toUpperCase() === "FDUSD" && !isIoc);
-      const spotFeeRate = (isZeroFeeMaker || this.host.cfg.dryRun) ? 0.0 : 0.00075;
-      spotTradingFeeBase = qty * spotFeeRate;
-      feeLog = spotTradingFeeBase > 0
-        ? ` | 🏷️ CEX Spot Fee: ${spotTradingFeeBase.toFixed(6)} ${this.host.baseAsset}`
-        : isZeroFeeMaker
-        ? " | 🎁 0% Maker Fee"
-        : "";
+      const feeCalc = this.calculateSpotFeeQuote({
+        fee: opts.fee,
+        feeAsset: opts.feeAsset,
+        price,
+        qty,
+        dryRun,
+        isIoc,
+      });
+      spotTradingFeeQuote = feeCalc.feeQuote;
+      spotTradingFeeBase = feeCalc.feeBase;
+      if (spotTradingFeeQuote > 0) {
+        this.host.totalGasSpentQuote += spotTradingFeeQuote;
+        this.host.totalGasDeductedQuote += spotTradingFeeQuote;
+        this.host.realizedPnl = this.host.tradeRealizedPnl - this.host.totalGasDeductedQuote;
+        feeLog = ` | 🏷️ Fee: -$${spotTradingFeeQuote.toFixed(4)} ${this.host.quoteAsset}`;
+      }
     } else {
       const uncompensatedGas = isSomiBase
         ? Math.max(this.host.accumulatedGasBase, this.host.totalGasSpentBase - this.host.totalGasDeductedBase)
@@ -583,6 +642,10 @@ export class OrderExecutor {
         gasCompSomi: compBase,
         gasLossQuote,
         gasLossUsdso: gasLossQuote,
+        gasFeeQuote: spotTradingFeeQuote,
+        gasFeeUsdso: spotTradingFeeQuote,
+        fee: opts.fee !== undefined ? opts.fee : (spotTradingFeeQuote > 0 ? (spotTradingFeeQuote / price) : undefined),
+        feeAsset: opts.feeAsset ?? (spotTradingFeeQuote > 0 ? (opts.fee !== undefined ? "BNB" : this.host.quoteAsset) : undefined),
         notional: fillNotional,
         notionalQuote: fillNotional,
         notionalUsdso: fillNotional,
@@ -614,10 +677,34 @@ export class OrderExecutor {
     txHash?: string;
     logPrefix?: string;
     dryRun: boolean;
+    fee?: number;
+    feeAsset?: string | null;
   }): void {
     const { price, qty, levelDesc, orderId, txHash, logPrefix = "", dryRun } = opts;
     const fillNotional = price * qty;
     const now = Date.now();
+
+    const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
+    let spotTradingFeeQuote = 0;
+    let feeLog = "";
+
+    if (!isDex) {
+      const feeCalc = this.calculateSpotFeeQuote({
+        fee: opts.fee,
+        feeAsset: opts.feeAsset,
+        price,
+        qty,
+        dryRun,
+        isIoc: false,
+      });
+      spotTradingFeeQuote = feeCalc.feeQuote;
+      if (spotTradingFeeQuote > 0) {
+        this.host.totalGasSpentQuote += spotTradingFeeQuote;
+        this.host.totalGasDeductedQuote += spotTradingFeeQuote;
+        this.host.realizedPnl = this.host.tradeRealizedPnl - this.host.totalGasDeductedQuote;
+        feeLog = ` | 🏷️ Fee: -$${spotTradingFeeQuote.toFixed(4)} ${this.host.quoteAsset}`;
+      }
+    }
 
     const { roundPnl } = this.lotTracker.closeLots(qty, price);
     this.host.needsBuyRebalance = true;
@@ -645,7 +732,7 @@ export class OrderExecutor {
     }
 
     this.host.log(
-      `🎯 ${logPrefix}MAKER SELL FILLED: ${qty.toFixed(4)} ${this.host.baseAsset} ($${fillNotional.toFixed(2)} ${this.host.quoteAsset}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)})`,
+      `🎯 ${logPrefix}MAKER SELL FILLED: ${qty.toFixed(4)} ${this.host.baseAsset} ($${fillNotional.toFixed(2)} ${this.host.quoteAsset}) @ $${price.toFixed(6)} • ${levelDesc}${orderId ? ` #${orderId}` : ""}${feeLog} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)})`,
     );
     this.host.emit({
       type: "order",
@@ -663,6 +750,10 @@ export class OrderExecutor {
         pnl: roundPnl,
         pnlQuote: roundPnl,
         pnlUsdso: roundPnl,
+        gasFeeQuote: spotTradingFeeQuote,
+        gasFeeUsdso: spotTradingFeeQuote,
+        fee: opts.fee !== undefined ? opts.fee : (spotTradingFeeQuote > 0 ? (spotTradingFeeQuote / price) : undefined),
+        feeAsset: opts.feeAsset ?? (spotTradingFeeQuote > 0 ? (opts.fee !== undefined ? "BNB" : this.host.quoteAsset) : undefined),
         reason: `Maker Sell Filled${orderId ? ` #${orderId}` : ""}`,
         time: now,
         dryRun,
@@ -858,6 +949,28 @@ export class OrderExecutor {
         ? (res.cummulativeQuoteQty / res.executedQty)
         : (typeof res.price === "number" && res.price > 0 ? res.price : effectivePrice);
 
+      let totalCommission = 0;
+      let commissionAsset = "";
+      if (Array.isArray(res.fills)) {
+        for (const fill of res.fills) {
+          totalCommission += Number(fill.commission || 0);
+          if (fill.commissionAsset) commissionAsset = fill.commissionAsset;
+        }
+      }
+      const feeCalc = this.calculateSpotFeeQuote({
+        fee: totalCommission > 0 ? totalCommission : undefined,
+        feeAsset: commissionAsset || undefined,
+        price: fillPrice,
+        qty: actualQty,
+        dryRun: false,
+        isIoc: true,
+      });
+      if (feeCalc.feeQuote > 0) {
+        this.host.totalGasSpentQuote += feeCalc.feeQuote;
+        this.host.totalGasDeductedQuote += feeCalc.feeQuote;
+        this.host.realizedPnl = this.host.tradeRealizedPnl - this.host.totalGasDeductedQuote;
+      }
+
       const { roundPnl } = this.lotTracker.closeLots(actualQty, fillPrice);
       const remainingHeld = this.lotTracker.baseHeld();
       const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
@@ -874,8 +987,9 @@ export class OrderExecutor {
         }
       }
 
+      const feeLog = feeCalc.feeQuote > 0 ? ` | 🏷️ Fee: -$${feeCalc.feeQuote.toFixed(4)} ${this.host.quoteAsset}` : "";
       this.host.log(
-        `⚡ ON-CHAIN ${actionLabel}: Sold ${actualQty.toFixed(4)} ${this.host.baseAsset} @ $${fillPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)} (tx: ${res.txHash || orderIdStr || "N/A"})`,
+        `⚡ ON-CHAIN ${actionLabel}: Sold ${actualQty.toFixed(4)} ${this.host.baseAsset} @ $${fillPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${slippagePctVal.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)}${feeLog} • Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)} (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.host.emit({
         type: "order",
@@ -890,6 +1004,10 @@ export class OrderExecutor {
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
+          gasFeeQuote: feeCalc.feeQuote,
+          gasFeeUsdso: feeCalc.feeQuote,
+          fee: totalCommission > 0 ? totalCommission : (feeCalc.feeQuote > 0 ? feeCalc.feeQuote : undefined),
+          feeAsset: commissionAsset || (feeCalc.feeQuote > 0 ? feeCalc.feeAsset : undefined),
           levelDesc: actionLabel,
           reason: actionLabel,
           time: now,
@@ -1030,6 +1148,15 @@ export class OrderExecutor {
         ? (res.cummulativeQuoteQty / res.executedQty)
         : (typeof res.price === "number" && res.price > 0 ? res.price : effectivePrice);
 
+      let totalCommission = 0;
+      let commissionAsset = "";
+      if (Array.isArray(res.fills)) {
+        for (const fill of res.fills) {
+          totalCommission += Number(fill.commission || 0);
+          if (fill.commissionAsset) commissionAsset = fill.commissionAsset;
+        }
+      }
+
       this.processBuyFill({
         price: fillPrice,
         qty: actualQty,
@@ -1042,6 +1169,8 @@ export class OrderExecutor {
         targetPrice,
         slippagePct: slippagePctVal,
         limitPrice,
+        fee: totalCommission > 0 ? totalCommission : undefined,
+        feeAsset: commissionAsset || undefined,
       });
       if (res?.txHash && (res.gasFee === undefined || res.gasFee <= 0)) {
         this.trackTxGas(res.txHash, actionLabel);
@@ -1276,6 +1405,28 @@ export class OrderExecutor {
         ? (res.cummulativeQuoteQty / res.executedQty)
         : (typeof res.price === "number" && res.price > 0 ? res.price : limitPrice);
 
+      let totalCommission = 0;
+      let commissionAsset = "";
+      if (Array.isArray(res.fills)) {
+        for (const fill of res.fills) {
+          totalCommission += Number(fill.commission || 0);
+          if (fill.commissionAsset) commissionAsset = fill.commissionAsset;
+        }
+      }
+      const feeCalc = this.calculateSpotFeeQuote({
+        fee: totalCommission > 0 ? totalCommission : undefined,
+        feeAsset: commissionAsset || undefined,
+        price: actualPrice,
+        qty: actualQty,
+        dryRun: false,
+        isIoc: true,
+      });
+      if (feeCalc.feeQuote > 0) {
+        this.host.totalGasSpentQuote += feeCalc.feeQuote;
+        this.host.totalGasDeductedQuote += feeCalc.feeQuote;
+        this.host.realizedPnl = this.host.tradeRealizedPnl - this.host.totalGasDeductedQuote;
+      }
+
       const { roundPnl } = this.lotTracker.closeLots(actualQty, actualPrice);
       const effectiveSlipPct = (action === "MANUAL" && limitPrice >= targetPrice) ? 0 : slippagePctVal;
       const isCut = action === "CUT";
@@ -1286,8 +1437,9 @@ export class OrderExecutor {
       const orderAction = isCut
         ? "CUT"
         : (isManual ? "EXIT" : (roundPnl >= 0 ? "TAKE_PROFIT" : "BREAKDOWN_EXIT"));
+      const feeLog = feeCalc.feeQuote > 0 ? ` | 🏷️ Fee: -$${feeCalc.feeQuote.toFixed(4)} ${this.host.quoteAsset}` : "";
       this.host.log(
-        `🚨 ON-CHAIN ${effectiveActionLabel}: ${actualQty.toFixed(4)} ${this.host.baseAsset} @ $${actualPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
+        `🚨 ON-CHAIN ${effectiveActionLabel}: ${actualQty.toFixed(4)} ${this.host.baseAsset} @ $${actualPrice.toFixed(6)} | Target: $${targetPrice.toFixed(6)} | Slip: ${effectiveSlipPct.toFixed(2)}% | Limit: $${limitPrice.toFixed(6)}${feeLog} (Trade PnL: ${roundPnl >= 0 ? "+$" : "-$"}${Math.abs(roundPnl).toFixed(4)} | Net Total: ${this.host.realizedPnl >= 0 ? "+$" : "-$"}${Math.abs(this.host.realizedPnl).toFixed(4)}) (tx: ${res.txHash || orderIdStr || "N/A"})`,
       );
       this.host.emit({
         type: "order",
@@ -1302,6 +1454,10 @@ export class OrderExecutor {
           pnl: roundPnl,
           pnlQuote: roundPnl,
           pnlUsdso: roundPnl,
+          gasFeeQuote: feeCalc.feeQuote,
+          gasFeeUsdso: feeCalc.feeQuote,
+          fee: totalCommission > 0 ? totalCommission : (feeCalc.feeQuote > 0 ? feeCalc.feeQuote : undefined),
+          feeAsset: commissionAsset || (feeCalc.feeQuote > 0 ? feeCalc.feeAsset : undefined),
           levelDesc: effectiveActionLabel,
           reason: effectiveActionLabel,
           time: now,

@@ -6783,3 +6783,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - บังคับ `targetSellQty = Math.min(targetSellQty, maxAchievableQty)` เพื่อให้ตรงกับขนาดที่ `order-executor.ts` วางได้จริง 100% ทำให้ไม่เกิดการยกเลิก/ตั้งใหม่ซ้ำซ้อน
   3. **Bump Version**:
      - ปรับ Version เป็น `0.2.206` ใน `package.json`, `src/version.ts`, และ `public/backtest.html`
+
+
+---
+
+## 232. CEX Spot Trading Fee Tracking & Net Realized PnL Separation (v0.2.207)
+
+- **สาเหตุของปัญหา**:
+  1. ในระบบเดิม ค่าธรรมเนียมการเทรดของกระดาน CEX (Binance Spot) ไม่ได้ถูกสะสมเข้า `totalGasSpentQuote` หรือ `totalGasDeductedQuote` ทำให้ค่าธรรมเนียมรวมเป็น `$0.00` ตลอดเวลา
+  2. การคำนวณกำไรสุทธิ `realizedPnl` จึงเท่ากับ `tradeRealizedPnl` โดยไม่มีการหักค่าธรรมเนียม CEX (Binance 0.075% BNB discount หรือ 0.1% standard)
+  3. ในหน้า Dashboard UI การ์ด Top KPI Realized PnL ซ่อนแถบ `Fee: -$...` เมื่อ `totalGasSpentUsdso === 0` ทำให้แสดงเฉพาะ `Trade: -$...` โดยไม่แยกค่าคอมมิชชันและค่าธรรมเนียมเหมือนระบบ DEX (Somnia/DreamDEX)
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.207)**:
+  1. **Authority Spot Fee Calculation Helper (`calculateSpotFeeQuote` in `src/strategy/order-executor.ts`)**:
+     - เพิ่มฟังก์ชันช่วยคำนวณค่าธรรมเนียม Spot CEX เป็น Quote Currency (USDT):
+       - หากระบุค่าคอมมิชชันและสินทรัพย์ (เช่น `BNB`, `USDT`, `INIT`): แปลงมูลค่าเข้า Quote Currency ตามอัตราส่วนจริง (BNB Tier 0.075%)
+       - หากเป็น Maker คู่ FDUSD: คิดค่าธรรมเนียม 0% Maker
+       - ค่าเริ่มต้น CEX: 0.075% ของมูลค่า Notional Fill
+     - ตรวจสอบการหักเหรียญ Base Asset: หากจ่ายค่าคอมมิชชันเป็น BNB หรือ Quote จะไม่หักลดจำนวนเหรียญที่ถือใน Lots ป้องกันปัญหายอดเหรียญใน Lots คลาดเคลื่อนกับยอดจริงในกระเป๋า
+  2. **Accurate Fee Accumulation & PnL Deduction (`processBuyFill`, `processSellFill`, `sellTrancheIOC`, `sellAll` in `src/strategy/order-executor.ts`)**:
+     - เมื่อมีคำสั่งซื้อหรือขายจับคู่สำเร็จ จะทำการบวกค่าธรรมเนียมเข้า `this.host.totalGasSpentQuote` และ `this.host.totalGasDeductedQuote`
+     - คำนวณ `realizedPnl = this.host.tradeRealizedPnl - this.host.totalGasDeductedQuote` อย่างเป็นทางการ
+     - บันทึก `gasFeeQuote`, `gasFeeUsdso`, `fee`, `feeAsset` ลงใน Trade Event และฐานข้อมูลคำสั่งเทรด
+  3. **Binance WebSocket User Data Stream Fee Integration (`src/strategy/index.ts`)**:
+     - ใน `handleWsExecutionReport`: ส่งค่า `fee: report.commissionAmount` และ `feeAsset: report.commissionAsset` เข้า `processBuyFill` และ `processSellFill` แบบ Real-time
+  4. **Historical Trades Fee Backfill (`loadState` in `src/strategy/index.ts` & `recalculateAllRealizedPnl` in `src/db.ts`)**:
+     - เมื่อบอทเริ่มต้นทำงาน หาก `totalGasSpentQuote <= 0` ระบบจะคำนวณและ Backfill ค่าธรรมเนียมย้อนหลังจากรายการเทรดทั้งหมดในฐานข้อมูลทันที
+     - แยก Gross Trade PnL กับ Trading Fees ออกจากกันอย่างเด็ดขาดเพื่อไม่ให้เกิดการหักค่าธรรมเนียมซ้ำซ้อน
+  5. **Dashboard UI Fee Badges & Top KPI Separation (`public/app.js`)**:
+     - Top KPI Card: แสดง `Trade: +$XX.XX | Fee: -$YY.YY` พร้อมตัวเลขทศนิยมที่อ่านง่าย (4 ตำแหน่งเมื่อต่ำกว่า $0.10)
+     - Activity Feed & Trades Table: แสดงป้ายแท็กกำกับค่าธรรมเนียม `🏷️ Fee -$X.XXXX` บนทุกรายการซื้อขาย และปรับป้าย Tx ให้แสดง `#<OrderId>` สำหรับคำสั่งเทรดบน Binance
+  6. **Bump Version**:
+     - ปรับ Version เป็น `0.2.207` ใน `package.json` และ `src/version.ts`

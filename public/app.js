@@ -3266,11 +3266,12 @@
     }
     if (elKpiGasSpent) {
       if (totalGasSpentUsdso > 0) {
-        elKpiGasSpent.textContent = `Fee: -$${totalGasSpentUsdso.toFixed(2)}`;
+        const feeVal = totalGasSpentUsdso < 0.1 ? totalGasSpentUsdso.toFixed(4) : totalGasSpentUsdso.toFixed(2);
+        elKpiGasSpent.textContent = `| Fee: -$${feeVal}`;
         elKpiGasSpent.title = `Total Trading Fee/Gas: $${totalGasSpentUsdso.toFixed(4)} ${quoteSym}`;
         elKpiGasSpent.style.display = "";
       } else if (totalGasSpentSomi > 0) {
-        elKpiGasSpent.textContent = `Fee: -${totalGasSpentSomi.toFixed(4)} ${baseSym}`;
+        elKpiGasSpent.textContent = `| Fee: -${totalGasSpentSomi.toFixed(4)} ${baseSym}`;
         elKpiGasSpent.title = `Total Trading Fee/Gas: ${totalGasSpentSomi.toFixed(4)} ${baseSym}`;
         elKpiGasSpent.style.display = "";
       } else {
@@ -4551,12 +4552,33 @@
       : "";
 
     // Compact Tx badge: display compact ...3e27 with full hash tooltip
+    const isSomniaTx = typeof order.txHash === "string" && order.txHash.startsWith("0x");
     const txBadge = order.txHash
-      ? `<a href="https://explorer.somnia.network/tx/${order.txHash}" target="_blank" rel="noopener noreferrer" class="act-tx-link" title="Somnia Tx: ${order.txHash}">⛓️ ...${order.txHash.slice(-4)}</a>`
-      : "";
-    const gasBadge = order.gasFeeSomi !== undefined
-      ? `<span class="act-gas-badge" title="Gas fee paid for this tx: ${order.gasFeeSomi.toFixed(6)} SOMI">⛽ ${order.gasFeeSomi.toFixed(5)} SOMI</span>`
-      : "";
+      ? (isSomniaTx
+          ? `<a href="https://explorer.somnia.network/tx/${order.txHash}" target="_blank" rel="noopener noreferrer" class="act-tx-link" title="Somnia Tx: ${order.txHash}">⛓️ ...${order.txHash.slice(-4)}</a>`
+          : `<span class="act-tx-link" title="Order #${order.txHash}">#${order.txHash.length > 8 ? order.txHash.slice(-6) : order.txHash}</span>`)
+      : (order.orderId ? `<span class="act-tx-link" title="Order #${order.orderId}">#${String(order.orderId).length > 8 ? String(order.orderId).slice(-6) : order.orderId}</span>` : "");
+
+    let feeBadge = "";
+    const rawFee = Number(order.fee || 0);
+    const gasFeeQuote = Number(order.gasFeeQuote || order.gasFeeUsdso || 0);
+    if (order.gasFeeSomi !== undefined && order.gasFeeSomi > 0) {
+      feeBadge = `<span class="act-gas-badge" title="Gas fee paid for this tx: ${order.gasFeeSomi.toFixed(6)} SOMI">⛽ ${order.gasFeeSomi.toFixed(5)} SOMI</span>`;
+    } else if (rawFee > 0 || gasFeeQuote > 0) {
+      const feeAssetStr = (order.feeAsset || "").toUpperCase();
+      let feeDisplay = "";
+      let feeTitle = "";
+      if (gasFeeQuote > 0) {
+        feeDisplay = `Fee -$${gasFeeQuote < 0.01 ? gasFeeQuote.toFixed(4) : gasFeeQuote.toFixed(2)}`;
+        feeTitle = `Trading Fee: $${gasFeeQuote.toFixed(4)}${rawFee > 0 ? ` (${rawFee} ${feeAssetStr})` : ""}`;
+      } else if (rawFee > 0) {
+        feeDisplay = `Fee -${rawFee < 0.001 ? rawFee.toFixed(6) : rawFee.toFixed(4)} ${feeAssetStr}`;
+        feeTitle = `Trading Fee: ${rawFee} ${feeAssetStr}`;
+      }
+      if (feeDisplay) {
+        feeBadge = `<span class="act-gas-badge" style="background: rgba(251, 191, 36, 0.12); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.3);" title="${feeTitle}">🏷️ ${feeDisplay}</span>`;
+      }
+    }
     const compAmount = Number(order.gasCompSomi || order.gasCompBase || 0);
     const gasCompBadge = compAmount > 0
       ? `<span class="act-gas-badge" style="background: rgba(16, 185, 129, 0.15); color: #4ade80; border-color: rgba(16, 185, 129, 0.4);" title="Compensated to Wallet: ${compAmount.toFixed(4)} SOMI (-$${(Number(order.gasLossUsdso || order.gasLossQuote || 0)).toFixed(4)}) | Net Lot: ${(Number(order.netQty || order.qty)).toFixed(4)} SOMI">🛡️ +${compAmount.toFixed(4)} SOMI Gas Ret</span>`
@@ -4579,7 +4601,7 @@
           <span>${notionalStr ? `${notionalStr} • ` : ""}${qtyStr}</span>
           ${iocBadge}
           ${txBadge}
-          ${gasBadge}
+          ${feeBadge}
           ${gasCompBadge}
         </div>
       </div>
