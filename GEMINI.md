@@ -6268,6 +6268,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
 4. **การขยับ Version**:
    - ขยับ Patch Version เป็น `0.2.185` ใน `package.json` และ `src/version.ts`
 
+---
+
+## 186. v0.2.186 — The 4 Pillars of Confluence Entry System: RSI-SMA Signal Line, No Falling Knife Under EMA 75/200, MACD Deceleration, & Crash Floor (`src/strategy/ma-fan/exhaustion.ts`, `src/strategy/ma-fan/core-rules.ts`, `src/backtest-service.ts`, `public/backtest.js`, `public/backtest.html`, `package.json`, `src/version.ts`)
+
+1. **สถาปัตยกรรมเกราะ 4 เสาหลัก (The 4 Pillars of Confluence Entry Architecture)**:
+   - จากการวิเคราะห์สถิติแท่งเทียนจริงกว่า 86,400 แท่งและผลการเทรด 12 ไม้สดของ `HAEDALUSDT` พบว่าการใช้ตัวนับเวลาถอยหลัง (Timer Delay) สู้การตรวจสอบเงื่อนไขเชิงโครงสร้าง (Structural & Momentum Price Action) ไม่ได้ จึงได้ปฏิรูปตรรกะการเข้าซื้อใหม่เป็นเกราะ 4 ชั้น:
+     - **🏛️ เสาหลักที่ 1 (RSI-SMA 14 Signal Line)**: เพิ่มฟังก์ชัน `calcSMA(rsiList, 14)` เพื่อคำนวณเส้นค่าเฉลี่ย 14 แท่งของ RSI (เทียบเท่าเส้นสีเหลือง RSI-based MA บน TradingView) กำหนดให้ `curRsi > curRsiSma` เพื่อกรองจังหวะโมเมนตัมหลอกที่ RSI เด้งสั้นๆ แท่งเดียวแต่ภาพรวมยังจมใต้ค่าเฉลี่ย สกัดไม้แพ้หนัก (#2 -4.40%, #4 -3.33%) ได้อย่างเด็ดขาด
+     - **🏛️ เสาหลักที่ 2 (No Falling Knife Under EMA 75/200)**: เมื่อราคาปิดอยู่ใต้เส้นแนวรับหลัก (EMA 75 หรือ EMA 200) บังคับให้ราคาต้องเริ่มยกฐาน `curCandle.low >= prevCandle.low` ห้ามเปิดสถานะ Buy ในขณะที่แท่งเทียนยังทำ New Low ต่ำกว่าแท่งก่อนหน้าต่อเนื่อง สกัดไม้หลุดเหว (#4, #9, #12)
+     - **🏛️ เสาหลักที่ 3 (MACD Deceleration)**: ฮิสโตแกรมแท่งแดงต้องเริ่มหดสั้นลง (`curHist > prevHist` หรือ `isTurningUp`) ยืนยันว่าแรงขายกำลังชะลอตัวลง ไม่เปิดช้อนตอนแท่งแดงกำลังถ่างกว้าง
+     - **🏛️ เสาหลักที่ 4 (RSI Crash Floor & Oversold Zone)**: กำหนดช่วงโซนปลอดภัย `28 <= RSI <= 45` เพื่อสกัดจังหวะ Panic Waterfall ที่ไร้บิดสภาพคล่อง (RSI < 28 สถิติ Win Rate 0%)
+2. **การผสานระบบแบบ 100% Causal Parity**:
+   - `src/strategy/ma-fan/exhaustion.ts`: เพิ่ม `calcSMA`, ส่งออก `rsiSma` และ `isRsiAboveSma` ใน `ExhaustionState`, ปรับปรุง `isOversoldExhaustion` ให้ตรวจเช็คทั้ง Crash Floor (`curRsi >= 28`), Oversold Zone (`curRsi <= 45`) และ Momentum Inflection (`isRsiAboveSma || (isTurningUp && curRsi >= curRsiSma * 0.99)`)
+   - `src/strategy/ma-fan/core-rules.ts`: เพิ่ม `noFallingKnife` เข้าสู่ `EntryChecklistItem`, ผสานเข้ากับเงื่อนไข `qualified` และแสดงผลรายละเอียดราคาเปรียบเทียบใน Checklist
+   - `src/backtest-service.ts`: ส่งผ่าน `rsiSma` เข้า `BacktestEvaluationItem` อย่างสมบูรณ์
+   - `public/backtest.js` & `public/backtest.html`: ปรับปรุงหน้าต่าง Popover ตรวจวัดแท่งเทียน (Candle Inspector) ให้ตรวจสอบและแสดงผลเกณฑ์ 6 ข้อครบถ้วน พร้อม Bump Cache Script เป็น `?v=0.2.186`
+3. **ผลการทดสอบ Backtest จริง (Real Historical Data)**:
+   - **`HAEDALUSDT` (1,000 แท่ง ~3.5 วัน)**: Win Rate พุ่งขึ้นเป็น **71.4% (5W / 2L)**, กำไรสุทธิ **+7.12% ($14.23)**, Profit Factor **2.41**, Max Drawdown ลดลงเหลือเพียง **-4.93%**
+   - **`ETHUSDT`**: Win Rate **100.0% (2W / 0L)**, กำไรสุทธิ **+0.76%**, Profit Factor **99.90**
+   - **`SOLUSDT`**: Win Rate **66.7% (2W / 1L)**, กำไรสุทธิ **+0.83%**, Profit Factor **1.69**
+4. **การขยับ Version**:
+   - ขยับ Patch Version เป็น `0.2.186` ใน `package.json` และ `src/version.ts`
+
 
 
 

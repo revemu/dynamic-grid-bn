@@ -114,6 +114,7 @@ export interface BacktestEvaluationItem {
   isFanningDown: boolean;
   isHookUp: boolean;
   rsi: number;
+  rsiSma?: number;
   isOversoldExhaustion: boolean;
   ema4: number;
   ema8: number;
@@ -469,6 +470,7 @@ export class BacktestService {
           isFanningDown: ribK.isFanningDown,
           isHookUp: ribK.isHookUp,
           rsi: exhK.rsi,
+          rsiSma: exhK.rsiSma,
           isOversoldExhaustion: exhK.isOversoldExhaustion,
           ema4: ribK.ema4,
           ema8: ribK.ema8,
@@ -522,6 +524,7 @@ export class BacktestService {
           isFanningDown: ribbon.isFanningDown,
           isHookUp: ribbon.isHookUp,
           rsi: exhaustion.rsi,
+          rsiSma: exhaustion.rsiSma,
           isOversoldExhaustion: exhaustion.isOversoldExhaustion,
           ema4: ribbon.ema4,
           ema8: ribbon.ema8,

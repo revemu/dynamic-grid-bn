@@ -478,6 +478,7 @@
             isFanningDown: ev.isFanningDown,
             isHookUp: ev.isHookUp,
             rsi: ev.rsi,
+            rsiSma: ev.rsiSma,
             isOversoldExhaustion: ev.isOversoldExhaustion,
             lowerWickPct,
           });
@@ -620,24 +621,27 @@
     const isSpreadReady = data.spreadPct >= targetSpread;
     const spreadDiff = data.spreadPct - targetSpread;
 
-    // 5-point Sniper conditions (Exact match with MaFanCoreRules)
+    // 6-point Sniper conditions (Exact match with MaFanCoreRules)
     const condOrder = data.isFanningDown && data.ema4 <= data.ema25;
     const condSpread = isSpreadReady && data.ema4 <= data.ema25;
     const condHook = data.isHookUp && c.close < data.ema25 && c.close <= data.ema25 * (1 - 0.0030);
     const condExhaust = !!data.isOversoldExhaustion;
     const condAbsorption = (data.lowerWickPct || 0) >= 15;
+    const isBelowMajor = (data.ema75 > 0 && c.close < data.ema75) || (data.ema200 > 0 && c.close < data.ema200);
+    const condNoKnife = !isBelowMajor || !data.prevCandle || (c.low >= data.prevCandle.low);
 
-    const allReady = condOrder && condSpread && condHook && condExhaust && condAbsorption;
+    const allReady = condOrder && condSpread && condHook && condExhaust && condAbsorption && condNoKnife;
 
     let verdictHtml = "";
     if (allReady) {
-      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบ 5 ข้อ! (เปิดไม้ BUY ณ ราคาปิดแท่ง $${fmtPrice(c.close)} เข้าสู่แท่งถัดไป)</div>`;
+      verdictHtml = `<div class="cic-verdict cic-verdict-ready">🟢 แท่งนี้เข้าเกณฑ์ Sniper ครบถ้วน! (เปิดไม้ BUY ณ ราคาปิดแท่ง $${fmtPrice(c.close)} เข้าสู่แท่งถัดไป)</div>`;
     } else {
       const missing = [];
       if (!condSpread) missing.push(data.ema4 > data.ema25 ? `พัดกางผิดทิศ (EMA4 อยู่เหนือ EMA25)` : `Spread ขาดอีก ${Math.abs(spreadDiff).toFixed(2)}%`);
       if (!condHook) missing.push(c.close >= data.ema25 * (1 - 0.0030) ? `ราคาอยู่ชิด/สูงกว่า EMA25 เกินไป (ขาด Upside Room ≥ 0.30%)` : `ปลายพัดยังไม่ม้วนตัวขึ้น (Hook Up)`);
       if (!condOrder) missing.push(`พัดยังไม่เรียงตัวขาลง`);
-      if (!condExhaust) missing.push(`ยังไม่เข้าโซนขายหมดแรง (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'} > 42)`);
+      if (!condNoKnife) missing.push(`อยู่ใต้เส้นใหญ่ EMA 75/200 และทำ New Low (มีดกำลังหล่น)`);
+      if (!condExhaust) missing.push(`ยังไม่เข้าเกณฑ์กลับตัว (RSI ${typeof data.rsi === 'number' ? data.rsi.toFixed(1) : '--'}${data.rsiSma ? ` / SMA ${data.rsiSma.toFixed(1)}` : ''})`);
       if (!condAbsorption) missing.push(`ไส้ล่างซึมซับแรงขายต่ำเกินไป (${(data.lowerWickPct || 0).toFixed(1)}% < 15%)`);
       verdictHtml = `<div class="cic-verdict cic-verdict-wait">⚠️ แท่งนี้ยังไม่เข้าเกณฑ์: ${missing.join(", ")}</div>`;
     }

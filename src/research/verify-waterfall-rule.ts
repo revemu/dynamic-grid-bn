@@ -34,9 +34,17 @@ for (let i = 0; i < 20; i++) {
 
 // 2. Test evaluateEntry with waterfallGuardMode
 {
-  // Make bar 19 a hook bar with 15%+ lower wick
-  // open = 95, close = 96, low = 94, high = 97
-  // lowerWick = 95 - 94 = 1.0, range = 97 - 94 = 3.0 -> wickPct = 33% >= 15%
+  // Make bar 18 bottom out at 94, and bar 19 a hook bar with 15%+ lower wick (low = 94 >= bar 18 low)
+  candles[18] = {
+    time: 1000 + 18 * 300,
+    open: 97,
+    high: 97,
+    low: 94,
+    close: 95,
+    volume: 1000,
+    isClosed: true,
+  };
+
   candles[19] = {
     time: 1000 + 19 * 300,
     open: 95,
@@ -122,7 +130,7 @@ for (let i = 0; i < 20; i++) {
       time: 1000 + i * 300,
       open: 96.0,
       high: 96.5,
-      low: 95.8,
+      low: 94.0,
       close: 96.2, // green
       volume: 1000,
       isClosed: true,

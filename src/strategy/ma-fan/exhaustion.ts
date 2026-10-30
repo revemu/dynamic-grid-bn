@@ -46,9 +46,30 @@ export function calcMACD(candles: Candle[], fast = 12, slow = 26, signal = 9) {
   return { macd: macdLine, signal: signalLine, hist };
 }
 
+/**
+ * Simple Moving Average (SMA) of numerical series (e.g. RSI Signal Line, matching TradingView RSI-based MA)
+ */
+export function calcSMA(values: number[], period: number = 14): number[] {
+  const n = values.length;
+  const sma: number[] = new Array(n).fill(values[0] ?? 50);
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    sum += values[i]!;
+    if (i >= period) {
+      sum -= values[i - period]!;
+      sma[i] = sum / period;
+    } else {
+      sma[i] = sum / (i + 1);
+    }
+  }
+  return sma;
+}
+
 export interface ExhaustionState {
   rsi: number;
   prevRsi: number;
+  rsiSma?: number;
+  isRsiAboveSma?: boolean;
   macd: {
     macd: number;
     signal: number;
@@ -66,6 +87,7 @@ export class ExhaustionEngine {
     if (n === 0) return [];
 
     const rsiList = calcRSI(candles, 14);
+    const rsiSmaList = calcSMA(rsiList, 14);
     const { macd, signal, hist } = calcMACD(candles, 12, 26, 9);
     const results: ExhaustionState[] = new Array(n);
 
@@ -73,18 +95,30 @@ export class ExhaustionEngine {
       const prevIdx = Math.max(0, idx - 1);
       const curRsi = rsiList[idx]!;
       const prevRsi = rsiList[prevIdx]!;
+      const curRsiSma = rsiSmaList[idx]!;
       const curHist = hist[idx]!;
       const prevHist = hist[prevIdx]!;
 
       const isTurningUp = curHist > prevHist;
       const isTurningDown = curHist < prevHist;
+      const isRsiAboveSma = curRsi > curRsiSma;
 
-      const isOversoldExhaustion = (prevRsi <= 42 || curRsi <= 38 || (isTurningUp && prevRsi <= 45)) && curRsi < 60;
+      // 4 Pillars Confluence:
+      // 1. Crash Floor: curRsi >= 28 (avoid catching falling knife panic dumps)
+      // 2. Oversold Zone: (prevRsi <= 42 || curRsi <= 42 || (isTurningUp && prevRsi <= 45)) && curRsi < 55
+      // 3. Momentum Deceleration / RSI-SMA cross: (isRsiAboveSma || (isTurningUp && curRsi >= curRsiSma * 0.99))
+      const isCrashKnife = curRsi < 28;
+      const inOversoldZone = (prevRsi <= 42 || curRsi <= 42 || (isTurningUp && prevRsi <= 45)) && curRsi < 55;
+      const hasMomentumReversal = isRsiAboveSma || (isTurningUp && curRsi >= curRsiSma * 0.99);
+
+      const isOversoldExhaustion = !isCrashKnife && inOversoldZone && hasMomentumReversal;
       const isOverboughtExhaustion = curRsi >= 70 || (isTurningDown && curRsi >= 55);
 
       results[idx] = {
         rsi: curRsi,
         prevRsi,
+        rsiSma: curRsiSma,
+        isRsiAboveSma,
         macd: {
           macd: macd[idx]!,
           signal: signal[idx]!,
@@ -103,26 +137,36 @@ export class ExhaustionEngine {
   public static evaluate(candles: Candle[], targetIdx?: number): ExhaustionState {
     const idx = targetIdx !== undefined ? targetIdx : candles.length - 1;
     const rsiList = calcRSI(candles, 14);
+    const rsiSmaList = calcSMA(rsiList, 14);
     const { macd, signal, hist } = calcMACD(candles, 12, 26, 9);
 
     const prevIdx = Math.max(0, idx - 1);
     const curRsi = rsiList[idx]!;
     const prevRsi = rsiList[prevIdx]!;
+    const curRsiSma = rsiSmaList[idx]!;
     const curHist = hist[idx]!;
     const prevHist = hist[prevIdx]!;
 
     const isTurningUp = curHist > prevHist;
     const isTurningDown = curHist < prevHist;
+    const isRsiAboveSma = curRsi > curRsiSma;
 
-    // Oversold exhaustion: RSI was low (<= 42) or currently oversold (<= 38), or MACD histogram turning up while RSI is in dip (<= 45). Never oversold if curRsi >= 60.
-    const isOversoldExhaustion = (prevRsi <= 42 || curRsi <= 38 || (isTurningUp && prevRsi <= 45)) && curRsi < 60;
+    // 4 Pillars Confluence:
+    // 1. Crash Floor: curRsi >= 28 (avoid catching falling knife panic dumps)
+    // 2. Oversold Zone: (prevRsi <= 42 || curRsi <= 42 || (isTurningUp && prevRsi <= 45)) && curRsi < 55
+    // 3. Momentum Deceleration / RSI-SMA cross: (isRsiAboveSma || (isTurningUp && curRsi >= curRsiSma * 0.99))
+    const isCrashKnife = curRsi < 28;
+    const inOversoldZone = (prevRsi <= 42 || curRsi <= 42 || (isTurningUp && prevRsi <= 45)) && curRsi < 55;
+    const hasMomentumReversal = isRsiAboveSma || (isTurningUp && curRsi >= curRsiSma * 0.99);
 
-    // Overbought exhaustion: RSI was above 70 or MACD histogram turned down
+    const isOversoldExhaustion = !isCrashKnife && inOversoldZone && hasMomentumReversal;
     const isOverboughtExhaustion = curRsi >= 70 || (isTurningDown && curRsi >= 55);
 
     return {
       rsi: curRsi,
       prevRsi,
+      rsiSma: curRsiSma,
+      isRsiAboveSma,
       macd: {
         macd: macd[idx]!,
         signal: signal[idx]!,

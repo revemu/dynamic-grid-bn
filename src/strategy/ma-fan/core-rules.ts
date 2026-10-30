@@ -17,7 +17,7 @@ export interface WaterfallMetrics {
 }
 
 export interface EntryChecklistItem {
-  id: "spread" | "order" | "hook" | "oversold" | "upside" | "wick" | "waterfall" | "rr" | "macroGate" | "circuitBreaker";
+  id: "spread" | "order" | "hook" | "oversold" | "noFallingKnife" | "upside" | "wick" | "waterfall" | "rr" | "macroGate" | "circuitBreaker";
   name: string;
   passed: boolean;
   actualText: string;
@@ -169,6 +169,7 @@ export class MaFanCoreRules {
     macroGateMode?: "off" | "noDeepBear" | "bullOnly";
     htfRegime?: HtfRegime;
     enableUpsideFloor?: boolean;
+    enableNoFallingKnife?: boolean;
     circuitBreakerActive?: boolean;
   }): EntryDecision {
     const {
@@ -200,6 +201,12 @@ export class MaFanCoreRules {
     const lowerWick = curCandle ? Math.min(curCandle.open, curCandle.close) - curCandle.low : 0;
     const lowerWickPct = range > 0 ? (lowerWick / range) * 100 : 0;
     const hasLowerWickAbsorption = lowerWickPct >= 15;
+
+    // No Falling Knife Check: When price is below EMA75 or EMA200, current candle's low must be >= previous candle's low (forming an absorption/higher low instead of printing lower lows)
+    const enableNoFallingKnife = opts.enableNoFallingKnife !== false;
+    const prevCandle = currentIndex > 0 ? candles[currentIndex - 1] : undefined;
+    const isBelowMajorEma = (ribbon.ema75 > 0 && closePrice < ribbon.ema75) || (ribbon.ema200 > 0 && closePrice < ribbon.ema200);
+    const passesNoFallingKnife = !enableNoFallingKnife || !isBelowMajorEma || !prevCandle || (curCandle !== undefined && curCandle.low >= prevCandle.low);
 
     // Dynamic SL: Look back 11 bars (idx - 10 to idx) for lowest point
     const recentLows = candles.slice(Math.max(0, currentIndex - 10), currentIndex + 1).map((x) => x.low);
@@ -300,8 +307,17 @@ export class MaFanCoreRules {
         id: "oversold",
         name: "แรงขายหมด (Oversold)",
         passed: exhaustion.isOversoldExhaustion,
-        actualText: `RSI ${typeof exhaustion.rsi === "number" ? exhaustion.rsi.toFixed(1) : "--"}${exhaustion.isOversoldExhaustion ? " (ขายหมดแรง)" : ""}`,
-        requiredText: "RSI ≤ 45 หรือ MACD งัดขึ้น",
+        actualText: `RSI ${typeof exhaustion.rsi === "number" ? exhaustion.rsi.toFixed(1) : "--"}${exhaustion.rsiSma ? ` (SMA ${exhaustion.rsiSma.toFixed(1)})` : ""}${exhaustion.isOversoldExhaustion ? " (ตัดขึ้น/หมดแรง ✅)" : ""}`,
+        requiredText: "RSI 28-45 & เหนือ RSI-SMA/MACD งัด",
+      },
+      {
+        id: "noFallingKnife",
+        name: "ไม่รับมีดหล่น (No Falling Knife)",
+        passed: passesNoFallingKnife,
+        actualText: isBelowMajorEma
+          ? (passesNoFallingKnife ? "ยกฐาน (Low ≥ แท่งก่อน)" : "ทำ New Low ต่ำกว่าแท่งก่อน")
+          : "อยู่เหนือเส้น EMA 75/200",
+        requiredText: isBelowMajorEma ? "ใต้เส้นใหญ่: Low ≥ แท่งก่อน" : "ผ่านอัตโนมัติ",
       },
       {
         id: "upside",
@@ -379,7 +395,8 @@ export class MaFanCoreRules {
       ribbon.isHookUp &&
       exhaustion.isOversoldExhaustion &&
       isDownside &&
-      hasLowerWickAbsorption;
+      hasLowerWickAbsorption &&
+      passesNoFallingKnife;
 
     if (!qualified) {
       return {
