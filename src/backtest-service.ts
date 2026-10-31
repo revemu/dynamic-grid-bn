@@ -89,6 +89,7 @@ export interface MarketScanOptions {
   tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid";
   tradeDirection?: "long" | "short" | "both";
   enableBaseConfirmationFilter?: boolean;
+  lockChannelInPosition?: boolean;
   onProgress?: (info: { index: number; total: number; symbol: string; candlesCount: number; pnlPct?: number; winRate?: number; tradesCount?: number }) => void;
 }
 
@@ -152,6 +153,7 @@ export interface BacktestRecord {
   macroGateMode?: "off" | "noDeepBear" | "bullOnly";
   enableUpsideFloor?: boolean;
   enableCircuitBreaker?: boolean;
+  lockChannelInPosition?: boolean;
   summary: BacktestSummary;
   trades: BacktestTrade[];
   markers: BacktestMarker[];
@@ -168,6 +170,7 @@ export interface BacktestHistoryItem {
   spreadThreshold: number;
   isAutoCalibrated?: boolean;
   useRatchetSl?: boolean;
+  lockChannelInPosition?: boolean;
   summary: BacktestSummary;
   tradeCount: number;
 }
@@ -361,6 +364,7 @@ export class BacktestService {
       costModel?: { feePctPerSide: number; slippagePctPerFill: number };
       saveToHistory?: boolean;
       enableBaseConfirmationFilter?: boolean;
+  lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
       minChannelWidthPct?: number;
@@ -380,6 +384,16 @@ export class BacktestService {
     for (let k = 0; k < warmup; k++) {
       dow.addCandle(candles[k]);
     }
+
+    const lockChannelInPosition = opts.lockChannelInPosition !== false;
+    let lockedChannel: {
+      floor: number;
+      ceiling: number;
+      center: number;
+      channelSpan: number;
+      buyLevels: number[];
+      sellTargets: number[];
+    } | null = null;
 
     let cash = initialCapital;
     let heldLots: Array<{
@@ -415,27 +429,56 @@ export class BacktestService {
         maxChannelWidthPct: opts.maxChannelWidthPct ?? 20.0,
         floorBufferPct: opts.floorBufferPct ?? 0.0,
       });
-      const floor = structure.bottomBound;
-      const ceiling = structure.upperBound;
-      const center = structure.centerPrice;
-      const channelSpan = ceiling - floor;
-      if (channelSpan <= 0) continue;
 
-      // 4 Buy Levels: Level 1 (45%), Level 2 (33%), Level 3 (20%), Level 4 (8% above floor)
-      const buyLevels = [
-        floor + channelSpan * 0.45,
-        floor + channelSpan * 0.33,
-        floor + channelSpan * 0.20,
-        floor + channelSpan * 0.08,
-      ];
+      let floor: number;
+      let ceiling: number;
+      let center: number;
+      let channelSpan: number;
+      let buyLevels: number[];
+      let sellTargets: number[];
 
-      // 4 Sell Targets: Target 1 (55%), Target 2 (68%), Target 3 (80%), Target 4 (92% above floor)
-      const sellTargets = [
-        floor + channelSpan * 0.55,
-        floor + channelSpan * 0.68,
-        floor + channelSpan * 0.80,
-        floor + channelSpan * 0.92,
-      ];
+      const isHoldingPosition = heldLots.length > 0;
+
+      if (lockChannelInPosition && isHoldingPosition && lockedChannel) {
+        // Position Lock: Freeze channel until all lots exit
+        floor = lockedChannel.floor;
+        ceiling = lockedChannel.ceiling;
+        center = lockedChannel.center;
+        channelSpan = lockedChannel.channelSpan;
+        buyLevels = lockedChannel.buyLevels;
+        sellTargets = lockedChannel.sellTargets;
+      } else {
+        floor = structure.bottomBound;
+        ceiling = structure.upperBound;
+        center = structure.centerPrice;
+        channelSpan = ceiling - floor;
+        if (channelSpan <= 0) continue;
+
+        // 4 Buy Levels: Level 1 (45%), Level 2 (33%), Level 3 (20%), Level 4 (8% above floor)
+        buyLevels = [
+          floor + channelSpan * 0.45,
+          floor + channelSpan * 0.33,
+          floor + channelSpan * 0.20,
+          floor + channelSpan * 0.08,
+        ];
+
+        // 4 Sell Targets: Target 1 (55%), Target 2 (68%), Target 3 (80%), Target 4 (92% above floor)
+        sellTargets = [
+          floor + channelSpan * 0.55,
+          floor + channelSpan * 0.68,
+          floor + channelSpan * 0.80,
+          floor + channelSpan * 0.92,
+        ];
+
+        // Dynamic Trailing: when channel moves while holding lots, update sell targets
+        if (!lockChannelInPosition && isHoldingPosition) {
+          for (const lot of heldLots) {
+            const dynamicTarget = sellTargets[lot.index] ?? (lot.buyPrice * 1.015);
+            const minProfitableTarget = lot.buyPrice * 1.0085;
+            lot.targetPrice = Math.max(dynamicTarget, minProfitableTarget);
+          }
+        }
+      }
 
       const floorBuf = opts.floorBufferPct ?? 0.0;
       const cutLossPrice = floorBuf > 0 ? floor * (1 - floorBuf / 100) : floor * 0.985;
@@ -533,6 +576,9 @@ export class BacktestService {
         remainingLots.push(lot);
       }
       heldLots = remainingLots;
+      if (heldLots.length === 0) {
+        lockedChannel = null;
+      }
 
       // 2. Evaluate Grid Buys (Tranche Size = 25% of Max Inventory)
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
@@ -566,6 +612,17 @@ export class BacktestService {
               targetPrice,
               costQuote: invest * costPerFill,
             });
+
+            if (!lockedChannel) {
+              lockedChannel = {
+                floor,
+                ceiling,
+                center,
+                channelSpan,
+                buyLevels: [...buyLevels],
+                sellTargets: [...sellTargets],
+              };
+            }
 
             markers.push({
               time: c.time,
@@ -674,6 +731,7 @@ export class BacktestService {
       macroGateMode: "off",
       enableUpsideFloor: false,
       enableCircuitBreaker: false,
+      lockChannelInPosition,
       summary,
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
@@ -724,6 +782,7 @@ export class BacktestService {
       };
       candlesHtf?: Candle[];
       enableBaseConfirmationFilter?: boolean;
+  lockChannelInPosition?: boolean;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -759,6 +818,16 @@ export class BacktestService {
     const candlesHtf = opts.candlesHtf && opts.candlesHtf.length > 0
       ? opts.candlesHtf
       : BacktestService.aggregateCandles(candles, 15);
+
+    const lockChannelInPosition = opts.lockChannelInPosition !== false;
+    let lockedChannel: {
+      floor: number;
+      ceiling: number;
+      center: number;
+      channelSpan: number;
+      buyLevels: number[];
+      sellTargets: number[];
+    } | null = null;
 
     // Dow Structure Engine for Dynamic Grid
     const dow = new DowStructureEngine(3, true, 20.0, 300);
@@ -842,10 +911,46 @@ export class BacktestService {
       dow.addCandle(c);
 
       const structure = dow.getStructure(c.close, undefined, { useOnlyClosedCandles: true });
-      const floor = structure.bottomBound;
-      const ceiling = structure.upperBound;
-      const center = structure.centerPrice;
-      const channelSpan = ceiling - floor;
+      let floor: number;
+      let ceiling: number;
+      let center: number;
+      let channelSpan: number;
+      let buyLevels: number[];
+      let sellTargets: number[];
+
+      const isHoldingPosition = heldLots.length > 0;
+      if (lockChannelInPosition && isHoldingPosition && lockedChannel) {
+        floor = lockedChannel.floor;
+        ceiling = lockedChannel.ceiling;
+        center = lockedChannel.center;
+        channelSpan = lockedChannel.channelSpan;
+        buyLevels = lockedChannel.buyLevels;
+        sellTargets = lockedChannel.sellTargets;
+      } else {
+        floor = structure.bottomBound;
+        ceiling = structure.upperBound;
+        center = structure.centerPrice;
+        channelSpan = ceiling - floor;
+        buyLevels = [
+          floor + channelSpan * 0.45,
+          floor + channelSpan * 0.33,
+          floor + channelSpan * 0.20,
+          floor + channelSpan * 0.08,
+        ];
+        sellTargets = [
+          floor + channelSpan * 0.55,
+          floor + channelSpan * 0.68,
+          floor + channelSpan * 0.80,
+          floor + channelSpan * 0.92,
+        ];
+        if (!lockChannelInPosition && isHoldingPosition) {
+          for (const lot of heldLots) {
+            const dynamicTarget = sellTargets[lot.index] ?? (lot.buyPrice * 1.015);
+            const minProfitableTarget = lot.buyPrice * 1.0085;
+            lot.targetPrice = Math.max(dynamicTarget, minProfitableTarget);
+          }
+        }
+      }
 
       // HTF Regime & Ribbon Evaluation for Sniper
       const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, c.time, tp1Ratio);
@@ -990,19 +1095,11 @@ export class BacktestService {
           Boolean(structure.isDowntrendDropActive)
         );
 
+        if (heldLots.length === 0) {
+          lockedChannel = null;
+        }
+
         if (!isHlWaiting && currentGridInv + trancheQuote <= gridInitialCap && gridCash >= trancheQuote && heldLots.length < 4) {
-          const buyLevels = [
-            floor + channelSpan * 0.45,
-            floor + channelSpan * 0.33,
-            floor + channelSpan * 0.20,
-            floor + channelSpan * 0.08,
-          ];
-          const sellTargets = [
-            floor + channelSpan * 0.55,
-            floor + channelSpan * 0.68,
-            floor + channelSpan * 0.80,
-            floor + channelSpan * 0.92,
-          ];
 
           for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
             const bl = buyLevels[lvlIdx];
@@ -1028,6 +1125,17 @@ export class BacktestService {
                 targetPrice,
                 costQuote: invest * costPerFill,
               });
+
+              if (!lockedChannel) {
+                lockedChannel = {
+                  floor,
+                  ceiling,
+                  center,
+                  channelSpan,
+                  buyLevels: [...buyLevels],
+                  sellTargets: [...sellTargets],
+                };
+              }
 
               markers.push({
                 time: c.time,
@@ -1379,6 +1487,7 @@ export class BacktestService {
       macroGateMode,
       enableUpsideFloor,
       enableCircuitBreaker,
+      lockChannelInPosition,
       summary,
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
@@ -1439,6 +1548,7 @@ export class BacktestService {
       onlyEntryIdx?: number;
       trimWarmupPrefix?: boolean;
       enableBaseConfirmationFilter?: boolean;
+  lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
       minChannelWidthPct?: number;
@@ -1461,6 +1571,7 @@ export class BacktestService {
         minChannelWidthPct: opts.minChannelWidthPct,
         maxChannelWidthPct: opts.maxChannelWidthPct,
         floorBufferPct: opts.floorBufferPct,
+        lockChannelInPosition: opts.lockChannelInPosition,
       });
     }
 
@@ -2403,6 +2514,7 @@ export class BacktestService {
               warmupBars: actualWarmup,
               trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
               enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
+              lockChannelInPosition: opts.lockChannelInPosition,
             });
 
             results.push({

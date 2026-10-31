@@ -6850,3 +6850,39 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - การหดลดจำนวนไม้ (Downward Clamping) จะทำงานตลอดเวลาเพื่อล้าง Ghost Lots ทันทีหากเหรียญในกระเป๋าถูกขายออกไปแล้ว
   6. **Bump Version**:
      - ปรับ Version เป็น `0.2.208` ใน `package.json` และ `src/version.ts`
+
+
+---
+
+## 234. Backtest Chart Autoscale & Marker Fixes, Dynamic Trailing vs Position Lock Option (v0.2.209)
+
+- **สาเหตุของปัญหา**:
+  1. **กราฟไม่โหลดในหน้า Backtest (Right Axis ค้างที่ `0.02 - 0.04`)**:
+     - เมื่อผู้ใช้คลิก ลาก หรือซูมแกนราคา (Y-axis) ในหน้าจอ Lightweight Charts จะเปลี่ยนสถานะแกนราคาเป็น `autoScale: false` โดยอัตโนมัติ
+     - ในฟังก์ชัน `displayRecord()` เดิม มีการเรียกเพียง `chart.timeScale().fitContent()` (จัดเฉพาะแกนเวลาแนวนอน X-axis) แต่ขาดการสั่งให้แกนราคาแนวตั้งขยายตัวอัตโนมัติตามข้อมูลใหม่ (`chart.priceScale('right').applyOptions({ autoScale: true })`) ทำให้แกนราคายังคงติดอยู่ที่ช่วงสเกลเริ่มต้น `0.020000 - 0.040000` ส่งผลให้แท่งเทียนราคาจริงของเหรียญ (~`$0.18 - $0.23`) หลุดออกไปนอกหน้าจอด้านบนทั้งหมด
+  2. **ปัญหาเครื่องหมายคำสั่งเทรดซ้ำกันในแท่งเดียวกัน (Duplicate Marker Timestamps in Canvas Mode)**:
+     - ในรอบที่มีการเทรดมากกว่า 80 ไม้ (เช่น 95 ไม้ใน INITUSDT) ระบบเปิดโหมด High Trade Volume Guard โดยใช้ High-Performance Native Canvas Markers
+     - มีจุดเปิด/ปิดไม้ที่มีเวลาแท่งเดียวกันถึง 43 ตำแหน่ง (เช่น ไม้ค้างที่ตัดปิด ณ สิ้นสุดการทดสอบ 4 ไม้ และไม้ Grid ที่ช้อนในแท่งเดียวกัน) ทำให้ Lightweight Charts เกิด Assertion Stumble และล้มเหลวในการเรนเดอร์กราฟ
+  3. **การแสดงผลไม้ค้างท้ายการทดสอบ (`exitType === "OPEN"`)**:
+     - ไม้ค้างที่ตัดปิด ณ แท่งสุดท้ายแสดงป้ายเป็น `🕸️ CUT` สีแดง ทำให้ผู้ใช้สับสนว่าเป็นไม้ Cut Loss แทนที่จะเป็น `📦 OPEN` (ไม้ถือค้าง)
+  4. **ความต้องการเลือกรูปแบบกรอบราคา (Dynamic Trailing vs Position Lock)**:
+     - สำหรับเหรียญที่มีลักษณะสวิงไปมาในกรอบกว้าง การขยับกรอบตามแท่งเทียนปิด (Dynamic Trailing) จะช่วยให้บอทจับรอบกำไรได้ดีกว่าการล็อคกรอบแช่แข็งไว้ที่เดิม จึงจำเป็นต้องมีตัวเลือกให้ผู้ใช้สลับโหมดได้ทั้งบนบอทจริงและในหน้า Backtest Studio
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.209)**:
+  1. **Lightweight Charts Autoscale & Marker Deduplication (`public/backtest.js`)**:
+     - เรียก `chart.priceScale("right").applyOptions({ autoScale: true });` และ `chart.timeScale().fitContent();` ทั้งก่อนและหลังการโหลดข้อมูลแท่งเทียนใน `displayRecord()` เพื่อให้สเกลราคาและแกนเวลาพอดีกับขนาดหน้าจอ 100% เสมอ
+     - นำตรรกะ Marker Deduplication / Merging มายุบรวมจุดมาร์กเกอร์ที่มีเวลาตรงกัน และครอบด้วย `try { candleSeries.setMarkers(mergedCanvasMarkers); } catch (err) { ... }` ป้องกันกราฟแคชจากปัญหา Timestamp ชนกัน
+     - ปรับป้ายของไม้ค้าง (`exitType === "OPEN"`) ให้แสดงเป็น `📦 OPEN (+...%)` หรือ `📦 OPEN (-...%)` สีเขียว/ส้มอย่างถูกต้อง ทั้งในโหมด Canvas Markers และ HTML Badges
+  2. **ตัวเลือกพฤติกรรมกรอบราคาใน Backtest Studio (`public/backtest.html`, `public/backtest.js` & `src/server.ts`)**:
+     - เพิ่ม Dropdown `พฤติกรรมกรอบ (Channel)` ในแถบควบคุมหลักและแถบควบคุม Market Scanner:
+       - `🔄 ขยับกรอบ (Dynamic Trailing - สวิงในกรอบ)` (ค่าเริ่มต้น: เหมาะสำหรับเหรียญ Sideways ในกรอบ)
+       - `🔒 ล็อคกรอบ (Position Lock - ถือไม้ล็อคเดิม)` (แช่แข็งกรอบเดิมจนกว่าจะปิดไม้ครบ)
+     - เชื่อมต่อตัวแปร `lockChannelInPosition` ผ่าน `/api/backtest/run` และ `/api/backtest/scan`
+  3. **Simulation Engine Support for Dynamic Trailing vs Position Lock (`src/backtest-service.ts`)**:
+     - ใน `runDynamicGridSimulation` และ `runDualHybridSimulation`:
+       - เมื่อ `lockChannelInPosition === true`: เมื่อเริ่มถือไม้ (`heldLots.length > 0`) ระบบจะแคช `lockedChannel` แช่แข็ง Floor, Ceiling, Buy Levels, และ Sell Targets ไว้จนกว่าจะปิดออเดอร์หมด (`heldLots.length === 0`)
+       - เมื่อ `lockChannelInPosition === false`: กรอบราคาจะขยับตามแท่งเทียนปิดสมบูรณ์ (`useOnlyClosedCandles: true`) และอัปเดตเป้าขายของแต่ละไม้ (`lot.targetPrice`) ให้ขยับตาม Sell Targets ของกรอบใหม่โดยอัตโนมัติ พร้อมการันตีกำไรขั้นต่ำเหนือต้นทุนไม้
+  4. **Live Bot Settings Modal Dynamic Trailing Switch (`public/index.html` & `public/app.js`)**:
+     - เพิ่ม Toggle Switch ในหน้าต่าง Settings Modal: `"🔒 ล็อคกรอบขณะถือไม้ (Position Lock) / ปิดเพื่อขยับกรอบตามแท่งเทียนปิด (Dynamic Trailing)"` ผูกเข้ากับฟิลด์ `lockChannelInPosition` ในการตั้งค่าบอทจริง
+  5. **Bump Version**:
+     - ปรับ Version เป็น `0.2.209` ใน `package.json` และ `src/version.ts`

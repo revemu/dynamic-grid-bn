@@ -49,6 +49,7 @@
   const inpTradeDirection = document.getElementById("btTradeDirection");
   const inpBudget = document.getElementById("btBudget");
   const inpBaseConfirmation = document.getElementById("btBaseConfirmation");
+  const inpLockChannel = document.getElementById("btLockChannel");
 
   function getSelectedSymbol() {
     if (!inpSymbol) return "BNBFDUSD";
@@ -227,6 +228,7 @@
       },
       rightPriceScale: {
         borderColor: "#22304d",
+        autoScale: true,
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       localization: {
@@ -424,6 +426,11 @@
 
     // 2. Set Candles and EMA lines
     if (record.candles && record.candles.length > 0) {
+      if (chart) {
+        try {
+          chart.priceScale("right").applyOptions({ autoScale: true });
+        } catch {}
+      }
       candleSeries.setData(record.candles);
 
       const hasWarmEmas = Array.isArray(record.evaluations) &&
@@ -544,12 +551,25 @@
     }
 
     // 3. Set Badges on Chart (Circular Badges with Hover Tooltips)
-    candleSeries.setMarkers([]);
+    try {
+      candleSeries.setMarkers([]);
+    } catch {}
     buildOrderBadges(record);
 
     // Fit chart
-    chart.timeScale().fitContent();
+    if (chart) {
+      try {
+        chart.priceScale("right").applyOptions({ autoScale: true });
+        chart.timeScale().fitContent();
+      } catch {}
+    }
     setTimeout(() => {
+      if (chart) {
+        try {
+          chart.priceScale("right").applyOptions({ autoScale: true });
+          chart.timeScale().fitContent();
+        } catch {}
+      }
       updateOrderBadgesPositions();
     }, 60);
 
@@ -850,7 +870,11 @@
           let exitColor = isWin ? "#8b5cf6" : "#ef4444";
           let exitShape = isWin ? "arrowDown" : "square";
 
-          if (isGrid) {
+          if (t.exitType === "OPEN") {
+            exitColor = isWin ? "#10b981" : "#f59e0b";
+            exitShape = "circle";
+            exitText = `📦 OPEN (${isWin ? "+" : ""}${t.pnlPct.toFixed(1)}%)`;
+          } else if (isGrid) {
             exitColor = isWin ? "#3b82f6" : "#ef4444";
             exitText = isWin ? `🕸️ TP (+${t.pnlPct.toFixed(1)}%)` : `🕸️ CUT (${t.pnlPct.toFixed(1)}%)`;
           } else {
@@ -867,7 +891,29 @@
         }
       }
       canvasMarkers.sort((a, b) => a.time - b.time);
-      candleSeries.setMarkers(canvasMarkers);
+
+      const mergedCanvasMarkers = [];
+      for (let i = 0; i < canvasMarkers.length; i++) {
+        const cur = canvasMarkers[i];
+        const prev = mergedCanvasMarkers[mergedCanvasMarkers.length - 1];
+        if (prev && prev.time === cur.time) {
+          if (prev.position !== cur.position) {
+            mergedCanvasMarkers.push({ ...cur });
+          } else {
+            if (cur.text && cur.text !== prev.text) {
+              prev.text = prev.text ? `${prev.text} • ${cur.text}` : cur.text;
+            }
+          }
+        } else {
+          mergedCanvasMarkers.push({ ...cur });
+        }
+      }
+
+      try {
+        candleSeries.setMarkers(mergedCanvasMarkers);
+      } catch (err) {
+        console.warn("Could not set canvas markers:", err);
+      }
       orderBadgesData = [];
       elChartOrderBadgesLayer.innerHTML = "";
       return;
@@ -906,7 +952,19 @@
       }
 
       // 3. Exit Badge
-      if (t.exitType === "GRID_TP") {
+      if (t.exitType === "OPEN") {
+        const isWin = t.pnlPct >= 0;
+        items.push({
+          tradeId: t.id,
+          action: "OPEN",
+          text: "OPEN",
+          time: t.exitTime,
+          price: t.exitPrice,
+          cssClass: isWin ? "badge-tp1" : "badge-sl-fixed",
+          badgeType: "OPEN",
+          trade: t,
+        });
+      } else if (t.exitType === "GRID_TP") {
         items.push({
           tradeId: t.id,
           action: "GRID_TP",
@@ -1372,11 +1430,13 @@
     const tradeMode = inpTradeMode ? inpTradeMode.value : "dip_hunter";
     const tradeDirection = inpTradeDirection ? inpTradeDirection.value : "long";
     const enableBaseConfirmationFilter = inpBaseConfirmation ? inpBaseConfirmation.value === "on" : false;
+    const lockChannelInPosition = inpLockChannel ? inpLockChannel.value === "locked" : false;
 
     const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
     loadingOverlay.style.display = "flex";
     const hlLabel = enableBaseConfirmationFilter ? "HL Base: ON (บอทจริง)" : "HL Base: OFF (Pure Grid)";
-    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection} / ${hlLabel})...`;
+    const chLabel = lockChannelInPosition ? "Channel: Locked (ล็อคกรอบ)" : "Channel: Dynamic (ขยับกรอบ)";
+    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection} / ${hlLabel} / ${chLabel})...`;
 
     try {
       const resp = await fetch("/api/backtest/run", {
@@ -1398,7 +1458,8 @@
           tradeMode,
           tradeDirection,
           enableBaseConfirmationFilter,
-        enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+          enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+          lockChannelInPosition,
         }),
       });
 
@@ -1499,6 +1560,9 @@
       if (inpBaseConfirmation && (data.record.enableBaseConfirmationFilter !== undefined || data.record.options?.enableBaseConfirmationFilter !== undefined)) {
         inpBaseConfirmation.value = (data.record.enableBaseConfirmationFilter ?? data.record.options?.enableBaseConfirmationFilter) ? "on" : "off";
       }
+      if (inpLockChannel && (data.record.lockChannelInPosition !== undefined || data.record.options?.lockChannelInPosition !== undefined)) {
+        inpLockChannel.value = (data.record.lockChannelInPosition ?? data.record.options?.lockChannelInPosition) ? "locked" : "dynamic";
+      }
 
       displayRecord(data.record);
     } catch (err) {
@@ -1560,6 +1624,9 @@
         if (inpBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
           inpBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
         }
+        if (inpLockChannel && cfg.lockChannelInPosition !== undefined) {
+          inpLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";
+        }
         if (inpFastCut) inpFastCut.value = "on";
         if (inpMaxSl) inpMaxSl.value = "1.8";
         if (inpFeeTier) {
@@ -1581,6 +1648,9 @@
         if (scTradeDirection && cfg.maFanTradeDirection) scTradeDirection.value = cfg.maFanTradeDirection;
         if (scBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
           scBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
+        }
+        if (scLockChannel && cfg.lockChannelInPosition !== undefined) {
+          scLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";
         }
         if (scFastCut) scFastCut.value = "on";
         if (scMaxSl) scMaxSl.value = "1.8";
@@ -1615,6 +1685,7 @@
     const enableUpsideFloor = inpUpsideFloor ? inpUpsideFloor.value === "on" : true;
     const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
     const enableBaseConfirmationFilter = inpBaseConfirmation ? inpBaseConfirmation.value === "on" : true;
+    const lockChannelInPosition = inpLockChannel ? inpLockChannel.value === "locked" : false;
 
     const summaryMsg = `ยืนยันการนำ Config จาก Backtest ไปใช้กับบอทจริงหรือไม่?\n\n` +
       `• คู่เหรียญ: ${symbol}\n` +
@@ -1625,6 +1696,7 @@
       `• Upside Floor: ${enableUpsideFloor ? "On (≥ 0.45% to EMA25)" : "Off"}\n` +
       `• Macro Gate: ${macroGateMode === "noDeepBear" ? "No Deep Bear" : macroGateMode === "bullOnly" ? "Bull Only" : "Off"}\n` +
       `• Base Filter (HL): ${enableBaseConfirmationFilter ? "On (รอสร้างฐาน HL - บอทจริง)" : "Off (Pure Grid - ดักเก็บทุกรอบ)"}\n` +
+      `• พฤติกรรมกรอบ: ${lockChannelInPosition ? "🔒 ล็อคกรอบขณะถือไม้ (Position Lock)" : "🔄 ขยับกรอบตามแท่งปิด (Dynamic Trailing)"}\n` +
       `• เงินทุนสูงสุด: $${budget}\n\n` +
       `บอทจริงจะบันทึกและสลับไปใช้คอนฟิกนี้ทันที!`;
 
@@ -1650,6 +1722,7 @@
         maFanMacroGate: macroGateMode,
         enableBaseConfirmationFilter,
         enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+        lockChannelInPosition,
         ...(inpTradeMode && inpTradeMode.value ? { strategyType: inpTradeMode.value } : {}),
       };
 
@@ -1797,6 +1870,7 @@
   const scTradeMode = document.getElementById("scTradeMode");
   const scTradeDirection = document.getElementById("scTradeDirection");
   const scBaseConfirmation = document.getElementById("scBaseConfirmation");
+  const scLockChannel = document.getElementById("scLockChannel");
   const scannerProgressFill = document.getElementById("scannerProgressFill");
 
   function initScannerEvents() {
@@ -1865,6 +1939,7 @@
         const tradeMode = scTradeMode ? scTradeMode.value : (inpTradeMode ? inpTradeMode.value : "dip_hunter");
         const tradeDirection = scTradeDirection ? scTradeDirection.value : (inpTradeDirection ? inpTradeDirection.value : "long");
         const enableBaseConfirmationFilter = scBaseConfirmation ? scBaseConfirmation.value === "on" : false;
+        const lockChannelInPosition = scLockChannel ? scLockChannel.value === "locked" : false;
 
         btnStartScan.disabled = true;
         let pollInterval = null;
@@ -1875,7 +1950,8 @@
         const scopeLabel = scope === "top100" ? "Top 100 USDT" : scope === "top50" ? "Top 50 USDT" : scope === "top20" ? "Top 20 USDT" : scope.toUpperCase();
         const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
         const hlLabel = enableBaseConfirmationFilter ? "HL Base: ON (บอทจริง)" : "HL Base: OFF (Pure Grid)";
-        if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scopeLabel}) บน ${timeframe} ย้อนหลัง ${limit.toLocaleString()} แท่ง (${dayEstimate}) [${hlLabel}]...`;
+        const chLabel = lockChannelInPosition ? "Channel: Locked" : "Channel: Dynamic";
+        if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญ Binance (${scopeLabel}) บน ${timeframe} ย้อนหลัง ${limit.toLocaleString()} แท่ง (${dayEstimate}) [${hlLabel} / ${chLabel}]...`;
         if (scannerCountText) scannerCountText.textContent = "กำลังดาวน์โหลดแท่งเทียนและประมวลผล MA Fan Sniper แบบคู่ขนาน...";
 
         pollInterval = setInterval(async () => {
@@ -1888,7 +1964,7 @@
               if (total > 0) {
                 const pct = Math.min(100, Math.round((index / total) * 100));
                 if (scannerProgressFill) scannerProgressFill.style.width = `${pct}%`;
-                if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญที่ ${index}/${total}: ${symbol} (${pct}%) [${hlLabel}]`;
+                if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนเหรียญที่ ${index}/${total}: ${symbol} (${pct}%) [${hlLabel} / ${chLabel}]`;
                 if (scannerCountText) scannerCountText.textContent = `โหลดแท่งเทียนแล้ว ${candlesCount.toLocaleString()} แท่ง...`;
               }
             }
@@ -1915,7 +1991,8 @@
               tradeMode,
               tradeDirection,
               enableBaseConfirmationFilter,
-        enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+              enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+              lockChannelInPosition,
             }),
           });
 
@@ -2033,6 +2110,7 @@
           if (scTradeMode && inpTradeMode) inpTradeMode.value = scTradeMode.value;
           if (scTradeDirection && inpTradeDirection) inpTradeDirection.value = scTradeDirection.value;
           if (scBaseConfirmation && inpBaseConfirmation) inpBaseConfirmation.value = scBaseConfirmation.value;
+          if (scLockChannel && inpLockChannel) inpLockChannel.value = scLockChannel.value;
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
           runBacktest();
         }
@@ -2054,6 +2132,7 @@
         const tradeMode = scTradeMode ? scTradeMode.value : "dip_hunter";
         const tradeDirection = scTradeDirection ? scTradeDirection.value : "long";
         const enableBaseConfirmationFilter = scBaseConfirmation ? scBaseConfirmation.value === "on" : true;
+        const lockChannelInPosition = scLockChannel ? scLockChannel.value === "locked" : false;
 
         const confirmMsg = `ต้องการสลับบอทจริงไปเทรด ${sym} พร้อมนำ Config ที่สแกนไปใช้งานหรือไม่?\n\n` +
           `• คู่เหรียญ: ${sym}\n` +
@@ -2062,6 +2141,7 @@
           `• Engine: ${tradeMode}\n` +
           `• Direction: ${tradeDirection}\n` +
           `• Base Filter (HL): ${enableBaseConfirmationFilter ? "On (รอสร้างฐาน HL - บอทจริง)" : "Off (Pure Grid - ดักเก็บทุกรอบ)"}\n` +
+          `• พฤติกรรมกรอบ: ${lockChannelInPosition ? "🔒 ล็อคกรอบขณะถือไม้ (Position Lock)" : "🔄 ขยับกรอบตามแท่งปิด (Dynamic Trailing)"}\n` +
           `• SL Mode: ${useRatchetSl ? "Ratchet SL" : "Fixed SL"}\n` +
           `• Circuit Breaker: ${enableCircuitBreaker ? "On" : "Off"}\n` +
           `• Upside Floor: ${enableUpsideFloor ? "On" : "Off"}\n` +
@@ -2084,7 +2164,8 @@
             maFanTradeMode: tradeMode,
             maFanTradeDirection: tradeDirection,
             enableBaseConfirmationFilter,
-        enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+            enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+            lockChannelInPosition,
             maxInventoryQuote: inpBudget ? Number(inpBudget.value) || 200 : 200,
             maxInventoryUsdso: inpBudget ? Number(inpBudget.value) || 200 : 200,
             ...(tradeMode ? { strategyType: tradeMode } : {}),
@@ -2169,6 +2250,12 @@
         }
         if (scBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
           scBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
+        }
+        if (inpLockChannel && cfg.lockChannelInPosition !== undefined) {
+          inpLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";
+        }
+        if (scLockChannel && cfg.lockChannelInPosition !== undefined) {
+          scLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";
         }
         if (inpTradeMode && (cfg.strategyType || cfg.strategyMode)) {
           inpTradeMode.value = cfg.strategyType || cfg.strategyMode;

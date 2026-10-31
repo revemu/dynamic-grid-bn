@@ -5361,6 +5361,7 @@
       setVal("cfg_maxChannelWidthPct", data.maxChannelWidthPct);
       setCheck("cfg_enableNarrowChannelCollapse", data.enableNarrowChannelCollapse !== false);
       setCheck("cfg_adjustChannelOnClosedOnly", data.adjustChannelOnClosedOnly !== false);
+      setCheck("cfg_lockChannelInPosition", data.lockChannelInPosition !== false);
       setVal("cfg_narrowChannelThresholdPct", data.narrowChannelThresholdPct ?? 1.2);
       setVal("cfg_narrowChannelBuyBufferPct", data.narrowChannelBuyBufferPct ?? 0.05);
       setVal("cfg_narrowChannelSellBufferPct", data.narrowChannelSellBufferPct ?? 0.05);
@@ -5642,6 +5643,7 @@
       maxChannelWidthPct: parseFloat(document.getElementById("cfg_maxChannelWidthPct").value),
       enableNarrowChannelCollapse: document.getElementById("cfg_enableNarrowChannelCollapse") ? document.getElementById("cfg_enableNarrowChannelCollapse").checked : true,
       adjustChannelOnClosedOnly: document.getElementById("cfg_adjustChannelOnClosedOnly") ? document.getElementById("cfg_adjustChannelOnClosedOnly").checked : true,
+      lockChannelInPosition: document.getElementById("cfg_lockChannelInPosition") ? document.getElementById("cfg_lockChannelInPosition").checked : true,
       narrowChannelThresholdPct: document.getElementById("cfg_narrowChannelThresholdPct") ? parseFloat(document.getElementById("cfg_narrowChannelThresholdPct").value) : 1.2,
       narrowChannelBuyBufferPct: document.getElementById("cfg_narrowChannelBuyBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelBuyBufferPct").value) : 0.05,
       narrowChannelSellBufferPct: document.getElementById("cfg_narrowChannelSellBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelSellBufferPct").value) : 0.05,

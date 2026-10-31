@@ -758,6 +758,7 @@ export class DashboardServer {
           const fastCutThresholdPct = parsed.fastCutThresholdPct !== undefined ? Number(parsed.fastCutThresholdPct) : -0.80;
           const stagnationBars = parsed.stagnationBars !== undefined ? Number(parsed.stagnationBars) : 6;
           const maxSlPct = parsed.maxSlPct !== undefined ? Number(parsed.maxSlPct) : 1.80;
+          const lockChannelInPosition = parsed.lockChannelInPosition !== undefined ? Boolean(parsed.lockChannelInPosition) : (liveCfg.lockChannelInPosition !== false);
 
           const isAutoSpread = spreadThreshold === "auto";
           const warmupPrefixBars = isAutoSpread ? 1200 : 0;
@@ -831,6 +832,7 @@ export class DashboardServer {
             maxChannelWidthPct: parsed.maxChannelWidthPct !== undefined ? Number(parsed.maxChannelWidthPct) : (Number(liveCfg.maxChannelWidthPct) || 20.0),
             floorBufferPct: parsed.floorBufferPct !== undefined ? Number(parsed.floorBufferPct) : (Number(liveCfg.floorBufferPct) || 0.0),
             maxInventoryQuote: parsed.budget ? Number(parsed.budget) : (Number(liveCfg.maxInventoryQuote) || budget),
+            lockChannelInPosition,
             warmupBars: actualWarmup,
             trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
           });
@@ -872,6 +874,7 @@ export class DashboardServer {
           const fastCutThresholdPct = parsed.fastCutThresholdPct !== undefined ? Number(parsed.fastCutThresholdPct) : -0.80;
           const stagnationBars = parsed.stagnationBars !== undefined ? Number(parsed.stagnationBars) : 6;
           const maxSlPct = parsed.maxSlPct !== undefined ? Number(parsed.maxSlPct) : 1.80;
+          const lockChannelInPosition = parsed.lockChannelInPosition !== undefined ? Boolean(parsed.lockChannelInPosition) : (liveCfg.lockChannelInPosition !== false);
           const enableBaseConfirmationFilter = parsed.enableBaseConfirmationFilter !== undefined ? Boolean(parsed.enableBaseConfirmationFilter) : false;
 
           let scanCostModel: { feePctPerSide: number; slippagePctPerFill: number } | undefined;
@@ -914,6 +917,7 @@ export class DashboardServer {
             tradeMode: parsed.tradeMode || (liveCfg.maFanTradeMode as any) || "dip_hunter",
             tradeDirection: parsed.tradeDirection || (liveCfg.maFanTradeDirection as any) || "long",
             enableBaseConfirmationFilter,
+            lockChannelInPosition,
             onProgress: (p) => {
               this.currentScanProgress = p;
               this.broadcast("scan_progress", p);
