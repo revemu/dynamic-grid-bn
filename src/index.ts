@@ -649,6 +649,8 @@ async function main(): Promise<void> {
               }
             });
             macroFeed.start();
+            (grid as any).resetConfirmedChannel?.();
+            wakeSleep?.();
           }
 
           if ((s.tradingTimeframe && s.tradingTimeframe !== prevTradingTf) || (s.initialCandleCount && s.initialCandleCount !== prevInitial)) {

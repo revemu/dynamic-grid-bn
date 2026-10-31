@@ -3873,10 +3873,12 @@
           buyLevels.forEach((lvl, bIdx) => {
             if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
               const isEnabled = enabledBuys[bIdx] !== false;
+              const isBoundPrice = Boolean((data.bottomBound && Math.abs(lvl - data.bottomBound) < 0.000001) ||
+                (data.upperBound && Math.abs(lvl - data.upperBound) < 0.000001));
               gridZoneLevelLines[lineIdx].applyOptions({
                 price: lvl,
                 color: isEnabled ? "rgba(56, 189, 248, 0.22)" : "rgba(148, 163, 184, 0.12)",
-                axisLabelVisible: isEnabled,
+                axisLabelVisible: isEnabled && !isBoundPrice,
                 title: "",
               });
               lineIdx++;
@@ -3887,10 +3889,12 @@
           sellLevels.forEach((lvl, sIdx) => {
             if (Number.isFinite(lvl) && gridZoneLevelLines[lineIdx]) {
               const isEnabled = enabledSells[sIdx] !== false;
+              const isBoundPrice = Boolean((data.bottomBound && Math.abs(lvl - data.bottomBound) < 0.000001) ||
+                (data.upperBound && Math.abs(lvl - data.upperBound) < 0.000001));
               gridZoneLevelLines[lineIdx].applyOptions({
                 price: lvl,
                 color: isEnabled ? "rgba(249, 115, 22, 0.22)" : "rgba(148, 163, 184, 0.12)",
-                axisLabelVisible: isEnabled,
+                axisLabelVisible: isEnabled && !isBoundPrice,
                 title: "",
               });
               lineIdx++;

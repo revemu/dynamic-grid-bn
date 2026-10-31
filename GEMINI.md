@@ -7060,3 +7060,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
     เมื่อ `upperBound - bottomBound < minDonchianSpan` จะขยายกรอบให้กว้างอย่างน้อย `minSpan` (6.0%) เสมอ และเซ็ต `clampStatus = "CLAMPED_MIN"`
     พร้อมคุม `maxSpan` และการันตีว่าราคาปัจจุบันจะไม่อยู่นอกกรอบ (`price > upperBound` / `price < bottomBound`)
   - อัปเดต Version เป็น `0.2.214` ใน `package.json` และ `src/version.ts`
+
+---
+
+### 241. Pure Grid Downtrend ChoCh Gate Bypass, Timeframe Sync & Immediate Channel Reset (v0.2.215)
+
+- **สาเหตุของปัญหา**:
+  1. **ป้ายแบนเนอร์และเกทติดค้างที่ $0.1857**: ใน `src/market-structure/regime-gate.ts` เสาหลักที่ 1 (Pillar 1: Dow ChoCh & Downtrend Gate) ดักว่าถ้าราคาอยู่ใต้ Lower High ล่าสุด ($0.1857) ในโครงสร้างขาลง ระบบจะขึ้นสถานะ `DOWNTREND_NO_CHANNEL` และแบนเนอร์จะขึ้นข้อความ `Channel: ⏸️ Downtrend active under last LH ($0.1857) - Waiting for Dow ChoCh breakout before opening channel` เสมอ แม้ว่าผู้ใช้จะตั้งค่าใน Backtest เป็น `HL Filter: Off (Pure Grid)` ก็ตาม ทำให้บอทจริงไม่ยอมเปิดกรอบ 6.0% ทำงาน
+  2. **ปุ่มส่งไปบอทจริงไม่ได้ส่ง Timeframe ของ Dynamic Grid**: ใน `public/backtest.js` ฟังก์ชัน `applyBacktestConfigToLiveBot` ส่งเฉพาะ `maFanExecutionTimeframe: timeframe` แต่ไม่ได้ส่ง `dowTimeframe: timeframe` และ `tradingTimeframe: timeframe` ส่งผลให้บอทจริงยังคงค้างอยู่ที่ 15M ไม่ยอมเปลี่ยนเป็น 5M ตาม Backtest
+  3. **กรอบราคาไม่อัปเดตทันทีเพราะรอแท่ง 15M ปิด**: เมื่อเปิด `adjustChannelOnClosedOnly: true` ตัวกลยุทธ์จะจำค่า `confirmedChannel` เดิมไว้และจะคำนวณใหม่เฉพาะตอนที่แท่งเทียนปิดสมบูรณ์ เมื่อรันบนแท่ง 15M ที่ยังไม่จบแท่ง กรอบราคาจึงดูเหมือนไม่ขยับเลย
+  4. **ป้ายกำกับราคาซ้อนทับกันบนกราฟ**: เส้นประระดับ Buy/Sell Levels บังเอิญไปซ้อนทับกับระดับ Upper Bound ($0.19308) และ Floor ($0.18206) ทำให้ป้าย Solid Fuchsia / Purple ของกรอบหลักถูกทับ
+- **การแก้ไข (v0.2.215)**:
+  1. **ปลดบล็อก ChoCh Gate ในโหมด Pure Grid (`src/market-structure/regime-gate.ts`)**:
+     - เมื่อผู้ใช้เลือก `HL Filter: Off` (`enableBaseConfirmationFilter: false`) หรือ `enableTrendGating: false` ระบบจะบายพาสเงื่อนไข `isUnderLastLh` และ `isDowntrendStructure` ใน Pillar 1 ทันที ทำให้กรอบราคาเปิดใช้งานรับสวิงความกว้าง 6.0% ได้สมบูรณ์ตามสถิติ Backtest โดยไม่ต้องรอเบรก ChoCh $0.1857
+  2. **ซิงค์ค่า Timeframe และ Options ครบถ้วนจาก Backtest (`public/backtest.js`)**:
+     - ส่ง `dowTimeframe: timeframe` และ `tradingTimeframe: timeframe` ไปพร้อมกับ payload
+     - ซิงค์ `enableTrendChannelGating: enableBaseConfirmationFilter`, `capitalZones: (Number(inpCapitalZones.value) || 1)`, `minChannelWidthPct: 6.0`, `maxChannelWidthPct: 25.0` ไปยัง `/api/config`
+  3. **เพิ่มเมธอด `resetConfirmedChannel()` และอัปเดตกรอบทันที (`src/strategy/index.ts` & `src/index.ts`)**:
+     - เมื่อมีการอัปเดต Timeframe, Channel Parameters หรือ Settings ให้ล้าง `confirmedChannel` และตั้ง `pendingConfirmedChannelUpdate = true` ทันที บอทจะรีคำนวณกรอบจากแท่งเทียนล่าสุดทันทีใน Tick ถัดไปโดยไม่ต้องรอจบแท่งเดิม
+     - ใน `src/index.ts`: เมื่อ WebSocket Kline Feed โหลด Timeframe ใหม่เสร็จ จะสั่ง `grid.resetConfirmedChannel?.()` และปลุก Loop ทันที
+  4. **ปรับการแสดงผล Axis Label ของระดับกริด (`public/app.js`)**:
+     - หากราคาของ Grid Level ตรงกับ `data.upperBound` หรือ `data.bottomBound` จะซ่อน Axis Label ของเส้นประ เพื่อให้ป้าย Solid Fuchsia (`#d946ef`) ของ Upper Bound และ Solid Purple (`#c084fc`) ของ Floor โดดเด่น ชัดเจน ไม่โดนทับ
+  5. **Bump Version**: ขยับเป็น `0.2.215` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย

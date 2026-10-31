@@ -95,10 +95,11 @@ export class RegimeChannelGate {
 
     // ── Pillar 1: Dow ChoCh & Downtrend Gate (Horizontal Last LH Breakout) ─────
     // In Dow Theory, a downtrend is broken only when price breaks above the last Lower High (ChoCh).
-    const isUnderLastLh = Boolean(lastLh && lastLh.price > 0 && price < lastLh.price * 0.999);
-    const isDowntrendStructure = regime === "DOWNTREND" ||
+    const allowBaseBypass = params.enableBaseConfirmationFilter === false;
+    const isUnderLastLh = !allowBaseBypass && Boolean(lastLh && lastLh.price > 0 && price < lastLh.price * 0.999);
+    const isDowntrendStructure = !allowBaseBypass && (regime === "DOWNTREND" ||
       (lastCanonicalLow?.dowLabel === "LL" && lastCanonicalHigh?.dowLabel === "LH") ||
-      Boolean(waveCycle?.activeCycleSummary?.includes("ขาลง"));
+      Boolean(waveCycle?.activeCycleSummary?.includes("ขาลง")));
 
     if (isUnderLastLh && isDowntrendStructure) {
       return {
@@ -125,7 +126,6 @@ export class RegimeChannelGate {
     }
 
     // ── Pillar 2: Base Confirmation Protocol (Active Dump / Breaking Lows) ──
-    const allowBaseBypass = params.enableBaseConfirmationFilter === false;
     const isBreakingLow = !allowBaseBypass && Boolean(
       isDowntrendDropActive ||
       (lastCanonicalLow && price < lastCanonicalLow.price * 0.9995)

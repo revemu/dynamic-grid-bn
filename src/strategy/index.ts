@@ -851,6 +851,14 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     return this.roundQty(qty).toFixed(this.qtyPrecision);
   }
 
+  public resetConfirmedChannel(): void {
+    this.confirmedChannel = undefined;
+    this.pendingConfirmedChannelUpdate = true;
+    this.lastDynamicBounds = undefined;
+    this.needsBuyRebalance = true;
+    this.needsSellRebalance = true;
+  }
+
   public updateRuntimeSettings(newSettings: Record<string, any>): Record<string, any> {
     for (const [key, val] of Object.entries(newSettings)) {
       if (val !== undefined) {
@@ -1057,9 +1065,13 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       newSettings.channelMode !== undefined ||
       newSettings.minChannelWidthPct !== undefined ||
       newSettings.maxChannelWidthPct !== undefined ||
+      newSettings.dowTimeframe !== undefined ||
+      newSettings.tradingTimeframe !== undefined ||
+      newSettings.enableBaseConfirmationFilter !== undefined ||
+      newSettings.enableTrendChannelGating !== undefined ||
+      newSettings.capitalZones !== undefined ||
       newSettings.floorBufferPct !== undefined ||
       newSettings.minFloorProximityPct !== undefined ||
-      newSettings.enableTrendChannelGating !== undefined ||
       newSettings.srLookbackCandles !== undefined ||
       newSettings.useTrueWick !== undefined ||
       newSettings.wickThresholdPct !== undefined ||
@@ -1070,8 +1082,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       newSettings.buyLevelPcts !== undefined ||
       newSettings.sellLevelPcts !== undefined
     ) {
-      this.confirmedChannel = undefined;
-      this.pendingConfirmedChannelUpdate = true;
+      this.resetConfirmedChannel();
     }
     this.syncDowEngineSettings();
     const configToPersist: Record<string, any> = {

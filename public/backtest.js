@@ -1993,6 +1993,8 @@
     try {
       const payload = {
         symbol,
+        dowTimeframe: timeframe,
+        tradingTimeframe: timeframe,
         maFanExecutionTimeframe: timeframe,
         maFanAutoCalibrateSpreadOnSwitch: isAutoSpread,
         ...(isAutoSpread ? {} : { maFanManualSpreadPct: Number(spreadVal) }),
@@ -2005,10 +2007,12 @@
         maFanMacroGate: macroGateMode,
         enableBaseConfirmationFilter,
         enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
+        enableTrendChannelGating: enableBaseConfirmationFilter,
         lockChannelInPosition,
-        capitalZones: inpCapitalZones ? Number(inpCapitalZones.value) || 2 : 2,
+        capitalZones: inpCapitalZones ? (Number(inpCapitalZones.value) || 1) : 1,
         gridCutLossMode: inpGridCutLossMode ? inpGridCutLossMode.value : "none",
         minChannelWidthPct: 6.0,
+        maxChannelWidthPct: 25.0,
         donchianPeriod: 48,
         channelMode: "DONCHIAN_ATR",
         sellProfitMode: "PORTFOLIO_AVG_PROFIT",
