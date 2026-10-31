@@ -6886,3 +6886,37 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่ม Toggle Switch ในหน้าต่าง Settings Modal: `"🔒 ล็อคกรอบขณะถือไม้ (Position Lock) / ปิดเพื่อขยับกรอบตามแท่งเทียนปิด (Dynamic Trailing)"` ผูกเข้ากับฟิลด์ `lockChannelInPosition` ในการตั้งค่าบอทจริง
   5. **Bump Version**:
      - ปรับ Version เป็น `0.2.209` ใน `package.json` และ `src/version.ts`
+
+
+---
+
+## 235. Unified Candle Order Badges (B/S), Sub-Trade Indicators & Harmonized Non-Cluttering SL (v0.2.210)
+
+- **สาเหตุและที่มาของความต้องการ**:
+  1. **การแสดงผลจุดซื้อขายใน Backtest ไม่เป็นเอกภาพกับบอทจริง**:
+     - เดิมใน `public/backtest.js` แยกสร้าง Badge อิสระทุกไม้ (`TP1`, `TP2`, `TP`, `SL`, `CUT`) ส่งผลให้แท่งเทียนที่มีการซื้อหรือขายหลายไม้เกิด Badge ซ้อนทับกันที่พิกัด `(x, y)` เดียวกัน บดบังแท่งเทียน และไม่ใช้สัญลักษณ์ `B` (Buy) และ `S` (Sell) ที่เป็นวงกลมมาตรฐานเหมือนบอทจริง
+     - เมื่อจำนวนไม้มากกว่า 80 ไม้ ระบบตัดไปใช้ Canvas Markers (`🕸️ TP`, `🎯 S`) ทำให้สูญเสียความสามารถในการ Hover ตรวจสอบรายละเอียดและกดคลิกนำทางไปยังตาราง
+  2. **ไม่มีการแสดงจำนวนการซื้อขายย่อยใน Badge**:
+     - เมื่อเกิดการซื้อหรือขายหลายไม้ในแท่งเทียนเดียวกัน (เช่น Grid ทยอยช้อน 2-3 ไม้ หรือ TP พร้อมกันหลายไม้) ผู้ใช้ไม่สามารถทราบได้จากรูปทรง Badge บนกราฟว่ามีกี่ไม้เกิดขึ้นในแท่งนั้น
+  3. **การแสดงผล Cut Loss / Stop Loss รกและบดบังเนื้อกราฟ**:
+     - ป้าย SL และ CUT เดิมเป็นกล่องสี่เหลี่ยมสีแดงเข้มทึบแสงขนาดใหญ่ (`#dc2626` / `#ea580c`) ทำให้เมื่อเกิดไม้คัท จุดมาร์กเกอร์จะแย่งสายตาและรกเกะกะบดบังไส้เทียนและจุดสวิง Dow Theory (`HH`, `LH`, `HL`, `LL`)
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.210)**:
+  1. **Candle-Level Order Grouping & B / S Badges (`public/backtest.js`)**:
+     - ยุบรวมไม้เทรดในแท่งเทียนเดียวกัน (`time`) ตามกลุ่มการกระทำมาตรฐาน:
+       - `BUY`: รวมไม้ซื้อทั้งหมดในแท่ง แสดงเป็นป้ายวงกลมสีเขียว `B` อยู่ใต้จุดต่ำสุดของแท่งเทียน (`candle.low`)
+       - `SELL`: รวมไม้ขายทำกำไรทั้งหมดในแท่ง (`TP`, `TP1`, `TP2`, `GRID_TP`, `OPEN win`) แสดงเป็นป้ายวงกลมสีแดง/ชมพู `S` อยู่เหนือจุดสูงสุดของแท่งเทียน (`candle.high`)
+       - `SL`: รวมไม้ตัดขาดทุนทั้งหมดในแท่ง (`GRID_CUT`, `SL`, `RATCHET_SL`, `SL_BE`, `TECH_FAST_CUT`, `OPEN loss`) แสดงเป็นป้าย `SL` ที่ได้รับการปรับแต่งให้กลมกลืน
+     - ขยายเกณฑ์ High Trade Guard จาก 80 ไม้ เป็น 300 ไม้ เพื่อให้การทดสอบปกติและรอบสวิงยาวได้แสดงผล DOM Badges แบบ Interactive ครบถ้วน
+  2. **Sub-Trade Badges & Counters (`public/backtest.js`, `public/app.js`, `public/backtest.css`, `public/style.css`)**:
+     - เพิ่มแท็กแสดงจำนวนไม้ย่อย `.badge-sub-count` บนมุมขวาบนของ Badge วงกลม (เช่น `B²` เมื่อมี 2 ไม้ซื้อ หรือ `S³` เมื่อมี 3 ไม้ขาย) สไตล์ Notification Badge มินิมอล ชัดเจน ไม่กินพื้นที่
+     - รองรับทั้งใน Backtest Studio (`public/backtest.js`) และหน้าแดชบอร์ดบอทจริง (`public/app.js`)
+     - รองรับการ Hover แสดง Tooltip รายการไม้ย่อยแบบการ์ด (`.cot-order-card`) ครบทุกไม้ พร้อมสรุปกำไร/ขาดทุนรวมของแท่งนั้น
+  3. **Harmonized Non-Cluttering SL / CUT Badge (`public/backtest.css` & `public/style.css`)**:
+     - ปรับแต่งดีไซน์ของ `.chart-order-badge.badge-sl` และ `.badge-cut`:
+       - ใช้สีแดงไวน์กึ่งโปร่งใสแนวกระจกฝ้า `background: rgba(225, 29, 72, 0.22); border: 1px solid rgba(244, 63, 94, 0.48); backdrop-filter: blur(4px);`
+       - ข้อความสีนุ่มนวล `color: #fda4af;` ทรงแคปซูลมนเรียว `border-radius: 9999px; height: 16px;`
+       - กลมกลืนไปกับกราฟธีมมืดและไม่แย่งสายตาหรือบดบังแท่งเทียน แต่ยังคงอ่านง่ายและสว่างขึ้นเมื่อนำเมาส์ไปชี้ (`hover`)
+     - ระบบจัดวางแบบ Side-by-Side: กรณีในแท่งเดียวกันมีทั้งไม้ขายทำกำไร (`SELL`) และไม้ตัดขาดทุน (`SL`) ระบบจะขยับแยกตำแหน่งในแนวนอน (`x - 12px` และ `x + 12px`) โดยอัตโนมัติ ทำให้ทั้งสองป้ายไม่ทับซ้อนกัน 100%
+  4. **Bump Version**:
+     - ปรับ Version เป็น `0.2.210` ใน `package.json` และ `src/version.ts`

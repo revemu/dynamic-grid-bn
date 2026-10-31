@@ -473,8 +473,11 @@
 
       const el = document.createElement("div");
       el.className = `chart-order-badge ${isBuy ? "badge-buy" : isCut ? "badge-cut" : "badge-sell"}`;
-      el.textContent = isBuy ? "B" : isCut ? "CUT" : "S";
-      el.title = `${isBuy ? "Buy" : isCut ? "Cut Loss" : "Sell"} Execution`;
+      const label = isBuy ? "B" : isCut ? "SL" : "S";
+      const count = item.count || 1;
+      const countHtml = count > 1 ? `<span class="badge-sub-count">${count}</span>` : "";
+      el.innerHTML = `<span class="badge-letter">${label}</span>${countHtml}`;
+      el.title = `${isBuy ? "Buy" : isCut ? "Cut Loss / SL" : "Sell"} Execution (${count} order${count > 1 ? "s" : ""})`;
 
       el.addEventListener("mouseenter", (e) => {
         const rect = chartContainer.getBoundingClientRect();
@@ -538,10 +541,20 @@
         continue;
       }
 
-      // Position: BUY sits 12px below candle low, SELL sits 12px above candle high (matching reference screenshot)
+      // Position: BUY sits 12px below candle low, SELL & SL sit 12px above candle high
+      // If both SELL and CUT/SL happen on the same candle, place them side-by-side to avoid overlapping
+      let xOffset = 0;
+      if (!isBuy) {
+        const hasSell = orderBadgesData.some((d) => d.time === item.time && d.action === "SELL");
+        const hasCut = orderBadgesData.some((d) => d.time === item.time && d.action === "CUT");
+        if (hasSell && hasCut) {
+          xOffset = isCut ? 12 : -12;
+        }
+      }
+
       const y = isBuy ? yCoord + 12 : yCoord - 12;
 
-      el.style.left = `${Math.round(x)}px`;
+      el.style.left = `${Math.round(x + xOffset)}px`;
       el.style.top = `${Math.round(y)}px`;
       el.style.display = "flex";
     }

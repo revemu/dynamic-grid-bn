@@ -634,8 +634,8 @@ body {
 
 .chart-order-badge {
   position: absolute;
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -656,48 +656,109 @@ body {
 }
 
 .chart-order-badge:hover {
-  transform: translate(-50%, -50%) scale(1.3);
+  transform: translate(-50%, -50%) scale(1.25);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.85);
   z-index: 35;
+}
+
+.chart-order-badge .badge-letter {
+  display: inline-block;
+  line-height: 1;
+}
+
+/* Sub-trade counter pill inside badge */
+.chart-order-badge .badge-sub-count {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  background: #090d16;
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+  font-size: 8px;
+  font-weight: 800;
+  min-width: 13px;
+  height: 13px;
+  line-height: 11px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  padding: 0 2px;
 }
 
 .chart-order-badge.badge-buy {
   background: #10b981;
 }
+.chart-order-badge.badge-buy .badge-sub-count {
+  border-color: #10b981;
+}
+
+.chart-order-badge.badge-sell {
+  background: #e11d48;
+}
+.chart-order-badge.badge-sell .badge-sub-count {
+  border-color: #e11d48;
+}
 
 .chart-order-badge.badge-tp1 {
   background: #0284c7;
   font-size: 8.5px;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
 }
 
 .chart-order-badge.badge-tp2 {
   background: #9333ea;
   font-size: 8.5px;
-  width: 22px;
-  height: 22px;
-}
-
-.chart-order-badge.badge-sl-ratchet {
-  background: #ea580c;
-  font-size: 9px;
   width: 20px;
   height: 20px;
 }
 
-.chart-order-badge.badge-sl-fixed {
-  background: #dc2626;
-  font-size: 9px;
-  width: 20px;
-  height: 20px;
-}
-
+/* ── Harmonized Non-Cluttering SL / CUT Badge ── */
+.chart-order-badge.badge-cut,
+.chart-order-badge.badge-sl,
+.chart-order-badge.badge-sl-subtle,
+.chart-order-badge.badge-sl-ratchet,
+.chart-order-badge.badge-sl-fixed,
 .chart-order-badge.badge-sl-be {
-  background: #f59e0b;
+  background: rgba(225, 29, 72, 0.22);
+  border: 1px solid rgba(244, 63, 94, 0.48);
+  color: #fda4af;
+  backdrop-filter: blur(4px);
+  border-radius: 9999px;
+  width: auto;
+  min-width: 19px;
+  height: 16px;
+  padding: 0 4px;
   font-size: 8.5px;
-  width: 22px;
-  height: 22px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.chart-order-badge.badge-cut .badge-sub-count,
+.chart-order-badge.badge-sl .badge-sub-count,
+.chart-order-badge.badge-sl-subtle .badge-sub-count,
+.chart-order-badge.badge-sl-ratchet .badge-sub-count,
+.chart-order-badge.badge-sl-fixed .badge-sub-count,
+.chart-order-badge.badge-sl-be .badge-sub-count {
+  border-color: #f43f5e;
+}
+
+.chart-order-badge.badge-cut:hover,
+.chart-order-badge.badge-sl:hover,
+.chart-order-badge.badge-sl-subtle:hover,
+.chart-order-badge.badge-sl-ratchet:hover,
+.chart-order-badge.badge-sl-fixed:hover,
+.chart-order-badge.badge-sl-be:hover {
+  background: rgba(225, 29, 72, 0.7);
+  border-color: #fb7185;
+  color: #ffffff;
+  box-shadow: 0 3px 8px rgba(225, 29, 72, 0.5);
+  transform: translate(-50%, -50%) scale(1.18);
+  z-index: 40;
 }
 
 /* ── Hover Tooltip ── */
@@ -749,6 +810,75 @@ body {
 .cot-val {
   font-weight: 600;
   color: #fff;
+}
+
+.cot-orders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+.cot-order-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cot-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.cot-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cot-badge-buy {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.cot-badge-sell {
+  background: rgba(244, 63, 94, 0.2);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+}
+
+.cot-badge-cut {
+  background: rgba(225, 29, 72, 0.2);
+  color: #fda4af;
+  border: 1px solid rgba(225, 29, 72, 0.4);
+}
+
+.cot-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10.5px;
+}
+
+.cot-val-pnl.pos {
+  color: #34d399;
+}
+
+.cot-val-pnl.neg {
+  color: #f87171;
 }
 
 /* ── Candle & Spread Inspector Popover ── */
