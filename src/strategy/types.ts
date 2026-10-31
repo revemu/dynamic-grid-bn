@@ -16,6 +16,7 @@ export interface Lot {
   price: number; // entry price
   qty: number;   // base remaining
   time: number;  // timestamp entry
+  zoneIndex?: number; // capital allocation zone index (0..4)
 }
 
 export interface OpenOrder {
@@ -151,9 +152,14 @@ export interface IStrategyHost {
   lockedChannel?: LockedChannel;
   lastEvaluatedFloor?: number;
   lastEvaluatedCeil?: number;
+  unlockedCapitalZones?: number;
+  stableFloorCandleCount?: number;
+  lastZoneUnlockFloor?: number;
+  prevCandidateFloor?: number;
 
   // Methods
   clearPositionState(): void;
+  getEffectiveMaxInventoryQuote(): number;
   getSymbolKey(): string;
   log(msg: string): void;
   status(msg: string): void;

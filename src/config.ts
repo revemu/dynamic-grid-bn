@@ -231,6 +231,18 @@ export const defaultStrategyConfig = {
   /** Minimum channel width (%) required to resume trading after a squeeze exit (default 2.0%). */
   minTradeableChannelWidthPct: 2.0,
 
+  // ── Capital Staging & Stabilized Channel DCA ────────────────────────────
+  /** Number of capital zones to divide budget for staged DCA when channel moves down and stabilizes (default 1, e.g. 4 = 4 zones of 25%). */
+  capitalZones: 1,
+  /** Minimum drop % between new lower channel and previous zone's lowest buy price before unlocking next DCA zone (default 2.5%). */
+  zoneMinDropPct: 2.5,
+  /** Number of closed candles a lower channel must remain stable (not making new lows) before unlocking next DCA zone (default 3 bars). */
+  zoneStabilizeCandles: 3,
+  /** Zone exit strategy: "HYBRID_ZONE_RECOVERY" (default) or "AVG_PROFIT_ALL". */
+  zoneExitMode: "HYBRID_ZONE_RECOVERY" as "HYBRID_ZONE_RECOVERY" | "AVG_PROFIT_ALL",
+  /** Cut loss behavior mode for dynamic grid in backtest: "none" (default for DCA hold), "entry_floor" (strict entry floor SL), or "final_zone_floor" (SL only after all zones exhausted). */
+  gridCutLossMode: "none" as "none" | "entry_floor" | "final_zone_floor",
+
   // ── Support & Resistance Channel Calculation Mode ────────────────────────
   /**
    * Channel boundary calculation mode:
@@ -415,6 +427,15 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.cutLossStage2Multiplier !== undefined) merged.cutLossStage2Multiplier = Number(saved.cutLossStage2Multiplier);
       if (saved.enableLhDynamicEscape !== undefined) merged.enableLhDynamicEscape = Boolean(saved.enableLhDynamicEscape);
       if (saved.minNetProfitPct !== undefined) merged.minNetProfitPct = Number(saved.minNetProfitPct);
+      if (saved.capitalZones !== undefined) merged.capitalZones = Math.max(1, Math.min(5, Number(saved.capitalZones) || 1));
+      if (saved.zoneMinDropPct !== undefined) merged.zoneMinDropPct = Math.max(0.5, Number(saved.zoneMinDropPct) || 2.5);
+      if (saved.zoneStabilizeCandles !== undefined) merged.zoneStabilizeCandles = Math.max(1, Math.min(20, Number(saved.zoneStabilizeCandles) || 3));
+      if (saved.zoneExitMode === "HYBRID_ZONE_RECOVERY" || saved.zoneExitMode === "AVG_PROFIT_ALL") {
+        merged.zoneExitMode = saved.zoneExitMode;
+      }
+      if (saved.gridCutLossMode === "none" || saved.gridCutLossMode === "entry_floor" || saved.gridCutLossMode === "final_zone_floor") {
+        merged.gridCutLossMode = saved.gridCutLossMode;
+      }
       if (saved.breakevenEscapeProfitPct !== undefined) merged.breakevenEscapeProfitPct = Number(saved.breakevenEscapeProfitPct);
       if (saved.maxActiveMakerBuys !== undefined) merged.maxActiveMakerBuys = Number(saved.maxActiveMakerBuys);
       if (saved.enableBuyAboveTrendSupport !== undefined) merged.enableBuyAboveTrendSupport = Boolean(saved.enableBuyAboveTrendSupport);

@@ -19,6 +19,7 @@ export interface Lot {
   price: number; // entry price
   qty: number;   // base remaining
   time: number;  // timestamp entry
+  zoneIndex?: number; // capital allocation zone index (0..4)
 }
 
 export interface OpenOrder {
@@ -87,6 +88,10 @@ export interface StrategyStateRecord {
   recentOrders?: any[];
   appliedManualTradeIds?: string[];
   lastCutLossTime?: number;
+  unlockedCapitalZones?: number;
+  stableFloorCandleCount?: number;
+  lastZoneUnlockFloor?: number;
+  prevCandidateFloor?: number;
   postCutSingleTrancheOnly?: boolean;
   isTrendSupportExitActive?: boolean;
   trendSupportBreakPrice?: number;

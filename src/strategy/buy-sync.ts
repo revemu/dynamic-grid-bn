@@ -80,7 +80,9 @@ export class BuyOrderSynchronizer {
     } = params;
 
     const currentHeldQuote = this.lotTracker.baseHeld() * refPrice;
-    const maxInv = this.host.cfg.maxInventoryQuote;
+    const maxInv = typeof (this.host as any).getEffectiveMaxInventoryQuote === "function"
+      ? (this.host as any).getEffectiveMaxInventoryQuote()
+      : this.host.cfg.maxInventoryQuote;
     const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
     const isCexExchange = this.host.binance.exchangeName === "binance";
 

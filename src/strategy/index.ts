@@ -97,6 +97,10 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   public lastBuyFillPrice = 0;
   public lastBuyFillCandleTime = 0;
   public postCutSingleTrancheOnly = false;
+  public unlockedCapitalZones = 1;
+  public stableFloorCandleCount = 0;
+  public lastZoneUnlockFloor?: number;
+  public prevCandidateFloor?: number;
   public sellOrdersActive = true;
   private sellZoneTransitionCandleTime?: number;
   public buyOrdersActive = true;
@@ -684,6 +688,13 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       enableLhDynamicEscape: this.cfg.enableLhDynamicEscape !== false,
       enableTwoStageCutLoss: this.cfg.enableTwoStageCutLoss !== false,
       cutLossStage2Multiplier: this.cfg.cutLossStage2Multiplier ?? 2.0,
+      capitalZones: this.cfg.capitalZones ?? 1,
+      zoneMinDropPct: this.cfg.zoneMinDropPct ?? 2.5,
+      zoneStabilizeCandles: this.cfg.zoneStabilizeCandles ?? 3,
+      zoneExitMode: this.cfg.zoneExitMode || "HYBRID_ZONE_RECOVERY",
+      gridCutLossMode: this.cfg.gridCutLossMode || "none",
+      unlockedCapitalZones: this.unlockedCapitalZones ?? 1,
+      stableFloorCandleCount: this.stableFloorCandleCount ?? 0,
       enableBaseConfirmationFilter: this.cfg.enableBaseConfirmationFilter !== false,
       enableWaterfallKnifeGuard: this.cfg.enableWaterfallKnifeGuard !== false,
       strategyType: (this.cfg as any).strategyType || this.strategyType || "dynamic_grid",
@@ -892,6 +903,28 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         if (key === "breakevenEscapeProfitPct") {
           this.cfg.breakevenEscapeProfitPct = Math.max(0.01, Number(val) || 0.06);
           this.needsSellRebalance = true;
+          continue;
+        }
+        if (key === "capitalZones") {
+          this.cfg.capitalZones = Math.max(1, Math.min(5, parseInt(val, 10) || 1));
+          this.needsBuyRebalance = true;
+          continue;
+        }
+        if (key === "zoneMinDropPct") {
+          this.cfg.zoneMinDropPct = Math.max(0.5, Number(val) || 2.5);
+          continue;
+        }
+        if (key === "zoneStabilizeCandles") {
+          this.cfg.zoneStabilizeCandles = Math.max(1, Math.min(20, parseInt(val, 10) || 3));
+          continue;
+        }
+        if (key === "zoneExitMode") {
+          this.cfg.zoneExitMode = val === "AVG_PROFIT_ALL" ? "AVG_PROFIT_ALL" : "HYBRID_ZONE_RECOVERY";
+          this.needsSellRebalance = true;
+          continue;
+        }
+        if (key === "gridCutLossMode") {
+          this.cfg.gridCutLossMode = (val === "entry_floor" || val === "final_zone_floor") ? val : "none";
           continue;
         }
         if (key === "maxActiveMakerBuys") {
@@ -1651,6 +1684,10 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     this.cutLossStage1Time = undefined;
     this.stuckSince = undefined;
     this.bufferBreakStartTime = undefined;
+    this.unlockedCapitalZones = 1;
+    this.stableFloorCandleCount = 0;
+    this.lastZoneUnlockFloor = undefined;
+    this.prevCandidateFloor = undefined;
     this.db.saveLockedChannel(this.getSymbolKey(), undefined);
   }
 
@@ -1828,6 +1865,22 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       } else {
         this.postCutSingleTrancheOnly = false;
       }
+      if (typeof (data as any).unlockedCapitalZones === "number" && Number.isFinite((data as any).unlockedCapitalZones)) {
+        this.unlockedCapitalZones = Math.max(1, (data as any).unlockedCapitalZones);
+      } else {
+        this.unlockedCapitalZones = 1;
+      }
+      if (typeof (data as any).stableFloorCandleCount === "number" && Number.isFinite((data as any).stableFloorCandleCount)) {
+        this.stableFloorCandleCount = (data as any).stableFloorCandleCount;
+      } else {
+        this.stableFloorCandleCount = 0;
+      }
+      if (typeof (data as any).lastZoneUnlockFloor === "number") {
+        this.lastZoneUnlockFloor = (data as any).lastZoneUnlockFloor;
+      }
+      if (typeof (data as any).prevCandidateFloor === "number") {
+        this.prevCandidateFloor = (data as any).prevCandidateFloor;
+      }
       if (typeof data.lastResolvedDumpLowPrice === "number") {
         this.lastResolvedDumpLowPrice = data.lastResolvedDumpLowPrice;
       }
@@ -2000,6 +2053,10 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         breakdownTime: this.breakdownTime,
         lastCutLossTime: this.lastCutLossTime,
         postCutSingleTrancheOnly: this.postCutSingleTrancheOnly,
+        unlockedCapitalZones: this.unlockedCapitalZones,
+        stableFloorCandleCount: this.stableFloorCandleCount,
+        lastZoneUnlockFloor: this.lastZoneUnlockFloor,
+        prevCandidateFloor: this.prevCandidateFloor,
         lastResolvedDumpLowPrice: this.lastResolvedDumpLowPrice,
         iocBracketSellCycle: this.iocBracketSellCycle
           ? {
@@ -2884,6 +2941,67 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         lowerBound = this.lastDynamicBounds.lowerBound;
       }
 
+      // 🛡️ Stabilized Channel Shift & Staged DCA Gate:
+      // While holding a position, if the new computed channel is LOWER than active channel,
+      // DO NOT immediately shift channel down on every falling bar!
+      // Require the candidate floor to STABILIZE (closed candles non-expanding, not waterfall knife, and minimum drop distance)
+      // before committing the shift and unlocking the next DCA capital zone!
+      const isShiftDownCandidate = Boolean(
+        isHoldingPosition &&
+        this.lastDynamicBounds &&
+        lowerBound < (this.lastDynamicBounds.lowerBound * 0.999)
+      );
+
+      let isStabilizedDownShift = false;
+      if (isShiftDownCandidate && this.lastDynamicBounds) {
+        const candidateFloor = lowerBound;
+        const prevCandFloor = this.prevCandidateFloor ?? candidateFloor;
+        if (candidateFloor < prevCandFloor * 0.998) {
+          // Floor is still expanding downward -> reset stabilization counter
+          this.stableFloorCandleCount = 0;
+          this.prevCandidateFloor = candidateFloor;
+        } else {
+          this.stableFloorCandleCount++;
+        }
+
+        const requiredStableBars = Math.max(1, Number(this.cfg.zoneStabilizeCandles ?? 3));
+        const isStableBarsOk = this.stableFloorCandleCount >= requiredStableBars;
+        const isNotWaterfall = !this.isDowntrendDropPaused;
+        const lowestLotPrice = this.lots.length > 0 ? Math.min(...this.lots.map((l) => l.price)) : 0;
+        const dropPct = lowestLotPrice > 0 ? ((lowestLotPrice - candidateFloor) / lowestLotPrice) * 100 : 0;
+        const requiredDropPct = Number(this.cfg.zoneMinDropPct ?? 2.5);
+        const isDropDistanceOk = (this.cfg.capitalZones ?? 1) <= 1 || dropPct >= requiredDropPct;
+
+        if (isStableBarsOk && isNotWaterfall && isDropDistanceOk) {
+          isStabilizedDownShift = true;
+          this.log(
+            `🎯 [STABILIZED CHANNEL COMMIT] Candidate lower channel [$${lowerBound.toFixed(4)} .. $${upperBound.toFixed(4)}] stabilized (${this.stableFloorCandleCount} bars stable, drop: -${dropPct.toFixed(2)}%) — committing channel shift.`,
+          );
+          const totalZones = Math.max(1, Number(this.cfg.capitalZones ?? 1));
+          if ((this.unlockedCapitalZones ?? 1) < totalZones) {
+            this.unlockedCapitalZones = (this.unlockedCapitalZones ?? 1) + 1;
+            this.log(
+              `🚀 [DCA ZONE UNLOCK] Unlocked Zone ${this.unlockedCapitalZones}/${totalZones} DCA budget ($${this.getEffectiveMaxInventoryQuote().toFixed(2)})!`,
+            );
+          }
+          this.stableFloorCandleCount = 0;
+          this.prevCandidateFloor = undefined;
+          this.lastZoneUnlockFloor = lowerBound;
+          this.needsBuyRebalance = true;
+          this.needsSellRebalance = true;
+        } else {
+          // NOT YET STABILIZED: freeze active channel at previous bounds!
+          lowerBound = this.lastDynamicBounds.lowerBound;
+          upperBound = this.lastDynamicBounds.upperBound;
+          centerPrice = this.lastDynamicBounds.centerPrice;
+          buyLevels = [...this.lastDynamicBounds.buyLevels];
+          sellLevels = [...this.lastDynamicBounds.sellLevels];
+          this.status(
+            `⏳ WAITING FOR LOWER CHANNEL TO STABILIZE: Candidate Floor $${candidateFloor.toFixed(4)} (Stable: ${this.stableFloorCandleCount}/${requiredStableBars} bars | Drop: -${dropPct.toFixed(2)}% | Min: ${requiredDropPct}%) — keeping active channel at Floor $${lowerBound.toFixed(4)}`,
+          );
+        }
+      }
+
       // Hysteresis smoothing: Only retain previous bounds when holding position AND within the same swing pivot.
       // When flat (100% cash / !isHoldingPosition) or when a new confirmed Dow swing forms, channel adapts dynamically.
       const shouldApplyHysteresis = Boolean(
@@ -3393,7 +3511,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       const lvlPrice = buyLevels[i];
       if (lvlPrice === undefined || lvlPrice <= 0) continue;
       const capFraction = this.getCumulativeBuyTargetFraction(i, enabledBuys, buyLevels.length, false);
-      const capQuote = capFraction * this.cfg.maxInventoryQuote;
+      const effMaxInv = this.getEffectiveMaxInventoryQuote();
+      const capQuote = capFraction * effMaxInv;
       if (inventoryQuote < capQuote - 1.0) {
         firstUnsatisfiedBuyPrice = lvlPrice;
         break;
@@ -3875,7 +3994,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         severity: "success",
       };
     } else if (inBuyZone) {
-      const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
+      const effMaxInv = this.getEffectiveMaxInventoryQuote();
+      const isCapacityFull = (effMaxInv > 0 && inventoryQuote >= effMaxInv - 1.0) || currentHoldPct >= 95;
 
       if (isCapacityFull) {
         botActionState = {
@@ -3939,7 +4059,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       }
     } else {
       // In Sell Zone (50% - 100%)
-      const isCapacityFull = currentHoldPct >= 95 || inventoryQuote >= this.cfg.maxInventoryQuote - 1.0;
+      const effMaxInv = this.getEffectiveMaxInventoryQuote();
+      const isCapacityFull = (effMaxInv > 0 && inventoryQuote >= effMaxInv - 1.0) || currentHoldPct >= 95;
 
       if (openSells.length > 0) {
         const tlDiffStr = tlFrontRunPct > 0 ? ` -${tlFrontRunPct.toFixed(2)}%` : "";
@@ -4148,10 +4269,18 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         isSwingConfirmed: dow?.isSwingConfirmed ?? false,
         maxInventoryQuote: this.cfg.maxInventoryQuote,
         maxInventoryUsdso: this.cfg.maxInventoryQuote,
+        capitalZones: Math.max(1, Number(this.cfg.capitalZones ?? 1)),
+        unlockedCapitalZones: Math.max(1, Number(this.unlockedCapitalZones ?? 1)),
+        effectiveMaxInventoryQuote: this.getEffectiveMaxInventoryQuote(),
+        stableFloorCandleCount: this.stableFloorCandleCount,
+        zoneMinDropPct: this.cfg.zoneMinDropPct ?? 2.5,
+        zoneStabilizeCandles: this.cfg.zoneStabilizeCandles ?? 3,
+        gridCutLossMode: this.cfg.gridCutLossMode ?? "final_zone_floor",
+        zoneExitMode: this.cfg.zoneExitMode ?? "PORTFOLIO_AVG",
         intervalMs: this.cfg.intervalMs ?? 2000,
         stuckSince: this.stuckSince,
         stuckTimeoutMs: this.cfg.stuckTimeoutMs,
-        lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time })),
+        lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time, zoneIndex: l.zoneIndex })),
         soldSellIndices: Array.from(this.soldSellIndices),
         orderExecutionMode: this.cfg.orderExecutionMode ?? "IOC_BRACKET",
         iocBracketSellCycle: this.iocBracketSellCycle
@@ -4539,6 +4668,13 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
 
   public getAvgEntryPrice(): number {
     return this.lotTracker.getAvgEntryPrice();
+  }
+
+  public getEffectiveMaxInventoryQuote(): number {
+    const totalZones = Math.max(1, Math.min(5, Number(this.cfg.capitalZones ?? 1)));
+    const unlocked = Math.max(1, Math.min(totalZones, Number(this.unlockedCapitalZones ?? 1)));
+    const maxQuote = Number(this.cfg.maxInventoryQuote ?? 200);
+    return maxQuote * (unlocked / totalZones);
   }
 
   public baseHeld(): number {

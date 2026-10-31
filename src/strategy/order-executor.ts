@@ -600,7 +600,8 @@ export class OrderExecutor {
 
     const rawNetQty = Math.max(0, qty - compBase - spotTradingFeeBase);
     const netQty = roundToStep(rawNetQty, this.getStepSize(), this.host.qtyPrecision);
-    this.host.lots.push({ price, qty: netQty, time: now });
+    const activeZoneIndex = Math.max(0, (this.host.unlockedCapitalZones ?? 1) - 1);
+    this.host.lots.push({ price, qty: netQty, time: now, zoneIndex: activeZoneIndex });
     this.host.lastBuyFillTime = now;
     this.host.lastBuyFillPrice = price;
     if (this.host.confirmedChannel?.candleTime) {
@@ -1542,7 +1543,9 @@ export class OrderExecutor {
       await this.cancelAllRestingOrders(undefined, "IOC_BRACKET mode active — clearing resting maker orders");
     }
 
-    const maxInv = this.host.cfg.maxInventoryQuote ?? 40;
+    const maxInv = typeof (this.host as any).getEffectiveMaxInventoryQuote === "function"
+      ? (this.host as any).getEffectiveMaxInventoryQuote()
+      : (this.host.cfg.maxInventoryQuote ?? 40);
     const currentHeldQuote = this.lotTracker.baseHeld() * refPrice;
     const enabledBuys = Array.isArray(this.host.cfg.enabledBuyLevels) ? this.host.cfg.enabledBuyLevels : [true, true, true, true, true];
     const enabledSells = Array.isArray(this.host.cfg.enabledSellTargets) ? this.host.cfg.enabledSellTargets : [true, true, true, true, true];

@@ -833,6 +833,12 @@ export class DashboardServer {
             floorBufferPct: parsed.floorBufferPct !== undefined ? Number(parsed.floorBufferPct) : (Number(liveCfg.floorBufferPct) || 0.0),
             maxInventoryQuote: parsed.budget ? Number(parsed.budget) : (Number(liveCfg.maxInventoryQuote) || budget),
             lockChannelInPosition,
+            capitalZones: parsed.capitalZones !== undefined ? Number(parsed.capitalZones) : (Number(liveCfg.capitalZones) || 4),
+            zoneStabilizeCandles: parsed.zoneStabilizeCandles !== undefined ? Number(parsed.zoneStabilizeCandles) : (Number(liveCfg.zoneStabilizeCandles) || 3),
+            zoneMinDropPct: parsed.zoneMinDropPct !== undefined ? Number(parsed.zoneMinDropPct) : (Number(liveCfg.zoneMinDropPct) || 2.5),
+            gridCutLossMode: parsed.gridCutLossMode || (liveCfg.gridCutLossMode as any) || "final_zone_floor",
+            zoneExitMode: parsed.zoneExitMode || (liveCfg.zoneExitMode as any) || "PORTFOLIO_AVG",
+            minNetProfitPct: parsed.minNetProfitPct !== undefined ? Number(parsed.minNetProfitPct) : (Number(liveCfg.minNetProfitPct) || 0.25),
             warmupBars: actualWarmup,
             trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
           });

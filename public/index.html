@@ -1149,6 +1149,65 @@
                   <span class="slider"></span>
                 </label>
               </div>
+
+              <!-- Multi-Zone Staged Capital Allocation -->
+              <div class="cfg-section-card" style="grid-column: 1 / -1; margin-top: 10px; border: 1px solid rgba(168, 85, 247, 0.35); background: rgba(168, 85, 247, 0.04);">
+                <div class="cfg-section-header">
+                  <span class="cfg-section-title">🎯 ระบบแบ่งเงินทุนและขยับกรอบถัวเฉลี่ยหลายโซน (Multi-Zone Capital Allocation &amp; Dynamic DCA)</span>
+                </div>
+                <div class="settings-grid">
+                  <div class="form-group">
+                    <label for="cfg_capitalZones">
+                      จำนวนส่วนแบ่งเงินทุน (Capital Zones)
+                      <span class="help-tip" title="แบ่งเงินทุนออกเป็นกี่ส่วน เช่น 4 โซน = ใช้เงิน 25% ในกรอบแรก เมื่อกรอบขยับลงและนิ่งแล้ว จึงนำอีก 25% มาถัวเฉลี่ยในกรอบถัดไป">ℹ️</span>
+                    </label>
+                    <select id="cfg_capitalZones" class="form-select">
+                      <option value="1">1 โซน (100% เงินทุนทั้งหมดในกรอบแรก)</option>
+                      <option value="2">2 โซน (50% ต่อโซน - 2 ระดับ)</option>
+                      <option value="3">3 โซน (33.3% ต่อโซน - 3 ระดับ)</option>
+                      <option value="4" selected>4 โซน (25% ต่อโซน - 4 ระดับ แนะนำ)</option>
+                      <option value="5">5 โซน (20% ต่อโซน - 5 ระดับ)</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg_zoneStabilizeCandles">
+                      จำนวนแท่งเทียนยืนยันกรอบนิ่ง (Stabilize Candle Bars)
+                      <span class="help-tip" title="จำนวนแท่งเทียนที่ขอบล่างของกรอบใหม่ต้องนิ่งสนิท (ไม่ขยายตัวลงต่อ) ก่อนอนุญาตให้ขยับกรอบและเข้าถัวเฉลี่ย (แนะนำ 3 แท่ง)">ℹ️</span>
+                    </label>
+                    <div class="input-with-unit">
+                      <input type="number" id="cfg_zoneStabilizeCandles" min="1" max="10" step="1" value="3" />
+                      <span class="unit">แท่ง</span>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg_zoneMinDropPct">
+                      ระยะห่างต่ำสุดก่อนถัวโซนใหม่ (Min Drop % to Next Zone)
+                      <span class="help-tip" title="ฐานกรอบใหม่ต้องต่ำกว่าไม้ที่ซื้อไว้ต่ำสุดอย่างน้อยกี่ % ถึงจะเริ่มถัวเฉลี่ย เพื่อป้องกันการซื้อถี่เกินไป (แนะนำ 2.5%)">ℹ️</span>
+                    </label>
+                    <div class="input-with-unit">
+                      <input type="number" id="cfg_zoneMinDropPct" min="0.5" max="20" step="0.5" value="2.5" />
+                      <span class="unit">%</span>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="cfg_zoneExitMode">
+                      กลยุทธ์ตั้งเป้าขายออก (Zone Exit Mode)
+                      <span class="help-tip" title="PORTFOLIO_AVG = คิดต้นทุนเฉลี่ยของทุกไม้แล้วตั้งเป้าขายบวกกำไร (แนะนำ) | ORIGINAL_TARGETS = ยึดเป้าขายเดิมตามกรอบแรก | PER_ZONE = แยกเป้าขายตามโซน">ℹ️</span>
+                    </label>
+                    <select id="cfg_zoneExitMode" class="form-select">
+                      <option value="PORTFOLIO_AVG" selected>📈 Portfolio Avg + Profit: รวมทุนเฉลี่ยทุกไม้แล้วบวกกำไร (แนะนำ)</option>
+                      <option value="ORIGINAL_TARGETS">🎯 Original Targets: คงเป้าขายเดิมตามกรอบราคาแรก</option>
+                      <option value="PER_ZONE">🏷️ Per-Zone Exits: แยกเป้าขายตามโซนที่เข้าซื้อ</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+                  <span class="slider"></span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -1434,6 +1493,17 @@
               </div>
 
               <div id="cutLossSubGroup" class="cfg-conditional-subgrid" style="grid-column: 1 / -1;">
+                <div class="form-group" style="grid-column: 1 / -1;">
+                  <label for="cfg_gridCutLossMode">
+                    🛡️ รูปแบบการตัดขาดทุนในระบบกริด (Grid Cut-Loss Mode)
+                    <span class="help-tip" title="final_zone_floor = ป้องกัน Cut Loss ก่อนเวลา โดยจะคัทต่อเมื่อหลุดฐานกรอบของโซนสุดท้ายเท่านั้น | entry_floor = คัททันทีเมื่อหลุดฐานกรอบแรก | none = ปิดการคัทลอสโดยสิ้นเชิง (เน้นถัวเฉลี่ยรอเด้งทำกำไร)">ℹ️</span>
+                  </label>
+                  <select id="cfg_gridCutLossMode" class="form-select">
+                    <option value="final_zone_floor" selected>🛡️ Final Zone Floor: ตัดขาดทุนเฉพาะเมื่อหลุดฐานของโซนสุดท้าย (แนะนำ - ป้องกัน Cut Loss ก่อนเวลา)</option>
+                    <option value="entry_floor">🚪 Entry Floor: ตัดขาดทุนเมื่อหลุดฐานกรอบแรกทันที</option>
+                    <option value="none">💎 None: ไม่ตัดขาดทุนเลย (เน้นถือรอและถัวเฉลี่ยจนกว่าจะเด้งกำไร)</option>
+                  </select>
+                </div>
                 <div class="form-group switch-group">
                   <div class="switch-label-group">
                     <span class="switch-title">คัทลอสเฉพาะเมื่อหลุดเส้น Buffer เท่านั้น (Cut Loss at Buffer Only)</span>

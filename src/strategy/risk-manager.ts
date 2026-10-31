@@ -100,8 +100,20 @@ export class RiskManager {
       const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
       if (this.host.baseHeld() >= dustThreshold) {
         const dexBid = bestBid ?? effectiveMid;
-        const shouldLiquidate = Boolean(this.host.cfg.liquidateOnTrendSupportBreak);
-        if (shouldLiquidate) {
+        const totalZones = Math.max(1, Number(this.host.cfg.capitalZones ?? 1));
+        const currentZone = Math.max(1, Number(this.host.unlockedCapitalZones ?? 1));
+        const hasRemainingZones = currentZone < totalZones;
+        const cutLossMode = this.host.cfg.gridCutLossMode ?? "final_zone_floor";
+
+        if (hasRemainingZones || cutLossMode === "none") {
+          this.host.log(
+            `🛡️ [TREND SUPPORT BREAK] Price ($${refPrice.toFixed(6)}) broke below Support Trendline ($${uptrendLine.currentLinePrice.toFixed(6)}) — Multi-Zone DCA active (Zone ${currentZone}/${totalZones}, Mode: ${cutLossMode}). Suppressing liquidation; cancelling resting buys to wait for lower zone stabilization!`,
+          );
+          const openBuys = this.host.openOrders.filter((o) => o.isBid);
+          if (openBuys.length > 0) {
+            await cancelAllRestingOrders("BUY", "Trend Support Broken — Cancel buys to avoid catching crash knife");
+          }
+        } else if (Boolean(this.host.cfg.liquidateOnTrendSupportBreak)) {
           this.host.log(
             `🚨 [TREND SUPPORT BREAK] Price ($${refPrice.toFixed(6)}) broke below Support Trendline ($${uptrendLine.currentLinePrice.toFixed(6)}) — Liquidating 100% (${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset}) to ${this.host.quoteAsset} to prevent holding crash knife!`,
           );
@@ -193,6 +205,23 @@ export class RiskManager {
     const dustThreshold = this.host.minQty ? this.host.minQty * 0.5 : 1e-6;
     const isHolding = this.host.baseHeld() >= dustThreshold || this.host.lots.length > 0;
     if (!isHolding) {
+      return false;
+    }
+
+    const totalZones = Math.max(1, Number(this.host.cfg.capitalZones ?? 1));
+    const currentZone = Math.max(1, Number(this.host.unlockedCapitalZones ?? 1));
+    const hasRemainingZones = currentZone < totalZones;
+    const cutLossMode = this.host.cfg.gridCutLossMode ?? "final_zone_floor";
+
+    if (hasRemainingZones || cutLossMode === "none") {
+      this.host.log(
+        `🛡️ [FAST CUT: DOWNTREND REGIME] Dow confirmed DOWNTREND but Multi-Zone DCA active (Zone ${currentZone}/${totalZones}, Mode: ${cutLossMode}) — Suppressing liquidation; cancelling resting buys and waiting for stabilization!`,
+      );
+      if (this.host.openOrders.length > 0) {
+        await cancelAllRestingOrders("BUY", "Downtrend regime — cancel buys for zone stabilization");
+      }
+      this.host.waitingForHigherLow = true;
+      this.host.saveState();
       return false;
     }
 
@@ -358,6 +387,25 @@ export class RiskManager {
 
         // Cancel resting buy orders immediately so we never buy more while below floor
         await cancelAllRestingOrders("BUY");
+
+        const totalZones = Math.max(1, Number(this.host.cfg.capitalZones ?? 1));
+        const currentZone = Math.max(1, Number(this.host.unlockedCapitalZones ?? 1));
+        const hasRemainingZones = currentZone < totalZones;
+        const cutLossMode = this.host.cfg.gridCutLossMode ?? "final_zone_floor";
+
+        if (cutLossMode === "none") {
+          this.host.status(
+            `🛡️ BELOW FLOOR (HOLDING): Price $${refPrice.toFixed(6)} < Floor $${lowerBound.toFixed(6)} — Cut-loss DISABLED (Mode: NONE). Holding ${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset}`,
+          );
+          return false;
+        }
+
+        if (hasRemainingZones && cutLossMode === "final_zone_floor") {
+          this.host.status(
+            `🛡️ MULTI-ZONE DCA ACTIVE (Zone ${currentZone}/${totalZones}): Price $${refPrice.toFixed(6)} < Floor $${lowerBound.toFixed(6)} — Cut-loss SUPPRESSED. Holding ${this.host.baseHeld().toFixed(4)} ${this.host.baseAsset} waiting for lower channel stabilization`,
+          );
+          return false;
+        }
 
         if (isBidTooDepressed) {
           this.host.status(

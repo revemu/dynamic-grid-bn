@@ -239,7 +239,7 @@ export class SellOrderSynchronizer {
       const levelsUnderTL = sellLevels.filter((lvl, idx) => {
         if (lvl >= effectiveResistancePrice || !enabledSells[idx]) return false;
         const hasExistingOrder = this.host.openOrders.some(
-          (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
+          (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)) && o.price >= minAllowedSellPrice * 0.999,
         );
         if (hasExistingOrder) return true;
         return !this.host.soldSellIndices.has(idx);
@@ -391,8 +391,9 @@ export class SellOrderSynchronizer {
         }
 
         let minAllowedSellPrice = Math.max(currentBestBid, refPrice);
-        if (mode === "PORTFOLIO_AVG_PROFIT" && avgEntry > 0) {
-          minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * 1.001);
+        const minProfitMulti = this.host.getMinProfitMultiplier();
+        if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
+          minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
         }
 
         const eligibleIndices = sellLevels
@@ -401,7 +402,7 @@ export class SellOrderSynchronizer {
             if (!enabledSells[idx]) return false;
             if (shouldSuppressAboveRes && lvl >= effectiveResistancePrice) return false;
             const hasExistingOrder = this.host.openOrders.some(
-              (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
+              (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)) && o.price >= minAllowedSellPrice * 0.999,
             );
             if (hasExistingOrder) return true;
             if (this.host.soldSellIndices.has(idx)) return false;
@@ -625,10 +626,19 @@ export class SellOrderSynchronizer {
           if (desiredSellQty < this.host.minQty) continue;
 
           let effLvlPrice = lvlPrice;
+          const minProfitMulti = this.host.getMinProfitMultiplier();
+          if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
+            const minNetProfitPct = Math.max(0.15, this.host.cfg.minNetProfitPct ?? 0.25);
+            const targetProfitPct = minNetProfitPct + (activeRank * 0.15);
+            effLvlPrice = Math.max(effLvlPrice, avgEntry * (1 + targetProfitPct / 100));
+          } else {
+            effLvlPrice = Math.max(effLvlPrice, minAllowedSellPrice);
+          }
           const minMakerPrice = Math.max(currentBestAsk, refPrice * 1.0005);
           if (effLvlPrice <= currentBestBid) {
             effLvlPrice = Math.max(effLvlPrice, minMakerPrice);
           }
+          effLvlPrice = roundToTick(effLvlPrice, this.host.tickSize || 0.0001);
 
           const otherOpenSellsQty = this.host.openOrders
             .filter((o) => !o.isBid && o !== currentOpenSellAtLvl)
@@ -739,7 +749,7 @@ export class SellOrderSynchronizer {
       .filter(({ lvl, idx }) => {
         if (!enabledSells[idx]) return false;
         const hasExistingOrder = this.host.openOrders.some(
-          (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)),
+          (o) => !o.isBid && (o.levelDesc === sellNames[idx] || (lvl && Math.abs(o.price - lvl) / lvl <= 0.001)) && o.price >= minAllowedSellPrice * 0.999,
         );
         if (hasExistingOrder) return true;
         if (this.host.soldSellIndices.has(idx)) return false;
@@ -873,10 +883,18 @@ export class SellOrderSynchronizer {
       }
 
       let lvlPrice = originalLvlPrice;
+      if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
+        const minNetProfitPct = Math.max(0.15, this.host.cfg.minNetProfitPct ?? 0.25);
+        const targetProfitPct = minNetProfitPct + (activeRank * 0.15);
+        lvlPrice = Math.max(lvlPrice, avgEntry * (1 + targetProfitPct / 100));
+      } else {
+        lvlPrice = Math.max(lvlPrice, minAllowedSellPrice);
+      }
       const minMakerPrice = Math.max(currentBestAsk, refPrice * 1.0005);
       if (lvlPrice <= currentBestBid) {
         lvlPrice = Math.max(lvlPrice, minMakerPrice);
       }
+      lvlPrice = roundToTick(lvlPrice, this.host.tickSize || 0.0001);
 
       let desiredSellQty = getCustomSellQty2(i, isFinalExitLevel, this.lotTracker.baseHeld());
       if (isFinalExitLevel && mode !== "LOT_BASED_PROFIT" && totalSellWeight2 <= 0) {

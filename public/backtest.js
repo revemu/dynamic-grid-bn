@@ -50,6 +50,8 @@
   const inpBudget = document.getElementById("btBudget");
   const inpBaseConfirmation = document.getElementById("btBaseConfirmation");
   const inpLockChannel = document.getElementById("btLockChannel");
+  const inpCapitalZones = document.getElementById("btCapitalZones");
+  const inpGridCutLossMode = document.getElementById("btGridCutLossMode");
 
   function getSelectedSymbol() {
     if (!inpSymbol) return "BNBFDUSD";
@@ -1612,11 +1614,13 @@
     const tradeDirection = inpTradeDirection ? inpTradeDirection.value : "long";
     const enableBaseConfirmationFilter = inpBaseConfirmation ? inpBaseConfirmation.value === "on" : false;
     const lockChannelInPosition = inpLockChannel ? inpLockChannel.value === "locked" : false;
+    const capitalZones = inpCapitalZones ? Number(inpCapitalZones.value) : 4;
+    const gridCutLossMode = inpGridCutLossMode ? inpGridCutLossMode.value : "final_zone_floor";
 
     const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
     loadingOverlay.style.display = "flex";
     const hlLabel = enableBaseConfirmationFilter ? "HL Base: ON (บอทจริง)" : "HL Base: OFF (Pure Grid)";
-    const chLabel = lockChannelInPosition ? "Channel: Locked (ล็อคกรอบ)" : "Channel: Dynamic (ขยับกรอบ)";
+    const chLabel = lockChannelInPosition ? "Channel: Locked (ล็อคกรอบ)" : `Channel: Dynamic (${capitalZones} Zones)`;
     loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection} / ${hlLabel} / ${chLabel})...`;
 
     try {
@@ -1641,6 +1645,8 @@
           enableBaseConfirmationFilter,
           enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
           lockChannelInPosition,
+          capitalZones,
+          gridCutLossMode,
         }),
       });
 
@@ -1744,6 +1750,12 @@
       if (inpLockChannel && (data.record.lockChannelInPosition !== undefined || data.record.options?.lockChannelInPosition !== undefined)) {
         inpLockChannel.value = (data.record.lockChannelInPosition ?? data.record.options?.lockChannelInPosition) ? "locked" : "dynamic";
       }
+      if (inpCapitalZones && (data.record.capitalZones !== undefined || data.record.options?.capitalZones !== undefined)) {
+        inpCapitalZones.value = String(data.record.capitalZones ?? data.record.options?.capitalZones ?? 4);
+      }
+      if (inpGridCutLossMode && (data.record.gridCutLossMode !== undefined || data.record.options?.gridCutLossMode !== undefined)) {
+        inpGridCutLossMode.value = String(data.record.gridCutLossMode ?? data.record.options?.gridCutLossMode ?? "final_zone_floor");
+      }
 
       displayRecord(data.record);
     } catch (err) {
@@ -1807,6 +1819,12 @@
         }
         if (inpLockChannel && cfg.lockChannelInPosition !== undefined) {
           inpLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";
+        }
+        if (inpCapitalZones && cfg.capitalZones !== undefined) {
+          inpCapitalZones.value = String(cfg.capitalZones);
+        }
+        if (inpGridCutLossMode && cfg.gridCutLossMode !== undefined) {
+          inpGridCutLossMode.value = String(cfg.gridCutLossMode);
         }
         if (inpFastCut) inpFastCut.value = "on";
         if (inpMaxSl) inpMaxSl.value = "1.8";
@@ -2434,6 +2452,12 @@
         }
         if (inpLockChannel && cfg.lockChannelInPosition !== undefined) {
           inpLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";
+        }
+        if (inpCapitalZones && cfg.capitalZones !== undefined) {
+          inpCapitalZones.value = String(cfg.capitalZones);
+        }
+        if (inpGridCutLossMode && cfg.gridCutLossMode !== undefined) {
+          inpGridCutLossMode.value = String(cfg.gridCutLossMode);
         }
         if (scLockChannel && cfg.lockChannelInPosition !== undefined) {
           scLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";

@@ -5414,6 +5414,11 @@
       setCheck("cfg_enableNarrowChannelCollapse", data.enableNarrowChannelCollapse !== false);
       setCheck("cfg_adjustChannelOnClosedOnly", data.adjustChannelOnClosedOnly !== false);
       setCheck("cfg_lockChannelInPosition", data.lockChannelInPosition !== false);
+      setVal("cfg_capitalZones", data.capitalZones ?? 4);
+      setVal("cfg_zoneStabilizeCandles", data.zoneStabilizeCandles ?? 3);
+      setVal("cfg_zoneMinDropPct", data.zoneMinDropPct ?? 2.5);
+      setVal("cfg_gridCutLossMode", data.gridCutLossMode || "final_zone_floor");
+      setVal("cfg_zoneExitMode", data.zoneExitMode || "PORTFOLIO_AVG");
       setVal("cfg_narrowChannelThresholdPct", data.narrowChannelThresholdPct ?? 1.2);
       setVal("cfg_narrowChannelBuyBufferPct", data.narrowChannelBuyBufferPct ?? 0.05);
       setVal("cfg_narrowChannelSellBufferPct", data.narrowChannelSellBufferPct ?? 0.05);
@@ -5696,6 +5701,11 @@
       enableNarrowChannelCollapse: document.getElementById("cfg_enableNarrowChannelCollapse") ? document.getElementById("cfg_enableNarrowChannelCollapse").checked : true,
       adjustChannelOnClosedOnly: document.getElementById("cfg_adjustChannelOnClosedOnly") ? document.getElementById("cfg_adjustChannelOnClosedOnly").checked : true,
       lockChannelInPosition: document.getElementById("cfg_lockChannelInPosition") ? document.getElementById("cfg_lockChannelInPosition").checked : true,
+      capitalZones: document.getElementById("cfg_capitalZones") ? parseInt(document.getElementById("cfg_capitalZones").value, 10) : 4,
+      zoneStabilizeCandles: document.getElementById("cfg_zoneStabilizeCandles") ? parseInt(document.getElementById("cfg_zoneStabilizeCandles").value, 10) : 3,
+      zoneMinDropPct: document.getElementById("cfg_zoneMinDropPct") ? parseFloat(document.getElementById("cfg_zoneMinDropPct").value) : 2.5,
+      gridCutLossMode: document.getElementById("cfg_gridCutLossMode") ? document.getElementById("cfg_gridCutLossMode").value : "final_zone_floor",
+      zoneExitMode: document.getElementById("cfg_zoneExitMode") ? document.getElementById("cfg_zoneExitMode").value : "PORTFOLIO_AVG",
       narrowChannelThresholdPct: document.getElementById("cfg_narrowChannelThresholdPct") ? parseFloat(document.getElementById("cfg_narrowChannelThresholdPct").value) : 1.2,
       narrowChannelBuyBufferPct: document.getElementById("cfg_narrowChannelBuyBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelBuyBufferPct").value) : 0.05,
       narrowChannelSellBufferPct: document.getElementById("cfg_narrowChannelSellBufferPct") ? parseFloat(document.getElementById("cfg_narrowChannelSellBufferPct").value) : 0.05,

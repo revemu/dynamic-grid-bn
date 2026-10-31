@@ -370,6 +370,12 @@ export class BacktestService {
       minChannelWidthPct?: number;
       maxChannelWidthPct?: number;
       floorBufferPct?: number;
+      capitalZones?: number;
+      zoneStabilizeCandles?: number;
+      zoneMinDropPct?: number;
+      gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
+      minNetProfitPct?: number;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -378,6 +384,27 @@ export class BacktestService {
     const maxInventory = opts.maxInventoryQuote ?? initialCapital;
     const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
     const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
+
+    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 4));
+    const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
+    const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
+    const gridCutLossMode = opts.gridCutLossMode ?? "final_zone_floor";
+    const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
+    const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
+    const zoneBudgetQuote = maxInventory / totalZones;
+
+    let unlockedCapitalZones = 1;
+    let stableFloorCandleCount = 0;
+    let prevCandidateFloor: number | undefined = undefined;
+    let lastZoneUnlockFloor: number | undefined = undefined;
+    let activeChannel: {
+      floor: number;
+      ceiling: number;
+      center: number;
+      channelSpan: number;
+      buyLevels: number[];
+      sellTargets: number[];
+    } | null = null;
 
     const dow = new DowStructureEngine(3, true, 20.0, 300);
     const warmup = Math.min(100, Math.floor(candles.length / 4));
@@ -399,6 +426,7 @@ export class BacktestService {
     let heldLots: Array<{
       id: number;
       index: number;
+      zoneIndex?: number;
       qty: number;
       buyPrice: number;
       entryTime: number;
@@ -439,7 +467,33 @@ export class BacktestService {
 
       const isHoldingPosition = heldLots.length > 0;
 
-      if (lockChannelInPosition && isHoldingPosition && lockedChannel) {
+      if (!isHoldingPosition) {
+        unlockedCapitalZones = 1;
+        stableFloorCandleCount = 0;
+        prevCandidateFloor = undefined;
+        lastZoneUnlockFloor = undefined;
+        lockedChannel = null;
+
+        floor = structure.bottomBound;
+        ceiling = structure.upperBound;
+        center = structure.centerPrice;
+        channelSpan = ceiling - floor;
+        if (channelSpan <= 0) continue;
+
+        buyLevels = [
+          floor + channelSpan * 0.45,
+          floor + channelSpan * 0.33,
+          floor + channelSpan * 0.20,
+          floor + channelSpan * 0.08,
+        ];
+        sellTargets = [
+          floor + channelSpan * 0.55,
+          floor + channelSpan * 0.68,
+          floor + channelSpan * 0.80,
+          floor + channelSpan * 0.92,
+        ];
+        activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
+      } else if (lockChannelInPosition && lockedChannel) {
         // Position Lock: Freeze channel until all lots exit
         floor = lockedChannel.floor;
         ceiling = lockedChannel.ceiling;
@@ -448,40 +502,104 @@ export class BacktestService {
         buyLevels = lockedChannel.buyLevels;
         sellTargets = lockedChannel.sellTargets;
       } else {
-        floor = structure.bottomBound;
-        ceiling = structure.upperBound;
-        center = structure.centerPrice;
-        channelSpan = ceiling - floor;
-        if (channelSpan <= 0) continue;
+        const candidateFloor = structure.bottomBound;
+        const currentActiveFloor = activeChannel?.floor ?? candidateFloor;
 
-        // 4 Buy Levels: Level 1 (45%), Level 2 (33%), Level 3 (20%), Level 4 (8% above floor)
-        buyLevels = [
-          floor + channelSpan * 0.45,
-          floor + channelSpan * 0.33,
-          floor + channelSpan * 0.20,
-          floor + channelSpan * 0.08,
-        ];
+        // Channel Shift Gate when candidate floor is lower than active channel
+        if (candidateFloor < currentActiveFloor * 0.999 && activeChannel) {
+          // Pillar 1: Stability count
+          if (prevCandidateFloor !== undefined && Math.abs(candidateFloor - prevCandidateFloor) / prevCandidateFloor <= 0.005) {
+            stableFloorCandleCount++;
+          } else {
+            stableFloorCandleCount = 1;
+          }
+          prevCandidateFloor = candidateFloor;
 
-        // 4 Sell Targets: Target 1 (55%), Target 2 (68%), Target 3 (80%), Target 4 (92% above floor)
-        sellTargets = [
-          floor + channelSpan * 0.55,
-          floor + channelSpan * 0.68,
-          floor + channelSpan * 0.80,
-          floor + channelSpan * 0.92,
-        ];
+          // Pillar 2: Not in dump
+          const isPillar2Ok = !structure.isDowntrendDropActive && (c.close >= c.open || structure.gridZone?.canEstablishChannel !== false);
 
-        // Dynamic Trailing: when channel moves while holding lots, update sell targets
-        if (!lockChannelInPosition && isHoldingPosition) {
+          // Pillar 3: Min drop % from lowest held lot
+          const lowestHeldLotPrice = Math.min(...heldLots.map((l) => l.buyPrice));
+          const isPillar3Ok = lowestHeldLotPrice > 0 && ((lowestHeldLotPrice - candidateFloor) / lowestHeldLotPrice) * 100 >= (zoneMinDropPct - 0.1);
+
+          const isStabilizedGatePassed = isPillar2Ok && isPillar3Ok && (stableFloorCandleCount >= zoneStabilizeCandles);
+
+          if (isStabilizedGatePassed) {
+            if (unlockedCapitalZones < totalZones) {
+              unlockedCapitalZones++;
+            }
+            floor = candidateFloor;
+            ceiling = structure.upperBound;
+            center = structure.centerPrice;
+            channelSpan = ceiling - floor;
+            buyLevels = [
+              floor + channelSpan * 0.45,
+              floor + channelSpan * 0.33,
+              floor + channelSpan * 0.20,
+              floor + channelSpan * 0.08,
+            ];
+            sellTargets = [
+              floor + channelSpan * 0.55,
+              floor + channelSpan * 0.68,
+              floor + channelSpan * 0.80,
+              floor + channelSpan * 0.92,
+            ];
+            activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
+            lastZoneUnlockFloor = floor;
+            stableFloorCandleCount = 0;
+          } else {
+            // Channel frozen waiting for stabilization
+            floor = activeChannel.floor;
+            ceiling = activeChannel.ceiling;
+            center = activeChannel.center;
+            channelSpan = activeChannel.channelSpan;
+            buyLevels = activeChannel.buyLevels;
+            sellTargets = activeChannel.sellTargets;
+          }
+        } else {
+          floor = candidateFloor;
+          ceiling = structure.upperBound;
+          center = structure.centerPrice;
+          channelSpan = ceiling - floor;
+          if (channelSpan <= 0) continue;
+          buyLevels = [
+            floor + channelSpan * 0.45,
+            floor + channelSpan * 0.33,
+            floor + channelSpan * 0.20,
+            floor + channelSpan * 0.08,
+          ];
+          sellTargets = [
+            floor + channelSpan * 0.55,
+            floor + channelSpan * 0.68,
+            floor + channelSpan * 0.80,
+            floor + channelSpan * 0.92,
+          ];
+          activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
+          stableFloorCandleCount = 0;
+        }
+
+        // Dynamic Trailing: when channel moves while holding lots, update sell targets ensuring min profit hurdle!
+        if (isHoldingPosition) {
+          const totalHeldQty = heldLots.reduce((sum, l) => sum + l.qty, 0);
+          const totalInvestQuote = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+          const avgEntry = totalHeldQty > 0 ? (totalInvestQuote / totalHeldQty) : 0;
+          const minProfitTarget = avgEntry > 0 ? avgEntry * (1 + minNetProfitPct / 100) : 0;
+
           for (const lot of heldLots) {
-            const dynamicTarget = sellTargets[lot.index] ?? (lot.buyPrice * 1.015);
-            const minProfitableTarget = lot.buyPrice * 1.0085;
-            lot.targetPrice = Math.max(dynamicTarget, minProfitableTarget);
+            if (zoneExitMode === "ORIGINAL_TARGETS" && lot.targetPrice > 0) {
+              continue;
+            }
+            const dynamicTarget = sellTargets[lot.index] ?? (avgEntry * 1.015);
+            lot.targetPrice = Math.max(dynamicTarget, minProfitTarget);
           }
         }
       }
 
       const floorBuf = opts.floorBufferPct ?? 0.0;
       const cutLossPrice = floorBuf > 0 ? floor * (1 - floorBuf / 100) : floor * 0.985;
+      const canTriggerCutLoss =
+        gridCutLossMode !== "none" &&
+        (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
 
       // 1. Evaluate Sells & Cut Losses for Open Lots
       const remainingLots: typeof heldLots = [];
@@ -527,13 +645,13 @@ export class BacktestService {
             position: "aboveBar",
             color: "#a855f7",
             shape: "arrowDown",
-            text: `🟣 GRID SELL #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+            text: `🟣 GRID SELL #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
           });
           continue;
         }
 
         // Cut Loss Hit
-        if (c.low <= cutLossPrice) {
+        if (canTriggerCutLoss && c.low <= cutLossPrice) {
           const exitPrice = cutLossPrice;
           const proceeds = lot.qty * exitPrice * (1 - costPerFill);
           const invest = lot.qty * lot.buyPrice;
@@ -568,7 +686,7 @@ export class BacktestService {
             position: "belowBar",
             color: "#ef4444",
             shape: "arrowDown",
-            text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
+            text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
           });
           continue;
         }
@@ -578,34 +696,43 @@ export class BacktestService {
       heldLots = remainingLots;
       if (heldLots.length === 0) {
         lockedChannel = null;
+        unlockedCapitalZones = 1;
+        stableFloorCandleCount = 0;
       }
 
-      // 2. Evaluate Grid Buys (Tranche Size = 25% of Max Inventory)
+      // 2. Evaluate Grid Buys (Tranche Size = 25% of current zone quota)
+      const effectiveMaxInventory = zoneBudgetQuote * unlockedCapitalZones;
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
-      const trancheQuote = maxInventory / 4;
+      const trancheQuote = zoneBudgetQuote / 4;
       const isHlWaiting = opts.enableBaseConfirmationFilter === true && (
         structure.gridZone?.canEstablishChannel === false ||
         Boolean(structure.isDowntrendDropActive)
       );
 
-      if (!isHlWaiting && currentInventory + trancheQuote <= maxInventory && cash >= trancheQuote && heldLots.length < 4) {
+      const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
+      if (!isHlWaiting && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           const bl = buyLevels[lvlIdx];
-          const alreadyFilledLevel = heldLots.some((l) => l.index === lvlIdx);
-          if (!alreadyFilledLevel && c.low <= bl && c.close >= cutLossPrice) {
+          const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
+          if (!alreadyFilledInCurrentZone && c.low <= bl && (!canTriggerCutLoss || c.close >= cutLossPrice)) {
             tradeCounter++;
             const buyPrice = bl;
             const invest = trancheQuote;
             const fillQty = (invest / buyPrice) * (1 - costPerFill);
             cash -= invest;
 
+            const totalHeldQtyBefore = heldLots.reduce((sum, l) => sum + l.qty, 0);
+            const totalInvestBefore = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+            const newAvgEntry = (totalInvestBefore + invest) / (totalHeldQtyBefore + fillQty);
+            const minProfitHurdle = newAvgEntry * (1 + minNetProfitPct / 100);
+
             const rawTarget = sellTargets[lvlIdx] ?? (buyPrice * 1.015);
-            const minTarget = buyPrice * 1.0085; // Min profit hurdle >= 0.85% to comfortably exceed roundtrip fees
-            const targetPrice = Math.max(rawTarget, minTarget);
+            const targetPrice = Math.max(rawTarget, minProfitHurdle);
 
             heldLots.push({
               id: tradeCounter,
               index: lvlIdx,
+              zoneIndex: unlockedCapitalZones,
               qty: fillQty,
               buyPrice,
               entryTime: c.time,
@@ -629,7 +756,7 @@ export class BacktestService {
               position: "belowBar",
               color: "#10b981",
               shape: "arrowUp",
-              text: `🟢 GRID BUY #${tradeCounter} (L${lvlIdx + 1}) @ $${buyPrice.toFixed(4)}`,
+              text: `🟢 GRID BUY #${tradeCounter} (L${lvlIdx + 1} Z${unlockedCapitalZones}) @ $${buyPrice.toFixed(4)}`,
             });
             break;
           }
@@ -782,7 +909,13 @@ export class BacktestService {
       };
       candlesHtf?: Candle[];
       enableBaseConfirmationFilter?: boolean;
-  lockChannelInPosition?: boolean;
+      lockChannelInPosition?: boolean;
+      capitalZones?: number;
+      zoneStabilizeCandles?: number;
+      zoneMinDropPct?: number;
+      gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
+      minNetProfitPct?: number;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -796,6 +929,27 @@ export class BacktestService {
     const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
     const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
     const tradeDirection = opts.tradeDirection ?? "both";
+
+    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 4));
+    const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
+    const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
+    const gridCutLossMode = opts.gridCutLossMode ?? "final_zone_floor";
+    const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
+    const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
+    const zoneBudgetQuote = gridInitialCap / totalZones;
+
+    let unlockedCapitalZones = 1;
+    let stableFloorCandleCount = 0;
+    let prevCandidateFloor: number | undefined = undefined;
+    let lastZoneUnlockFloor: number | undefined = undefined;
+    let activeChannel: {
+      floor: number;
+      ceiling: number;
+      center: number;
+      channelSpan: number;
+      buyLevels: number[];
+      sellTargets: number[];
+    } | null = null;
     const macroGateMode = opts.macroGateMode ?? "noDeepBear";
     const enableUpsideFloor = opts.enableUpsideFloor !== false;
     const enableCircuitBreaker = opts.enableCircuitBreaker !== false;
@@ -841,6 +995,7 @@ export class BacktestService {
     let heldLots: Array<{
       id: number;
       index: number;
+      zoneIndex?: number;
       qty: number;
       buyPrice: number;
       entryTime: number;
@@ -919,14 +1074,13 @@ export class BacktestService {
       let sellTargets: number[];
 
       const isHoldingPosition = heldLots.length > 0;
-      if (lockChannelInPosition && isHoldingPosition && lockedChannel) {
-        floor = lockedChannel.floor;
-        ceiling = lockedChannel.ceiling;
-        center = lockedChannel.center;
-        channelSpan = lockedChannel.channelSpan;
-        buyLevels = lockedChannel.buyLevels;
-        sellTargets = lockedChannel.sellTargets;
-      } else {
+      if (!isHoldingPosition) {
+        unlockedCapitalZones = 1;
+        stableFloorCandleCount = 0;
+        prevCandidateFloor = undefined;
+        lastZoneUnlockFloor = undefined;
+        lockedChannel = null;
+
         floor = structure.bottomBound;
         ceiling = structure.upperBound;
         center = structure.centerPrice;
@@ -943,11 +1097,96 @@ export class BacktestService {
           floor + channelSpan * 0.80,
           floor + channelSpan * 0.92,
         ];
-        if (!lockChannelInPosition && isHoldingPosition) {
+        activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
+      } else if (lockChannelInPosition && lockedChannel) {
+        floor = lockedChannel.floor;
+        ceiling = lockedChannel.ceiling;
+        center = lockedChannel.center;
+        channelSpan = lockedChannel.channelSpan;
+        buyLevels = lockedChannel.buyLevels;
+        sellTargets = lockedChannel.sellTargets;
+      } else {
+        const candidateFloor = structure.bottomBound;
+        const currentActiveFloor = activeChannel?.floor ?? candidateFloor;
+
+        if (candidateFloor < currentActiveFloor * 0.999 && activeChannel) {
+          if (prevCandidateFloor !== undefined && Math.abs(candidateFloor - prevCandidateFloor) / prevCandidateFloor <= 0.005) {
+            stableFloorCandleCount++;
+          } else {
+            stableFloorCandleCount = 1;
+          }
+          prevCandidateFloor = candidateFloor;
+
+          const isPillar2Ok = !structure.isDowntrendDropActive && (c.close >= c.open || structure.gridZone?.canEstablishChannel !== false);
+          const lowestHeldLotPrice = Math.min(...heldLots.map((l) => l.buyPrice));
+          const isPillar3Ok = lowestHeldLotPrice > 0 && ((lowestHeldLotPrice - candidateFloor) / lowestHeldLotPrice) * 100 >= (zoneMinDropPct - 0.1);
+
+          const isStabilizedGatePassed = isPillar2Ok && isPillar3Ok && (stableFloorCandleCount >= zoneStabilizeCandles);
+
+          if (isStabilizedGatePassed) {
+            if (unlockedCapitalZones < totalZones) {
+              unlockedCapitalZones++;
+            }
+            floor = candidateFloor;
+            ceiling = structure.upperBound;
+            center = structure.centerPrice;
+            channelSpan = ceiling - floor;
+            buyLevels = [
+              floor + channelSpan * 0.45,
+              floor + channelSpan * 0.33,
+              floor + channelSpan * 0.20,
+              floor + channelSpan * 0.08,
+            ];
+            sellTargets = [
+              floor + channelSpan * 0.55,
+              floor + channelSpan * 0.68,
+              floor + channelSpan * 0.80,
+              floor + channelSpan * 0.92,
+            ];
+            activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
+            lastZoneUnlockFloor = floor;
+            stableFloorCandleCount = 0;
+          } else {
+            floor = activeChannel.floor;
+            ceiling = activeChannel.ceiling;
+            center = activeChannel.center;
+            channelSpan = activeChannel.channelSpan;
+            buyLevels = activeChannel.buyLevels;
+            sellTargets = activeChannel.sellTargets;
+          }
+        } else {
+          floor = candidateFloor;
+          ceiling = structure.upperBound;
+          center = structure.centerPrice;
+          channelSpan = ceiling - floor;
+          buyLevels = [
+            floor + channelSpan * 0.45,
+            floor + channelSpan * 0.33,
+            floor + channelSpan * 0.20,
+            floor + channelSpan * 0.08,
+          ];
+          sellTargets = [
+            floor + channelSpan * 0.55,
+            floor + channelSpan * 0.68,
+            floor + channelSpan * 0.80,
+            floor + channelSpan * 0.92,
+          ];
+          activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
+          stableFloorCandleCount = 0;
+        }
+
+        if (isHoldingPosition) {
+          const totalHeldQty = heldLots.reduce((sum, l) => sum + l.qty, 0);
+          const totalInvestQuote = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+          const avgEntry = totalHeldQty > 0 ? (totalInvestQuote / totalHeldQty) : 0;
+          const minProfitTarget = avgEntry > 0 ? avgEntry * (1 + minNetProfitPct / 100) : 0;
+
           for (const lot of heldLots) {
-            const dynamicTarget = sellTargets[lot.index] ?? (lot.buyPrice * 1.015);
-            const minProfitableTarget = lot.buyPrice * 1.0085;
-            lot.targetPrice = Math.max(dynamicTarget, minProfitableTarget);
+            if (zoneExitMode === "ORIGINAL_TARGETS" && lot.targetPrice > 0) {
+              continue;
+            }
+            const dynamicTarget = sellTargets[lot.index] ?? (avgEntry * 1.015);
+            lot.targetPrice = Math.max(dynamicTarget, minProfitTarget);
           }
         }
       }
@@ -1001,7 +1240,12 @@ export class BacktestService {
 
       // ── 1. EVALUATE GRID EXITS (TP & Cut Loss) ──
       if (channelSpan > 0) {
-        const cutLossPrice = floor * 0.985;
+        const floorBuf = opts.slBufferPct ?? 0.0;
+        const cutLossPrice = floorBuf > 0 ? floor * (1 - floorBuf / 100) : floor * 0.985;
+        const canTriggerCutLoss =
+          gridCutLossMode !== "none" &&
+          (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
+
         const remainingLots: typeof heldLots = [];
         for (const lot of heldLots) {
           if (c.high >= lot.targetPrice) {
@@ -1039,12 +1283,12 @@ export class BacktestService {
               position: "aboveBar",
               color: "#3b82f6",
               shape: "circle",
-              text: `🔵 GRID TP #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+              text: `🔵 GRID TP #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
             });
             continue;
           }
 
-          if (c.low <= cutLossPrice) {
+          if (canTriggerCutLoss && c.low <= cutLossPrice) {
             const exitPrice = cutLossPrice;
             const proceeds = lot.qty * exitPrice * (1 - costPerFill);
             const invest = lot.qty * lot.buyPrice;
@@ -1079,7 +1323,7 @@ export class BacktestService {
               position: "belowBar",
               color: "#ef4444",
               shape: "arrowDown",
-              text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
+              text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
             });
             continue;
           }
@@ -1088,7 +1332,8 @@ export class BacktestService {
         heldLots = remainingLots;
 
         // ── 2. EVALUATE GRID BUYS ──
-        const trancheQuote = gridInitialCap / 4;
+        const effectiveMaxInventory = zoneBudgetQuote * unlockedCapitalZones;
+        const trancheQuote = zoneBudgetQuote / 4;
         const currentGridInv = heldLots.reduce((s, l) => s + (l.qty * l.buyPrice), 0);
         const isHlWaiting = opts.enableBaseConfirmationFilter === true && (
           structure.gridZone?.canEstablishChannel === false ||
@@ -1097,27 +1342,35 @@ export class BacktestService {
 
         if (heldLots.length === 0) {
           lockedChannel = null;
+          unlockedCapitalZones = 1;
+          stableFloorCandleCount = 0;
         }
 
-        if (!isHlWaiting && currentGridInv + trancheQuote <= gridInitialCap && gridCash >= trancheQuote && heldLots.length < 4) {
+        const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
+        if (!isHlWaiting && currentGridInv + trancheQuote <= effectiveMaxInventory && gridCash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
 
           for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
             const bl = buyLevels[lvlIdx];
-            const alreadyFilled = heldLots.some((l) => l.index === lvlIdx);
-            if (!alreadyFilled && c.low <= bl && c.close >= cutLossPrice) {
+            const alreadyFilled = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
+            if (!alreadyFilled && c.low <= bl && (!canTriggerCutLoss || c.close >= cutLossPrice)) {
               tradeCounter++;
               const buyPrice = bl;
               const invest = trancheQuote;
               const fillQty = (invest / buyPrice) * (1 - costPerFill);
               gridCash -= invest;
 
+              const totalHeldQtyBefore = heldLots.reduce((sum, l) => sum + l.qty, 0);
+              const totalInvestBefore = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+              const newAvgEntry = (totalInvestBefore + invest) / (totalHeldQtyBefore + fillQty);
+              const minProfitHurdle = newAvgEntry * (1 + minNetProfitPct / 100);
+
               const rawTarget = sellTargets[lvlIdx] ?? (buyPrice * 1.015);
-              const minTarget = buyPrice * 1.0085; // Min profit hurdle >= 0.85% to comfortably exceed roundtrip fees
-              const targetPrice = Math.max(rawTarget, minTarget);
+              const targetPrice = Math.max(rawTarget, minProfitHurdle);
 
               heldLots.push({
                 id: tradeCounter,
                 index: lvlIdx,
+                zoneIndex: unlockedCapitalZones,
                 qty: fillQty,
                 buyPrice,
                 entryTime: c.time,
@@ -1142,7 +1395,7 @@ export class BacktestService {
                 position: "belowBar",
                 color: "#10b981",
                 shape: "circle",
-                text: `🟢 GRID BUY #${tradeCounter} (L${lvlIdx + 1}) @ $${buyPrice.toFixed(4)}`,
+                text: `🟢 GRID BUY #${tradeCounter} (L${lvlIdx + 1} Z${unlockedCapitalZones}) @ $${buyPrice.toFixed(4)}`,
               });
               break;
             }
@@ -1555,6 +1808,12 @@ export class BacktestService {
       maxChannelWidthPct?: number;
       floorBufferPct?: number;
       maxInventoryQuote?: number;
+      capitalZones?: number;
+      zoneStabilizeCandles?: number;
+      zoneMinDropPct?: number;
+      gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
+      minNetProfitPct?: number;
     }
   ): BacktestRecord {
     if (opts.tradeMode === "dynamic_grid") {
@@ -1572,6 +1831,12 @@ export class BacktestService {
         maxChannelWidthPct: opts.maxChannelWidthPct,
         floorBufferPct: opts.floorBufferPct,
         lockChannelInPosition: opts.lockChannelInPosition,
+        capitalZones: opts.capitalZones,
+        zoneStabilizeCandles: opts.zoneStabilizeCandles,
+        zoneMinDropPct: opts.zoneMinDropPct,
+        gridCutLossMode: opts.gridCutLossMode,
+        zoneExitMode: opts.zoneExitMode,
+        minNetProfitPct: opts.minNetProfitPct,
       });
     }
 
@@ -1601,6 +1866,13 @@ export class BacktestService {
         precomputed: opts.precomputed,
         candlesHtf: opts.candlesHtf,
         enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
+        lockChannelInPosition: opts.lockChannelInPosition,
+        capitalZones: opts.capitalZones,
+        zoneStabilizeCandles: opts.zoneStabilizeCandles,
+        zoneMinDropPct: opts.zoneMinDropPct,
+        gridCutLossMode: opts.gridCutLossMode,
+        zoneExitMode: opts.zoneExitMode,
+        minNetProfitPct: opts.minNetProfitPct,
       });
     }
 

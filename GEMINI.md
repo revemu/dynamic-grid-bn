@@ -6961,3 +6961,49 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ในตารางประวัติไม้เทรด (Trades Table): คอลัมน์ระยะเวลาถือครองแสดงป้ายสีอำพันเด่นชัด `⏳ ถือรอ 48 แท่ง (~4 ชม.)`
   4. **Bump Version**:
      - ปรับ Version เป็น `0.2.211` ใน `package.json` และ `src/version.ts`
+
+
+---
+
+## 237. 4-Zone Staged Capital Allocation, Stabilized Channel Gate, Cut-Loss Suppression & Sell Loss Prevention (v0.2.212)
+
+- **สาเหตุของปัญหา**:
+  1. **การเลื่อนกรอบลงทำให้วางขายขาดทุน (Live Bot Shifted Resting Sells Below Avg Cost)**:
+     - เมื่อเปิด `lockChannelInPosition: false` (Dynamic Trailing) แล้วราคาเหรียญหลุดกรอบลงไปลึก (เช่น `INITUSDT` บน `:3334`) กรอบราคาและเส้น `sellLevels` ขยับลงมาอยู่ต่ำกว่าต้นทุนเฉลี่ย (`avgEntry = $0.20199`)
+     - ใน `sell-sync.ts` เมื่อระดับเป้าขายทั้งหมดต่ำกว่า `minAllowedSellPrice` ตรรกะ fallback ได้ดึงเส้นขายสูงสุด (`sellLevels[4]`) มาตั้งออเดอร์โดยไม่ได้ clamp ให้สูงกว่า `avgEntry * minProfitMulti` ทำให้บอทตั้งและเลื่อนคำสั่งขายลงไปที่ `$0.19066 - $0.19969` ซึ่งทำให้ขายขาดทุนทันทีหากราคาเด้งมาแตะ
+  2. **Backtest Bias จาก Runaway Stop Loss และ Hardcoded 0.85% Hurdle**:
+     - ใน `backtest-service.ts` เมื่อขยับกรอบลง เส้น Stop Loss / Cut Loss ขยับตามลงไปเรื่อยๆ จนกว่าราคาจะเด้ง ทำให้ Backtest แทบไม่เคยตัดขาดทุน (Win Rate สูงผิดปกติ)
+     - มีการฮาร์ดโค้ดเป้ากำไร `lot.buyPrice * 1.0085` รายไม้ โดยไม่ได้อิงจาก `avgEntry` ของพอร์ตตามการทำงานจริง
+  3. **การทุ่มเงินทุน 100% ในกรอบแรกทำให้ไม่มีเงินเหลือถัวเฉลี่ยเมื่อกรอบหลุดลงไป**:
+     - หากราคาหลุดฐานกรอบแรก ระบบจะตัดขาดทุนทันทีหรือค้างไม้ไว้จนติดดอย โดยไม่มีเงินทุนสำรองไว้รอถัวเฉลี่ยในจังหวะที่กรอบราคาด้านล่างนิ่งและสร้างฐานใหม่
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.212)**:
+  1. **ระบบแบ่งเงินทุนหลายโซน (Multi-Zone Staged Capital Allocation: `capitalZones: 1..5`, ค่าเริ่มต้น 4 โซน)**:
+     - ใน `src/config.ts`, `src/db.ts`, `src/strategy/types.ts`:
+       - เพิ่มพารามิเตอร์ `capitalZones` (ค่าเริ่มต้น 4 โซน = โซนละ 25% ของ `maxInventoryQuote`)
+       - เมธอด `getEffectiveMaxInventoryQuote()`: คืนค่าเพดานงบประมาณตามโซนที่ปลดล็อคแล้ว `(maxInventoryQuote / capitalZones) * unlockedCapitalZones`
+       - `Lot.zoneIndex`: บันทึกเลขโซนที่ไม้ถูกเข้าซื้อ (เช่น Zone 1, Zone 2, Zone 3, Zone 4)
+       - `StrategyStateRecord`: ติดตาม `unlockedCapitalZones`, `stableFloorCandleCount`, `lastZoneUnlockFloor`, `prevCandidateFloor`
+  2. **ประตูยืนยันกรอบนิ่งก่อนขยับลงและถัวเฉลี่ย (3-Pillar Stabilized Channel Shift Gate)**:
+     - ใน `src/strategy/index.ts` และ `src/backtest-service.ts`:
+       - เมื่อถือไม้ค้างอยู่ (`isHoldingPosition`) และตรวจพบกรอบราคาใหม่ต่ำกว่ากรอบเดิม (`candidateFloor < activeFloor`):
+         - **เสาหลักที่ 1 (Pillar 1: Flat Floor Stability Count)**: ขอบล่างต้องหยุดทำ New Low และนิ่งสนิทอย่างน้อย `zoneStabilizeCandles` (ค่าเริ่มต้น 3 แท่ง)
+         - **เสาหลักที่ 2 (Pillar 2: Non-Waterfall Reversal)**: แท่งเทียนต้องปิดเขียว หรือ Dow สร้างจุดต่ำสุดสวิง ไม่ได้อยู่ในสภาวะน้ำตกเทกระจาย (`!isDowntrendDropActive`)
+         - **เสาหลักที่ 3 (Pillar 3: Minimum Distance Span)**: ขอบล่างใหม่ต้องต่ำกว่าไม้ที่ซื้อไว้ต่ำสุดอย่างน้อย `zoneMinDropPct` (ค่าเริ่มต้น 2.5%) เพื่อป้องกันการถัวเฉลี่ยถี่เกินไป
+       - หากยังไม่ผ่านประตูทั้ง 3 ประการ: กรอบราคาและเป้าขายจะถูก **แช่แข็ง (Frozen at Active Channel)** นิ่งสนิท 100% จนกว่าราคาจะสร้างฐานด้านล่างนิ่งแล้วจริง
+  3. **ระบบระงับการคัทลอสชั่วคราวขณะมีโซนสำรอง (Multi-Zone Cut-Loss Suppression)**:
+     - ใน `src/strategy/risk-manager.ts`:
+       - เพิ่มตัวเลือก `gridCutLossMode`: `"final_zone_floor"` (แนะนำ), `"entry_floor"`, `"none"`
+       - เมื่อราคาหลุดต่ำกว่า Floor หรือ Buffer แต่ยังมีโซนเงินทุนสำรองเหลือ (`unlockedCapitalZones < capitalZones`):
+         - สั่งยกเลิกออเดอร์ฝั่ง BUY ค้างทั้งหมด เพื่อป้องกันการเข้าซื้อระหว่างราคากำลังทุบ
+         - ระงับการตัดขาดทุน (Suppress Cut Loss) และคงไม้เดิมไว้ เพื่อนำเงินทุนโซนถัดไปมาถัวเฉลี่ยเมื่อกรอบนิ่ง
+  4. **ระบบล็อกราคาขายไม่ให้ต่ำกว่าทุนโดยเด็ดขาด (Sell Loss Clamping & Staggered Hurdle)**:
+     - ใน `src/strategy/sell-sync.ts`:
+       - คำนวณ `minAllowedSellPrice = Math.max(currentBestBid, refPrice, avgEntry * minProfitMulti)`
+       - ตรวจสอบออเดอร์ที่มีอยู่เดิม: หาก `o.price < minAllowedSellPrice * 0.999` จะไม่นับเป็น order ที่ยอมรับได้ และจะถูกปรับเลื่อนขึ้นมาที่ระดับกำไรทันที
+       - ตรรกะ `lvlPrice`: บังคับ Clamp ด้วย `Math.max(lvlPrice, avgEntry * (1 + targetProfitPct / 100))` โดยมีบันไดกำไรขั้นต่ำตามลำดับไม้ ป้องกันการตั้งหรือเลื่อนขายขาดทุน 100%
+  5. **การปรับความเที่ยงตรงใน Backtest และ UI แดชบอร์ด**:
+     - ปรับ `runDynamicGridSimulation` และ `runDualHybridSimulation` ใน `src/backtest-service.ts` ให้จำลองการปลดล็อคโซน, การตรวจจับกรอบนิ่ง, และตัด bias ฮาร์ดโค้ด `1.0085` ออกทั้งหมด
+     - เพิ่มตัวควบคุมใน `public/index.html`, `public/app.js`, `public/backtest.html`, `public/backtest.js` สำหรับ `capitalZones`, `zoneStabilizeCandles`, `zoneMinDropPct`, `gridCutLossMode`, `zoneExitMode`
+  6. **Bump Version**:
+     - ปรับ Version เป็น `0.2.212` ใน `package.json` และ `src/version.ts`
