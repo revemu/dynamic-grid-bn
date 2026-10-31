@@ -200,7 +200,7 @@ export const defaultStrategyConfig = {
    * 2. "PORTFOLIO_AVG_PROFIT": Only sell at prices higher than portfolio average entry (+minNetProfitPct).
    * 3. "LOT_BASED_PROFIT": Lot-based matching; only sell inventory from lots bought lower than the sell target price.
    */
-  sellProfitMode: "GRID_CASHFLOW" as "GRID_CASHFLOW" | "PORTFOLIO_AVG_PROFIT" | "LOT_BASED_PROFIT",
+  sellProfitMode: "PORTFOLIO_AVG_PROFIT" as "GRID_CASHFLOW" | "PORTFOLIO_AVG_PROFIT" | "LOT_BASED_PROFIT",
   /** Computed alias for sellProfitMode === "PORTFOLIO_AVG_PROFIT". */
   get requireProfitAboveAvgEntry(): boolean { return this.sellProfitMode === "PORTFOLIO_AVG_PROFIT"; },
   set requireProfitAboveAvgEntry(v: boolean) { if (v) this.sellProfitMode = "PORTFOLIO_AVG_PROFIT"; },
@@ -232,8 +232,8 @@ export const defaultStrategyConfig = {
   minTradeableChannelWidthPct: 2.0,
 
   // ── Capital Staging & Stabilized Channel DCA ────────────────────────────
-  /** Number of capital zones to divide budget for staged DCA when channel moves down and stabilizes (default 1, e.g. 4 = 4 zones of 25%). */
-  capitalZones: 1,
+  /** Number of capital zones to divide budget for staged DCA when channel moves down and stabilizes (default 2, e.g. 2 = 2 zones of 50%, 4 = 4 zones of 25%). */
+  capitalZones: 2,
   /** Minimum drop % between new lower channel and previous zone's lowest buy price before unlocking next DCA zone (default 2.5%). */
   zoneMinDropPct: 2.5,
   /** Number of closed candles a lower channel must remain stable (not making new lows) before unlocking next DCA zone (default 3 bars). */
@@ -255,10 +255,10 @@ export const defaultStrategyConfig = {
   channelMode: "DONCHIAN_ATR" as "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF",
   /** Lookback bars for Volume Profile calculation on macro candles (default 192 = 48 hours on 15m). */
   vpLookbackBars: 192,
-  /** Min channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 1.8%). */
-  minChannelWidthPct: 1.8,
-  /** Max channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 6.0%). */
-  maxChannelWidthPct: 6.0,
+  /** Min channel width for DOW_SWINGS & FIXED_PCT_CLAMP & DONCHIAN_ATR (in %, default 6.0%). */
+  minChannelWidthPct: 6.0,
+  /** Max channel width for DOW_SWINGS & FIXED_PCT_CLAMP (in %, default 20.0%). */
+  maxChannelWidthPct: 20.0,
   /** When true, freezes/locks channel bounds while holding inventory position to avoid shifting sell targets. */
   lockChannelInPosition: true,
   /** When true, recalculates and shifts channel bounds only when a candle closes (confirmed candle), preventing jitter during live ticks. */

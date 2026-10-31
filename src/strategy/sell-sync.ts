@@ -392,7 +392,7 @@ export class SellOrderSynchronizer {
 
         let minAllowedSellPrice = Math.max(currentBestBid, refPrice);
         const minProfitMulti = this.host.getMinProfitMultiplier();
-        if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
+        if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
           minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
         }
 
@@ -740,7 +740,7 @@ export class SellOrderSynchronizer {
       refPrice,
       lowestLotPrice > 0 ? lowestLotPrice * minProfitMulti : 0,
     );
-    if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
+    if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
       minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
     }
 
@@ -883,7 +883,7 @@ export class SellOrderSynchronizer {
       }
 
       let lvlPrice = originalLvlPrice;
-      if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
+      if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
         const minNetProfitPct = Math.max(0.15, this.host.cfg.minNetProfitPct ?? 0.25);
         const targetProfitPct = minNetProfitPct + (activeRank * 0.15);
         lvlPrice = Math.max(lvlPrice, avgEntry * (1 + targetProfitPct / 100));

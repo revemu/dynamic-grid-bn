@@ -153,9 +153,9 @@
           <label>แบ่งเงินทุนโซน (Capital Zones)</label>
           <select id="btCapitalZones" title="แบ่งเงินทุนออกเป็นกี่ส่วนเพื่อถัวเฉลี่ยตามระดับโซน เช่น 4 โซน (25% ต่อโซน)">
             <option value="1">1 โซน (100% ก้อนเดียว)</option>
-            <option value="2">2 โซน (50% ต่อโซน)</option>
+            <option value="2" selected>2 โซน (50% ต่อโซน - แนะนำ)</option>
             <option value="3">3 โซน (33.3% ต่อโซน)</option>
-            <option value="4" selected>4 โซน (25% ต่อโซน - แนะนำ)</option>
+            <option value="4">4 โซน (25% ต่อโซน)</option>
             <option value="5">5 โซน (20% ต่อโซน)</option>
           </select>
         </div>
@@ -163,9 +163,9 @@
         <div class="bt-input-group">
           <label>การตัดขาดทุน (Cut Loss Mode)</label>
           <select id="btGridCutLossMode" title="รูปแบบการ Stop-Loss / Cut Loss เมื่อหลุดกรอบราคา">
-            <option value="final_zone_floor" selected>🛡️ Final Zone Floor (คัทเฉพาะโซนสุดท้าย)</option>
+            <option value="none" selected>💎 None (ไม่คัท ถัวรอเด้ง - แนะนำ)</option>
+            <option value="final_zone_floor">🛡️ Final Zone Floor (คัทเฉพาะโซนสุดท้าย)</option>
             <option value="entry_floor">🚪 Entry Floor (คัททันทีหลุดกรอบแรก)</option>
-            <option value="none">💎 None (ไม่คัท ถัวรอเด้ง)</option>
           </select>
         </div>
 

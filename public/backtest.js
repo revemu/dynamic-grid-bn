@@ -487,6 +487,7 @@
           chart.priceScale("right").applyOptions({ autoScale: true });
         } catch {}
       }
+      clearSelectedTradeLines();
       candleSeries.setData(record.candles);
 
       const hasWarmEmas = Array.isArray(record.evaluations) &&
@@ -1568,15 +1569,98 @@
       });
     }
 
-    function bindRowClickEvents() {
-      tradesTableBody.querySelectorAll("tr[data-entry-time]").forEach((row) => {
-        row.addEventListener("click", () => {
-          const entryTime = Number(row.getAttribute("data-entry-time"));
-          const exitTime = Number(row.getAttribute("data-exit-time"));
-          zoomToTrade(entryTime, exitTime);
-        });
+  let selectedTradeLines = [];
+
+  function clearSelectedTradeLines() {
+    if (!candleSeries || selectedTradeLines.length === 0) return;
+    selectedTradeLines.forEach((l) => {
+      try { candleSeries.removePriceLine(l); } catch {}
+    });
+    selectedTradeLines = [];
+  }
+
+  function displayTradeEntryChannel(trade) {
+    if (!candleSeries || !trade) return;
+    clearSelectedTradeLines();
+
+    // 1. Channel Floor (0%)
+    if (typeof trade.channelFloor === "number" && trade.channelFloor > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.channelFloor,
+        color: "#ef4444",
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title: `Floor 0% ($${fmtPrice(trade.channelFloor)})`,
       });
+      if (l) selectedTradeLines.push(l);
     }
+
+    // 2. Channel Ceil (100%)
+    if (typeof trade.channelCeil === "number" && trade.channelCeil > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.channelCeil,
+        color: "#10b981",
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title: `Ceil 100% ($${fmtPrice(trade.channelCeil)})`,
+      });
+      if (l) selectedTradeLines.push(l);
+    }
+
+    // 3. Channel Center (50%)
+    if (typeof trade.channelMid === "number" && trade.channelMid > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.channelMid,
+        color: "rgba(255, 255, 255, 0.45)",
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `Center 50% ($${fmtPrice(trade.channelMid)})`,
+      });
+      if (l) selectedTradeLines.push(l);
+    }
+
+    // 4. Trade Entry Price
+    if (typeof trade.entryPrice === "number" && trade.entryPrice > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.entryPrice,
+        color: "#38bdf8",
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: `Entry #${trade.id} ($${fmtPrice(trade.entryPrice)})`,
+      });
+      if (l) selectedTradeLines.push(l);
+    }
+
+    if (overlayInfo && trade.channelFloor) {
+      const spanStr = trade.channelSpanPct ? ` (กว้าง ${trade.channelSpanPct}%)` : "";
+      const zoneStr = trade.zoneIndex ? ` [โซน ${trade.zoneIndex}]` : "";
+      overlayInfo.innerHTML = `<span style="color:#38bdf8; font-weight:700;">ไม้ #${trade.id}</span> | ซื้อ: $${fmtPrice(trade.entryPrice)} | กรอบ: [$${fmtPrice(trade.channelFloor)} - $${fmtPrice(trade.channelCeil)}]${spanStr}${zoneStr}`;
+    }
+  }
+
+  function bindRowClickEvents() {
+    tradesTableBody.querySelectorAll("tr[data-entry-time]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const tradeId = Number(row.getAttribute("data-trade-id"));
+        const entryTime = Number(row.getAttribute("data-entry-time"));
+        const exitTime = Number(row.getAttribute("data-exit-time"));
+
+        // Visual highlight on row
+        tradesTableBody.querySelectorAll("tr").forEach((r) => (r.style.backgroundColor = ""));
+        row.style.backgroundColor = "rgba(99, 102, 241, 0.25)";
+
+        const trade = (currentRecord?.trades || []).find((t) => t.id === tradeId);
+        if (trade) {
+          displayTradeEntryChannel(trade);
+        }
+        zoomToTrade(entryTime, exitTime);
+      });
+    });
+  }
 
     bindRowClickEvents();
   }
@@ -1922,6 +2006,13 @@
         enableBaseConfirmationFilter,
         enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
         lockChannelInPosition,
+        capitalZones: inpCapitalZones ? Number(inpCapitalZones.value) || 2 : 2,
+        gridCutLossMode: inpGridCutLossMode ? inpGridCutLossMode.value : "none",
+        minChannelWidthPct: 6.0,
+        donchianPeriod: 48,
+        channelMode: "DONCHIAN_ATR",
+        sellProfitMode: "PORTFOLIO_AVG_PROFIT",
+        requireProfitAboveAvgEntry: true,
         ...(inpTradeMode && inpTradeMode.value ? { strategyType: inpTradeMode.value } : {}),
       };
 
@@ -1953,7 +2044,7 @@
     if (target === "main" || target === "both") {
       if (inpTradeMode) inpTradeMode.value = engine;
       if (inpTimeframe) inpTimeframe.value = "5m";
-      if (inpSpread) inpSpread.value = "0.50";
+      if (inpSpread) inpSpread.value = engine === "dynamic_grid" ? "0.25" : "0.50";
       if (inpSlMode) inpSlMode.value = "ratchet";
       if (inpMacroGate) inpMacroGate.value = "noDeepBear";
       if (inpCircuitBreaker) inpCircuitBreaker.value = "on";
@@ -1962,8 +2053,11 @@
       if (inpMaxSl) inpMaxSl.value = "1.8";
       if (inpTradeDirection) inpTradeDirection.value = "long";
       if (inpFeeTier) inpFeeTier.value = "bnb";
-      if (inpBudget && (!inpBudget.value || Number(inpBudget.value) < 100)) inpBudget.value = "100";
+      if (inpBudget) inpBudget.value = "200";
       if (inpBaseConfirmation) inpBaseConfirmation.value = "off";
+      if (inpCapitalZones) inpCapitalZones.value = "2";
+      if (inpGridCutLossMode) inpGridCutLossMode.value = "none";
+      if (inpLockChannel) inpLockChannel.value = "dynamic";
     }
 
     // 2. Market Scanner Form

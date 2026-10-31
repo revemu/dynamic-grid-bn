@@ -40,6 +40,11 @@ export interface BacktestTrade {
   cushionApplied?: boolean;
   costQuote?: number;
   rewardRiskAtEntry?: number;
+  channelFloor?: number;
+  channelCeil?: number;
+  channelMid?: number;
+  channelSpanPct?: number;
+  zoneIndex?: number;
 }
 
 export interface MarketScanResultItem {
@@ -385,10 +390,10 @@ export class BacktestService {
     const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
     const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
 
-    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 4));
+    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 2));
     const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
     const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
-    const gridCutLossMode = opts.gridCutLossMode ?? "final_zone_floor";
+    const gridCutLossMode = opts.gridCutLossMode ?? "none";
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const zoneBudgetQuote = maxInventory / totalZones;
@@ -432,6 +437,9 @@ export class BacktestService {
       entryTime: number;
       targetPrice: number;
       costQuote: number;
+      floorAtEntry?: number;
+      ceilingAtEntry?: number;
+      centerAtEntry?: number;
     }> = [];
 
     const trades: BacktestTrade[] = [];
@@ -638,6 +646,11 @@ export class BacktestService {
             pnlPct,
             holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
             costQuote: lot.costQuote + exitCost,
+            channelFloor: lot.floorAtEntry,
+            channelCeil: lot.ceilingAtEntry,
+            channelMid: lot.centerAtEntry,
+            channelSpanPct: lot.floorAtEntry && lot.ceilingAtEntry ? Number((((lot.ceilingAtEntry - lot.floorAtEntry) / lot.floorAtEntry) * 100).toFixed(2)) : undefined,
+            zoneIndex: lot.zoneIndex,
           });
 
           markers.push({
@@ -679,6 +692,11 @@ export class BacktestService {
             pnlPct,
             holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
             costQuote: lot.costQuote + exitCost,
+            channelFloor: lot.floorAtEntry,
+            channelCeil: lot.ceilingAtEntry,
+            channelMid: lot.centerAtEntry,
+            channelSpanPct: lot.floorAtEntry && lot.ceilingAtEntry ? Number((((lot.ceilingAtEntry - lot.floorAtEntry) / lot.floorAtEntry) * 100).toFixed(2)) : undefined,
+            zoneIndex: lot.zoneIndex,
           });
 
           markers.push({
@@ -738,6 +756,9 @@ export class BacktestService {
               entryTime: c.time,
               targetPrice,
               costQuote: invest * costPerFill,
+              floorAtEntry: floor,
+              ceilingAtEntry: ceiling,
+              centerAtEntry: center,
             });
 
             if (!lockedChannel) {
@@ -807,6 +828,11 @@ export class BacktestService {
         pnlPct,
         holdingBars: candles.length - 1 - (candles.findIndex((x) => x.time === lot.entryTime) || 0),
         costQuote: lot.costQuote + exitCost,
+        channelFloor: lot.floorAtEntry,
+        channelCeil: lot.ceilingAtEntry,
+        channelMid: lot.centerAtEntry,
+        channelSpanPct: lot.floorAtEntry && lot.ceilingAtEntry ? Number((((lot.ceilingAtEntry - lot.floorAtEntry) / lot.floorAtEntry) * 100).toFixed(2)) : undefined,
+        zoneIndex: lot.zoneIndex,
       });
 
       markers.push({
@@ -930,10 +956,10 @@ export class BacktestService {
     const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
     const tradeDirection = opts.tradeDirection ?? "both";
 
-    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 4));
+    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 2));
     const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
     const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
-    const gridCutLossMode = opts.gridCutLossMode ?? "final_zone_floor";
+    const gridCutLossMode = opts.gridCutLossMode ?? "none";
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const zoneBudgetQuote = gridInitialCap / totalZones;
@@ -1002,6 +1028,9 @@ export class BacktestService {
       entryIdx: number;
       targetPrice: number;
       costQuote: number;
+      floorAtEntry?: number;
+      ceilingAtEntry?: number;
+      centerAtEntry?: number;
     }> = [];
 
     // Sniper Subsystem State
@@ -1276,6 +1305,11 @@ export class BacktestService {
               pnlPct,
               holdingBars: i - lot.entryIdx,
               costQuote: lot.costQuote + exitCost,
+              channelFloor: lot.floorAtEntry,
+              channelCeil: lot.ceilingAtEntry,
+              channelMid: lot.centerAtEntry,
+              channelSpanPct: lot.floorAtEntry && lot.ceilingAtEntry ? Number((((lot.ceilingAtEntry - lot.floorAtEntry) / lot.floorAtEntry) * 100).toFixed(2)) : undefined,
+              zoneIndex: lot.zoneIndex,
             });
 
             markers.push({
@@ -1316,6 +1350,11 @@ export class BacktestService {
               pnlPct,
               holdingBars: i - lot.entryIdx,
               costQuote: lot.costQuote + exitCost,
+              channelFloor: lot.floorAtEntry,
+              channelCeil: lot.ceilingAtEntry,
+              channelMid: lot.centerAtEntry,
+              channelSpanPct: lot.floorAtEntry && lot.ceilingAtEntry ? Number((((lot.ceilingAtEntry - lot.floorAtEntry) / lot.floorAtEntry) * 100).toFixed(2)) : undefined,
+              zoneIndex: lot.zoneIndex,
             });
 
             markers.push({
@@ -1377,6 +1416,9 @@ export class BacktestService {
                 entryIdx: i,
                 targetPrice,
                 costQuote: invest * costPerFill,
+                floorAtEntry: floor,
+                ceilingAtEntry: ceiling,
+                centerAtEntry: center,
               });
 
               if (!lockedChannel) {
@@ -1695,6 +1737,11 @@ export class BacktestService {
         pnlPct,
         holdingBars: candles.length - 1 - (candles.findIndex((x) => x.time === lot.entryTime) || 0),
         costQuote: lot.costQuote + exitCost,
+        channelFloor: lot.floorAtEntry,
+        channelCeil: lot.ceilingAtEntry,
+        channelMid: lot.centerAtEntry,
+        channelSpanPct: lot.floorAtEntry && lot.ceilingAtEntry ? Number((((lot.ceilingAtEntry - lot.floorAtEntry) / lot.floorAtEntry) * 100).toFixed(2)) : undefined,
+        zoneIndex: lot.zoneIndex,
       });
     }
 

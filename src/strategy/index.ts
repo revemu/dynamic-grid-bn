@@ -2401,6 +2401,15 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         netPnlQuote: this.realizedPnl,
         netPnlUsdso: this.realizedPnl,
         avgEntryPrice: avgEntry,
+        effectiveSellTargets: (this.lastTelemetryData.sellLevels || []).map((rawLvl: number, idx: number) => {
+          if (avgEntry <= 0) return rawLvl;
+          const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + (idx * 0.15);
+          const minTargetPrice = avgEntry * (1 + targetProfitPct / 100);
+          const shouldLockAboveAvg = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT" ||
+            this.cfg.requireProfitAboveAvgEntry ||
+            this.cfg.gridCutLossMode === "none";
+          return this.roundPrice(shouldLockAboveAvg ? Math.max(rawLvl, minTargetPrice) : rawLvl);
+        }),
         lots: this.lots.map((l) => ({ price: l.price, qty: l.qty, time: l.time })),
         soldSellIndices: Array.from(this.soldSellIndices),
         orderExecutionMode: this.cfg.orderExecutionMode ?? "IOC_BRACKET",
@@ -4215,6 +4224,15 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         sellOrdersActive: this.sellOrdersActive,
         buyLevels: buyLevels,
         sellLevels: sellLevels,
+        effectiveSellTargets: sellLevels.map((rawLvl, idx) => {
+          if (avgEntry <= 0) return rawLvl;
+          const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + (idx * 0.15);
+          const minTargetPrice = avgEntry * (1 + targetProfitPct / 100);
+          const shouldLockAboveAvg = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT" ||
+            this.cfg.requireProfitAboveAvgEntry ||
+            this.cfg.gridCutLossMode === "none";
+          return this.roundPrice(shouldLockAboveAvg ? Math.max(rawLvl, minTargetPrice) : rawLvl);
+        }),
         enabledBuyLevels: this.cfg.enabledBuyLevels ?? [true, true, true, true, true],
         enabledSellTargets: this.cfg.enabledSellTargets ?? [true, true, true, true, true],
         buyLevelPcts: this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2],

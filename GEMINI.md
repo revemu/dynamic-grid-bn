@@ -7007,3 +7007,42 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่มตัวควบคุมใน `public/index.html`, `public/app.js`, `public/backtest.html`, `public/backtest.js` สำหรับ `capitalZones`, `zoneStabilizeCandles`, `zoneMinDropPct`, `gridCutLossMode`, `zoneExitMode`
   6. **Bump Version**:
      - ปรับ Version เป็น `0.2.212` ใน `package.json` และ `src/version.ts`
+
+---
+
+### 239. Donchian Width Clamping (`minChannelWidthPct: 6.0%`), Backtest Trade-Entry Channel Visualizer, 2-Zone Default & Pause Background Calculation Decoupling (v0.2.213)
+
+- **สาเหตุของปัญหาและที่มา**:
+  1. **สาเหตุของภาวะกรอบแคบ (Narrow Channel Root Cause)**:
+     - เกิดจาก Donchian Lookback (48 แท่งบน 5M = 4 ชั่วโมง) สั้นเกินไป เมื่อเกิดการทุ่มขาย (Crash) แล้วราคาเข้าสู่ช่วง Sideway Consolidation เกิน 4 ชม. ราคาสูงสุดเดิมจะหลุดกรอบออกไป
+     - เมื่อรวมกับความผันผวน (ATR) ที่ลดลงตามธรรมชาติ ตัวคุมกรอบเดิม (`minDonchianSpan`) บีบกรอบลงมาเหลือเพียง 1.5% - 2.0% ทำให้เกิดภาวะกรอบแคบผิดปกติ
+  2. **ผลการเปรียบเทียบกลยุทธ์ (Backtest Comparative Analysis บน INITUSDT 2,016 แท่ง)**:
+     - 1 โซน (100%): Net PnL +24.9% แต่ Max Drawdown สูงถึง -13.93%
+     - 4 โซน (25%x4): Drawdown ต่ำมาก -4.37% แต่กำไรโตช้า (+7.74%)
+     - **2 โซน (50%x2 - None)**: จุดสมดุลที่ดีที่สุด ได้กำไรสูงถึง +15.53% ในขณะที่ลด Max Drawdown เหลือเพียง -7.88% (ลดความเสี่ยงลงเกือบครึ่งหนึ่ง)
+     - **การคุม `minChannelWidthPct = 6.0%`**: ดันผลตอบแทน 1 โซนพุ่งเป็น **+28.17%** (PF 2.71) และ 2 โซนพุ่งเป็น **+18.73%** (DD 8.14%) เพราะป้องกันการยิงออเดอร์กระจุกตัวในระยะแคบเกินไป
+  3. **ความต้องการในการแสดงกรอบราคาของแต่ละไม้ใน Backtest**:
+     - ผู้ใช้ต้องการคลิกดูแต่ละไม้ใน Trade Log แล้วให้กราฟวาดกรอบราคา Floor/Ceil/Mid ของไม้นั้นโดยเฉพาะ
+  4. **การคำนวณเบื้องหลังขณะ Pause (Pause Action vs Calculation Decoupling)**:
+     - เมื่อบอทอยู่ในสถานะ Pause บอทต้องหยุด Action ยิงออเดอร์ไปที่กระดาน แต่ต้องคำนวณกรอบราคา, Dynamic Grid Levels, และเป้าขายจริงเหนือทุน (`effectiveSellTargets`) ส่งขึ้น UI แดชบอร์ดตลอดเวลา
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.213)**:
+  1. **การปรับค่ามาตรฐานใหม่ของระบบ**:
+     - `minChannelWidthPct: 6.0%` (ขยายกรอบขั้นต่ำ Donchian เป็น 6.0%)
+     - `capitalZones: 2` (แบ่ง 2 โซน โซนละ 50% เป็นค่าเริ่มต้น)
+     - `gridCutLossMode: "none"` (เป็นค่าเริ่มต้น)
+     - `sellProfitMode: "PORTFOLIO_AVG_PROFIT"` และ `requireProfitAboveAvgEntry: true`
+  2. **ระบบวาดกรอบราคาเข้าซื้อของแต่ละไม้ใน Backtest Studio (`public/backtest.js` & `src/backtest-service.ts`)**:
+     - ใน `BacktestTrade`: เพิ่มฟิลด์ `channelFloor, channelCeil, channelMid, channelSpanPct, zoneIndex`
+     - ใน `heldLots`: บันทึก `floorAtEntry, ceilingAtEntry, centerAtEntry`
+     - ใน `public/backtest.js`: เมื่อคลิกแถวไม้ในตาราง Trade Log:
+       - วาดเส้น Floor (0% สีแดง), Ceil (100% สีเขียว), Mid (50% สีขาวประ), Entry Price (สีฟ้า) ด้วย `candleSeries.createPriceLine`
+       - ซูมกราฟและแสดง Overlay สรุปข้อมูลกรอบและโซนของไม้นั้น
+  3. **ระบบคำนวณเป้าขายและส่งต่อแดชบอร์ดขณะ Pause**:
+     - ใน `src/strategy/index.ts`: คำนวณ `effectiveSellTargets` ที่ผ่านการ clamp เหนือ `avgEntry * minProfitMultiplier` ส่งลง `telemetryData` และ `emitTelemetryTick`
+     - ใน `src/strategy/sell-sync.ts`: ป้องกันการขายต่ำกว่าทุนในทุกโหมดเมื่อ `gridCutLossMode === "none"` หรือ `avgEntry > 0`
+     - ใน `public/app.js`: ปรับแถบขั้นบันได Sell Steps 1-5 และเส้นปะ Sell Levels บนกราฟให้อิงตาม `effectiveSellTargets` ล็อคกำไรเหนือทุนเฉลี่ย
+  4. **การซิงค์ Config จาก Backtest กลับไปยังบอทจริง**:
+     - ปุ่ม "ส่งไปใช้กับบอทจริง" ซิงค์ `donchianPeriod: 48, minChannelWidthPct: 6.0, capitalZones: 2, gridCutLossMode: "none", sellProfitMode: "PORTFOLIO_AVG_PROFIT"` ไปยัง API `/api/config` ครบถ้วน
+  5. **Bump Version**:
+     - ปรับ Version เป็น `0.2.213` ใน `package.json` และ `src/version.ts`

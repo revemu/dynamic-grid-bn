@@ -2232,7 +2232,9 @@
       : [52, 62, 72, 82, 92];
 
     const bLevels = Array.isArray(data.buyLevels) && data.buyLevels.length >= 5 ? data.buyLevels : null;
-    const sLevels = Array.isArray(data.sellLevels) && data.sellLevels.length >= 5 ? data.sellLevels : null;
+    const sLevels = Array.isArray(data.effectiveSellTargets) && data.effectiveSellTargets.length >= 5
+      ? data.effectiveSellTargets
+      : (Array.isArray(data.sellLevels) && data.sellLevels.length >= 5 ? data.sellLevels : null);
 
     const effBuyPcts = buyPcts.map((pct, i) => (bLevels && span > 0 ? Math.round(((bLevels[i] - floor) / span) * 100) : pct));
     const effSellPcts = sellPcts.map((pct, i) => (sLevels && span > 0 ? Math.round(((sLevels[i] - floor) / span) * 100) : pct));
@@ -3833,11 +3835,13 @@
               ? buyPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
               : (data.buyLevels || []));
 
-        let sellLevels = Array.isArray(data.sellLevels) && data.sellLevels.length > 0
-          ? data.sellLevels
-          : (data.bottomBound && data.upperBound
-              ? sellPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
-              : (data.sellLevels || []));
+        let sellLevels = Array.isArray(data.effectiveSellTargets) && data.effectiveSellTargets.length > 0
+          ? data.effectiveSellTargets
+          : (Array.isArray(data.sellLevels) && data.sellLevels.length > 0
+              ? data.sellLevels
+              : (data.bottomBound && data.upperBound
+                  ? sellPcts.map((pct) => data.bottomBound + (data.upperBound - data.bottomBound) * (pct / 100))
+                  : (data.sellLevels || [])));
 
         const allLevels = [...buyLevels, ...sellLevels].filter(Number.isFinite);
 
