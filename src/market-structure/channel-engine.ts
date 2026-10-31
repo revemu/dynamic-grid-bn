@@ -64,13 +64,26 @@ export class ChannelEngine {
       const rawBottom = allLows.length > 0 ? Math.min(...allLows) : price * 0.985;
       const rawUpper = allHighs.length > 0 ? Math.max(...allHighs) : price * 1.015;
 
-      const minDonchianSpan = Math.max(price * 0.015, price * effAtrPct * 2.0);
+      const minDonchianSpan = Math.max(minSpan, price * effAtrPct * 2.0);
       bottomBound = rawBottom;
       upperBound = rawUpper;
       isSwingConfirmed = true;
 
       if (upperBound - bottomBound < minDonchianSpan) {
         upperBound = bottomBound + minDonchianSpan;
+        clampStatus = "CLAMPED_MIN";
+      } else if (maxSpan > 0 && upperBound - bottomBound > maxSpan) {
+        upperBound = bottomBound + maxSpan;
+        clampStatus = "CLAMPED_MAX";
+      } else {
+        clampStatus = "NATURAL_SWING";
+      }
+
+      if (price > upperBound) {
+        upperBound = Math.max(upperBound, price * 1.002);
+      }
+      if (price < bottomBound) {
+        bottomBound = Math.min(bottomBound, price * 0.998);
       }
 
       rawWidthPct = bottomBound > 0 ? ((upperBound - bottomBound) / bottomBound) * 100 : 0;

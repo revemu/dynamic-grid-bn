@@ -7046,3 +7046,17 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ปุ่ม "ส่งไปใช้กับบอทจริง" ซิงค์ `donchianPeriod: 48, minChannelWidthPct: 6.0, capitalZones: 2, gridCutLossMode: "none", sellProfitMode: "PORTFOLIO_AVG_PROFIT"` ไปยัง API `/api/config` ครบถ้วน
   5. **Bump Version**:
      - ปรับ Version เป็น `0.2.213` ใน `package.json` และ `src/version.ts`
+
+---
+
+### 240. Donchian Min Width Enforcement Bugfix in ChannelEngine (`minDonchianSpan = Math.max(minSpan, ...)` v0.2.214)
+
+- **สาเหตุของปัญหา**:
+  - ใน `src/market-structure/channel-engine.ts` บรรทัดที่ 67: โค้ดคำนวณระยะกรอบขั้นต่ำของ Donchian เดิมเขียนไว้ว่า `const minDonchianSpan = Math.max(price * 0.015, price * effAtrPct * 2.0);` ซึ่งฮาร์ดโค้ด 1.5% (`0.015`) และไม่ได้นำตัวแปร `minSpan` (ที่คำนวณมาจาก `minChannelWidthPct = 6.0%`) มาใช้เลย
+  - ส่งผลให้เมื่อกราฟเกิดการทุ่มขายแล้วออกข้างสะสมพลัง Donchian High - Low อยู่ที่ ~$0.18571 - $0.18206 = 2.0% ซึ่งมากกว่า 1.5% โค้ดจึงไม่ขยายกรอบ และปล่อยให้กรอบแคบเพียง 2.0%
+- **การแก้ไข (v0.2.214)**:
+  - แก้ไขใน `src/market-structure/channel-engine.ts`:
+    `const minDonchianSpan = Math.max(minSpan, price * effAtrPct * 2.0);`
+    เมื่อ `upperBound - bottomBound < minDonchianSpan` จะขยายกรอบให้กว้างอย่างน้อย `minSpan` (6.0%) เสมอ และเซ็ต `clampStatus = "CLAMPED_MIN"`
+    พร้อมคุม `maxSpan` และการันตีว่าราคาปัจจุบันจะไม่อยู่นอกกรอบ (`price > upperBound` / `price < bottomBound`)
+  - อัปเดต Version เป็น `0.2.214` ใน `package.json` และ `src/version.ts`
