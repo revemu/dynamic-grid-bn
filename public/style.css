@@ -932,6 +932,7 @@ body {
   user-select: none;
   z-index: 26;
   text-align: center;
+  will-change: left, top;
 }
 
 .chart-order-badge:hover {
@@ -1044,6 +1045,7 @@ body {
   user-select: none;
   z-index: 25;
   white-space: nowrap;
+  will-change: left, top;
 }
 
 /* Icon span: fixed size to prevent emoji from dominating */

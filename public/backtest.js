@@ -203,6 +203,31 @@
     return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  // Format holding duration in bars and human-readable real time
+  function fmtHoldingDuration(bars, entryTime, exitTime) {
+    if (!bars && !entryTime) return "--";
+    let timeStr = "";
+    if (entryTime && exitTime && exitTime > entryTime) {
+      const diffSec = exitTime - entryTime;
+      if (diffSec < 3600) {
+        timeStr = `~${Math.round(diffSec / 60)} นาที`;
+      } else if (diffSec < 86400) {
+        const h = Math.floor(diffSec / 3600);
+        const m = Math.floor((diffSec % 3600) / 60);
+        timeStr = `~${h} ชม.${m > 0 ? ` ${m} น.` : ""}`;
+      } else {
+        const d = Math.floor(diffSec / 86400);
+        const h = Math.floor((diffSec % 86400) / 3600);
+        timeStr = `~${d} วัน${h > 0 ? ` ${h} ชม.` : ""}`;
+      }
+    } else if (bars) {
+      const estMins = bars * 5;
+      if (estMins < 60) timeStr = `~${estMins} นาที`;
+      else timeStr = `~${(estMins / 60).toFixed(1)} ชม.`;
+    }
+    return `${bars || 0} แท่ง (${timeStr})`;
+  }
+
   // Initialize TradingView Lightweight Chart
   function initChart() {
     if (!window.LightweightCharts) {
@@ -377,33 +402,62 @@
     });
 
     // Synchronize circular order badges and inspector with chart scroll, pan, zoom, and drag
+    let isChartDragging = false;
+    let syncRafId = null;
+
+    function scheduleSyncPositions() {
+      if (syncRafId) return;
+      syncRafId = requestAnimationFrame(() => {
+        syncRafId = null;
+        updateOrderBadgesPositions();
+        updateBtCandleInspectorPosition();
+        if (isChartDragging) {
+          scheduleSyncPositions();
+        }
+      });
+    }
+
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      updateOrderBadgesPositions();
-      updateBtCandleInspectorPosition();
+      scheduleSyncPositions();
     });
     chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-      updateOrderBadgesPositions();
-      updateBtCandleInspectorPosition();
+      scheduleSyncPositions();
     });
-    chartContainer.addEventListener("mousemove", (e) => {
-      if (e.buttons > 0) {
-        updateOrderBadgesPositions();
-        updateBtCandleInspectorPosition();
+
+    // Pointer drag tracking across entire window to guarantee continuous sync during chart drag/pan
+    chartContainer.addEventListener("pointerdown", (e) => {
+      if (e.button === 0) {
+        isChartDragging = true;
+        scheduleSyncPositions();
       }
     });
+    window.addEventListener("pointermove", (e) => {
+      if (isChartDragging || e.buttons > 0) {
+        scheduleSyncPositions();
+      }
+    });
+    window.addEventListener("pointerup", () => {
+      if (isChartDragging) {
+        isChartDragging = false;
+        scheduleSyncPositions();
+      }
+    });
+    window.addEventListener("pointercancel", () => {
+      if (isChartDragging) {
+        isChartDragging = false;
+        scheduleSyncPositions();
+      }
+    });
+
     chartContainer.addEventListener("wheel", () => {
-      requestAnimationFrame(() => {
-        updateOrderBadgesPositions();
-        updateBtCandleInspectorPosition();
-      });
+      scheduleSyncPositions();
     }, { passive: true });
     chartContainer.addEventListener("mouseleave", () => {
       hideOrderTooltip();
     });
     if (window.ResizeObserver && chartContainer) {
       const ro = new ResizeObserver(() => {
-        updateOrderBadgesPositions();
-        updateBtCandleInspectorPosition();
+        scheduleSyncPositions();
       });
       ro.observe(chartContainer);
     }
@@ -871,9 +925,9 @@
           let exitText = "S";
 
           if (t.exitType === "OPEN") {
-            exitColor = isWin ? "#10b981" : "#f43f5e";
+            exitColor = isWin ? "#06b6d4" : "#f59e0b";
             exitShape = "circle";
-            exitText = isWin ? "B" : "SL";
+            exitText = "O";
           } else if (
             t.exitType === "GRID_CUT" ||
             t.exitType === "SL" ||
@@ -976,14 +1030,15 @@
         });
       }
 
-      // 3. Exit Event
+      // 3. Exit or Open Holding Event
       if (t.exitTime) {
         let exitAction = "SELL";
         let isSl = false;
+        let isOpen = false;
 
         if (t.exitType === "OPEN") {
-          isSl = (t.pnlPct ?? 0) < 0;
-          exitAction = isSl ? "SL" : "SELL";
+          isOpen = true;
+          exitAction = "OPEN";
         } else if (
           t.exitType === "GRID_CUT" ||
           t.exitType === "SL" ||
@@ -1000,11 +1055,16 @@
 
         const exitKey = `${t.exitTime}_${exitAction}`;
         if (!groupedBadges.has(exitKey)) {
+          const isWin = (t.pnlPct ?? 0) >= 0;
           groupedBadges.set(exitKey, {
             time: t.exitTime,
             action: exitAction,
-            label: isSl ? "SL" : "S",
-            cssClass: isSl ? "badge-sl-subtle" : "badge-sell",
+            label: isOpen ? "O" : isSl ? "SL" : "S",
+            cssClass: isOpen
+              ? (isWin ? "badge-open-win" : "badge-open-loss")
+              : isSl
+              ? "badge-sl-subtle"
+              : "badge-sell",
             subTrades: [],
           });
         }
@@ -1086,13 +1146,14 @@
         continue;
       }
 
-      // Check if both SELL and SL happen on the same candle to place them side by side
+      // Check if multiple exits/open badges happen on the same candle to place them side by side
       let xOffset = 0;
       if (!isBelow) {
         const hasSell = orderBadgesData.some((d) => d.time === item.time && d.action === "SELL");
         const hasSl = orderBadgesData.some((d) => d.time === item.time && d.action === "SL");
-        if (hasSell && hasSl) {
-          xOffset = item.action === "SL" ? 12 : -12;
+        const hasOpen = orderBadgesData.some((d) => d.time === item.time && d.action === "OPEN");
+        if ((hasSell && hasSl) || (hasOpen && (hasSell || hasSl))) {
+          xOffset = (item.action === "SL" || item.action === "OPEN") ? 12 : -12;
         }
       }
 
@@ -1155,6 +1216,73 @@
           .join("");
         bodyHtml = `<div class="cot-orders-list">${listCards}</div>`;
       }
+    } else if (item.action === "OPEN") {
+      // 📦 OPEN Position (Still Holding at end of backtest)
+      actionColor = "#38bdf8";
+      if (count === 1) {
+        const sub = item.subTrades[0];
+        const t = sub.trade;
+        const isWin = (t.pnlPct ?? 0) >= 0;
+        actionTitle = `📦 กำลังถือ Position (OPEN) ไม้ #${t.id} [ยังไม่ปิดไม้]`;
+        actionColor = isWin ? "#38bdf8" : "#fbbf24";
+
+        let distToSlHtml = "";
+        if (t.stopLossPrice && sub.price) {
+          const distToSlPct = Math.abs(((sub.price - t.stopLossPrice) / sub.price) * 100);
+          distToSlHtml = `<div class="cot-row"><span class="cot-label">ระยะห่างจาก Stop Loss:</span><span class="cot-val" style="color: #fda4af;">${distToSlPct.toFixed(2)}% ($${fmtPrice(t.stopLossPrice)})</span></div>`;
+        }
+
+        bodyHtml = `
+          <div class="cot-row"><span class="cot-label">ราคาเข้า (Entry):</span><span class="cot-val">$${fmtPrice(t.entryPrice)}</span></div>
+          <div class="cot-row"><span class="cot-label">ราคาล่าสุด (Current):</span><span class="cot-val" style="color: #38bdf8;">$${fmtPrice(sub.price)}</span></div>
+          <div class="cot-row"><span class="cot-label">ผลตอบแทน (Unrealized):</span><span class="cot-val ${isWin ? "text-win" : "text-loss"}">${isWin ? "+" : ""}${(t.pnlPct ?? 0).toFixed(2)}% (${isWin ? "+" : "-"}$${Math.abs(t.pnlQuote || 0).toFixed(2)})</span></div>
+          <div class="cot-row"><span class="cot-label">ระยะเวลาที่ถือรอ:</span><span class="cot-val" style="color: #fbbf24; font-weight:700;">${fmtHoldingDuration(t.holdingBars, t.entryTime, sub.time)}</span></div>
+          ${distToSlHtml}
+          <div class="cot-row" style="margin-top:4px; font-size:10px; color:#94a3b8; font-style:italic;"><span>* สถานะ: ยังถือสถานะอยู่ ณ สิ้นสุดการทดสอบ</span></div>
+        `;
+      } else {
+        let totalPnlQuote = 0;
+        let totalPnlPct = 0;
+        const listCards = item.subTrades
+          .map((sub) => {
+            const t = sub.trade;
+            const pnlQ = t.pnlQuote || 0;
+            const pnlP = t.pnlPct || 0;
+            totalPnlQuote += pnlQ;
+            totalPnlPct += pnlP;
+            const isWin = pnlP >= 0;
+            return `
+              <div class="cot-order-card">
+                <div class="cot-card-top">
+                  <span class="cot-badge ${isWin ? "cot-badge-buy" : "cot-badge-sell"}">OPEN #${t.id}</span>
+                  <span class="cot-order-time">${fmtHoldingDuration(t.holdingBars, t.entryTime, sub.time)}</span>
+                </div>
+                <div class="cot-card-row">
+                  <span class="cot-label">ราคาเข้า:</span>
+                  <span class="cot-val">$${fmtPrice(t.entryPrice)}</span>
+                </div>
+                <div class="cot-card-row">
+                  <span class="cot-label">ราคาล่าสุด:</span>
+                  <span class="cot-val" style="color: #38bdf8;">$${fmtPrice(sub.price)}</span>
+                </div>
+                <div class="cot-card-row">
+                  <span class="cot-label">ผลตอบแทน:</span>
+                  <span class="cot-val-pnl ${isWin ? "pos" : "neg"}">${isWin ? "+" : ""}${pnlP.toFixed(2)}% (${isWin ? "+" : "-"}$${Math.abs(pnlQ).toFixed(2)})</span>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+        actionTitle = `📦 รวม ${count} ไม้ที่ถือค้างอยู่ (OPEN x${count}) [ยังไม่ปิดไม้]`;
+        actionColor = totalPnlPct >= 0 ? "#38bdf8" : "#fbbf24";
+        bodyHtml = `
+          <div class="cot-orders-list">${listCards}</div>
+          <div class="cot-row" style="margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <span class="cot-label">รวมผลตอบแทนไม้ค้าง:</span>
+            <span class="cot-val ${totalPnlPct >= 0 ? "text-win" : "text-loss"}">${totalPnlPct >= 0 ? "+" : ""}${(totalPnlPct / count).toFixed(2)}% avg (${totalPnlQuote >= 0 ? "+" : "-"}$${Math.abs(totalPnlQuote).toFixed(2)})</span>
+          </div>
+        `;
+      }
     } else if (item.action === "SELL") {
       actionColor = "#e11d48";
       if (count === 1) {
@@ -1168,7 +1296,7 @@
           <div class="cot-row"><span class="cot-label">ราคาขาย:</span><span class="cot-val" style="color: #c084fc;">$${fmtPrice(sub.price)}</span></div>
           <div class="cot-row"><span class="cot-label">ราคาเข้า (Entry):</span><span class="cot-val">$${fmtPrice(t.entryPrice)}</span></div>
           <div class="cot-row"><span class="cot-label">กำไรสุทธิ:</span><span class="cot-val text-win">+${(t.pnlPct ?? 0).toFixed(2)}% (+$${Math.abs(t.pnlQuote || 0).toFixed(2)})</span></div>
-          <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars || 0} แท่ง</span></div>
+          <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${fmtHoldingDuration(t.holdingBars, t.entryTime, sub.time)}</span></div>
           <div class="cot-row"><span class="cot-label">เวลาขาย:</span><span class="cot-val">${fmtDateTime(sub.time)}</span></div>
         `;
       } else {
@@ -1186,7 +1314,7 @@
               <div class="cot-order-card">
                 <div class="cot-card-top">
                   <span class="cot-badge cot-badge-sell">${sub.type || "SELL"} #${t.id}</span>
-                  <span class="cot-order-time">${fmtDateTime(sub.time)}</span>
+                  <span class="cot-order-time">${fmtHoldingDuration(t.holdingBars, t.entryTime, sub.time)}</span>
                 </div>
                 <div class="cot-card-row">
                   <span class="cot-label">ราคาขาย:</span>
@@ -1222,7 +1350,7 @@
           <div class="cot-row"><span class="cot-label">ราคาตัดขาดทุน:</span><span class="cot-val" style="color: #fda4af;">$${fmtPrice(sub.price)}</span></div>
           <div class="cot-row"><span class="cot-label">ราคาเข้า (Entry):</span><span class="cot-val">$${fmtPrice(t.entryPrice)}</span></div>
           <div class="cot-row"><span class="cot-label">ผลลัพธ์สุทธิ:</span><span class="cot-val text-loss">${(t.pnlPct ?? 0).toFixed(2)}% (-$${Math.abs(t.pnlQuote || 0).toFixed(2)})</span></div>
-          <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${t.holdingBars || 0} แท่ง</span></div>
+          <div class="cot-row"><span class="cot-label">ระยะเวลาถือ:</span><span class="cot-val">${fmtHoldingDuration(t.holdingBars, t.entryTime, sub.time)}</span></div>
           <div class="cot-row"><span class="cot-label">เวลาตัดขาดทุน:</span><span class="cot-val">${fmtDateTime(sub.time)}</span></div>
         `;
       } else {
@@ -1239,7 +1367,7 @@
               <div class="cot-order-card">
                 <div class="cot-card-top">
                   <span class="cot-badge cot-badge-cut">${sub.type || "SL"} #${t.id}</span>
-                  <span class="cot-order-time">${fmtDateTime(sub.time)}</span>
+                  <span class="cot-order-time">${fmtHoldingDuration(t.holdingBars, t.entryTime, sub.time)}</span>
                 </div>
                 <div class="cot-card-row">
                   <span class="cot-label">ราคาตัด:</span>
@@ -1396,7 +1524,11 @@
               </div>
             </td>
             <td><span class="badge-exit ${badgeClass}">${badgeLabel}</span></td>
-            <td>${t.holdingBars} แท่ง</td>
+            <td>
+              ${isStillOpen
+                ? `<span style="display:inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); font-weight: 700;">⏳ ถือรอ ${fmtHoldingDuration(t.holdingBars, t.entryTime, t.exitTime)}</span>`
+                : fmtHoldingDuration(t.holdingBars, t.entryTime, t.exitTime)}
+            </td>
             <td class="${isWin ? "text-win" : "text-loss"}" style="font-weight: 700;">
               ${isWin ? "+" : ""}${t.pnlPct.toFixed(2)}%
             </td>

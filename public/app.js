@@ -224,6 +224,20 @@
   let rawOrders = [];
   let structureMarkers = [];
   let pendingCandles = null;
+  const cachedCandlesMap = new Map();
+  const candleHasMultipleExits = new Set();
+
+  function syncCachedCandlesMap(candles) {
+    if (!Array.isArray(candles)) return;
+    cachedCandlesMap.clear();
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      if (c && typeof c.time === "number") {
+        cachedCandlesMap.set(c.time, c);
+      }
+    }
+  }
+
   let pendingTick = null;
   let activeSymbol = "";
   let activeBaseAsset = "BASE";
@@ -501,13 +515,6 @@
     const chartWidth = chartContainer.clientWidth;
     const chartHeight = chartContainer.clientHeight;
 
-    const candleMap = new Map();
-    if (pendingCandles && pendingCandles.length > 0) {
-      for (const c of pendingCandles) {
-        candleMap.set(c.time, c);
-      }
-    }
-
     for (const item of orderBadgesData) {
       const key = `${item.time}_${item.action}`;
       const el = badgeDomPool.get(key);
@@ -519,8 +526,9 @@
         continue;
       }
 
-      const candle = candleMap.get(item.time);
+      const candle = cachedCandlesMap.get(item.time);
       const isBuy = item.action === "BUY";
+      const isCut = item.action === "CUT";
 
       let refPrice;
       if (candle) {
@@ -542,16 +550,8 @@
       }
 
       // Position: BUY sits 12px below candle low, SELL & SL sit 12px above candle high
-      // If both SELL and CUT/SL happen on the same candle, place them side-by-side to avoid overlapping
-      let xOffset = 0;
-      if (!isBuy) {
-        const hasSell = orderBadgesData.some((d) => d.time === item.time && d.action === "SELL");
-        const hasCut = orderBadgesData.some((d) => d.time === item.time && d.action === "CUT");
-        if (hasSell && hasCut) {
-          xOffset = isCut ? 12 : -12;
-        }
-      }
-
+      // If both SELL and CUT/SL happen on the same candle, place them side-by-side to avoid overlapping (O(1) lookup)
+      const xOffset = (!isBuy && candleHasMultipleExits.has(item.time)) ? (isCut ? 12 : -12) : 0;
       const y = isBuy ? yCoord + 12 : yCoord - 12;
 
       el.style.left = `${Math.round(x + xOffset)}px`;
@@ -596,6 +596,20 @@
     }
 
     orderBadgesData = Array.from(grouped.values());
+
+    candleHasMultipleExits.clear();
+    const exitsPerCandle = new Map();
+    for (let i = 0; i < orderBadgesData.length; i++) {
+      const item = orderBadgesData[i];
+      if (item.action === "SELL" || item.action === "CUT") {
+        const c = (exitsPerCandle.get(item.time) || 0) + 1;
+        exitsPerCandle.set(item.time, c);
+        if (c > 1) {
+          candleHasMultipleExits.add(item.time);
+        }
+      }
+    }
+
     updateOrderBadgesDom();
     updateOrderBadgesPositions();
 
@@ -996,30 +1010,57 @@
         hideChartOrderTooltip();
       });
 
-      // Synchronize circular order badges and candle inspector with chart scroll, pan, zoom, and drag
+      // Synchronize circular order badges, swing badges and candle inspector with chart scroll, pan, zoom, and drag
+      let isChartDragging = false;
+      let syncRafId = null;
+
+      function scheduleSyncPositions() {
+        if (syncRafId) return;
+        syncRafId = requestAnimationFrame(() => {
+          syncRafId = null;
+          updateOrderBadgesPositions();
+          updateSwingBadgesPositions();
+          updateCandleInspectorPosition();
+          if (isChartDragging) {
+            scheduleSyncPositions();
+          }
+        });
+      }
+
       chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-        updateOrderBadgesPositions();
-        updateSwingBadgesPositions();
-        updateCandleInspectorPosition();
+        scheduleSyncPositions();
       });
       chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-        updateOrderBadgesPositions();
-        updateSwingBadgesPositions();
-        updateCandleInspectorPosition();
+        scheduleSyncPositions();
       });
-      chartContainer.addEventListener("mousemove", (e) => {
-        if (e.buttons > 0) {
-          updateOrderBadgesPositions();
-          updateSwingBadgesPositions();
-          updateCandleInspectorPosition();
+
+      // Pointer drag tracking across entire window to guarantee continuous sync during chart drag/pan
+      chartContainer.addEventListener("pointerdown", (e) => {
+        if (e.button === 0) {
+          isChartDragging = true;
+          scheduleSyncPositions();
         }
       });
+      window.addEventListener("pointermove", (e) => {
+        if (isChartDragging || e.buttons > 0) {
+          scheduleSyncPositions();
+        }
+      });
+      window.addEventListener("pointerup", () => {
+        if (isChartDragging) {
+          isChartDragging = false;
+          scheduleSyncPositions();
+        }
+      });
+      window.addEventListener("pointercancel", () => {
+        if (isChartDragging) {
+          isChartDragging = false;
+          scheduleSyncPositions();
+        }
+      });
+
       chartContainer.addEventListener("wheel", () => {
-        requestAnimationFrame(() => {
-          updateOrderBadgesPositions();
-          updateSwingBadgesPositions();
-          updateCandleInspectorPosition();
-        });
+        scheduleSyncPositions();
       }, { passive: true });
 
       if (window.ResizeObserver) {
@@ -1028,9 +1069,7 @@
             const { width, height } = entry.contentRect;
             if (width > 0 && height > 0 && chart) {
               chart.applyOptions({ width, height });
-              updateOrderBadgesPositions();
-              updateSwingBadgesPositions();
-              updateCandleInspectorPosition();
+              scheduleSyncPositions();
             }
           }
         });
@@ -1042,9 +1081,7 @@
               width: chartContainer.clientWidth || 800,
               height: chartContainer.clientHeight || 480,
             });
-            updateOrderBadgesPositions();
-            updateSwingBadgesPositions();
-            updateCandleInspectorPosition();
+            scheduleSyncPositions();
           }
         });
       }
@@ -1682,6 +1719,7 @@
     if (cleanCandles.length > 0) {
       try {
         candleSeries.setData(cleanCandles);
+        syncCachedCandlesMap(cleanCandles);
         updateMaFanRibbonLines(cleanCandles);
         latestCandle = cleanCandles[cleanCandles.length - 1];
         latestCandleTime = latestCandle.time;
@@ -1736,6 +1774,7 @@
       else cachedPrimaryCandles.push(formatted);
     }
     pendingCandles = cachedPrimaryCandles;
+    cachedCandlesMap.set(formatted.time, formatted);
 
     if (currentActiveTimeframe === "15m") {
       latestCandle = formatted;

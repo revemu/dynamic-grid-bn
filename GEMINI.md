@@ -6920,3 +6920,44 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ระบบจัดวางแบบ Side-by-Side: กรณีในแท่งเดียวกันมีทั้งไม้ขายทำกำไร (`SELL`) และไม้ตัดขาดทุน (`SL`) ระบบจะขยับแยกตำแหน่งในแนวนอน (`x - 12px` และ `x + 12px`) โดยอัตโนมัติ ทำให้ทั้งสองป้ายไม่ทับซ้อนกัน 100%
   4. **Bump Version**:
      - ปรับ Version เป็น `0.2.210` ใน `package.json` และ `src/version.ts`
+
+
+---
+
+## 236. Chart Pan/Drag 60FPS Sync, Open Holding Badge (O) & Duration Tracking (v0.2.211)
+
+- **สาเหตุของปัญหา**:
+  1. **Badge คำสั่งซื้อขายและสวิง Dow ไม่ขยับตามเวลาเลื่อนกราฟ และมีอาการหน่วง (Chart Pan/Drag Desync & Lag)**:
+     - กราฟ Lightweight Charts ดักจับการลากเมาส์ (Drag/Pan) ผ่าน Canvas Pointer Capture ภายในตัว
+     - Event `subscribeVisibleLogicalRangeChange` ไม่ได้ยิงทุกพิกเซลระหว่างที่เมาส์กำลังกดลาก แต่จะยิงเป็นช่วงๆ หรือเมื่อปล่อยเมาส์
+     - ฟังก์ชัน `updateOrderBadgesPositions()` มีการสร้าง `new Map()` วนลูปแท่งเทียน 1,000-2,000 แท่งใหม่ทุกครั้งที่มีการขยับเมาส์ พร้อมอ่าน `clientWidth / clientHeight` สลับกับการเขียน `style.left / top` ทำให้เบราว์เซอร์เกิด Forced Synchronous Layout Thrashing
+  2. **ความสับสนของไม้ที่ยังถือค้างอยู่ ณ สิ้นสุดการทดสอบ (`exitType === "OPEN"`)**:
+     - เดิมแสดงป้ายเป็น `SL` (หากติดลบ) หรือ `S` (หากบวก) ทำให้ผู้ใช้เข้าใจผิดว่าบอทสั่งขายหรือตัดขาดทุนไปแล้ว
+     - ขาดการบอกระยะเวลาและระยะราคาที่ถือรอมาแล้ว
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.211)**:
+  1. **Smooth 60/120 FPS Drag Synchronization Loop (`public/app.js` & `public/backtest.js`)**:
+     - เพิ่มตัวแปร `isChartDragging` และฟังก์ชัน `scheduleSyncPositions()` ผ่าน `requestAnimationFrame`:
+       - เมื่อเกิด `pointerdown` บน `chartContainer` ระบบจะเปิดลูป `requestAnimationFrame` ซิงค์พิกัดของ Badge ทุกตัวแบบเรียลไทม์ทุกเฟรมหน้าจอ จนกว่าจะปล่อยเมาส์ (`pointerup` บน `window`)
+       - รองรับการขยับตามติดแท่งเทียน 100% ไม่หลุดหรือค้างแม้จะลากเมาส์เร็วหรือลากหลุดออกนอกขอบ Canvas
+     - แคช `cachedCandlesMap` ถาวร อัปเดตเฉพาะตอนแท่งเทียนเปลี่ยน ทำให้การดึง High/Low ของแท่งเทียนเป็น $O(1)$
+     - แคช `candleHasMultipleExits` ล่วงหน้า ตัดการค้นหา $O(N^2)$ `orderBadgesData.some(...)` ออกทั้งหมด
+     - เพิ่ม `will-change: left, top;` ใน `public/style.css` และ `public/backtest.css` เพื่อเปิดใช้ GPU Hardware Acceleration
+  2. **Open Position Badge (`O`) (`public/backtest.js` & `public/backtest.css`)**:
+     - สำหรับไม้ที่มีสถานะ `exitType === "OPEN"` ปรับแสดงป้ายวงกลม **`O`** (ย่อจาก OPEN / กำลังถืออยู่):
+       - ถือสถานะบวก ($\ge 0\%$): สีฟ้าคราม `badge-open-win` (`#0284c7`) พร้อมขอบนีออน `#38bdf8`
+       - ถือสถานะลบ ($< 0\%$): สีส้มอำพัน `badge-open-loss` (`#d97706`) พร้อมขอบส้ม `#fbbf24`
+       - รองรับป้ายไม้ย่อย: แสดงเป็น **`O²`** หรือ **`O³`** หากมีหลายไม้ค้าง
+       - Canvas markers fallback: แสดงเป็นวงกลม **`O`** สีฟ้า/ส้ม
+  3. **Holding Duration & Distance Tracking (`fmtHoldingDuration`)**:
+     - เพิ่มฟังก์ชัน `fmtHoldingDuration(bars, entryTime, exitTime)` แปลงจำนวนแท่งและเวลาจริง เช่น `48 แท่ง (~4 ชม. 0 นาที)`
+     - ใน Hover Tooltip ของ Badge `O`:
+       - `⏳ ระยะเวลาที่ถือรอ: 48 แท่ง (~4 ชม. 0 นาที)`
+       - `ราคาเข้า (Entry): $...`
+       - `ราคาล่าสุด (Current): $...`
+       - `📊 ผลตอบแทนปัจจุบัน (Unrealized): +...% (+$...)`
+       - `🛡️ ระยะห่างจากจุด Stop Loss: ...% ($...)`
+       - ระบุชัดเจน: `*(สถานะ: ยังไม่ได้ปิดไม้ขาย / ถือค้างอยู่ ณ สิ้นสุดช่วงทดสอบ)*`
+     - ในตารางประวัติไม้เทรด (Trades Table): คอลัมน์ระยะเวลาถือครองแสดงป้ายสีอำพันเด่นชัด `⏳ ถือรอ 48 แท่ง (~4 ชม.)`
+  4. **Bump Version**:
+     - ปรับ Version เป็น `0.2.211` ใน `package.json` และ `src/version.ts`

@@ -653,6 +653,7 @@ body {
   user-select: none;
   z-index: 26;
   text-align: center;
+  will-change: left, top;
 }
 
 .chart-order-badge:hover {
@@ -700,6 +701,28 @@ body {
 }
 .chart-order-badge.badge-sell .badge-sub-count {
   border-color: #e11d48;
+}
+
+/* ── Open Position Badges (O) ── */
+.chart-order-badge.badge-open,
+.chart-order-badge.badge-open-win {
+  background: #0284c7;
+  border: 1.5px solid #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.45);
+}
+.chart-order-badge.badge-open-win .badge-sub-count {
+  border-color: #38bdf8;
+}
+
+.chart-order-badge.badge-open-loss {
+  background: #d97706;
+  border: 1.5px solid #fbbf24;
+  color: #ffffff;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.45);
+}
+.chart-order-badge.badge-open-loss .badge-sub-count {
+  border-color: #fbbf24;
 }
 
 .chart-order-badge.badge-tp1 {
