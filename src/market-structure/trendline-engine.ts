@@ -218,7 +218,7 @@ export class TrendlineEngine {
             const c = candles[cIdx];
             if (!c) continue;
             const val = bestP1.price + bestSlope * (c.time - bestP1.time);
-            points.push({ time: c.time, value: Number(val.toFixed(6)) });
+            points.push({ time: c.time, value: Number(val.toFixed(8)) });
           }
 
           let totalBrokenCandles = 0;
@@ -438,7 +438,7 @@ export class TrendlineEngine {
             const c = candles[cIdx];
             if (!c) continue;
             const val = bestV1.price + bestSlope * (c.time - bestV1.time);
-            points.push({ time: c.time, value: Number(val.toFixed(6)) });
+            points.push({ time: c.time, value: Number(val.toFixed(8)) });
           }
 
           let totalBrokenCandles = 0;

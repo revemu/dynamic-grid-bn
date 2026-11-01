@@ -250,11 +250,11 @@ export class DowEngine {
 
         const lastPt = wavePoints[wavePoints.length - 1];
         if (lastPt && lastPt.time === c.time) {
-          lastPt.value = Number(interpPrice.toFixed(6));
+          lastPt.value = Number(interpPrice.toFixed(8));
         } else {
           wavePoints.push({
             time: c.time,
-            value: Number(interpPrice.toFixed(6)),
+            value: Number(interpPrice.toFixed(8)),
           });
         }
       }

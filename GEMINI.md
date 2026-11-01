@@ -7546,7 +7546,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - หลังกดส่งการตั้งค่าไปยังบอทจริง ระบบจะตรวจเช็คยอดเงินสดคงเหลือ หากต่ำกว่า $5.00 จะแจ้งเตือนให้ผู้ใช้ทราบทันที
      - เพิ่มกล่องยืนยันถามผู้ใช้ว่าต้องการสั่ง Resume บอทและเริ่มวางออเดอร์ทันทีเลยหรือไม่ เพื่อความสะดวกในการเริ่มเทรดโดยไม่ต้องกด Resume ซ้ำที่หน้าแดชบอร์ด
 - **Version Bump**:
-  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.5`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.6`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+
+---
+
+### 257. Precision Truncation Fix in Grid Levels & Dynamic Price Formatting for Sub-Cent/Meme Coins (v0.3.0.7)
+
+- **สาเหตุที่บอทไม่ตั้ง Order บน PEPEFDUSD (Root Cause Analysis)**:
+  1. **บั๊กการตัดทศนิยมฮาร์ดโค้ด `.toFixed(6)` ใน `src/market-structure/channel-engine.ts`**:
+     - เหรียญมีม/ราคาต่ำอย่าง PEPE มีราคาต่อหน่วยละเอียดระดับ 8 หลักทศนิยม (เช่น `$0.00000494`)
+     - ความกว้างของกรอบ (Span) อยู่ที่ประมาณ `$0.00000030` ทำให้ระยะห่างแต่ละไม้มีขนาดเพียง `0.00000004` (4e-8)
+     - ระดับราคา Buy Levels ทั้ง 5 ไม้ที่แท้จริงคือ `0.00000506, 0.00000502, 0.00000498, 0.00000494, 0.00000493`
+     - แต่ในไฟล์ `channel-engine.ts` บรรทัด 440 และ 447 มีโค้ดเดิมครอบด้วย `.toFixed(6)`: `buyPcts.map((pct) => Number((bottomBound + finalSpan * (pct / 100)).toFixed(6)))` ส่งผลให้ตัวเลขของไม้ 1 ถึง 5 ถูกตัดหลักที่ 7-8 ทิ้ง แล้วปัดเศษกลายเป็น **`0.000005` ซ้ำกันทั้ง 5 ไม้**!
+  2. **คำสั่ง Maker Limit ซื้อถูกตัดสิทธิ์ทั้งหมด (Zero Orders Placed)**:
+     - ใน `src/strategy/buy-sync.ts`: บน Binance CEX บอทอยู่ในโหมด `MAKER_LIMIT` ซึ่งมีเงื่อนไขความปลอดภัยว่าคำสั่ง Maker Buy Limit จะต้องตั้งในราคาที่ต่ำกว่าหรือเท่ากับราคาตลาดปัจจุบันเท่านั้น (`lvl <= maxAllowedBuyPrice`)
+     - ในตอนที่ราคาตลาดอยู่ที่ `$0.00000494`: เมื่อ `buyLevels` ทุกไม้กลายเป็น `0.000005` ซึ่งสูงกว่าราคาตลาด (`0.000005 > 0.00000494`) ระบบความปลอดภัยจึงตัดสินว่าทั้ง 5 ไม้แพงกว่าตลาด และตัดทิ้งออกจากสิทธิ์การวางคำสั่งทั้งหมด (`eligibleBuyIndices = []`) ส่งผลให้บอทไม่ส่ง Order ใดๆ เข้า Orderbook เลย
+     - และข้อความบนหน้าแดชบอร์ดค้างว่า: `"ซื้อไม้ 1 เมื่อราคา <$0.00000500 (Buy L1)"` ทั้งๆ ที่ราคาตลาดปัจจุบันต่ำกว่า $0.00000500 อยู่แล้ว
+  3. **ข้อความราคาแสดงเป็น `$0.0000` จากฮาร์ดโค้ด `.toFixed(4)`**:
+     - ใน `src/strategy/index.ts` และ `src/strategy/buy-sync.ts` มีการใช้ `.toFixed(4)` ในการแปลงราคาเป็นข้อความ ทำให้ราคาที่ต่ำกว่า 0.0001 ถูกแสดงผลเป็น `$0.0000` (เช่น `"Price < 0% Floor ($0.0000)"`)
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **ปลด `.toFixed(6)` ออกจาก `src/market-structure/channel-engine.ts`**:
+     - ปรับให้ `buyLevels` และ `sellLevels` ส่งคืนค่าดิบที่มีความละเอียดสูง และให้ `roundPrice(p)` ใน Layer ของ Strategy เป็นผู้ปัดเศษตาม `pricePrecision` และ `tickSize` จริงของ Exchange Symbol (PEPE = 8 หลัก, ENSO = 4 หลัก, BTC/ETH = 2 หลัก) อย่างแม่นยำ
+  2. **ขยายความละเอียดใน `volume-profile.ts`, `dow-engine.ts` และ `trendline-engine.ts`**:
+     - รองรับทศนิยมละเอียด 8 หลัก ไม่ให้ข้อมูลสวิง, Volume Profile POC/VAH/VAL และจุดเส้นแนวโน้ม Trendline ถูกตัดทอนความแม่นยำ
+  3. **ปรับการแสดงผลข้อความใน `src/strategy/index.ts`, `src/strategy/buy-sync.ts`, `src/strategy/sell-sync.ts` และ `src/strategy/risk-manager.ts`**:
+     - เปลี่ยนการจัดรูปแบบข้อความราคาจาก `.toFixed(4)` หรือ `.toFixed(6)` มาเป็น `this.host.formatPrice(...)` หรือ `toFixed(this.pricePrecision)` เพื่อให้แสดงราคาที่แท้จริง ไม่กลายเป็น `$0.0000`
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.7`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
 
 
 ---

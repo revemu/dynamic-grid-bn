@@ -2846,7 +2846,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           );
           if (this.waitingForHigherLow && hasRealChannel && buyLevels.length > 1 && buyLevels[1] > 0.0001) {
             this.log(
-              `🔄 [CHANNEL SHIFT] Updated recovery Buy Level 2 to new channel L2: $${buyLevels[1].toFixed(4)} (Floor: $${lowerBound.toFixed(4)})`,
+              `🔄 [CHANNEL SHIFT] Updated recovery Buy Level 2 to new channel L2: $${buyLevels[1].toFixed(this.pricePrecision)} (Floor: $${lowerBound.toFixed(this.pricePrecision)})`,
             );
             this.breakdownBuyLevel2Price = buyLevels[1];
             this.saveState();
@@ -3111,7 +3111,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         if ((isStableBarsOk && isNotWaterfall && isDropDistanceOk) || hasAlreadyTradedBelowActiveFloor) {
           isStabilizedDownShift = true;
           this.log(
-            `🎯 [STABILIZED CHANNEL COMMIT] Candidate lower channel [$${lowerBound.toFixed(4)} .. $${upperBound.toFixed(4)}] ${hasAlreadyTradedBelowActiveFloor ? "(committed immediately: already holding lower zone lots)" : `stabilized (${this.stableFloorCandleCount} bars stable, drop: -${displayDropPct.toFixed(2)}%)`} — committing channel shift.`,
+            `🎯 [STABILIZED CHANNEL COMMIT] Candidate lower channel [$${lowerBound.toFixed(this.pricePrecision)} .. $${upperBound.toFixed(this.pricePrecision)}] ${hasAlreadyTradedBelowActiveFloor ? "(committed immediately: already holding lower zone lots)" : `stabilized (${this.stableFloorCandleCount} bars stable, drop: -${displayDropPct.toFixed(2)}%)`} — committing channel shift.`,
           );
           const totalZones = Math.max(1, Number(this.cfg.capitalZones ?? 1));
           if ((this.unlockedCapitalZones ?? 1) < totalZones) {
@@ -3134,7 +3134,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           buyLevels = [...this.lastDynamicBounds.buyLevels];
           sellLevels = [...this.lastDynamicBounds.sellLevels];
           this.status(
-            `⏳ WAITING FOR LOWER CHANNEL TO STABILIZE: Candidate Floor $${candidateFloor.toFixed(4)} (Stable: ${this.stableFloorCandleCount}/${requiredStableBars} bars | Drop: -${displayDropPct.toFixed(2)}% | Min: ${requiredDropPct}%) — keeping active channel at Floor $${lowerBound.toFixed(4)}`,
+            `⏳ WAITING FOR LOWER CHANNEL TO STABILIZE: Candidate Floor $${candidateFloor.toFixed(this.pricePrecision)} (Stable: ${this.stableFloorCandleCount}/${requiredStableBars} bars | Drop: -${displayDropPct.toFixed(2)}% | Min: ${requiredDropPct}%) — keeping active channel at Floor $${lowerBound.toFixed(this.pricePrecision)}`,
           );
         }
       }
@@ -3967,7 +3967,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         botActionState = {
           code: "BELOW_FLOOR_CUTLOSS",
           title: candlesCount < requiredCandles ? "⏳ Cut Loss Confirming (Waiting Closed Bar)" : "🚨 Cut Loss Triggered",
-          reason: `Price < 0% Floor ($${lowerBound.toFixed(4)}) • Holding $${inventoryQuote.toFixed(1)}`,
+          reason: `Price < 0% Floor ($${lowerBound.toFixed(this.pricePrecision)}) • Holding $${inventoryQuote.toFixed(1)}`,
           nextTrigger: `Liquidating to ${this.quoteAsset} / Waiting Closed Bar (${candlesCount}/${requiredCandles} bar${requiredCandles > 1 ? "s" : ""})`,
           severity: "alert",
         };
@@ -3975,8 +3975,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         botActionState = {
           code: "BELOW_FLOOR_PROTECTED",
           title: "🛡️ Capital Protected (Below Floor)",
-          reason: `Price < 0% Floor ($${lowerBound.toFixed(4)}) • Holding $0.00 (100% Cash)`,
-          nextTrigger: `Paused: Waiting Bottom / Higher Low > $${(this.breakdownLowPrice ?? refPrice).toFixed(4)}`,
+          reason: `Price < 0% Floor ($${lowerBound.toFixed(this.pricePrecision)}) • Holding $0.00 (100% Cash)`,
+          nextTrigger: `Paused: Waiting Bottom / Higher Low > $${(this.breakdownLowPrice ?? refPrice).toFixed(this.pricePrecision)}`,
           severity: "info",
         };
       }
@@ -4002,10 +4002,10 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         botActionState = {
           code: "WAITING_TRENDLINE_BREAKOUT",
           title: count === 1 ? "⏳ TL Breakout (1/2 bars)" : (isFlatWait ? "🛡️ รอตั้งฐาน HL (ใต้เส้นกด)" : "📉 Under Trendline"),
-          reason: `${isFlatWait ? `100% Cash • กรอบเปลี่ยน/เสี่ยงทำ LL (Floor: $${dumpFloor.toFixed(4)})` : `Floor broke`} • Under TL ($${downtrendLine.currentLinePrice.toFixed(4)})${count === 1 ? " [1/2 bars breaking]" : ""}`,
+          reason: `${isFlatWait ? `100% Cash • กรอบเปลี่ยน/เสี่ยงทำ LL (Floor: $${dumpFloor.toFixed(this.pricePrecision)})` : `Floor broke`} • Under TL ($${downtrendLine.currentLinePrice.toFixed(this.pricePrecision)})${count === 1 ? " [1/2 bars breaking]" : ""}`,
           nextTrigger: count === 1
-            ? `Wait 2nd candle confirm > $${downtrendLine.currentLinePrice.toFixed(4)}`
-            : `Wait breakout > $${downtrendLine.currentLinePrice.toFixed(4)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(4)})`,
+            ? `Wait 2nd candle confirm > $${downtrendLine.currentLinePrice.toFixed(this.pricePrecision)}`
+            : `Wait breakout > $${downtrendLine.currentLinePrice.toFixed(this.pricePrecision)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(this.pricePrecision)})`,
           severity: "warning",
         };
       } else {
@@ -4013,9 +4013,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           code: "WAITING_HIGHER_LOW",
           title: isFlatWait ? "🛡️ รอตั้งฐาน HL (100% Cash)" : "⏳ Wait Higher Low",
           reason: isFlatWait
-            ? `100% Cash • กรอบเปลี่ยน/เสี่ยงทำ LL (Floor: $${dumpFloor.toFixed(4)})`
-            : `Floor broke ($${dumpFloor.toFixed(4)})`,
-          nextTrigger: `Wait HL > $${dumpLow.toFixed(4)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(4)})`,
+            ? `100% Cash • กรอบเปลี่ยน/เสี่ยงทำ LL (Floor: $${dumpFloor.toFixed(this.pricePrecision)})`
+            : `Floor broke ($${dumpFloor.toFixed(this.pricePrecision)})`,
+          nextTrigger: `Wait HL > $${dumpLow.toFixed(this.pricePrecision)} or Stand above Buy 2 ($${effectiveBuyLevel2Target.toFixed(this.pricePrecision)})`,
           severity: "warning",
         };
       }

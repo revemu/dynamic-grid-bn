@@ -122,21 +122,21 @@ export class VolumeProfileEngine {
     const vah = lowestPrice + (upperIdx + 1) * binSize;
 
     const bins: VolumeProfileBin[] = binVolumes.map((vol, idx) => ({
-      price: Number((lowestPrice + (idx + 0.5) * binSize).toFixed(6)),
+      price: Number((lowestPrice + (idx + 0.5) * binSize).toFixed(8)),
       volume: Number(vol.toFixed(4)),
       isPoc: idx === pocIdx,
       inValueArea: inValueArea[idx] || false,
     }));
 
     return {
-      poc: Number(poc.toFixed(6)),
-      vah: Number(vah.toFixed(6)),
-      val: Number(val.toFixed(6)),
+      poc: Number(poc.toFixed(8)),
+      vah: Number(vah.toFixed(8)),
+      val: Number(val.toFixed(8)),
       totalVolume: Number(totalVolume.toFixed(2)),
       valueAreaVolume: Number(accumulatedVolume.toFixed(2)),
       bins,
-      highestPrice: Number(highestPrice.toFixed(6)),
-      lowestPrice: Number(lowestPrice.toFixed(6)),
+      highestPrice: Number(highestPrice.toFixed(8)),
+      lowestPrice: Number(lowestPrice.toFixed(8)),
       calculatedAt: Date.now(),
     };
   }

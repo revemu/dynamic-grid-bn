@@ -105,9 +105,9 @@ export class BuyOrderSynchronizer {
       if (openBuys.length > 0) {
         const sellLevel1Price = sellLevels[0] ?? (lowerBound + span * 0.60);
         const pauseReason = !this.host.buyOrdersActive
-          ? `Price ($${refPrice.toFixed(6)} | ${positionPct.toFixed(1)}%) above Sell Level 1 ($${sellLevel1Price.toFixed(6)}) — buying paused to prevent churn in upper profit zone`
+          ? `Price ($${this.host.formatPrice(refPrice)} | ${positionPct.toFixed(1)}%) above Sell Level 1 ($${this.host.formatPrice(sellLevel1Price)}) — buying paused to prevent churn in upper profit zone`
           : uptrendBroken
-          ? `Trend support broken ($${activeUptrendLine?.currentLinePrice.toFixed(6)}) — buying paused, waiting to sell or cut loss`
+          ? `Trend support broken ($${activeUptrendLine ? this.host.formatPrice(activeUptrendLine.currentLinePrice) : "TL"}) — buying paused, waiting to sell or cut loss`
           : (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.waitingForHigherLow)
           ? "Waiting for Higher Low — cancelled resting buy orders"
           : (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.isDowntrendDropPaused)
@@ -169,7 +169,7 @@ export class BuyOrderSynchronizer {
     if (isTlAboveBuyTarget && activeUptrendLine) {
       // If trendline sits above standard buy targets, float top buy level to trendline support price
       effectiveBuyLevels[0] = activeUptrendLine.currentLinePrice;
-      effectiveLevelNames[0] = `Buy TL Support ($${activeUptrendLine.currentLinePrice.toFixed(4)})`;
+      effectiveLevelNames[0] = `Buy TL Support ($${this.host.formatPrice(activeUptrendLine.currentLinePrice)})`;
     }
 
     const maxAllowedBuyPrice = Math.min(currentBestBid, refPrice);
@@ -210,7 +210,7 @@ export class BuyOrderSynchronizer {
           const oldName = o.levelDesc || "unlabeled";
           o.levelDesc = expectedName;
           o.targetFraction = buyTargets[closestIdx] || 1.0;
-          this.host.log(`🔗 [sync] Re-linked resting BUY order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${o.price.toFixed(6)}`);
+          this.host.log(`🔗 [sync] Re-linked resting BUY order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${this.host.formatPrice(o.price)}`);
         }
       } else if (!o.levelDesc || !effectiveLevelNames.includes(o.levelDesc)) {
         remainingStaleBuys.push(o);
@@ -428,7 +428,7 @@ export class BuyOrderSynchronizer {
         const ordNotional = (o.notionalQuote !== undefined ? o.notionalQuote : o.notionalUsdso) || (o.price * o.qty);
         let cancelReason = `Level allocation target fulfilled (${o.levelDesc}) — releasing locked budget ($${ordNotional.toFixed(2)}) for remaining eligible levels`;
         if (this.host.cfg.enableBaseConfirmationFilter !== false && isLlContinuationBreakdown && structuralBreakdownLow && o.price < structuralBreakdownLow.price * 1.0005) {
-          cancelReason = `Dow continuation breakdown: price ($${refPrice.toFixed(4)}) breaking below support ($${structuralBreakdownLow.price.toFixed(4)}) after LH — cancelling buys below broken support`;
+          cancelReason = `Dow continuation breakdown: price ($${this.host.formatPrice(refPrice)}) breaking below support ($${this.host.formatPrice(structuralBreakdownLow.price)}) after LH — cancelling buys below broken support`;
         } else if (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.cfg.enableWaterfallKnifeGuard !== false && this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && o.price < this.host.lastBuyFillPrice * 0.999) {
           cancelReason = isIntraCandleWaterfallActive
             ? `Intra-candle waterfall guard: price dumping post-buy — cancelling deep buy (${o.levelDesc}) until candle stabilizes`
@@ -438,10 +438,10 @@ export class BuyOrderSynchronizer {
           const isTl = isTlActive && activeDowntrendLine && effectiveResistancePrice === activeDowntrendLine.currentLinePrice;
           const resDisplayName = isTl ? "Trendline" : "Real S/R Ceil";
           cancelReason = o.price >= effectiveResistancePrice
-            ? `${resDisplayName} resistance filter: buy @ $${o.price.toFixed(4)} >= ${resDisplayName} $${effectiveResistancePrice.toFixed(4)} — suppressed until breakout`
-            : `${resDisplayName} profit guard: buy @ $${o.price.toFixed(4)} too close to ${resDisplayName} $${effectiveResistancePrice.toFixed(4)} (margin ${marginPct.toFixed(2)}% < min ${minResProfitMarginPct.toFixed(2)}%) — suppressed until breakout`;
+            ? `${resDisplayName} resistance filter: buy @ $${this.host.formatPrice(o.price)} >= ${resDisplayName} $${this.host.formatPrice(effectiveResistancePrice)} — suppressed until breakout`
+            : `${resDisplayName} profit guard: buy @ $${this.host.formatPrice(o.price)} too close to ${resDisplayName} $${this.host.formatPrice(effectiveResistancePrice)} (margin ${marginPct.toFixed(2)}% < min ${minResProfitMarginPct.toFixed(2)}%) — suppressed until breakout`;
         } else if (isTrendSupportGuarded && activeUptrendLine && !activeUptrendLine.isBroken && o.price < activeUptrendLine.currentLinePrice * 0.998) {
-          cancelReason = `Trend support filter: buy @ $${o.price.toFixed(6)} < Support TL $${activeUptrendLine.currentLinePrice.toFixed(6)} — cancelled to prevent below-TL fill`;
+          cancelReason = `Trend support filter: buy @ $${this.host.formatPrice(o.price)} < Support TL $${this.host.formatPrice(activeUptrendLine.currentLinePrice)} — cancelled to prevent below-TL fill`;
         } else if (currentHoldFraction >= 0.95) {
           cancelReason = `Portfolio capacity full (${(currentHoldFraction * 100).toFixed(1)}%) — cancelling ${o.levelDesc}`;
         }
@@ -544,7 +544,7 @@ export class BuyOrderSynchronizer {
 
         if (priceDiffRatio > priceTolerance || needsResize) {
           const reason = priceDiffRatio > priceTolerance
-            ? `Channel shifted: aligning buy price ($${currentOpenBuyAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
+            ? `Channel shifted: aligning buy price ($${this.host.formatPrice(currentOpenBuyAtLvl.price)} -> $${this.host.formatPrice(lvlPrice)})`
             : isTotalExposureExceeded
             ? `Total buy exposure exceeded remaining capacity: adjusting order ($${currentOrderNotional.toFixed(2)} -> $${maxPossibleBudget.toFixed(2)})`
             : `Rebalancing buy quantity to match grid tranche ($${currentOrderNotional.toFixed(2)} -> $${maxPossibleBudget.toFixed(2)})`;
@@ -589,7 +589,7 @@ export class BuyOrderSynchronizer {
         if (desiredBuyQty >= this.host.minQty && availableBudget >= minOrderNotional) {
           const actionLabel = effectiveLevelNames[i] || `Buy Level ${i + 1}`;
           this.host.log(
-            `⚡ [DREAMDEX ASK MATCH] Ask $${currentBestAsk.toFixed(6)} <= ${actionLabel} ($${lvlPrice.toFixed(6)}) — executing immediate IOC fill for $${availableBudget.toFixed(2)} ${this.host.quoteAsset}`,
+            `⚡ [DREAMDEX ASK MATCH] Ask $${this.host.formatPrice(currentBestAsk)} <= ${actionLabel} ($${this.host.formatPrice(lvlPrice)}) — executing immediate IOC fill for $${availableBudget.toFixed(2)} ${this.host.quoteAsset}`,
           );
           await buyTrancheIOC(desiredBuyQty, currentBestAsk, actionLabel, lvlPrice, availableBudget);
           continue;

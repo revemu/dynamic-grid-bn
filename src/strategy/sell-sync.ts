@@ -239,7 +239,7 @@ export class SellOrderSynchronizer {
         if (existingTlSell && existingTlSell.price < (minProfitTargetPrice * 0.999)) {
           await cancelOrderInternal(
             existingTlSell,
-            `${resDisplayName} price ($${effectiveTlSellPrice.toFixed(4)}) drifted below minimum profit target ($${minProfitTargetPrice.toFixed(4)}) — cancelling TL sell`,
+            `${resDisplayName} price ($${this.host.formatPrice(effectiveTlSellPrice)}) drifted below minimum profit target ($${this.host.formatPrice(minProfitTargetPrice)}) — cancelling TL sell`,
           );
           this.host.openOrders = this.host.openOrders.filter((o) => o !== existingTlSell);
           this.host.saveState();
@@ -273,7 +273,7 @@ export class SellOrderSynchronizer {
         if (existingTlSell && existingTlSell.levelDesc !== tlSellName) {
           existingTlSell.levelDesc = tlSellName;
           existingTlSell.targetFraction = 0.0;
-          this.host.log(`🔗 [RES SELL] Re-linked resting SELL order #${existingTlSell.onChainOrderId || existingTlSell.id} @ $${existingTlSell.price.toFixed(6)} to ${tlSellName}`);
+          this.host.log(`🔗 [RES SELL] Re-linked resting SELL order #${existingTlSell.onChainOrderId || existingTlSell.id} @ $${this.host.formatPrice(existingTlSell.price)} to ${tlSellName}`);
         }
 
         const minOrderNotional = Math.max(this.host.minNotional || 5.0, 5.0);
@@ -311,7 +311,7 @@ export class SellOrderSynchronizer {
 
               if (tlPriceDiffRatio > 0.001 || qtyDiffRatio > 0.05) {
                 const cancelReason = tlPriceDiffRatio > 0.001
-                  ? `${resDisplayName} price updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`
+                  ? `${resDisplayName} price updated: moving resting sell ($${this.host.formatPrice(existingTlSell.price)} -> $${this.host.formatPrice(effectiveTlSellPrice)})`
                   : `Rebalancing ${resDisplayName} sell quantity (${existingTlSell.qty} -> ${targetSellQty} ${this.host.baseAsset})`;
                 await cancelOrderInternal(existingTlSell, cancelReason);
                 this.host.openOrders = this.host.openOrders.filter((o) => o !== existingTlSell);
@@ -393,7 +393,7 @@ export class SellOrderSynchronizer {
           for (const o of suppressedSells) {
             await cancelOrderInternal(
               o,
-              `${resDisplayName} suppressed: sell @ $${o.price.toFixed(6)} >= ${resDisplayName} $${effectiveResistancePrice.toFixed(6)}`,
+              `${resDisplayName} suppressed: sell @ $${this.host.formatPrice(o.price)} >= ${resDisplayName} $${this.host.formatPrice(effectiveResistancePrice)}`,
             );
           }
           this.host.openOrders = this.host.openOrders.filter((o) => !suppressedSells.includes(o));
@@ -458,7 +458,7 @@ export class SellOrderSynchronizer {
                 if (tlPriceDiffRatio > 0.001 || qtyDiffRatio > 0.05) {
                   await cancelOrderInternal(
                     existingTlSell,
-                    `${resDisplayName} price updated: moving resting sell ($${existingTlSell.price.toFixed(6)} -> $${effectiveTlSellPrice.toFixed(6)})`,
+                    `${resDisplayName} price updated: moving resting sell ($${this.host.formatPrice(existingTlSell.price)} -> $${this.host.formatPrice(effectiveTlSellPrice)})`,
                   );
                   this.host.openOrders = this.host.openOrders.filter((o) => o !== existingTlSell);
                   this.host.saveState();
@@ -666,7 +666,7 @@ export class SellOrderSynchronizer {
               avgEntry > 0 && currentOpenSellAtLvl.price < minAllowedSellPrice * 0.9995;
             if (needsQtyResize || priceDiffRatio > shiftTol || isBelowMinProfit) {
               const reason = priceDiffRatio > shiftTol
-                ? `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${effLvlPrice.toFixed(6)})`
+                ? `Channel shifted: aligning sell price ($${this.host.formatPrice(currentOpenSellAtLvl.price)} -> $${this.host.formatPrice(effLvlPrice)})`
                 : "Rebalancing sell quantity to match inventory tranche";
               await cancelOrderInternal(currentOpenSellAtLvl, reason);
               this.host.openOrders = this.host.openOrders.filter((o) => o !== currentOpenSellAtLvl);
@@ -742,7 +742,7 @@ export class SellOrderSynchronizer {
           const oldName = o.levelDesc || "unlabeled";
           o.levelDesc = expectedName;
           o.targetFraction = sellHoldingTargets[closestIdx] ?? 0.0;
-          this.host.log(`🔗 [sync] Re-linked resting SELL order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${o.price.toFixed(6)}`);
+          this.host.log(`🔗 [sync] Re-linked resting SELL order #${o.onChainOrderId || o.id} (${oldName} -> ${o.levelDesc}) @ $${this.host.formatPrice(o.price)}`);
         }
       } else if (!o.levelDesc || !sellNames.includes(o.levelDesc)) {
         remainingStaleSells.push(o);
@@ -938,7 +938,7 @@ export class SellOrderSynchronizer {
           avgEntry > 0 && currentOpenSellAtLvl.price < minAllowedSellPrice * 0.9995;
         if (isPriceShifted || needsQtyResize || isBelowMinProfit) {
           const reason = isPriceShifted
-            ? `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
+            ? `Channel shifted: aligning sell price ($${this.host.formatPrice(currentOpenSellAtLvl.price)} -> $${this.host.formatPrice(lvlPrice)})`
             : `Rebalancing sell quantity to equal tranche (${currentOpenSellAtLvl.qty.toFixed(4)} -> ${targetSellQty.toFixed(4)} ${this.host.baseAsset})`;
           await cancelOrderInternal(currentOpenSellAtLvl, reason);
           this.host.openOrders = this.host.openOrders.filter((o) => o !== currentOpenSellAtLvl);

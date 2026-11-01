@@ -679,22 +679,22 @@ export class RiskManager {
       );
     } else if (isCandleStandingAboveBuy2) {
       resolveRecovery(
-        `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${refPrice.toFixed(6)} (Confirmed Closed Candle $${confirmedLastClosed!.close.toFixed(6)} >= Buy Level 2 $${effectiveBuyLevel2Target.toFixed(6)}) — Breakdown resolved, enabling recovery entry!`,
+        `🚀 BUY LEVEL 2 RECOVERY CONFIRMED @ $${this.host.formatPrice(refPrice)} (Confirmed Closed Candle $${this.host.formatPrice(confirmedLastClosed!.close)} >= Buy Level 2 $${this.host.formatPrice(effectiveBuyLevel2Target)}) — Breakdown resolved, enabling recovery entry!`,
       );
     } else if (isDynamicReboundReclaimed) {
       const gainPct = ((confirmedLastClosed!.close - trackedLow) / trackedLow) * 100;
       resolveRecovery(
-        `🚀 DYNAMIC REBOUND RECLAIM CONFIRMED @ $${refPrice.toFixed(6)} (Closed green $${confirmedLastClosed!.close.toFixed(6)} +${gainPct.toFixed(2)}% >= +${reboundThresholdPct}% above dump low $${trackedLow.toFixed(6)}) — Breakdown resolved, enabling accumulation!`,
+        `🚀 DYNAMIC REBOUND RECLAIM CONFIRMED @ $${this.host.formatPrice(refPrice)} (Closed green $${this.host.formatPrice(confirmedLastClosed!.close)} +${gainPct.toFixed(2)}% >= +${reboundThresholdPct}% above dump low $${this.host.formatPrice(trackedLow)}) — Breakdown resolved, enabling accumulation!`,
       );
     } else if (isEarlyCandleReversal) {
       resolveRecovery(
-        `🕯️ EARLY CANDLE REVERSAL CONFIRMED @ $${refPrice.toFixed(6)} (Bullish Engulfing/Hammer off dump low $${trackedLow.toFixed(6)}) — Early reversal confirmed, enabling accumulation!`,
+        `🕯️ EARLY CANDLE REVERSAL CONFIRMED @ $${this.host.formatPrice(refPrice)} (Bullish Engulfing/Hammer off dump low $${this.host.formatPrice(trackedLow)}) — Early reversal confirmed, enabling accumulation!`,
       );
     } else if (isTlBreakoutResolved) {
       const brokenCount = dow?.downtrendLine?.brokenCandleCount ?? 2;
-      const linePriceStr = dow?.downtrendLine ? `TL $${dow.downtrendLine.currentLinePrice.toFixed(6)}` : "downtrend line";
+      const linePriceStr = dow?.downtrendLine ? `TL $${this.host.formatPrice(dow.downtrendLine.currentLinePrice)}` : "downtrend line";
       resolveRecovery(
-        `🚀 TRENDLINE BREAKOUT CONFIRMED (${brokenCount} candles) @ $${refPrice.toFixed(6)} (Broke above ${linePriceStr}) — Breakdown resolved, enabling recovery entry!`,
+        `🚀 TRENDLINE BREAKOUT CONFIRMED (${brokenCount} candles) @ $${this.host.formatPrice(refPrice)} (Broke above ${linePriceStr}) — Breakdown resolved, enabling recovery entry!`,
       );
     } else if (!isBelowFloor && (this.host.breakdownFloorPrice || this.host.breakdownLowPrice || lowerBound > 0)) {
       // 3. Resolve via Confirmed Dow Theory Higher Low (HL) Swing Pivot
@@ -708,7 +708,7 @@ export class RiskManager {
 
       if (hlCheck && hlCheck.confirmed && hlCheck.higherLow) {
         resolveRecovery(
-          `✅ HIGHER LOW (HL) CONFIRMED @ $${hlCheck.higherLow.price.toFixed(6)} (${hlCheck.reason}) — Breakdown resolved, enabling recovery entry!`,
+          `✅ HIGHER LOW (HL) CONFIRMED @ $${this.host.formatPrice(hlCheck.higherLow.price)} (${hlCheck.reason}) — Breakdown resolved, enabling recovery entry!`,
         );
       } else if (
         isChannelReady &&
@@ -719,7 +719,7 @@ export class RiskManager {
         (confirmedLastClosed && confirmedLastClosed.close >= this.host.breakdownFloorPrice)
       ) {
         resolveRecovery(
-          `🚀 CHANNEL FLOOR RECLAIMED @ $${refPrice.toFixed(6)} >= Original Breakdown Floor $${this.host.breakdownFloorPrice.toFixed(6)} — Breakdown resolved, enabling recovery entry!`,
+          `🚀 CHANNEL FLOOR RECLAIMED @ $${this.host.formatPrice(refPrice)} >= Original Breakdown Floor $${this.host.formatPrice(this.host.breakdownFloorPrice)} — Breakdown resolved, enabling recovery entry!`,
         );
       }
     }

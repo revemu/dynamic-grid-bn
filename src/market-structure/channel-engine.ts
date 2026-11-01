@@ -437,14 +437,14 @@ export class ChannelEngine {
     const buyLevels = hasValidChannel
       ? (isNarrowChannel
           ? [bottomBound * (1 + buyBufferFrac)]
-          : buyPcts.map((pct) => Number((bottomBound + finalSpan * (pct / 100)).toFixed(6))))
+          : buyPcts.map((pct) => bottomBound + finalSpan * (pct / 100)))
       : [];
 
     // Grid Levels in Sell Zone (Evenly spaced in profit taking zone above Center)
     const sellLevels = hasValidChannel
       ? (isNarrowChannel
           ? [upperBound * (1 - sellBufferFrac)]
-          : sellPcts.map((pct) => Number((bottomBound + finalSpan * (pct / 100)).toFixed(6))))
+          : sellPcts.map((pct) => bottomBound + finalSpan * (pct / 100)))
       : [];
 
     const zoneWidthPct = bottomBound > 0 ? (finalSpan / bottomBound) * 100 : 0;
