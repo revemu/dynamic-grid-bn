@@ -692,7 +692,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       capitalZones: this.cfg.capitalZones ?? 1,
       zoneMinDropPct: this.cfg.zoneMinDropPct ?? 2.5,
       zoneStabilizeCandles: this.cfg.zoneStabilizeCandles ?? 3,
-      zoneExitMode: this.cfg.zoneExitMode || "HYBRID_ZONE_RECOVERY",
+      zoneExitMode: this.cfg.zoneExitMode || "PORTFOLIO_AVG",
       gridCutLossMode: this.cfg.gridCutLossMode || "none",
       unlockedCapitalZones: this.unlockedCapitalZones ?? 1,
       stableFloorCandleCount: this.stableFloorCandleCount ?? 0,
@@ -928,7 +928,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           continue;
         }
         if (key === "zoneExitMode") {
-          this.cfg.zoneExitMode = val === "AVG_PROFIT_ALL" ? "AVG_PROFIT_ALL" : "HYBRID_ZONE_RECOVERY";
+          this.cfg.zoneExitMode = (val === "ORIGINAL_TARGETS" || val === "PER_ZONE" || val === "AVG_PROFIT_ALL" || val === "HYBRID_ZONE_RECOVERY")
+            ? val
+            : "PORTFOLIO_AVG";
           this.needsSellRebalance = true;
           continue;
         }
@@ -1894,6 +1896,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       if (typeof (data as any).prevCandidateFloor === "number") {
         this.prevCandidateFloor = (data as any).prevCandidateFloor;
       }
+      if (typeof (data as any).lastStabilizeCandleTime === "number") {
+        this.lastStabilizeCandleTime = (data as any).lastStabilizeCandleTime;
+      }
       if (typeof data.lastResolvedDumpLowPrice === "number") {
         this.lastResolvedDumpLowPrice = data.lastResolvedDumpLowPrice;
       }
@@ -1974,10 +1979,17 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       ) {
         const hasInventory = this.lots.length > 0 && this.baseHeld() >= (this.minQty || 0.001);
         const hasOpenSells = this.openOrders.some((o) => !o.isBid);
+        const lowestLotPrice = this.lots.length > 0 ? Math.min(...this.lots.map((l) => l.price)) : 0;
+        const isStaleFloor = lowestLotPrice > 0 && persistentLockedChannel.lowerBound > 0 && lowestLotPrice < persistentLockedChannel.lowerBound * 0.985;
 
-        // As long as the bot holds inventory or resting sell orders, this locked channel represents
-        // the original structural entry and profit-taking bounds! Never wipe it arbitrarily.
-        if (hasInventory || hasOpenSells) {
+        if (isStaleFloor) {
+          this.log(
+            `⚠️ [state] Discarded stale persistent locked channel bounds for ${symbolKey} [$${persistentLockedChannel.lowerBound.toFixed(6)} .. $${persistentLockedChannel.upperBound.toFixed(6)}] because inventory has lots down to $${lowestLotPrice.toFixed(6)} (< floor)`,
+          );
+          this.lockedChannel = undefined;
+          this.lastDynamicBounds = undefined;
+          this.db.saveLockedChannel(symbolKey, undefined);
+        } else if (hasInventory || hasOpenSells) {
           const dSpan = persistentLockedChannel.upperBound - persistentLockedChannel.lowerBound;
           const isNarrowRestored = persistentLockedChannel.buyLevels.length === 1;
           const curBuyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
@@ -2068,6 +2080,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         postCutSingleTrancheOnly: this.postCutSingleTrancheOnly,
         unlockedCapitalZones: this.unlockedCapitalZones,
         stableFloorCandleCount: this.stableFloorCandleCount,
+        lastStabilizeCandleTime: this.lastStabilizeCandleTime,
         lastZoneUnlockFloor: this.lastZoneUnlockFloor,
         prevCandidateFloor: this.prevCandidateFloor,
         lastResolvedDumpLowPrice: this.lastResolvedDumpLowPrice,
@@ -3020,10 +3033,18 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
 
         const displayDropPct = lowestLotPrice > candidateFloor ? dropFromLowestLotPct : dropFromActiveFloorPct;
 
-        if (isStableBarsOk && isNotWaterfall && isDropDistanceOk) {
+        // If the bot has already purchased lots below the active floor (e.g. Zone 1 DCA fills),
+        // the lower channel shift is already a living reality and must be committed immediately.
+        const hasAlreadyTradedBelowActiveFloor = Boolean(
+          lowestLotPrice > 0 &&
+          activeFloor > 0 &&
+          lowestLotPrice < activeFloor * 0.985
+        );
+
+        if ((isStableBarsOk && isNotWaterfall && isDropDistanceOk) || hasAlreadyTradedBelowActiveFloor) {
           isStabilizedDownShift = true;
           this.log(
-            `🎯 [STABILIZED CHANNEL COMMIT] Candidate lower channel [$${lowerBound.toFixed(4)} .. $${upperBound.toFixed(4)}] stabilized (${this.stableFloorCandleCount} bars stable, drop: -${displayDropPct.toFixed(2)}%) — committing channel shift.`,
+            `🎯 [STABILIZED CHANNEL COMMIT] Candidate lower channel [$${lowerBound.toFixed(4)} .. $${upperBound.toFixed(4)}] ${hasAlreadyTradedBelowActiveFloor ? "(committed immediately: already holding lower zone lots)" : `stabilized (${this.stableFloorCandleCount} bars stable, drop: -${displayDropPct.toFixed(2)}%)`} — committing channel shift.`,
           );
           const totalZones = Math.max(1, Number(this.cfg.capitalZones ?? 1));
           if ((this.unlockedCapitalZones ?? 1) < totalZones) {
@@ -3111,7 +3132,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         this.lastDynamicBounds = { lowerBound, upperBound, centerPrice, buyLevels: [...buyLevels], sellLevels: [...sellLevels] };
       }
 
-      if (isHoldingPosition && lockChannelInPosition) {
+      if (isHoldingPosition) {
         this.lockedChannel = {
           lowerBound,
           upperBound,
@@ -3119,9 +3140,59 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           buyLevels: [...buyLevels],
           sellLevels: [...sellLevels],
           rawFloorPrice,
-          lockedAt: Date.now(),
+          lockedAt: this.lockedChannel?.lockedAt || Date.now(),
         };
         this.db.saveLockedChannel(symbolKey, this.lockedChannel);
+      }
+    }
+
+    // ── Entry Shield & Sell Zone Envelope Expansion ──────────────────────────
+    // When holding an inventory position with requireProfitAboveAvgEntry (or PORTFOLIO_AVG_PROFIT),
+    // ensure upperBound encompasses the required take profit targets in the Upper Zone (Sell Zone),
+    // while keeping buyLevels anchored locally to support so orders do not chase inflated levels.
+    const portfolioAvgEntry = this.getAvgEntryPrice();
+    const shouldLockAboveAvg = (this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT" ||
+      this.cfg.requireProfitAboveAvgEntry ||
+      this.cfg.gridCutLossMode === "none") && portfolioAvgEntry > 0;
+
+    if (isHoldingPosition && shouldLockAboveAvg) {
+      const minNetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25);
+      const minTargetPrice = portfolioAvgEntry * (1 + minNetProfitPct / 100);
+      const requiredCeiling = portfolioAvgEntry * (1 + (minNetProfitPct + 0.60) / 100);
+
+      if (upperBound < requiredCeiling) {
+        upperBound = this.roundPrice(requiredCeiling);
+        centerPrice = this.roundPrice((lowerBound + upperBound) / 2);
+
+        // Keep buyLevels anchored locally to support/accumulation so we don't place buys too high
+        const curBuyPcts = this.cfg.buyLevelPcts ?? [42, 32, 22, 12, 2];
+        const curSellPcts = this.cfg.sellLevelPcts ?? [52, 62, 72, 82, 92];
+        const localMaxSpan = lowerBound * ((this.cfg.maxChannelWidthPct ?? 6.0) / 100);
+        const rawUpper = dow?.gridZone?.upperBound ?? (dow?.upperBound ? Math.min(dow.upperBound, lowerBound + localMaxSpan) : lowerBound + localMaxSpan);
+        const localSpan = Math.max(0.000001, Math.min(rawUpper - lowerBound, localMaxSpan));
+        buyLevels = curBuyPcts.map((pct) => this.roundPrice(lowerBound + localSpan * (pct / 100)));
+
+        // Distribute sellLevels in the Upper Zone (at or above minTargetPrice up to upperBound)
+        const sellSpan = Math.max(0.000001, upperBound - minTargetPrice);
+        sellLevels = curSellPcts.map((pct) => {
+          const frac = Math.max(0, (pct - 50) / 50);
+          return this.roundPrice(minTargetPrice + sellSpan * frac);
+        });
+
+        if (this.lastDynamicBounds) {
+          this.lastDynamicBounds.upperBound = upperBound;
+          this.lastDynamicBounds.centerPrice = centerPrice;
+          this.lastDynamicBounds.buyLevels = [...buyLevels];
+          this.lastDynamicBounds.sellLevels = [...sellLevels];
+        }
+
+        if (this.lockedChannel) {
+          this.lockedChannel.upperBound = upperBound;
+          this.lockedChannel.centerPrice = centerPrice;
+          this.lockedChannel.buyLevels = [...buyLevels];
+          this.lockedChannel.sellLevels = [...sellLevels];
+          this.db.saveLockedChannel(symbolKey, this.lockedChannel);
+        }
       }
     }
 

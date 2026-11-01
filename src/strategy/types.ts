@@ -154,6 +154,7 @@ export interface IStrategyHost {
   lastEvaluatedCeil?: number;
   unlockedCapitalZones?: number;
   stableFloorCandleCount?: number;
+  lastStabilizeCandleTime?: number;
   lastZoneUnlockFloor?: number;
   prevCandidateFloor?: number;
 

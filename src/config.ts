@@ -238,8 +238,8 @@ export const defaultStrategyConfig = {
   zoneMinDropPct: 2.5,
   /** Number of closed candles a lower channel must remain stable (not making new lows) before unlocking next DCA zone (default 3 bars). */
   zoneStabilizeCandles: 3,
-  /** Zone exit strategy: "HYBRID_ZONE_RECOVERY" (default) or "AVG_PROFIT_ALL". */
-  zoneExitMode: "HYBRID_ZONE_RECOVERY" as "HYBRID_ZONE_RECOVERY" | "AVG_PROFIT_ALL",
+  /** Zone exit strategy: "PORTFOLIO_AVG" (default), "ORIGINAL_TARGETS", "PER_ZONE", "HYBRID_ZONE_RECOVERY", or "AVG_PROFIT_ALL". */
+  zoneExitMode: "PORTFOLIO_AVG" as "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE" | "HYBRID_ZONE_RECOVERY" | "AVG_PROFIT_ALL",
   /** Cut loss behavior mode for dynamic grid in backtest: "none" (default for DCA hold), "entry_floor" (strict entry floor SL), or "final_zone_floor" (SL only after all zones exhausted). */
   gridCutLossMode: "none" as "none" | "entry_floor" | "final_zone_floor",
 
@@ -430,8 +430,8 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.capitalZones !== undefined) merged.capitalZones = Math.max(1, Math.min(5, Number(saved.capitalZones) || 1));
       if (saved.zoneMinDropPct !== undefined) merged.zoneMinDropPct = Math.max(0.5, Number(saved.zoneMinDropPct) || 2.5);
       if (saved.zoneStabilizeCandles !== undefined) merged.zoneStabilizeCandles = Math.max(1, Math.min(20, Number(saved.zoneStabilizeCandles) || 3));
-      if (saved.zoneExitMode === "HYBRID_ZONE_RECOVERY" || saved.zoneExitMode === "AVG_PROFIT_ALL") {
-        merged.zoneExitMode = saved.zoneExitMode;
+      if (saved.zoneExitMode) {
+        merged.zoneExitMode = saved.zoneExitMode as any;
       }
       if (saved.gridCutLossMode === "none" || saved.gridCutLossMode === "entry_floor" || saved.gridCutLossMode === "final_zone_floor") {
         merged.gridCutLossMode = saved.gridCutLossMode;

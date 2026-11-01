@@ -7162,5 +7162,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Bump Version**:
      - ปรับ Version เป็น `0.2.218` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 245. Elimination of Floating Ghost Channel, Stale Bounds Restoration Guard & Sell Zone Envelope Expansion (v0.2.219)
+
+- **สาเหตุของปัญหา**:
+  1. **กรอบราคาลอยเคว้งคว้างบนฟ้า (`$0.1947 - $0.2287`) หลังรีสตาร์ทบอท**:
+     - เมื่อราคาหลุด Floor เดิมและลงมาเล่นใน Zone 1 (เช่น ช้อนซื้อที่ `$0.16758 - $0.16981` และวางจุดขายที่ `$0.18377`)
+     - ใน `src/strategy/index.ts` เมธอด `step()` เดิมบันทึกกรอบลงฐานข้อมูลเฉพาะเมื่อ `isHoldingPosition && lockChannelInPosition` เท่านั้น ทำให้เมื่อตั้งค่า `lockChannelInPosition: false` กรอบใหม่ที่เลื่อนลงมาข้างล่างไม่เคยถูกบันทึกลง `db.lockedChannels` เลย
+     - เมื่อรีสตาร์ทบอท ฟังก์ชัน `loadState()` ไปดึงกรอบโบราณใน DB (`$0.1947`) กลับมาใส่ใน `this.lastDynamicBounds` ซ้ำซ้อน ทำให้กรอบดีดกลับขึ้นไปลอยบนฟ้าทุกครั้งที่รีสตาร์ท
+  2. **ระบบ Stabilize Gate แช่แข็งกรอบ ทั้งที่ซื้อของโซนล่างไปแล้ว**:
+     - พอมีกรอบเก่าค้างอยู่ ระบบเข้าใจผิดว่าราคาเพิ่งจะทิ้งตัวลงมา จึงสั่ง `WAITING FOR LOWER CHANNEL TO STABILIZE` รอแท่งเทียน 3 แท่ง ทั้งๆ ที่บอทได้ช้อนซื้อไม้ในโซนล่างไปแล้วหลายชั่วโมง
+     - เมื่อกรอบลอยค้างอยู่ข้างบน ทำให้ `refPrice < lowerBound` ส่งผลให้ฟังก์ชัน `buy-sync` ยกเลิกออเดอร์ซื้อทั้งหมด และ Risk Manager ร้องเตือน `BELOW_FLOOR_CUTLOSS` ตลอดเวลา
+  3. **จุดขาย ($0.18377) ลอยอยู่นอกกรอบบน (Upper Bound)**:
+     - เมื่อคำนวณกรอบล่างที่ `$0.16682` ด้วยความกว้างปกติ 6% จะได้เพดานกรอบดิบ (`rawUpperBound`) อยู่ที่ `$0.17683`
+     - แต่ต้นทุนเฉลี่ยของพอร์ตอยู่ที่ `$0.18285` และจุดขายทำกำไรสุทธิอยู่ที่ `$0.18377` ซึ่งสูงกว่าเพดานเดิม
+     - ส่งผลให้จุดขายจริงและเส้นเป้าขาย `effectiveSellTargets` ลอยทะลุกรอบบนขึ้นไปอยู่นอกชาร์ต
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.219)**:
+  1. **Stale Locked Channel Discard Guard (`loadState()` ใน `src/strategy/index.ts`)**:
+     - ตรวจสอบ `lowestLotPrice`: หากพอร์ตถือของที่มีราคาซื้อต่ำกว่า `persistentLockedChannel.lowerBound * 0.985` (เช่น ซื้อไว้ที่ `$0.16758` แต่กรอบใน DB อยู่ที่ `$0.19469`) ระบบจะ **ทำลายกรอบเก่าทิ้งทันที** พร้อมบันทึกลบออกจาก DB เพื่อป้องกันไม่ให้กรอบโบราณฟื้นคืนชีพกลับมาหลอกหลอน
+  2. **Bypass Stabilize Gate เมื่อมีไม้ในโซนล่างแล้ว (`step()` ใน `src/strategy/index.ts`)**:
+     - เพิ่มเงื่อนไข `hasAlreadyTradedBelowActiveFloor`: หากบอทเคยซื้อไม้ที่ต่ำกว่า `activeFloor * 0.985` ไปแล้ว ให้ **Commit Channel Shift ลงมาเกาะฐานล่างทันทีโดยไม่ต้องรอ Stabilize 3 แท่ง**
+     - บันทึกกรอบราคาล่าสุดลงฐานข้อมูล `db.saveLockedChannel` เสมอเมื่อถือสถานะ (`isHoldingPosition`) ไม่ว่าจะเปิดหรือปิด `lockChannelInPosition`
+     - บันทึกและซิงค์ `lastStabilizeCandleTime` เข้าสู่ `StrategyStateRecord` ใน `src/db.ts` และ `src/strategy/types.ts`
+  3. **Sell Zone Envelope Expansion & Local Accumulation Anchor (`step()` ใน `src/strategy/index.ts`)**:
+     - เมื่อถือสถานะและเปิดโหมดขายเอากำไร (`shouldLockAboveAvg && portfolioAvgEntry > 0`):
+       - หากเพดานกรอบ (`upperBound`) ต่ำกว่าราคาขายที่ต้องการ (`requiredCeiling = avgEntry * (1 + minNetProfitPct + 0.60%)`):
+         - ขยาย `upperBound = requiredCeiling` และปรับ `centerPrice = (lowerBound + upperBound) / 2`
+         - **Buy Levels (ไม้ซื้อ)**: ยังคงคำนวณและยึดเหนี่ยวอยู่กับแนวรับของคลื่นล่างตามปกติ (`lowerBound + localSpan * buyPct`) เพื่อป้องกันไม่ให้บอทกระโดดขึ้นไปตั้งรับซื้อแพง
+         - **Sell Levels (ไม้ขาย)**: จัดวางกระจายตัวอยู่ใน **กรอบบน (Upper Zone)** เหนือ `centerPrice` ขึ้นไปถึง `upperBound` (`$0.18377 - $0.18486`) อย่างสมบูรณ์แบบ
+       - ผลลัพธ์: Floor อยู่ที่ `$0.16682`, Buy Levels อยู่ที่ `$0.168 - $0.171`, Center อยู่ที่ `$0.17584`, Sell Levels และจุดขายจริง `$0.18377` อยู่ในกรอบบนใต้เพดาน `$0.18486` ครบถ้วนตามทฤษฎี Grid Trading 100%
+  4. **ซิงค์ค่า `zoneExitMode` ครบวงจร**:
+     - ใน `src/config.ts` และ `src/strategy/index.ts`: รองรับค่า `"PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE" | "HYBRID_ZONE_RECOVERY" | "AVG_PROFIT_ALL"` ตรงกันกับหน้าเว็บและ Backtest Studio
+  5. **Bump Version**:
+     - ปรับ Version เป็น `0.2.219` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
 
 

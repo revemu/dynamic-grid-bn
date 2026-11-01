@@ -90,6 +90,7 @@ export interface StrategyStateRecord {
   lastCutLossTime?: number;
   unlockedCapitalZones?: number;
   stableFloorCandleCount?: number;
+  lastStabilizeCandleTime?: number;
   lastZoneUnlockFloor?: number;
   prevCandidateFloor?: number;
   postCutSingleTrancheOnly?: boolean;
