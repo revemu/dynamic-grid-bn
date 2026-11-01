@@ -5329,6 +5329,18 @@
       if (btnMaFan) btnMaFan.style.display = "none";
     }
 
+    const btnRotation = document.getElementById("tabBtnRotation");
+    if (btnRotation) {
+      btnRotation.style.display = "inline-flex";
+      btnRotation.style.order = "5";
+    }
+
+    const currentActiveTab = document.querySelector(".settings-tabs .tab-btn.active")?.getAttribute("data-tab");
+    if (currentActiveTab === "tab-rotation") {
+      activateSettingsTab("tab-rotation");
+      return;
+    }
+
     if (autoActivatePrimary) {
       activateSettingsTab(primaryTabId);
     } else {
@@ -7984,7 +7996,7 @@
       const res = await fetch(`${API_BASE}/api/rotation/scan-now`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ forceRotate }),
+        body: JSON.stringify({ forceRotate, quoteAsset: document.getElementById("cfg_rotationQuoteAsset")?.value }),
       });
       const data = await res.json();
       if (!data.success) {

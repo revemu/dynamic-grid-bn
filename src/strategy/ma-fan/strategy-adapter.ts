@@ -478,6 +478,12 @@ export class MaFanTradingStrategy implements IStrategy {
       this.cfg.maFanTradeDirection = s.maFanTradeDirection;
       this.maFan.config.tradeDirection = s.maFanTradeDirection;
     }
+    if (s.enableAutoRotation !== undefined) this.cfg.enableAutoRotation = Boolean(s.enableAutoRotation);
+    if (s.rotationQuoteAsset !== undefined) this.cfg.rotationQuoteAsset = s.rotationQuoteAsset;
+    if (s.rotationIntervalMinutes !== undefined) this.cfg.rotationIntervalMinutes = Number(s.rotationIntervalMinutes);
+    if (s.rotationIdleCashMinutes !== undefined) this.cfg.rotationIdleCashMinutes = Number(s.rotationIdleCashMinutes);
+    if (s.rotationScoreMarginPct !== undefined) this.cfg.rotationScoreMarginPct = Number(s.rotationScoreMarginPct);
+    if (s.rotationMinVolumeUsd !== undefined) this.cfg.rotationMinVolumeUsd = Number(s.rotationMinVolumeUsd);
 
     this.maFan.config.manualSpreadPct = this.cfg.maFanManualSpreadPct;
     this.maFan.config.autoCalibrateSpreadOnSwitch = this.cfg.maFanAutoCalibrateSpreadOnSwitch;

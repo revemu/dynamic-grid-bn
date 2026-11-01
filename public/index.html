@@ -2240,6 +2240,127 @@
         </div>
       </div>
 
+
+        <!-- ═══════════════════ Tab 5: สลับคู่เหรียญอัตโนมัติ (Auto Rotation) ═══════════════════ -->
+        <div class="tab-pane" id="tab-rotation">
+          <!-- Section: สลับคู่เหรียญอัตโนมัติตามสภาวะตลาด -->
+          <div class="cfg-section-card">
+            <div class="cfg-section-header">
+              <span class="cfg-section-title">🔄 การหมุนเวียนคู่เหรียญอัตโนมัติ (Autonomous Market Regime &amp; Pair Rotation)</span>
+              <span class="cfg-section-desc">วิเคราะห์สภาวะตลาด (Dow Theory / Trend / ATR / Volume) และจำลองผลเทรดเพื่อเลือกคู่เหรียญที่ดีที่สุดให้อัตโนมัติ</span>
+            </div>
+            <div class="settings-grid">
+              <div class="form-group">
+                <label for="cfg_enableAutoRotation">
+                  เปิดระบบสลับคู่เหรียญอัตโนมัติ
+                  <span class="help-tip" title="เมื่อจบแต่ละรอบเทรด (100% Cash) หรือถือเงินสดว่างเกินเวลา บอทจะประเมินคะแนนและสลับคู่เหรียญให้อัตโนมัติ">ℹ️</span>
+                </label>
+                <div class="toggle-group" style="display: flex; align-items: center; gap: 10px; margin-top: 6px;">
+                  <label class="switch">
+                    <input type="checkbox" id="cfg_enableAutoRotation" />
+                    <span class="slider round"></span>
+                  </label>
+                  <span id="cfg_enableAutoRotation_label" style="font-size: 13px; font-weight: 600; color: #94a3b8;">ปิดใช้งาน (Manual)</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_rotationQuoteAsset">
+                  สกุลเงินอ้างอิงสำหรับสแกน (Quote Asset)
+                  <span class="help-tip" title="เลือกสกุลเงินอ้างอิงที่ต้องการสแกน เช่น USDT หรือ FDUSD (ค่าธรรมเนียม 0% Maker บน Binance)">ℹ️</span>
+                </label>
+                <select id="cfg_rotationQuoteAsset" class="form-select">
+                  <option value="USDT">💵 USDT (Tether - คู่เหรียญเยอะที่สุด โวลุ่มหนาแน่น)</option>
+                  <option value="FDUSD">🟡 FDUSD (First Digital USD - 0% Maker Fee Tier)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_rotationIntervalMinutes">
+                  รอบเวลาสแกนปกติ (Scan Cooldown)
+                  <span class="help-tip" title="ระยะเวลาพักขั้นต่ำระหว่างการสลับคู่เหรียญเพื่อป้องกันการสลับบ่อยเกินไป (แนะนำ 180 นาที = 3 ชม.)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_rotationIntervalMinutes" step="15" min="15" max="1440" value="180" />
+                  <span class="unit">นาที</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_rotationIdleCashMinutes">
+                  ถือเงินสดว่างเกินเวลา (Idle Cash Timeout)
+                  <span class="help-tip" title="หากพอร์ตว่างเป็นเงินสด 100% เกินเวลาที่กำหนด ให้กระตุ้นการสแกนหาคู่เหรียญใหม่ที่พร้อมเทรดทันที">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_rotationIdleCashMinutes" step="10" min="10" max="720" value="120" />
+                  <span class="unit">นาที</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_rotationScoreMarginPct">
+                  เกณฑ์คะแนนที่ต้องชนะคู่เดิม (Score Margin Advantage)
+                  <span class="help-tip" title="คู่เหรียญใหม่ต้องมีคะแนน Composite Score ชนะคู่เหรียญเดิมอย่างน้อยกี่เปอร์เซ็นต์ ถึงจะยอมสลับคู่ (แนะนำ 20%)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_rotationScoreMarginPct" step="5" min="5" max="50" value="20" />
+                  <span class="unit">%</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="cfg_rotationMinVolumeUsd">
+                  โวลุ่มซื้อขาย 24 ชม. ขั้นต่ำ (Min 24h Volume)
+                  <span class="help-tip" title="กรองเฉพาะเหรียญที่มีสภาพคล่องสูง ป้องกันเหรียญสภาพคล่องต่ำติดดอย (แนะนำ $3,000,000 USD ขึ้นไป)">ℹ️</span>
+                </label>
+                <div class="input-with-unit">
+                  <input type="number" id="cfg_rotationMinVolumeUsd" step="500000" min="100000" max="50000000" value="3000000" />
+                  <span class="unit">$</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section: สแกนตลาดและทดสอบผลทันที -->
+          <div class="cfg-section-card">
+            <div class="cfg-section-header">
+              <span class="cfg-section-title">🔍 สแกนตลาดและจำลองผลเทรดทันที (Manual Market Scan &amp; Simulation)</span>
+              <span class="cfg-section-desc">รัน Funnel กรองเหรียญชั้นนำและจำลองผลเทรด 5m/15m แบบ Real-time ทันที</span>
+            </div>
+
+            <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
+              <button type="button" class="btn btn-primary" id="btnTestRotationScan" style="background: linear-gradient(135deg, #0284c7, #0369a1); border-color: #38bdf8;">
+                🔍 สแกนตลาดทันที (Scan Market Now)
+              </button>
+              <button type="button" class="btn btn-secondary" id="btnForceRotateTop1" style="background: rgba(16, 185, 129, 0.2); border-color: #10b981; color: #34d399;">
+                ⚡ สลับคู่ไปยังอันดับ 1 ทันที (Force Rotate Top #1)
+              </button>
+            </div>
+
+            <div id="rotationScanStatus" style="font-size: 13px; margin-bottom: 14px; min-height: 22px;"></div>
+
+            <div id="rotationScanResultsTable" style="display: none; overflow-x: auto; max-height: 400px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08);">
+              <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <thead>
+                  <tr style="background: rgba(255, 255, 255, 0.05); color: #94a3b8; text-align: left; border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+                    <th style="padding: 10px 12px; width: 50px; text-align: center;">อันดับ</th>
+                    <th style="padding: 10px 12px;">คู่เหรียญ</th>
+                    <th style="padding: 10px 12px;">คะแนนรวม</th>
+                    <th style="padding: 10px 12px;">Sim PnL</th>
+                    <th style="padding: 10px 12px;">Win Rate</th>
+                    <th style="padding: 10px 12px;">จำนวนไม้</th>
+                    <th style="padding: 10px 12px;">Max DD</th>
+                    <th style="padding: 10px 12px;">24h Vol / Chg</th>
+                    <th style="padding: 10px 12px;">ผลการประเมิน</th>
+                  </tr>
+                </thead>
+                <tbody id="rotationScanResultsBody">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
       <div class="modal-footer">
         <div class="modal-footer-status" id="settingsSaveStatus"></div>
         <div class="modal-footer-btns">

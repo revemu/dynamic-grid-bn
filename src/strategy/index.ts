@@ -677,6 +677,14 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       minGasReserveSomi: this.cfg.minGasReserveSomi ?? 2.0,
       timezone: this.cfg.timezone || "Asia/Bangkok",
       dashboardPort: this.cfg.dashboardPort ?? 3333,
+      enableAutoRotation: Boolean(this.cfg.enableAutoRotation),
+      rotationQuoteAsset: this.cfg.rotationQuoteAsset || "USDT",
+      rotationIntervalMinutes: this.cfg.rotationIntervalMinutes ?? 180,
+      rotationIdleCashMinutes: this.cfg.rotationIdleCashMinutes ?? 120,
+      rotationScoreMarginPct: this.cfg.rotationScoreMarginPct ?? 20,
+      rotationMinVolumeUsd: this.cfg.rotationMinVolumeUsd ?? 3_000_000,
+      rotationWhitelist: this.cfg.rotationWhitelist || [],
+      rotationBlacklist: this.cfg.rotationBlacklist || [],
       enabledBuyLevels: Array.isArray(this.cfg.enabledBuyLevels) ? this.cfg.enabledBuyLevels : [true, true, true, true, true],
       enabledSellTargets: Array.isArray(this.cfg.enabledSellTargets) ? this.cfg.enabledSellTargets : [true, true, true, true, true],
       buyLevelPcts: Array.isArray(this.cfg.buyLevelPcts) ? this.cfg.buyLevelPcts : [42, 32, 22, 12, 2],
@@ -773,8 +781,10 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
    * Returns the minimum net profit multiplier (e.g. 1.0025 for 0.25% minNetProfitPct) required for profitable exits.
    */
   public getMinProfitMultiplier(): number {
+    const isDex = this.binance.hasGasFees || this.binance.isDex || this.binance.exchangeName === "dreamdex";
+    const feeBufferPct = isDex ? 0 : 0.16; // CEX maker/taker roundtrip fee buffer (0.075% x 2 + cushion)
     const pct = Math.max(0.05, Number(this.cfg.minNetProfitPct ?? 0.25));
-    return 1 + pct / 100;
+    return 1 + (pct + feeBufferPct) / 100;
   }
 
   /**
@@ -926,6 +936,38 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         }
         if (key === "zoneStabilizeCandles") {
           this.cfg.zoneStabilizeCandles = Math.max(1, Math.min(20, parseInt(val, 10) || 3));
+          continue;
+        }
+        if (key === "enableAutoRotation") {
+          this.cfg.enableAutoRotation = Boolean(val);
+          continue;
+        }
+        if (key === "rotationQuoteAsset") {
+          this.cfg.rotationQuoteAsset = val === "FDUSD" ? "FDUSD" : "USDT";
+          continue;
+        }
+        if (key === "rotationIntervalMinutes") {
+          this.cfg.rotationIntervalMinutes = Math.max(15, Number(val) || 180);
+          continue;
+        }
+        if (key === "rotationIdleCashMinutes") {
+          this.cfg.rotationIdleCashMinutes = Math.max(10, Number(val) || 120);
+          continue;
+        }
+        if (key === "rotationScoreMarginPct") {
+          this.cfg.rotationScoreMarginPct = Math.max(5, Number(val) || 20);
+          continue;
+        }
+        if (key === "rotationMinVolumeUsd") {
+          this.cfg.rotationMinVolumeUsd = Math.max(100_000, Number(val) || 3_000_000);
+          continue;
+        }
+        if (key === "rotationWhitelist" && Array.isArray(val)) {
+          this.cfg.rotationWhitelist = val.map((s: any) => String(s).toUpperCase().trim()).filter(Boolean);
+          continue;
+        }
+        if (key === "rotationBlacklist" && Array.isArray(val)) {
+          this.cfg.rotationBlacklist = val.map((s: any) => String(s).toUpperCase().trim()).filter(Boolean);
           continue;
         }
         if (key === "zoneExitMode") {
@@ -1188,12 +1230,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         }
       }
 
-      // If Binance confirms 0 open orders, purge phantom in-memory orders
-      if (onChainIdSet.size === 0 && this.openOrders.length > 0) {
-        this.log(`🧹 [sync] Binance confirms 0 open orders — cleared ${this.openOrders.length} stale in-memory order(s)`);
-        this.openOrders = [];
-        this.saveState();
-      }
+      // Note: Reconciled below via staleTracked inspection so fills are detected and lots closed
 
       // In IOC_BRACKET mode, resting BUY maker orders should never exist on the book
       if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
@@ -1686,6 +1723,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
    * sold sell targets wave tracker, and IOC bracket sell cycle.
    */
   public clearPositionState(): void {
+    const hadLots = this.lots.length > 0;
     this.lots = [];
     this.lockedChannel = undefined;
     this.lastDynamicBounds = undefined;
@@ -1708,14 +1746,16 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     const symbolKey = this.getSymbolKey();
     this.db.saveLockedChannel(symbolKey, undefined);
     this.db.saveState({ lots: [] }, true, symbolKey);
-    this.emit({
-      type: "position_flat",
-      data: {
-        symbol: this.symbol,
-        exchange: this.binance?.exchangeName || this.cfg.exchange,
-        time: Date.now(),
-      },
-    });
+    if (hadLots && !this.isSwitchingSymbol) {
+      this.emit({
+        type: "position_flat",
+        data: {
+          symbol: this.symbol,
+          exchange: this.binance?.exchangeName || this.cfg.exchange,
+          time: Date.now(),
+        },
+      });
+    }
   }
 
   public clampLotsTo(maxAllowedQty: number): void {

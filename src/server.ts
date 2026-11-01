@@ -32,7 +32,7 @@ export interface DashboardServerOptions {
   onReloadState?: () => void;
   onSyncExchangeTrades?: () => Promise<{ success: boolean; synced: number; purged?: number; error?: string }>;
   getRotationStatus?: () => any;
-  onTriggerRotationScan?: (opts?: { forceRotate?: boolean }) => Promise<any>;
+  onTriggerRotationScan?: (opts?: { forceRotate?: boolean; quoteAsset?: string }) => Promise<any>;
   maxCandles?: number;
 }
 
@@ -689,12 +689,13 @@ export class DashboardServer {
         try {
           const parsed = body ? JSON.parse(body) : {};
           const forceRotate = Boolean(parsed.forceRotate);
+          const quoteAsset = parsed.quoteAsset === "FDUSD" ? "FDUSD" : (parsed.quoteAsset === "USDT" ? "USDT" : undefined);
           if (!this.opts.onTriggerRotationScan) {
             res.writeHead(400, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ success: false, error: "Rotation engine not available" }));
             return;
           }
-          const result = await this.opts.onTriggerRotationScan({ forceRotate });
+          const result = await this.opts.onTriggerRotationScan({ forceRotate, quoteAsset });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: true, ...result }));
         } catch (e: any) {

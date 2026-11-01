@@ -767,11 +767,24 @@ async function main(): Promise<void> {
     onTriggerRotationScan: async (opts) => {
       const cfg = grid.getRuntimeConfig();
       const currentSym = cfg.symbol || activeSymbol;
+      if (opts?.forceRotate) {
+        const refP = grid.lastRefPrice || grid.getAvgEntryPrice?.() || 1;
+        const heldVal = grid.baseHeld() * refP;
+        const isHolding = heldVal >= 1.0 || grid.getLots().length > 0;
+        if (isHolding) {
+          return {
+            rotated: false,
+            report: pairRotator.getStatus(currentSym, cfg).latestCandidates,
+            reason: `Cannot force rotate while holding position (${grid.baseHeld().toFixed(4)} ${(grid as any).baseAsset || currentSym} ≈ ${heldVal.toFixed(2)}). Exit position first!`,
+          };
+        }
+      }
       const res = await pairRotator.evaluateAndRotate({
         currentSymbol: currentSym,
         trigger: "MANUAL_FORCE",
         cfg,
         forceRotate: opts?.forceRotate,
+        quoteAsset: opts?.quoteAsset,
       });
       if (res.rotated && res.targetSymbol) {
         log(`🚀 [MANUAL ROTATION] Rotating from ${currentSym} to ${res.targetSymbol} (${res.reason})`);
@@ -881,6 +894,7 @@ async function main(): Promise<void> {
             const maxIdleMs = (cfg.rotationIdleCashMinutes || 120) * 60_000;
             if (flatDurationMs >= maxIdleMs) {
               const currentSym = cfg.symbol || activeSymbol;
+              grid.lastFlatCashTime = Date.now();
               log(`⏳ [AUTO-ROTATION] Idle cash timeout (${(flatDurationMs / 60_000).toFixed(0)}m / ${cfg.rotationIdleCashMinutes}m) -> Evaluating market regime...`);
               try {
                 const res = await pairRotator.evaluateAndRotate({

@@ -58,6 +58,7 @@ const STABLE_BASE_TOKENS = new Set([
 ]);
 
 export class AutonomousPairRotator {
+  private isScanning = false;
   public lastRotationTime: number = 0;
   public lastScanTime: number = 0;
   private history: RotationHistoryRecord[] = [];
@@ -137,20 +138,31 @@ export class AutonomousPairRotator {
     trigger: "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" | "MANUAL_FORCE";
     cfg: Config;
     forceRotate?: boolean;
+    quoteAsset?: string;
   }): Promise<{ rotated: boolean; targetSymbol?: string; report: RotationCandidateScore[]; reason: string }> {
-    const { currentSymbol, trigger, cfg, forceRotate } = opts;
-    const normCurrent = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
-
-    // 1. Cooldown Guard
-    const cooldownMs = (cfg.rotationIntervalMinutes || 180) * 60_000;
-    const timeSinceLastRotation = Date.now() - this.lastRotationTime;
-    if (trigger !== "MANUAL_FORCE" && !forceRotate && timeSinceLastRotation < cooldownMs) {
-      const remainingMins = Math.ceil((cooldownMs - timeSinceLastRotation) / 60_000);
-      const reason = `Rotation cooldown active (${remainingMins} min remaining)`;
-      return { rotated: false, report: this.latestCandidates, reason };
+    if (this.isScanning) {
+      return {
+        rotated: false,
+        report: this.latestCandidates,
+        reason: "A market scan is already in progress. Please wait for completion.",
+      };
     }
+    this.isScanning = true;
 
-    const targetQuote = cfg.rotationQuoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+    try {
+      const { currentSymbol, trigger, cfg, forceRotate } = opts;
+      const normCurrent = currentSymbol.toUpperCase().replace(/[\/\-_:]/g, "");
+
+      // 1. Cooldown Guard
+      const cooldownMs = (cfg.rotationIntervalMinutes || 180) * 60_000;
+      const timeSinceLastRotation = Date.now() - this.lastRotationTime;
+      if (trigger !== "MANUAL_FORCE" && !forceRotate && timeSinceLastRotation < cooldownMs) {
+        const remainingMins = Math.ceil((cooldownMs - timeSinceLastRotation) / 60_000);
+        const reason = `Rotation cooldown active (${remainingMins} min remaining)`;
+        return { rotated: false, report: this.latestCandidates, reason };
+      }
+
+      const targetQuote = opts.quoteAsset === "FDUSD" || (!opts.quoteAsset && cfg.rotationQuoteAsset === "FDUSD") ? "FDUSD" : "USDT";
     this.log(`Initiating market scan (${trigger}) for Quote Asset: ${targetQuote}...`);
 
     // 2. Stage 1: Lightweight 24h Ticker Fetch & Filtering
@@ -295,7 +307,7 @@ export class AutonomousPairRotator {
           fastCutThresholdPct: -0.80,
           stagnationBars: 6,
           maxSlPct: 1.80,
-          tradeMode: "dip_hunter",
+          tradeMode: "dynamic_grid",
           tradeDirection: "long",
           capitalZones: cfg.capitalZones ?? 2,
           channelMode: cfg.channelMode ?? "DONCHIAN_ATR",
@@ -427,6 +439,9 @@ export class AutonomousPairRotator {
       report,
       reason: `Current symbol ${normCurrent} is already the highest scoring candidate (${currentScore}/100). Remaining on ${normCurrent}.`,
     };
+    } finally {
+      this.isScanning = false;
+    }
   }
 
   private recordHistory(

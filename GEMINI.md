@@ -7260,3 +7260,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่มปุ่มแสดงสถานะ `Auto-Rotate: ON/OFF` บนเมนูด้านบนของแดชบอร์ด
   5. **Version Bump**:
      - อัปเดตเวอร์ชันเป็น `0.2.221` ใน `package.json` และ `src/version.ts`
+
+
+---
+
+### 248. Bug Fixes: Auto-Rotation UI/Engine, Holding Lots Synchronization & Portfolio Avg Profit Protection (v0.2.222)
+
+- **สาเหตุของปัญหา**:
+  1. **UI แท็บการสลับคู่เหรียญไม่แสดงผล (Missing Tab Pane in Settings Modal)**: ใน `public/index.html` มีปุ่ม `#tabBtnRotation` แต่ขาด `<div class="tab-pane" id="tab-rotation">` ทำให้เวลากดแท็บไม่มีเนื้อหาขึ้น และปุ่ม `#tabBtnRotation` ไม่มี CSS order ทำให้ไปขึ้นหน้าสุดด้านซ้าย
+  2. **การตั้งค่า Auto-Rotation ไม่ถูกบันทึกลง Settings DB**: ใน `src/strategy/index.ts` และ adapter กลยุทธ์อื่นๆ เมธอด `getRuntimeConfig()` และ `updateRuntimeSettings()` ขาดการ map ตัวแปรของ rotation ทำให้ `enableAutoRotation` ถูกประเมินเป็น `false` เสมอเมื่อรีโหลด
+  3. **ลูปสแกนไม่รู้จบเมื่อพอร์ตว่าง (Infinite Loop on IDLE_CASH_TIMEOUT)**: ใน `src/index.ts` เมื่อเงื่อนไขเวลาถือเงินสดเกินกำหนดทำงาน ระบบไม่ได้รีเซ็ต `grid.lastFlatCashTime` ส่งผลให้หลังจาก 120 นาทีแรก มันจะสั่งรันสแกนทุกๆ 60 วินาทีตลอดเวลา และ `clearPositionState()` เดิมปล่อย Event `position_flat` ตลอดเวลาแม้ไม่มี position อยู่จริง
+  4. **ไม้ขายทำกำไรขายต่ำกว่าราคาทุนเฉลี่ยพอร์ต (Sell Order Below Avg Entry & Gross Loss)**:
+     - ใน `src/strategy/sell-sync.ts`: เงื่อนไข `priceDiffRatio > shiftTol` เดิมบล็อกไม่ให้อัปเดตไม้ขายหากราคาขยับไม่ถึงเกณฑ์ความกว้างช่อง (shift tolerance 0.8%) ทำให้ไม้ขายที่ตั้งไว้ตั้งแต่ก่อนหน้านี้ค้างอยู่ที่ราคาเดิมใต้ราคาทุนเฉลี่ย (`avgEntry`)
+     - `minProfitMultiplier` ไม่ได้รวมค่าธรรมเนียมเทรดแบบไป-กลับของ CEX (0.15% - 0.20%) ทำให้แม้จะขายที่ +0.06% แต่เมื่อหักค่าธรรมเนียมแล้วผลตอบแทนสุทธิติดลบ (-$0.537)
+  5. **จบรอบการเทรดแล้วแต่ล็อตคงค้างในระบบ (Holding Lots Lingering After Trade Round Closed)**:
+     - ใน `src/strategy/index.ts` บรรทัดที่ 1192: โค้ดเดิมสั่ง `this.openOrders = []` ล่วงหน้าทันทีที่ Binance ส่งกลับมาว่า open orders = 0
+     - การล้างคำสั่งทิ้งล่วงหน้านี้ ทำให้ Pillar 2 ในบรรทัด 1420 ข้ามการตรวจจับออเดอร์ที่ถูกแมตช์ `FILLED` บน Binance ทำให้ `processSellFill` และ `lotTracker.closeLots()` ไม่ถูกเรียก ล็อตจึงค้างเติ่งใน `state.lots` 7 ไม้
+     - ใน `clampLotsTo(maxAllowedQty)`: หากปริมาณเหลือเป็นเศษเหรียญต่ำกว่า Notional $1.00 USD หรือน้อยกว่า dustThreshold ระบบเดิมไม่ได้สั่งเคลียร์ position state
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.222)**:
+  1. **หน้าต่างแท็บ Auto-Rotation สมบูรณ์ (`public/index.html` & `public/app.js`)**:
+     - เพิ่มแท็บ `<div class="tab-pane" id="tab-rotation">` เต็มรูปแบบ พร้อมสวิตช์เปิด/ปิด, เมนูเลือกสกุลเงินอ้างอิง USDT / FDUSD, เกณฑ์ Cooldown, Idle Cash, Score Margin, และ Min Volume
+     - เพิ่มตารางแสดงผลลัพธ์การสแกนสด 2-Stage Market Funnel พร้อมปุ่ม "สแกนตลาดทันที" และ "สลับคู่ไปยังอันดับ 1 ทันที"
+     - กำหนด `order: 5` ให้ปุ่ม `#tabBtnRotation` และแก้ไข `btnOpenRotationModal` ให้เปิดแท็บสลับคู่เหรียญได้แม่นยำ 100%
+  2. **Settings Persistence & Concurrency Guard (`src/strategy/index.ts`, `src/pair-rotator.ts`, `src/server.ts`)**:
+     - เชื่อมต่อตัวแปร rotation ทั้งหมดเข้ากับ `getRuntimeConfig()` และ `updateRuntimeSettings()` บันทึกลง `data/settings.db.json` อย่างสมบูรณ์
+     - เพิ่มระบบป้องกันรันสแกนซ้อน `isScanning` concurrency lock ใน `AutonomousPairRotator`
+     - ปรับค่า default simulation tradeMode เป็น `"dynamic_grid"` ให้ตรงกับกลยุทธ์กริด
+     - รองรับการ override `quoteAsset` ตรงจาก UI scan trigger เข้าสู่อีเวนต์แบ็กเอนด์
+  3. **Strict Portfolio Avg Profit Guard & CEX Fee Buffer (`src/strategy/sell-sync.ts` & `src/strategy/index.ts`)**:
+     - ปรับปรุง `getMinProfitMultiplier()` ให้บวก Fee Buffer ขั้นต่ำ 0.16% สำหรับการเทรดบน CEX เสมอ เพื่อรับประกันว่ากำไรสุทธิหลังหักค่าธรรมเนียมจะเป็นบวกแน่นอน
+     - ใน `sell-sync.ts`: เพิ่มเงื่อนไขบังคับยกเลิกและตั้งไม้ขายใหม่ทันทีหากไม้ขายเดิมต่ำกว่า `minAllowedSellPrice` (`isBelowMinProfit`) โดยไม่ถูกบล็อกด้วย `shiftTol`
+     - กรองและยกเลิกออเดอร์ขายที่ค้างอยู่ต่ำกว่าเกณฑ์กำไรขั้นต่ำในขั้นตอน `remainingStaleSells`
+  4. **Robust Order Match Reconciliation & Zombie Lots Prevention (`src/strategy/index.ts` & `src/strategy/lot-tracker.ts`)**:
+     - ลบโค้ด premature open orders purge ในบรรทัด 1192 ออกอย่างถาวร เพื่อให้ออเดอร์ที่ปิดบน Binance ถูกตรวจสอบผ่าน `getOrder` และส่งเข้า `processSellFill` / `closeLots` ครบทุกไม้
+     - ปรับปรุง `clampLotsTo` ใน `LotTracker`: เมื่อความจุพอร์ตเหลือน้อยกว่า $1.00 USD หรือน้อยกว่า dustThreshold ให้สั่ง `clearPositionState()` ทันที ป้องกันการมีเศษขยะตกค้างใน `state.lots`
+     - ป้องกัน `position_flat` ไม่ให้ถูกส่งออกไปหากไม่มี position ตั้งแต่แรก หรือกำลังอยู่ในขั้นตอนสลับเหรียญ
+  5. **Version Bump**:
+     - อัปเดตเวอร์ชันเป็น `0.2.222` ใน `package.json` และ `src/version.ts`

@@ -118,7 +118,10 @@ export class LotTracker {
    * Clamp open lots to maxAllowedQty (used during inventory reconciliation)
    */
   public clampLotsTo(maxAllowedQty: number): void {
-    if (maxAllowedQty <= 1e-6) {
+    const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
+    const refP = this.host.lastRefPrice || (this.host.lots.length > 0 ? this.getAvgEntryPrice() : 0);
+    const notional = maxAllowedQty * (refP || 1);
+    if (maxAllowedQty <= dustThreshold || notional < 1.0) {
       this.host.clearPositionState();
       return;
     }

@@ -652,7 +652,9 @@ export class SellOrderSynchronizer {
             const shiftTol = this.host.cfg.minChannelShiftPct ? this.host.cfg.minChannelShiftPct / 100 : 0.008;
             const isCexExchange = this.host.binance.exchangeName !== "dreamdex";
             const needsQtyResize = (doSellRebalance || hasMissingEligibleSellOrders || (isCexExchange && qtyDiffRatio > 0.10)) && qtyDiffRatio > qtyTol;
-            if (needsQtyResize || priceDiffRatio > shiftTol) {
+            const isBelowMinProfit = (mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) &&
+              avgEntry > 0 && currentOpenSellAtLvl.price < minAllowedSellPrice * 0.9995;
+            if (needsQtyResize || priceDiffRatio > shiftTol || isBelowMinProfit) {
               const reason = priceDiffRatio > shiftTol
                 ? `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${effLvlPrice.toFixed(6)})`
                 : "Rebalancing sell quantity to match inventory tranche";
@@ -692,6 +694,20 @@ export class SellOrderSynchronizer {
           return Math.max(0.0, 1.0 - (rank / activeSellCount));
         });
 
+
+    const mode = this.host.cfg.sellProfitMode || (this.host.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
+    const avgEntry = this.lotTracker.getAvgEntryPrice();
+    const minProfitMulti = this.host.getMinProfitMultiplier();
+    const lowestLotPrice = this.host.lots.length > 0 ? Math.min(...this.host.lots.map((l) => l.price)) : 0;
+    let minAllowedSellPrice = Math.max(
+      currentBestBid,
+      refPrice,
+      lowestLotPrice > 0 ? lowestLotPrice * minProfitMulti : 0,
+    );
+    if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
+      minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
+    }
+
     const remainingStaleSells: OpenOrder[] = [];
     for (const o of this.host.openOrders) {
       if (o.isBid) continue;
@@ -720,6 +736,8 @@ export class SellOrderSynchronizer {
         }
       } else if (!o.levelDesc || !sellNames.includes(o.levelDesc)) {
         remainingStaleSells.push(o);
+      } else if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0 && o.price < minAllowedSellPrice * 0.999) {
+        remainingStaleSells.push(o);
       }
     }
 
@@ -731,18 +749,6 @@ export class SellOrderSynchronizer {
       this.host.saveState();
     }
 
-    const mode = this.host.cfg.sellProfitMode || (this.host.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
-    const avgEntry = this.lotTracker.getAvgEntryPrice();
-    const minProfitMulti = this.host.getMinProfitMultiplier();
-    const lowestLotPrice = this.host.lots.length > 0 ? Math.min(...this.host.lots.map((l) => l.price)) : 0;
-    let minAllowedSellPrice = Math.max(
-      currentBestBid,
-      refPrice,
-      lowestLotPrice > 0 ? lowestLotPrice * minProfitMulti : 0,
-    );
-    if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
-      minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
-    }
 
     const eligibleSellIndices = sellLevels
       .map((lvl, idx) => ({ lvl, idx }))
@@ -918,7 +924,9 @@ export class SellOrderSynchronizer {
         const currentQtyTol = this.host.cfg.orderQtyTolerancePct ? this.host.cfg.orderQtyTolerancePct / 100 : 0.05;
         const needsQtyResize = (doSellRebalance || hasMissingEligibleSellOrders || (isCexExchange && currentQtyDiffRatio > 0.10)) && currentQtyDiffRatio > currentQtyTol;
 
-        if (isPriceShifted || needsQtyResize) {
+        const isBelowMinProfit = (mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) &&
+          avgEntry > 0 && currentOpenSellAtLvl.price < minAllowedSellPrice * 0.9995;
+        if (isPriceShifted || needsQtyResize || isBelowMinProfit) {
           const reason = isPriceShifted
             ? `Channel shifted: aligning sell price ($${currentOpenSellAtLvl.price.toFixed(6)} -> $${lvlPrice.toFixed(6)})`
             : `Rebalancing sell quantity to equal tranche (${currentOpenSellAtLvl.qty.toFixed(4)} -> ${targetSellQty.toFixed(4)} ${this.host.baseAsset})`;
