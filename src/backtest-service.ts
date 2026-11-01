@@ -609,8 +609,10 @@ export class BacktestService {
     const startIdx = opts.startTradingBarIndex !== undefined ? Math.max(warmup, opts.startTradingBarIndex) : warmup;
     let lastFlatTime = candles.length > startIdx ? candles[startIdx].time : Date.now();
     let wasHolding = false;
+    let lastProcessedBar = candles.length > 0 ? candles.length - 1 : 0;
 
     for (let i = warmup; i < candles.length; i++) {
+      lastProcessedBar = i;
       const c = candles[i];
       dow.addCandle(c);
 
@@ -985,8 +987,9 @@ export class BacktestService {
     }
 
     // End of simulation - settle any open remaining lots to align Net PnL, Win Rate, and Loss Trades
-    const lastPrice = candles.length > 0 ? candles[candles.length - 1].close : 0;
-    const lastTime = candles.length > 0 ? candles[candles.length - 1].time : Date.now();
+    const processedCandles = candles.slice(0, lastProcessedBar + 1);
+    const lastPrice = processedCandles.length > 0 ? processedCandles[processedCandles.length - 1].close : 0;
+    const lastTime = processedCandles.length > 0 ? processedCandles[processedCandles.length - 1].time : Date.now();
     for (const lot of heldLots) {
       const exitPrice = lastPrice;
       const proceeds = lot.qty * exitPrice * (1 - costPerFill);
@@ -1018,7 +1021,7 @@ export class BacktestService {
         exitType: "OPEN",
         pnlQuote,
         pnlPct,
-        holdingBars: candles.length - 1 - (candles.findIndex((x) => x.time === lot.entryTime) || 0),
+        holdingBars: processedCandles.length - 1 - (processedCandles.findIndex((x) => x.time === lot.entryTime) || 0),
         costQuote: lot.costQuote + exitCost,
         channelFloor: lot.floorAtEntry,
         channelCeil: lot.ceilingAtEntry,
@@ -1069,7 +1072,7 @@ export class BacktestService {
       createdAt: new Date().toISOString(),
       symbol,
       timeframe,
-      candleCount: candles.length,
+      candleCount: processedCandles.length,
       spreadThreshold: 0,
       isAutoCalibrated: false,
       useRatchetSl: false,
@@ -1080,7 +1083,7 @@ export class BacktestService {
       summary,
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
-      candles,
+      candles: processedCandles,
     };
 
     if (opts.saveToHistory !== false) {
@@ -3224,6 +3227,7 @@ export class BacktestService {
       await new Promise((r) => setTimeout(r, 80));
     }
 
+    console.log(`[RotationBacktest] 🌐 Universe candles loaded: ${universeMap.size}/${targetSymbols.length} pairs ready for ${quote}`);
     return universeMap;
   }
 
@@ -3279,6 +3283,12 @@ export class BacktestService {
       }
 
       if (idx < 287) continue;
+
+      // Stale candle check: candle time should be within 1 hour of targetTime
+      if (targetTime - candles[idx].time > 3600) continue;
+
+      // Ensure there are at least 5 candles ahead to actually simulate
+      if (candles.length - 1 - idx < 5) continue;
 
       const slice24h = candles.slice(idx - 287, idx + 1);
       let high24h = -Infinity;
@@ -3472,19 +3482,20 @@ export class BacktestService {
       throw new Error(`Failed to load candles for ${quote} universe`);
     }
 
-    // 2. Compute common overlapping time boundaries
-    let minCommonTime = -Infinity;
-    let maxCommonTime = Infinity;
-
+    // 2. Compute timeline boundaries across major pairs with full history
+    let maxCandleTime = 0;
     for (const candles of universeCandles.values()) {
       if (candles.length > 0) {
-        if (candles[0].time > minCommonTime) minCommonTime = candles[0].time;
-        if (candles[candles.length - 1].time < maxCommonTime) maxCommonTime = candles[candles.length - 1].time;
+        const lastTime = candles[candles.length - 1].time;
+        if (lastTime > maxCandleTime) maxCandleTime = lastTime;
       }
     }
 
-    const simStartTime = Math.max(minCommonTime + 600 * 300, maxCommonTime - simLimit * 300);
-    const simEndTime = maxCommonTime;
+    const simEndTime = maxCandleTime > 0 ? maxCandleTime : Math.floor(Date.now() / 1000);
+    const simStartTime = simEndTime - simLimit * 300;
+
+    console.log(`[RotationBacktest] 🚀 Starting simulation: quote=${quote}, simLimit=${simLimit} bars (${((simLimit * 300) / 86400).toFixed(1)} days), universeLoaded=${universeCandles.size} pairs`);
+    console.log(`[RotationBacktest] 📅 Timeline bounds: start=${new Date(simStartTime * 1000).toISOString()} (${simStartTime}) ➔ end=${new Date(simEndTime * 1000).toISOString()} (${simEndTime})`);
 
     this.rotationBtProgress = {
       phase: "simulating",
@@ -3502,10 +3513,27 @@ export class BacktestService {
       gridOpts: opts,
     });
 
-    let activeCandidate = initialCandidates[0] || {
-      symbol: quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT",
-      compositeScore: 70,
-    };
+    console.log(`[RotationBacktest] 🔎 Initial funnel at ${new Date(simStartTime * 1000).toISOString()} found ${initialCandidates.length} eligible candidates: ` +
+      (initialCandidates.length > 0 ? initialCandidates.slice(0, 5).map(c => `${c.symbol}(score=${c.compositeScore})`).join(", ") : "none")
+    );
+
+    let activeCandidate = initialCandidates[0];
+    if (!activeCandidate) {
+      const fallbackSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
+      console.warn(`[RotationBacktest] ⚠️ No initial candidate passed full funnel criteria at simStartTime. Falling back to ${fallbackSym}`);
+      activeCandidate = {
+        symbol: fallbackSym,
+        compositeScore: 70,
+        simScore: 30,
+        structureScore: 20,
+        positionScore: 10,
+        liquidityScore: 10,
+        netPnlPct: 0,
+        winRate: 0,
+        range24hPct: 5,
+        quoteVol24h: 10_000_000,
+      };
+    }
     let activeSymbol = activeCandidate.symbol;
     let currentCash = initialCapital;
     let currentTime = simStartTime;
@@ -3524,15 +3552,48 @@ export class BacktestService {
     while (currentTime < simEndTime - 3600 && legIndex < 50) {
       legIndex++;
       const currentLegStartTime = currentTime;
-      const symCandles = universeCandles.get(activeSymbol);
-      if (!symCandles || symCandles.length < 100) break;
 
-      const startBarIdx = symCandles.findIndex((c) => c.time >= currentTime);
-      if (startBarIdx < 0 || startBarIdx >= symCandles.length - 10) break;
+      let symCandles = universeCandles.get(activeSymbol);
+      let startBarIdx = symCandles ? symCandles.findIndex((c) => c.time >= currentTime) : -1;
+
+      // If activeSymbol doesn't have sufficient bars or has reached end of data, find alternative viable pair
+      if (!symCandles || startBarIdx < 0 || startBarIdx >= symCandles.length - 10) {
+        console.warn(`[RotationBacktest] ⚠️ Pair ${activeSymbol} is not viable at ${new Date(currentTime * 1000).toISOString()} (startBarIdx=${startBarIdx}, total=${symCandles?.length || 0})`);
+        const altCandidates = this.evaluateHistoricalFunnelAtTime({
+          targetTime: currentTime,
+          universeCandles,
+          quoteAsset: quote,
+          gridOpts: opts,
+        });
+
+        const viable = altCandidates.find((c) => {
+          const cCandles = universeCandles.get(c.symbol);
+          if (!cCandles) return false;
+          const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
+          return idx >= 0 && idx < cCandles.length - 10;
+        });
+
+        if (viable) {
+          console.log(`[RotationBacktest] 🔄 Swapping to viable alternative candidate: ${viable.symbol} (score=${viable.compositeScore})`);
+          activeCandidate = viable;
+          activeSymbol = viable.symbol;
+          symCandles = universeCandles.get(activeSymbol);
+          startBarIdx = symCandles ? symCandles.findIndex((c) => c.time >= currentTime) : -1;
+          if (!symCandles || startBarIdx < 0 || startBarIdx >= symCandles.length - 10) {
+            console.warn(`[RotationBacktest] 🛑 Alternative candidate ${activeSymbol} also lacks candles. Ending simulation loop.`);
+            break;
+          }
+        } else {
+          console.warn(`[RotationBacktest] 🛑 No viable pairs found with active candles at ${new Date(currentTime * 1000).toISOString()}. Ending simulation loop.`);
+          break;
+        }
+      }
 
       const warmupBars = Math.min(200, startBarIdx);
       const legCandles = symCandles.slice(startBarIdx - warmupBars);
       const simStartIdx = warmupBars;
+
+      console.log(`[RotationBacktest] ▶️ [Leg #${legIndex}] Starting on ${activeSymbol} at ${new Date(currentLegStartTime * 1000).toISOString()} (cash=$${currentCash.toFixed(2)}, entryScore=${activeCandidate?.compositeScore || 65})`);
 
       let legStopReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" = "POST_ROUND_EXIT";
       let nextSymbol: string | undefined = undefined;
@@ -3583,6 +3644,7 @@ export class BacktestService {
 
           const requiredScore = curScore * (1 + scoreMarginPct / 100);
           if (best.symbol !== activeSymbol && best.compositeScore >= 55 && best.compositeScore >= requiredScore) {
+            console.log(`[RotationBacktest] 🔀 [Leg #${legIndex}] Rotation triggered by ${state.trigger} at ${new Date(state.time * 1000).toISOString()}: ${activeSymbol} (${curScore}) ➔ ${best.symbol} (${best.compositeScore}, required >= ${requiredScore.toFixed(1)})`);
             legStopReason = state.trigger;
             nextSymbol = best.symbol;
             nextSymbolScore = best.compositeScore;
@@ -3651,6 +3713,8 @@ export class BacktestService {
 
       legs.push(legItem);
 
+      console.log(`[RotationBacktest] ⏹️ [Leg #${legIndex}] Finished on ${activeSymbol}: duration=${legItem.durationHours}h, pnl=${legItem.netPnlPct >= 0 ? '+' : ''}${legItem.netPnlPct}% ($${legItem.netPnlQuote}), trades=${legItem.tradesCount} (win=${legItem.winCount}), trigger=${legItem.triggerReason}`);
+
       currentCash = endingCapital;
       currentTime = legEndTime;
       lastRotationTime = currentTime;
@@ -3667,14 +3731,25 @@ export class BacktestService {
           quoteAsset: quote,
           gridOpts: opts,
         });
-        if (candidates.length > 0 && candidates[0].symbol !== activeSymbol) {
-          activeCandidate = candidates[0];
-          activeSymbol = candidates[0].symbol;
+        const viable = candidates.find((c) => {
+          if (c.symbol === activeSymbol) return false;
+          const cCandles = universeCandles.get(c.symbol);
+          if (!cCandles) return false;
+          const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
+          return idx >= 0 && idx < cCandles.length - 10;
+        });
+        if (viable) {
+          console.log(`[RotationBacktest] 🔄 Rotating to next top viable candidate: ${viable.symbol} (score=${viable.compositeScore})`);
+          activeCandidate = viable;
+          activeSymbol = viable.symbol;
         } else {
+          console.log(`[RotationBacktest] ⏹️ No more alternative viable candidates at ${new Date(currentTime * 1000).toISOString()}. Simulation loop completed.`);
           break;
         }
       }
     }
+
+    console.log(`[RotationBacktest] 🎉 Simulation finished: totalLegs=${legs.length}, totalTrades=${allTrades.length}, finalEquity=$${currentCash.toFixed(2)} (Net: ${(((currentCash - initialCapital) / initialCapital) * 100).toFixed(2)}%), maxDD=-${maxPortfolioDrawdownPct.toFixed(2)}%`);
 
     // 5. Per-Pair Contribution Breakdown
     const pairMap = new Map<string, PairContributionItem>();
@@ -3706,7 +3781,8 @@ export class BacktestService {
     pairContributions.sort((a, b) => b.totalNetPnlQuote - a.totalNetPnlQuote);
 
     // 6. Benchmark Single-Pair Comparison
-    const benchmarkSymbol = legs.length > 0 ? legs[0].symbol : (quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT");
+    const defaultBtc = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
+    const benchmarkSymbol = universeCandles.has(defaultBtc) ? defaultBtc : (legs.length > 0 ? legs[0].symbol : defaultBtc);
     let benchmarkPnlPct = 0;
     try {
       const bCandles = universeCandles.get(benchmarkSymbol);

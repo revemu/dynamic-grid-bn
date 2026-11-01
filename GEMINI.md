@@ -7389,3 +7389,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ตาราง **Per-Pair Contribution**: จัดอันดับว่าตลอดการหมุนเวียนพอร์ต เหรียญไหนทำกำไรให้พอร์ตมากที่สุด
   7. **Version Milestone Release**:
      - ขยับเวอร์ชันสู่ **`0.3.0`** ใน `package.json` และ `src/version.ts`
+
+---
+
+### 251. Fix Multi-Pair Rotation Backtest Simulation Window, Viable Pair Switching & Server Logging (v0.3.1)
+
+- **สาเหตุของปัญหา (Root Cause)**:
+  1. ในการรัน Autonomous Multi-Pair Rotation Backtest บน Universe Top 50 ของกระดาน (โดยเฉพาะ FDUSD) มีบางเหรียญที่เพิ่งลิสต์เข้า Binance ได้ไม่กี่วัน (เช่น มีประวัติเพียง 1-2 วัน)
+  2. โค้ดเดิมใน `src/backtest-service.ts` ใช้ตรรกะ `minCommonTime = Math.max(all candles[0].time)` หาจุดเริ่มต้นร่วมของทุกเหรียญใน Universe ทำให้เหรียญที่เพิ่งลิสต์ใหม่นี้ดึงเวลา `minCommonTime` ขึ้นมาเป็น 1-2 วันก่อนปัจจุบัน และเมื่อบวกเผื่อ `600 * 300` (~50 ชม.) ส่งผลให้ `simStartTime` ถูกผลักดันมาจนชนกับเวลาปัจจุบัน (`simEndTime`) ทันที
+  3. เมื่อ Server วิ่งเข้าสู่ Loop `while (currentTime < simEndTime - 3600)` เงื่อนไขจึงกลายเป็น `false` ตั้งแต่วินาทีแรก ส่งผลให้ Server จบการทำงานทันทีโดยยังไม่ได้เริ่มสัก Leg และส่งผลลัพธ์เป็น 0 ครั้ง 0 ไม้ ($200 ➔ $200) กลับมา
+  4. บนหน้าเว็บ (`public/backtest.js`) ในขณะที่ Server ประมวลผลเสร็จในเสี้ยววินาที มี Async Request ของ Progress Poller รอบสุดท้ายที่ค้างอยู่ ส่งค่า 95% กลับมาเขียนทับแถบ 100%
+  5. หากเหรียญที่ถูกเลือกถึงจุดสิ้นสุดของแท่งเทียนหรือไม่มีข้อมูล โค้ดเดิมจะ `break` ทันทีแทนที่จะสลับไปเทรดเหรียญอื่นที่มีข้อมูลพร้อม
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **Decoupled Simulation Timeline (`src/backtest-service.ts`)**:
+     - กำหนด `simEndTime` จากแท่งเทียนล่าสุดในตลาด และคำนวณ `simStartTime = simEndTime - simLimit * 300` (เช่น ย้อนหลัง 4,000 แท่ง = 14 วันเต็ม) อิงตามเหรียญหลักในตลาดที่มีประวัติครบถ้วน
+     - เหรียญใหม่จะไม่ตัดทอนช่วงเวลาจำลองของเหรียญอื่นทั้งกระดาน โดยระบบจะนำเหรียญใหม่มาคิดคะแนน Funnel เฉพาะเมื่อถึงจุดเวลาที่มีประวัติครบ 288 แท่ง (24 ชม.) ขึ้นไปเท่านั้น
+  2. **Viable Candidate Fallback & Candle Bounds Trimming**:
+     - เพิ่ม Stale & Future Candle Checks ใน `evaluateHistoricalFunnelAtTime` (ต้องมีข้อมูลไม่เก่าเกิน 1 ชม. และมีแท่งเทียนเหลือข้างหน้าอย่างน้อย 5 แท่ง)
+     - ใน Walk-Forward Loop: หากเหรียญปัจจุบันไม่มีแท่งเทียน ณ จุดเวลานั้น ระบบจะเลือกเหรียญสำรองที่มีคะแนนสูงสุดอันดับถัดไปที่พร้อมเทรดแทนทันที ไม่หยุดการทำงาน
+     - ปรับ `runDynamicGridSimulation` ให้ตัดเก็บเฉพาะ `processedCandles` ที่รันจริงจนถึงจุดหยุด เพื่อให้ `legEndTime` และกราฟของแต่ละ Leg มีความแม่นยำ 100%
+  3. **Detailed Server-Side Logging**:
+     - เพิ่ม Log รายละเอียดขั้นตอนต่างๆ บน Node.js Server: จุดเริ่มต้น/สิ้นสุด Timeline, จำนวนเหรียญใน Funnel, คะแนนและการเริ่ม Leg แต่ละรอบ, สัญญาณและเหตุผลการ Rotate, ผลลัพธ์ PnL และสถิติไม้ของแต่ละ Leg
+  4. **Frontend Poller Guard (`public/backtest.js`)**:
+     - เพิ่ม Flag `rotationPollerActive` เพื่อป้องกันไม่ให้ Async Poll Response ที่ตกค้างมาเขียนทับความคืบหน้า 100%
+  5. **Version Bump**:
+     - ปรับเวอร์ชันเป็น **`0.3.1`** ใน `package.json` และ `src/version.ts`
+

@@ -2814,11 +2814,14 @@
         if (rotationBtCountText) rotationBtCountText.textContent = "0%";
         if (rotationBtProgressFill) rotationBtProgressFill.style.width = "5%";
 
+        let rotationPollerActive = true;
         if (rotationProgressTimer) clearInterval(rotationProgressTimer);
         rotationProgressTimer = setInterval(async () => {
+          if (!rotationPollerActive) return;
           try {
             const pRes = await fetch("/api/backtest/rotation/progress");
             const pData = await pRes.json();
+            if (!rotationPollerActive) return;
             if (pData.success && pData.progress) {
               const prog = pData.progress;
               if (prog.message && rotationBtStatusText) rotationBtStatusText.textContent = prog.message;
@@ -2847,6 +2850,7 @@
           });
 
           const data = await res.json();
+          rotationPollerActive = false;
           if (rotationProgressTimer) {
             clearInterval(rotationProgressTimer);
             rotationProgressTimer = null;
@@ -2862,6 +2866,7 @@
             alert(`เกิดข้อผิดพลาดในการรันจำลอง: ${data.error || "Unknown error"}`);
           }
         } catch (err) {
+          rotationPollerActive = false;
           if (rotationProgressTimer) {
             clearInterval(rotationProgressTimer);
             rotationProgressTimer = null;
