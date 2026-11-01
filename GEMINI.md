@@ -7597,6 +7597,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.9`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 260. Maker Limit Premature Cancel Fix on Flash Dip & Stable Level Allocation (v0.3.0.10)
+
+- **สาเหตุที่บอทยกเลิกออเดอร์หนีตอนราคาวิ่งลงมาจะ Match ซื้อ (Root Cause Analysis)**:
+  1. **เงื่อนไขบั๊กใน `eligibleBuyIndices` (`src/strategy/buy-sync.ts`)**:
+     - มีโค้ดตรวจเช็ค: `if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && lvl >= maxAllowedBuyPrice) return false;`
+     - ความตั้งใจเดิมคือป้องกันไม่ให้วางออเดอร์ใหม่เหนือราคาตลาดเพื่อหลีกเลี่ยงการเป็น Taker
+     - แต่เมื่อใส่ไว้ใน `eligibleBuyIndices` ส่งผลให้ออเดอร์ที่ **วางรออยู่บนกระดานแล้ว (Resting Maker Buy Limit)** พอราคาร่วงลงมาแตะราคาออเดอร์ (เช่น ERA ร่วงมาแตะ `$0.0691` หรือทำไส้ที่ `$0.0689`) จะเข้าเงื่อนไข `lvl >= maxAllowedBuyPrice` ทันที
+     - ตัวกรอง Ineligible Guard ที่บรรทัด 422 จึงเข้าใจผิดว่าระดับนี้กลายเป็น Ineligible และส่งคำสั่ง `CANCEL` ไปยกเลิกออเดอร์ออกจาก Binance ทันทีในเสี้ยววินาทีก่อนที่จะได้ของ (`Level allocation target fulfilled (Buy Level 1) — releasing locked budget`)
+  2. **เกิด Cancel ลูกโซ่จากการ Rebalance งบประมาณ**:
+     - เมื่อ Buy Level 1 ถูกยกเลิก งบประมาณ 4 โซนถูกเกลี่ยเหลือ 3 โซน (งบต่อไม้ขยับจาก $12.50 เป็น $16.67) ส่งผลให้ออเดอร์ Buy Level 2 โดน Cancel ตามไปด้วย (`Rebalancing buy quantity to match grid tranche $12.50 -> $16.67`)
+     - พอนาทีถัดมาราคาดีดกลับไป `$0.0693` เล็กน้อย บอทก็ส่งออเดอร์ Buy Level 1 ไปวางใหม่ วนลูปทำให้ไม่ได้ของ
+- **การแก้ไข (Fix Implementation)**:
+  1. **ปลดเงื่อนไข `lvl >= maxAllowedBuyPrice` ออกจาก `eligibleBuyIndices`**:
+     - ออเดอร์ที่วางอยู่บนกระดานแล้วจะคงอยู่บน Order Book อย่างมั่นคง ไม่ถูกมองว่า Ineligible
+     - เมื่อราคาตลาดร่วงลงมาแตะราคาซื้อ ออเดอร์จะอยู่นิ่งๆ รอให้ Binance จับคู่เป็น Maker Fill 100%
+  2. **คงการเช็ค `lvlPrice <= maxAllowedBuyPrice` ไว้เฉพาะตอนส่งคำสั่งใหม่**:
+     - ที่บรรทัด 555 และ 599 (`isEligibleForNewOrder` / `isEligibleForReplacement`) มีการเช็ค `lvlPrice <= maxAllowedBuyPrice` เพื่อป้องกันไม่ให้ออกออเดอร์ข้าม Spread เป็น Taker ไว้อย่างถูกต้องอยู่แล้ว
+  3. **ขจัดปัญหา Cancel ลูกโซ่**:
+     - งบประมาณคงที่ไม้ละ $12.50 ต่อเนื่อง ไม่มีการ Rebalance Cancel ซ้ำซ้อน
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.10`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
 
 
 ---
@@ -7702,4 +7726,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - แท็บกรอบราคา & โครงสร้างสามารถ Scroll ดูและปรับแต่งการตั้งค่าได้ครบทุกส่วน (Section 2.1 ถึง 2.4) อย่างราบรื่น ไม่ค้าง และกด Save ได้ทันที
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.9`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 260. Maker Limit Premature Cancel Fix on Flash Dip & Stable Level Allocation (v0.3.0.10)
+
+- **สาเหตุที่บอทยกเลิกออเดอร์หนีตอนราคาวิ่งลงมาจะ Match ซื้อ (Root Cause Analysis)**:
+  1. **เงื่อนไขบั๊กใน `eligibleBuyIndices` (`src/strategy/buy-sync.ts`)**:
+     - มีโค้ดตรวจเช็ค: `if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && lvl >= maxAllowedBuyPrice) return false;`
+     - ความตั้งใจเดิมคือป้องกันไม่ให้วางออเดอร์ใหม่เหนือราคาตลาดเพื่อหลีกเลี่ยงการเป็น Taker
+     - แต่เมื่อใส่ไว้ใน `eligibleBuyIndices` ส่งผลให้ออเดอร์ที่ **วางรออยู่บนกระดานแล้ว (Resting Maker Buy Limit)** พอราคาร่วงลงมาแตะราคาออเดอร์ (เช่น ERA ร่วงมาแตะ `$0.0691` หรือทำไส้ที่ `$0.0689`) จะเข้าเงื่อนไข `lvl >= maxAllowedBuyPrice` ทันที
+     - ตัวกรอง Ineligible Guard ที่บรรทัด 422 จึงเข้าใจผิดว่าระดับนี้กลายเป็น Ineligible และส่งคำสั่ง `CANCEL` ไปยกเลิกออเดอร์ออกจาก Binance ทันทีในเสี้ยววินาทีก่อนที่จะได้ของ (`Level allocation target fulfilled (Buy Level 1) — releasing locked budget`)
+  2. **เกิด Cancel ลูกโซ่จากการ Rebalance งบประมาณ**:
+     - เมื่อ Buy Level 1 ถูกยกเลิก งบประมาณ 4 โซนถูกเกลี่ยเหลือ 3 โซน (งบต่อไม้ขยับจาก $12.50 เป็น $16.67) ส่งผลให้ออเดอร์ Buy Level 2 โดน Cancel ตามไปด้วย (`Rebalancing buy quantity to match grid tranche $12.50 -> $16.67`)
+     - พอนาทีถัดมาราคาดีดกลับไป `$0.0693` เล็กน้อย บอทก็ส่งออเดอร์ Buy Level 1 ไปวางใหม่ วนลูปทำให้ไม่ได้ของ
+- **การแก้ไข (Fix Implementation)**:
+  1. **ปลดเงื่อนไข `lvl >= maxAllowedBuyPrice` ออกจาก `eligibleBuyIndices`**:
+     - ออเดอร์ที่วางอยู่บนกระดานแล้วจะคงอยู่บน Order Book อย่างมั่นคง ไม่ถูกมองว่า Ineligible
+     - เมื่อราคาตลาดร่วงลงมาแตะราคาซื้อ ออเดอร์จะอยู่นิ่งๆ รอให้ Binance จับคู่เป็น Maker Fill 100%
+  2. **คงการเช็ค `lvlPrice <= maxAllowedBuyPrice` ไว้เฉพาะตอนส่งคำสั่งใหม่**:
+     - ที่บรรทัด 555 และ 599 (`isEligibleForNewOrder` / `isEligibleForReplacement`) มีการเช็ค `lvlPrice <= maxAllowedBuyPrice` เพื่อป้องกันไม่ให้ออกออเดอร์ข้าม Spread เป็น Taker ไว้อย่างถูกต้องอยู่แล้ว
+  3. **ขจัดปัญหา Cancel ลูกโซ่**:
+     - งบประมาณคงที่ไม้ละ $12.50 ต่อเนื่อง ไม่มีการ Rebalance Cancel ซ้ำซ้อน
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.10`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 

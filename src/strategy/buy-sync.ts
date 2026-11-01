@@ -331,11 +331,6 @@ export class BuyOrderSynchronizer {
         if (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.cfg.enableWaterfallKnifeGuard !== false && this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && (isWithinBuyCooldown || isIntraCandleWaterfallActive) && this.host.lastBuyFillPrice > 0 && lvl < this.host.lastBuyFillPrice * 0.999) {
           return false;
         }
-        // In MAKER_LIMIT mode: buy orders must strictly be placed below current market price!
-        // Levels at or above current market price are not eligible (waiting for price to dip below them).
-        if (this.host.cfg.orderExecutionMode === "MAKER_LIMIT" && lvl >= maxAllowedBuyPrice) {
-          return false;
-        }
         return true;
       })
       .map(({ idx }) => idx);
