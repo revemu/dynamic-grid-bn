@@ -7576,6 +7576,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.8`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 259. Settings Modal DOM Tag Mismatch Fix, Footer Button Alignment & Tab Scroll Restoration (v0.3.0.9)
+
+- **สาเหตุของปัญหาหน้าตั้งค่ากรอบค้างและปุ่มหลุดเอียงไปทางขวา (Root Cause Analysis)**:
+  1. **แท็ก HTML ปิดส่วนเกินตกค้างใน `public/index.html`**:
+     - ภายใน Tab 2 ("กรอบราคา & โครงสร้าง") ใต้หัวข้อ *Multi-Zone Capital Allocation & Dynamic DCA* มีโค้ดแท็กปิดตกค้างอยู่ 3 บรรทัด (`<span class="slider"></span>`, `</label>`, `</div>`)
+     - แท็ก `</div>` ส่วนเกินนี้ทำให้ `<div class="modal-card settings-modal">` ถูกสั่งปิดก่อนเวลา
+  2. **ผลกระทบต่อ UI & UX**:
+     - **ปุ่ม Save หลุดไปขวาสุด**: `<div class="modal-footer">` หลุดออกมาอยู่นอกกล่อง Modal Card และกลายเป็น sibling flex item ใน `.modal-overlay` จึงถูกดันไปอยู่ข้างๆ ทางขวาบนพื้นหลังสีดำ
+     - **หน้าจอเหมือนค้างและเลื่อนลงไม่ได้**: เนื้อหา Section 2.2, 2.3, 2.4 และ Footer ถูกตัดขาดจากโครงสร้าง Modal ทำให้กล่องตัดจบตรง Multi-Zone พอดี ไม่สามารถเลื่อน Scroll ดูการตั้งค่าที่เหลือ และไม่สามารถกด Save ในหน้าต่างได้ ต้องคลิกพื้นที่ว่างสีดำด้านนอกเพื่อให้ปิด Modal ออกมา
+     - **จุดขาวลอยที่มุมซ้ายล่าง**: เกิดจาก `<span class="slider"></span>` ที่ไม่มีตัวครอบ
+- **การแก้ไข (Fix Implementation)**:
+  1. **ทำความสะอาดแท็กใน `public/index.html`**:
+     - ตัด 3 บรรทัดส่วนเกินออก และคืนค่า Tag Balance ของ `public/index.html` ทั้งไฟล์ให้สมบูรณ์ 100% (0 Unclosed Tags, 0 Mismatches)
+  2. **การคืนรูปทรงที่ถูกต้องของ Modal**:
+     - ปุ่ม `[ 🔄 คืนค่าปัจจุบัน ]` และ `[ 💾 บันทึกและใช้งานทันที (Save & Apply) ]` กลับเข้ามาอยู่ใน Footer ด้านล่างของ Modal Card อย่างสวยงาม
+     - แท็บกรอบราคา & โครงสร้างสามารถ Scroll ดูและปรับแต่งการตั้งค่าได้ครบทุกส่วน (Section 2.1 ถึง 2.4) อย่างราบรื่น ไม่ค้าง และกด Save ได้ทันที
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.9`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
 
 
 ---
@@ -7660,4 +7681,25 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เมื่อ `dowTrendFilter === false`: แสดงเป็น `DOW: RANGE (OFF)` (จางลง) พร้อม Tooltip ระบุว่าตัวกรองปิดอยู่
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.8`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 259. Settings Modal DOM Tag Mismatch Fix, Footer Button Alignment & Tab Scroll Restoration (v0.3.0.9)
+
+- **สาเหตุของปัญหาหน้าตั้งค่ากรอบค้างและปุ่มหลุดเอียงไปทางขวา (Root Cause Analysis)**:
+  1. **แท็ก HTML ปิดส่วนเกินตกค้างใน `public/index.html`**:
+     - ภายใน Tab 2 ("กรอบราคา & โครงสร้าง") ใต้หัวข้อ *Multi-Zone Capital Allocation & Dynamic DCA* มีโค้ดแท็กปิดตกค้างอยู่ 3 บรรทัด (`<span class="slider"></span>`, `</label>`, `</div>`)
+     - แท็ก `</div>` ส่วนเกินนี้ทำให้ `<div class="modal-card settings-modal">` ถูกสั่งปิดก่อนเวลา
+  2. **ผลกระทบต่อ UI & UX**:
+     - **ปุ่ม Save หลุดไปขวาสุด**: `<div class="modal-footer">` หลุดออกมาอยู่นอกกล่อง Modal Card และกลายเป็น sibling flex item ใน `.modal-overlay` จึงถูกดันไปอยู่ข้างๆ ทางขวาบนพื้นหลังสีดำ
+     - **หน้าจอเหมือนค้างและเลื่อนลงไม่ได้**: เนื้อหา Section 2.2, 2.3, 2.4 และ Footer ถูกตัดขาดจากโครงสร้าง Modal ทำให้กล่องตัดจบตรง Multi-Zone พอดี ไม่สามารถเลื่อน Scroll ดูการตั้งค่าที่เหลือ และไม่สามารถกด Save ในหน้าต่างได้ ต้องคลิกพื้นที่ว่างสีดำด้านนอกเพื่อให้ปิด Modal ออกมา
+     - **จุดขาวลอยที่มุมซ้ายล่าง**: เกิดจาก `<span class="slider"></span>` ที่ไม่มีตัวครอบ
+- **การแก้ไข (Fix Implementation)**:
+  1. **ทำความสะอาดแท็กใน `public/index.html`**:
+     - ตัด 3 บรรทัดส่วนเกินออก และคืนค่า Tag Balance ของ `public/index.html` ทั้งไฟล์ให้สมบูรณ์ 100% (0 Unclosed Tags, 0 Mismatches)
+  2. **การคืนรูปทรงที่ถูกต้องของ Modal**:
+     - ปุ่ม `[ 🔄 คืนค่าปัจจุบัน ]` และ `[ 💾 บันทึกและใช้งานทันที (Save & Apply) ]` กลับเข้ามาอยู่ใน Footer ด้านล่างของ Modal Card อย่างสวยงาม
+     - แท็บกรอบราคา & โครงสร้างสามารถ Scroll ดูและปรับแต่งการตั้งค่าได้ครบทุกส่วน (Section 2.1 ถึง 2.4) อย่างราบรื่น ไม่ค้าง และกด Save ได้ทันที
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.9`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
