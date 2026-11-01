@@ -2625,6 +2625,254 @@
       })
       .catch(() => {});
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // 🔄 Autonomous Multi-Pair Rotation Backtest Studio Handlers
+    // ══════════════════════════════════════════════════════════════════════════
+    const btnOpenRotationBt = document.getElementById("btnOpenRotationBt");
+    const btnCloseRotationBtModal = document.getElementById("btnCloseRotationBtModal");
+    const rotationBtModalBackdrop = document.getElementById("rotationBtModalBackdrop");
+    const btnStartRotationBt = document.getElementById("btnStartRotationBt");
+    const rotationBtProgressWrap = document.getElementById("rotationBtProgressWrap");
+    const rotationBtStatusText = document.getElementById("rotationBtStatusText");
+    const rotationBtCountText = document.getElementById("rotationBtCountText");
+    const rotationBtProgressFill = document.getElementById("rotationBtProgressFill");
+    const rotationBtKpiGrid = document.getElementById("rotationBtKpiGrid");
+    const rotationBtResultsSection = document.getElementById("rotationBtResultsSection");
+    const rotationLegsTableBody = document.getElementById("rotationLegsTableBody");
+    const rotationPairContribBody = document.getElementById("rotationPairContribBody");
+
+    let currentRotationResult = null;
+    let rotationProgressTimer = null;
+
+    if (btnOpenRotationBt && rotationBtModalBackdrop) {
+      btnOpenRotationBt.addEventListener("click", () => {
+        rotationBtModalBackdrop.style.display = "flex";
+      });
+    }
+
+    if (btnCloseRotationBtModal && rotationBtModalBackdrop) {
+      btnCloseRotationBtModal.addEventListener("click", () => {
+        rotationBtModalBackdrop.style.display = "none";
+        if (rotationProgressTimer) {
+          clearInterval(rotationProgressTimer);
+          rotationProgressTimer = null;
+        }
+      });
+    }
+
+    if (rotationBtModalBackdrop) {
+      rotationBtModalBackdrop.addEventListener("click", (e) => {
+        if (e.target === rotationBtModalBackdrop) {
+          rotationBtModalBackdrop.style.display = "none";
+          if (rotationProgressTimer) {
+            clearInterval(rotationProgressTimer);
+            rotationProgressTimer = null;
+          }
+        }
+      });
+    }
+
+    function renderRotationBacktestResult(res) {
+      if (!res || !res.summary) return;
+      currentRotationResult = res;
+
+      const sum = res.summary;
+      if (rotationBtKpiGrid) rotationBtKpiGrid.style.display = "grid";
+      if (rotationBtResultsSection) rotationBtResultsSection.style.display = "block";
+
+      const pnlColor = sum.netPnlPct >= 0 ? "#10b981" : "#ef4444";
+      const elNetPnl = document.getElementById("rotKpiNetPnl");
+      const elNetQuote = document.getElementById("rotKpiNetQuote");
+      if (elNetPnl) {
+        elNetPnl.textContent = `${sum.netPnlPct >= 0 ? "+" : ""}${sum.netPnlPct.toFixed(2)}%`;
+        elNetPnl.style.color = pnlColor;
+      }
+      if (elNetQuote) {
+        elNetQuote.textContent = `${sum.netPnlQuote >= 0 ? "+$" : "-$"}${Math.abs(sum.netPnlQuote).toFixed(2)}`;
+      }
+
+      const elCapital = document.getElementById("rotKpiCapital");
+      if (elCapital) elCapital.textContent = `${sum.initialCapital.toFixed(0)} ➔ ${sum.finalEquity.toFixed(2)}`;
+
+      const elRotations = document.getElementById("rotKpiRotations");
+      const elLegWr = document.getElementById("rotKpiLegWinRate");
+      if (elRotations) elRotations.textContent = `${sum.totalRotations} ครั้ง (${sum.totalLegs} รอบ)`;
+      if (elLegWr) elLegWr.textContent = `Leg Win Rate: ${sum.legWinRate.toFixed(1)}%`;
+
+      const elTrades = document.getElementById("rotKpiTrades");
+      const elTradeWr = document.getElementById("rotKpiTradeWinRate");
+      if (elTrades) elTrades.textContent = `${sum.totalTrades} ไม้`;
+      if (elTradeWr) elTradeWr.textContent = `Trade Win Rate: ${sum.tradeWinRate.toFixed(1)}%`;
+
+      const elDd = document.getElementById("rotKpiDrawdown");
+      const elPf = document.getElementById("rotKpiProfitFactor");
+      if (elDd) elDd.textContent = `-${sum.maxPortfolioDrawdownPct.toFixed(2)}%`;
+      if (elPf) elPf.textContent = `Profit Factor: ${sum.profitFactor.toFixed(2)}`;
+
+      const elAlpha = document.getElementById("rotKpiAlpha");
+      const elBenchSub = document.getElementById("rotKpiBenchmarkSub");
+      if (elAlpha) {
+        const alphaColor = sum.alphaVsBenchmarkPct >= 0 ? "#10b981" : "#ef4444";
+        elAlpha.textContent = `${sum.alphaVsBenchmarkPct >= 0 ? "+" : ""}${sum.alphaVsBenchmarkPct.toFixed(2)}%`;
+        elAlpha.style.color = alphaColor;
+      }
+      if (elBenchSub) {
+        elBenchSub.textContent = `เทียบถือ ${sum.benchmarkSinglePairSymbol} (${sum.benchmarkSinglePairPnlPct >= 0 ? "+" : ""}${sum.benchmarkSinglePairPnlPct.toFixed(2)}%)`;
+      }
+
+      // Render Legs Table
+      if (rotationLegsTableBody && Array.isArray(res.legs)) {
+        rotationLegsTableBody.innerHTML = res.legs.map((leg, idx) => {
+          const lPnlColor = leg.netPnlPct >= 0 ? "#10b981" : "#ef4444";
+          const startD = new Date(leg.startTime * 1000).toLocaleDateString("th-TH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const endD = new Date(leg.endTime * 1000).toLocaleDateString("th-TH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+          const trigLabel = leg.triggerReason === "INITIAL_SELECTION" ? "⭐ เริ่มต้น" : (leg.triggerReason === "IDLE_CASH_TIMEOUT" ? "⏳ Idle Timeout" : "🎯 จบรอบ Flat");
+
+          return `
+            <tr>
+              <td style="font-weight: bold; text-align: center;">#${leg.legIndex}</td>
+              <td style="font-size: 11px; color: #94a3b8;">${startD} ➔ ${endD} (${leg.durationHours}h)</td>
+              <td style="font-weight: bold; color: #38bdf8;">${leg.symbol}</td>
+              <td><span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${trigLabel}</span></td>
+              <td><span class="badge" style="background: ${leg.entryScore >= 70 ? '#10b981' : '#f59e0b'}; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${leg.entryScore}/100</span></td>
+              <td>${leg.startingCapital.toFixed(2)} ➔ ${leg.endingCapital.toFixed(2)}</td>
+              <td style="font-weight: bold; color: ${lPnlColor};">${leg.netPnlPct >= 0 ? "+" : ""}${leg.netPnlPct.toFixed(2)}%</td>
+              <td style="color: ${lPnlColor};">${leg.netPnlQuote >= 0 ? "+$" : "-$"}${Math.abs(leg.netPnlQuote).toFixed(2)}</td>
+              <td>${leg.winCount} / ${leg.tradesCount} (${leg.winRate.toFixed(0)}%)</td>
+              <td>
+                <button class="btn-sync-config btn-view-leg-chart" data-leg-idx="${idx}" style="padding: 2px 8px; font-size: 11px; border-color: #8b5cf6; color: #c084fc;">
+                  📈 ดูกราฟ
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join("");
+
+        // Wire click handlers for view leg chart
+        document.querySelectorAll(".btn-view-leg-chart").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            const idx = Number(btn.getAttribute("data-leg-idx"));
+            const leg = res.legs[idx];
+            if (leg && leg.candles && leg.candles.length > 0) {
+              if (rotationBtModalBackdrop) rotationBtModalBackdrop.style.display = "none";
+              // Render leg candles, markers and trades on main chart
+              if (typeof setChartCandles === "function") {
+                setChartCandles(leg.candles);
+              }
+              if (typeof renderMarkers === "function" && leg.markers) {
+                renderMarkers(leg.markers);
+              }
+              if (typeof renderTradesTable === "function" && leg.trades) {
+                renderTradesTable(leg.trades);
+              }
+              const legSymEl = document.getElementById("legSymTf");
+              if (legSymEl) {
+                legSymEl.textContent = `${leg.symbol} 5M (รอบที่ #${leg.legIndex} | ${leg.netPnlPct >= 0 ? "+" : ""}${leg.netPnlPct.toFixed(2)}%)`;
+              }
+            }
+          });
+        });
+      }
+
+      // Render Per-Pair Contribution Table
+      if (rotationPairContribBody && Array.isArray(res.pairContributions)) {
+        rotationPairContribBody.innerHTML = res.pairContributions.map((item, idx) => {
+          const isTop = idx === 0;
+          const pColor = item.totalNetPnlQuote >= 0 ? "#10b981" : "#ef4444";
+          return `
+            <tr style="${isTop ? 'background: rgba(16, 185, 129, 0.1); font-weight: bold;' : ''}">
+              <td style="text-align: center;">${isTop ? '👑 ' : ''}#${idx + 1}</td>
+              <td style="color: #38bdf8; font-weight: bold;">${item.symbol}</td>
+              <td>${item.legsCount} รอบ</td>
+              <td>${item.totalHoursHeld} ชม.</td>
+              <td>${item.tradesCount} ไม้</td>
+              <td>${item.winRate.toFixed(1)}%</td>
+              <td style="color: ${pColor};">${item.totalNetPnlQuote >= 0 ? "+$" : "-$"}${Math.abs(item.totalNetPnlQuote).toFixed(2)}</td>
+              <td style="color: ${pColor}; font-weight: bold;">${item.totalNetPnlPct >= 0 ? "+" : ""}${item.totalNetPnlPct.toFixed(2)}%</td>
+            </tr>
+          `;
+        }).join("");
+      }
+    }
+
+    if (btnStartRotationBt) {
+      btnStartRotationBt.addEventListener("click", async () => {
+        const quoteAsset = document.getElementById("rotBtQuoteAsset")?.value || "FDUSD";
+        const maxUniversePairs = Number(document.getElementById("rotBtUniverseSize")?.value) || 50;
+        const limit = Number(document.getElementById("rotBtLimit")?.value) || 4000;
+        const initialCapital = Number(document.getElementById("rotBtInitialCapital")?.value) || 200;
+        const rotationIntervalMinutes = Number(document.getElementById("rotBtCooldownMins")?.value) || 180;
+        const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 15;
+        const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 2;
+
+        if (rotationBtProgressWrap) rotationBtProgressWrap.style.display = "block";
+        if (rotationBtKpiGrid) rotationBtKpiGrid.style.display = "none";
+        if (rotationBtResultsSection) rotationBtResultsSection.style.display = "none";
+        btnStartRotationBt.disabled = true;
+
+        if (rotationBtStatusText) rotationBtStatusText.textContent = `กำลังเชื่อมต่อตลาด Binance เพื่อดึง Universe Top ${maxUniversePairs} ${quoteAsset}...`;
+        if (rotationBtCountText) rotationBtCountText.textContent = "0%";
+        if (rotationBtProgressFill) rotationBtProgressFill.style.width = "5%";
+
+        if (rotationProgressTimer) clearInterval(rotationProgressTimer);
+        rotationProgressTimer = setInterval(async () => {
+          try {
+            const pRes = await fetch("/api/backtest/rotation/progress");
+            const pData = await pRes.json();
+            if (pData.success && pData.progress) {
+              const prog = pData.progress;
+              if (prog.message && rotationBtStatusText) rotationBtStatusText.textContent = prog.message;
+              if (prog.total > 0 && rotationBtProgressFill && rotationBtCountText) {
+                const pct = Math.min(95, Math.round((prog.completed / prog.total) * 100));
+                rotationBtProgressFill.style.width = `${pct}%`;
+                rotationBtCountText.textContent = `${pct}%`;
+              }
+            }
+          } catch {}
+        }, 800);
+
+        try {
+          const res = await fetch("/api/backtest/rotation/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              quoteAsset,
+              maxUniversePairs,
+              limit,
+              initialCapital,
+              rotationIntervalMinutes,
+              rotationScoreMarginPct,
+              capitalZones,
+            }),
+          });
+
+          const data = await res.json();
+          if (rotationProgressTimer) {
+            clearInterval(rotationProgressTimer);
+            rotationProgressTimer = null;
+          }
+
+          if (rotationBtProgressFill) rotationBtProgressFill.style.width = "100%";
+          if (rotationBtCountText) rotationBtCountText.textContent = "100%";
+          if (rotationBtStatusText) rotationBtStatusText.textContent = "จำลองการเทรดเสร็จสมบูรณ์!";
+
+          if (data.success && data.result) {
+            renderRotationBacktestResult(data.result);
+          } else {
+            alert(`เกิดข้อผิดพลาดในการรันจำลอง: ${data.error || "Unknown error"}`);
+          }
+        } catch (err) {
+          if (rotationProgressTimer) {
+            clearInterval(rotationProgressTimer);
+            rotationProgressTimer = null;
+          }
+          alert(`Network error: ${err.message}`);
+        } finally {
+          btnStartRotationBt.disabled = false;
+        }
+      });
+    }
+
     // Do NOT automatically run backtest on page load; wait for user to click "Run Backtest"
   });
 })();

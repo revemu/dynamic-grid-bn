@@ -910,6 +910,61 @@ export class DashboardServer {
       return;
     }
 
+    if (pathname === "/api/backtest/rotation/progress" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, progress: BacktestService.getRotationBtProgress() }));
+      return;
+    }
+
+    if (pathname === "/api/backtest/rotation/latest" && req.method === "GET") {
+      const latest = BacktestService.getLatestRotationResult();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, result: latest }));
+      return;
+    }
+
+    if (pathname === "/api/backtest/rotation/run" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          const quoteAsset = parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+          const maxUniversePairs = Number(parsed.maxUniversePairs) || 50;
+          const limit = Number(parsed.limit) || 4000;
+          const initialCapital = Number(parsed.initialCapital) || 200;
+          const rotationIntervalMinutes = Number(parsed.rotationIntervalMinutes) || 180;
+          const rotationIdleCashMinutes = Number(parsed.rotationIdleCashMinutes) || 120;
+          const rotationScoreMarginPct = Number(parsed.rotationScoreMarginPct) || 15;
+          const capitalZones = Number(parsed.capitalZones) || 2;
+          const channelMode = parsed.channelMode || "DONCHIAN_ATR";
+          const gridCutLossMode = parsed.gridCutLossMode || "none";
+
+          const result = await BacktestService.runMultiPairRotationSimulation({
+            quoteAsset,
+            maxUniversePairs,
+            limit,
+            initialCapital,
+            rotationIntervalMinutes,
+            rotationIdleCashMinutes,
+            rotationScoreMarginPct,
+            capitalZones,
+            channelMode,
+            gridCutLossMode,
+            customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
+            blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
+          });
+
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, result }));
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        }
+      });
+      return;
+    }
+
     if (pathname === "/api/backtest/scan/progress" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ success: true, progress: this.currentScanProgress }));

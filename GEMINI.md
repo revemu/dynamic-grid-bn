@@ -7350,3 +7350,42 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - สร้างฟังก์ชัน `loadRotationStatus()` และแยก `renderRotationReport(report)` เพื่อให้แสดงผลตารางคะแนนเหรียญได้ทันทีที่เปิดหน้าต่าง
   7. **Version Bump**:
      - อัปเดตเวอร์ชันเป็น `0.2.223` ใน `package.json` และ `src/version.ts`
+
+---
+
+### 250. Milestone Release: Autonomous Multi-Pair Rotation Backtest Engine with Top 50 Universe (v0.3.0)
+
+- **ภาพรวมและเหตุผลในการพัฒนา (Feature Motivation)**:
+  - เดิมทีระบบ Backtest บนหน้าเว็บ (`backtest.html`) และเอนจินจำลอง `BacktestService` รองรับเฉพาะการทดสอบแบบ Single-Pair (รันเหรียญเดี่ยว 1 คู่ตลอดทั้งช่วงเวลา) หรือสแกนเปรียบเทียบผลงานของแต่ละเหรียญแยกกัน
+  - ผู้ใช้ต้องการระบบจำลองพอร์ตที่สามารถ **สลับคู่เหรียญอัตโนมัติต่อเนื่องข้ามเวลาในอดีต (Continuous Multi-Pair Walk-Forward Backtest)** โดยเริ่มด้วยเงินต้นก้อนเดียว (เช่น $200) และใช้ตรรกะสัญญาณและเอนจินเดียวกันกับบอทจริง 100%
+  - รองรับการสแกนขอบเขตเหรียญที่กว้างขึ้นเป็น **Top 50 Pairs** และสามารถเลือกโหมดสกุลเงินหลักอย่างใดอย่างหนึ่งได้อย่างเด็ดขาดระหว่าง **`FDUSD` (0% Maker Fee)** หรือ **`USDT` (Standard Fee)** โดยไม่มีการปนสกุลเงินกันในพอร์ต
+
+- **สถาปัตยกรรมและการทำงานของระบบใหม่ (Architecture & Implementation)**:
+  1. **Persistent Disk + Memory Kline Cache (`data/cache/klines/` in `src/backtest-service.ts`)**:
+     - เพิ่มระบบบันทึกและอ่านแคชแท่งเทียน 5m ลงดิสก์อัตโนมัติใน `fetchBinanceCandles`
+     - ตรวจสอบ RAM Cache ก่อน ➔ หากไม่มี ตรวจสอบ Disk Cache (`data/cache/klines/${cleanSym}_${interval}.json`) หากข้อมูลมีความสดใหม่ (< 15 นาที) โหลดขึ้น RAM ทันทีในระดับ Milliseconds
+     - ช่วยให้การรันจำลอง Top 50 ในครั้งถัดไป ไม่ต้องดาวน์โหลดซ้ำจาก Binance และไม่ติดปัญหา Rate Limit 429
+  2. **Top 50 Universe Discovery & Loader (`fetchTopUniverseCandles`)**:
+     - ดึงข้อมูล 24h Ticker จาก Binance Spot กรองเฉพาะคู่เหรียญที่ลงท้ายด้วย `FDUSD` หรือ `USDT` ตามโหมดที่เลือก
+     - ตัดเหรียญ Stablecoins และเหรียญ Leveraged ออกทั้งหมด คัดเลือกเฉพาะเหรียญที่มีสภาพคล่องสูงสุดเรียงตาม Volume 24 ชม. ตัดมาเป็น Top 50 Pairs (สำหรับ FDUSD จะได้ครบ 100% ทุกคู่เหรียญที่มีในกระดาน Binance)
+     - ดาวน์โหลดแท่งเทียน 5m ในปริมาณที่ครอบคลุมช่วงเวลาทดสอบ + 600 แท่งล่วงหน้าเพื่อใช้ทำ Indicator Warmup
+  3. **Point-in-Time 2-Stage Historical Funnel Evaluator (`evaluateHistoricalFunnelAtTime`)**:
+     - คำนวณสัญญาณคัดกรองเหรียญ ณ จุดเวลา `targetTime` ในอดีตอย่างแม่นยำ โดยไม่มีการมองเห็นอนาคต (Zero Look-Ahead Bias):
+       - **Stage 1 (24h Rolling Window)**: คำนวณจาก 288 แท่งเทียน 5m ย้อนหลัง ณ ขณะนั้น กรองเหรียญที่ 24h Price Range (4.0% - 22.0%), 24h Change (-5.5% ถึง +15.0%), Position in Range (10% - 65%), และ Volume ผ่านเกณฑ์ คัดเลือก Top 6 เหรียญ
+       - **Stage 2 (500-Bar Dynamic Grid Simulation & Composite Scoring 100 คะแนน)**: รันจำลอง `runDynamicGridSimulation` บนแท่งเทียน 500 แท่งย้อนหลัง ณ จุดเวลานั้น ให้คะแนน Sim Score (45 pts), Dow Structure (30 pts), Position in Channel (15 pts), และ Liquidity (10 pts)
+  4. **Warmup-Preserving Walk-Forward Leg Stitching (`runDynamicGridSimulation` & `runMultiPairRotationSimulation`)**:
+     - ใน `runDynamicGridSimulation`: เพิ่มออปชัน `startTradingBarIndex` และ Hook `onFlatCheckStop`
+     - แท่งเทียนก่อนหน้า `startTradingBarIndex` ใช้สำหรับ Warmup โครงสร้าง Dow Theory / Donchian Channel
+     - เมื่อไม้ขายปิดครบจนพอร์ตว่าง (`heldLots.length === 0` / Just Became Flat) หรือถือเงินสดว่างเกินกำหนด (`IDLE_CASH_TIMEOUT`): ระบบจะเรียก `onFlatCheckStop` เพื่อประเมินคะแนนตลาด
+     - หากพบเหรียญใหม่ที่มีคะแนนชนะเหรียญเดิมเกิน `Score Margin` (เช่น ชนะเกิน 15%) ระบบจะหยุด Leg ปัจจุบัน คืนยอดเงินทุนสุทธิ (Cash + Realized PnL) เพื่อยกยอดไปเริ่ม Leg ใหม่บนเหรียญใหม่ทันที
+  5. **REST API Integration (`src/server.ts`)**:
+     - `POST /api/backtest/rotation/run`: รับพารามิเตอร์จำลองและรัน `runMultiPairRotationSimulation`
+     - `GET /api/backtest/rotation/progress`: รายงานสถานะความคืบหน้าแบบ Real-time
+     - `GET /api/backtest/rotation/latest`: คืนค่าผลลัพธ์การทดสอบล่าสุด
+  6. **Interactive Studio UI (`public/backtest.html` & `public/backtest.js`)**:
+     - เพิ่มปุ่ม `🔄 Auto-Rotate Backtest` บน Header และหน้าต่าง Modal เต็มรูปแบบ
+     - แผง KPI 6 การ์ด: Net PnL %, Net PnL $, Compounded Capital, Rotations & Leg Win Rate, Total Trades & Trade Win Rate, Max Drawdown %, Alpha vs Benchmark
+     - ตาราง **Rotation Journey Timeline**: แสดงรายละเอียดการสลับคู่เหรียญแต่ละรอบ พร้อมปุ่ม **`📈 ดูกราฟ`** ที่คลิกแล้วส่งไม้เทรดช่วงนั้นไปแสดงบนกราฟหลักทันที
+     - ตาราง **Per-Pair Contribution**: จัดอันดับว่าตลอดการหมุนเวียนพอร์ต เหรียญไหนทำกำไรให้พอร์ตมากที่สุด
+  7. **Version Milestone Release**:
+     - ขยับเวอร์ชันสู่ **`0.3.0`** ใน `package.json` และ `src/version.ts`

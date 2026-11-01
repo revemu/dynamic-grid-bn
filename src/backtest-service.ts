@@ -194,6 +194,104 @@ export interface MarketScanPersistence {
   results: MarketScanResultItem[];
 }
 
+export interface MultiPairRotationOptions {
+  quoteAsset: "FDUSD" | "USDT";
+  maxUniversePairs?: number;
+  customWhitelist?: string[];
+  blacklist?: string[];
+  timeframe?: string;
+  limit?: number;
+  initialCapital?: number;
+  rotationIntervalMinutes?: number;
+  rotationIdleCashMinutes?: number;
+  rotationScoreMarginPct?: number;
+  minVolumeUsd?: number;
+  capitalZones?: number;
+  channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
+  minChannelWidthPct?: number;
+  maxChannelWidthPct?: number;
+  zoneMinDropPct?: number;
+  zoneStabilizeCandles?: number;
+  lockChannelInPosition?: boolean;
+  enableBaseConfirmation?: boolean;
+  gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+}
+
+export interface RotationLegRecord {
+  legIndex: number;
+  symbol: string;
+  startTime: number;
+  endTime: number;
+  durationHours: number;
+  triggerReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT";
+  entryScore: number;
+  previousSymbol?: string;
+  previousSymbolScore?: number;
+  startingCapital: number;
+  endingCapital: number;
+  netPnlQuote: number;
+  netPnlPct: number;
+  tradesCount: number;
+  winCount: number;
+  lossCount: number;
+  winRate: number;
+  maxDrawdownPct: number;
+  topCandidatesSnapshot: Array<{
+    symbol: string;
+    compositeScore: number;
+    netPnlPct: number;
+    winRate: number;
+    range24hPct: number;
+  }>;
+  trades: BacktestTrade[];
+  candles: Candle[];
+  markers: BacktestMarker[];
+}
+
+export interface PairContributionItem {
+  symbol: string;
+  legsCount: number;
+  totalHoursHeld: number;
+  tradesCount: number;
+  winRate: number;
+  totalNetPnlQuote: number;
+  totalNetPnlPct: number;
+}
+
+export interface MultiPairRotationResult {
+  id: string;
+  createdAt: number;
+  options: MultiPairRotationOptions;
+  summary: {
+    quoteAsset: "FDUSD" | "USDT";
+    universeScannedCount: number;
+    initialCapital: number;
+    finalEquity: number;
+    netPnlQuote: number;
+    netPnlPct: number;
+    totalRotations: number;
+    totalLegs: number;
+    profitableLegs: number;
+    legWinRate: number;
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    tradeWinRate: number;
+    maxPortfolioDrawdownPct: number;
+    profitFactor: number;
+    totalFeesPaid: number;
+    bestPairSymbol: string;
+    bestPairPnlPct: number;
+    benchmarkSinglePairSymbol: string;
+    benchmarkSinglePairPnlPct: number;
+    alphaVsBenchmarkPct: number;
+  };
+  legs: RotationLegRecord[];
+  pairContributions: PairContributionItem[];
+  equityCurve: Array<{ time: number; equity: number; symbol: string; drawdownPct: number }>;
+  allTrades: Array<BacktestTrade & { symbol: string; legIndex: number }>;
+}
+
 const DB_PATH = path.resolve(process.cwd(), "data", "backtest-history.db.json");
 const SCAN_DB_PATH = path.resolve(process.cwd(), "data", "market-scan.db.json");
 
@@ -208,7 +306,18 @@ function ensureDbFile(): void {
 }
 
 export class BacktestService {
+  public static readonly KLINE_CACHE_DIR = path.resolve(process.cwd(), "data", "cache", "klines");
   private static candleCache = new Map<string, { timestamp: number; candles: Candle[] }>();
+  private static rotationBtProgress = { phase: "idle", completed: 0, total: 0, currentSymbol: "", message: "" };
+  private static latestRotationResult: MultiPairRotationResult | null = null;
+
+  public static getRotationBtProgress() {
+    return this.rotationBtProgress;
+  }
+
+  public static getLatestRotationResult(): MultiPairRotationResult | null {
+    return this.latestRotationResult;
+  }
 
   /**
    * Fetch historical candles from Binance Spot REST API
@@ -223,10 +332,27 @@ export class BacktestService {
     const cached = this.candleCache.get(cacheKey);
     const nowMs = Date.now();
 
-    // In-memory candle cache: if we already fetched >= limit candles within 5 minutes, reuse instantly
+    // 1. In-memory candle cache: if we already fetched >= limit candles within 5 minutes, reuse instantly
     if (cached && cached.candles.length >= limit && (nowMs - cached.timestamp < 300_000)) {
-      console.log(`[CandleFeed] ⚡ Cache HIT for ${cleanSym} (${interval}) -> using ${cached.candles.length} cached candles`);
+      console.log(`[CandleFeed] ⚡ RAM Cache HIT for ${cleanSym} (${interval}) -> using ${cached.candles.length} cached candles`);
       return cached.candles.slice(-limit);
+    }
+
+    // 2. Persistent Disk Cache: check data/cache/klines/ for previously saved historical bars
+    const diskPath = path.join(BacktestService.KLINE_CACHE_DIR, `${cleanSym}_${interval}.json`);
+    if (!cached && fs.existsSync(diskPath)) {
+      try {
+        const raw = fs.readFileSync(diskPath, "utf8");
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.candles) && parsed.candles.length >= limit) {
+          const age = nowMs - (parsed.timestamp || 0);
+          if (age < 900_000) { // Fresh within 15 minutes
+            console.log(`[CandleFeed] 💾 Disk Cache HIT for ${cleanSym} (${interval}) -> using ${parsed.candles.length} candles`);
+            this.candleCache.set(cacheKey, { timestamp: parsed.timestamp, candles: parsed.candles });
+            return parsed.candles.slice(-limit);
+          }
+        }
+      } catch {}
     }
 
     // Quick single fetch if limit <= 1000
@@ -264,7 +390,13 @@ export class BacktestService {
 
       const sorted = candles.sort((a, b) => a.time - b.time);
       this.candleCache.set(cacheKey, { timestamp: nowMs, candles: sorted });
-      console.log(`[CandleFeed] ✅ ${cleanSym} (${interval}): Loaded ${sorted.length} candles.`);
+      try {
+        if (!fs.existsSync(BacktestService.KLINE_CACHE_DIR)) {
+          fs.mkdirSync(BacktestService.KLINE_CACHE_DIR, { recursive: true });
+        }
+        fs.writeFileSync(diskPath, JSON.stringify({ timestamp: nowMs, candles: sorted }), "utf8");
+      } catch {}
+      console.log(`[CandleFeed] ✅ ${cleanSym} (${interval}): Loaded ${sorted.length} candles (saved to disk cache).`);
       return sorted;
     }
 
@@ -339,7 +471,13 @@ export class BacktestService {
     const sorted = Array.from(candlesMap.values()).sort((a, b) => a.time - b.time);
     const resultCandles = sorted.slice(-maxCandles);
     this.candleCache.set(cacheKey, { timestamp: Date.now(), candles: resultCandles });
-    console.log(`[CandleFeed] ✅ ${cleanSym} (${interval}): Successfully loaded ${resultCandles.length} candles.`);
+    try {
+      if (!fs.existsSync(BacktestService.KLINE_CACHE_DIR)) {
+        fs.mkdirSync(BacktestService.KLINE_CACHE_DIR, { recursive: true });
+      }
+      fs.writeFileSync(diskPath, JSON.stringify({ timestamp: Date.now(), candles: resultCandles }), "utf8");
+    } catch {}
+    console.log(`[CandleFeed] ✅ ${cleanSym} (${interval}): Successfully loaded ${resultCandles.length} candles (saved to disk cache).`);
     return resultCandles;
   }
 
@@ -389,6 +527,13 @@ export class BacktestService {
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
+      startTradingBarIndex?: number;
+      onFlatCheckStop?: (state: {
+        barIndex: number;
+        time: number;
+        cash: number;
+        trigger: "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT";
+      }) => boolean;
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -461,9 +606,15 @@ export class BacktestService {
     let tradeCounter = 0;
     let totalFeesQuote = 0;
 
+    const startIdx = opts.startTradingBarIndex !== undefined ? Math.max(warmup, opts.startTradingBarIndex) : warmup;
+    let lastFlatTime = candles.length > startIdx ? candles[startIdx].time : Date.now();
+    let wasHolding = false;
+
     for (let i = warmup; i < candles.length; i++) {
       const c = candles[i];
       dow.addCandle(c);
+
+      const isTradingActive = i >= startIdx;
 
       const structure = dow.getStructure(c.close, undefined, {
         useOnlyClosedCandles: true,
@@ -726,10 +877,37 @@ export class BacktestService {
         remainingLots.push(lot);
       }
       heldLots = remainingLots;
+      const justBecameFlat = wasHolding && heldLots.length === 0;
+      wasHolding = heldLots.length > 0;
+
       if (heldLots.length === 0) {
         lockedChannel = null;
         unlockedCapitalZones = 1;
         stableFloorCandleCount = 0;
+      }
+
+      if (justBecameFlat) {
+        lastFlatTime = c.time;
+      }
+
+      if (isTradingActive && opts.onFlatCheckStop && heldLots.length === 0) {
+        if (justBecameFlat) {
+          const shouldStop = opts.onFlatCheckStop({
+            barIndex: i,
+            time: c.time,
+            cash,
+            trigger: "POST_ROUND_EXIT",
+          });
+          if (shouldStop) break;
+        } else if (c.time - lastFlatTime >= 7200) { // 2 hours idle cash
+          const shouldStop = opts.onFlatCheckStop({
+            barIndex: i,
+            time: c.time,
+            cash,
+            trigger: "IDLE_CASH_TIMEOUT",
+          });
+          if (shouldStop) break;
+        }
       }
 
       // 2. Evaluate Grid Buys (Tranche Size = 25% of current zone quota)
@@ -742,7 +920,7 @@ export class BacktestService {
       );
 
       const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
-      if (!isHlWaiting && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
+      if (isTradingActive && !isHlWaiting && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           const bl = buyLevels[lvlIdx];
           const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
@@ -2958,5 +3136,649 @@ export class BacktestService {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Fetch historical 5m candles for Top N liquid pairs in FDUSD or USDT universe
+   */
+  public static async fetchTopUniverseCandles(opts: {
+    quoteAsset: "FDUSD" | "USDT";
+    maxPairs?: number;
+    limit?: number;
+    customWhitelist?: string[];
+    blacklist?: string[];
+    onProgress?: (p: { completed: number; total: number; currentSymbol: string; message: string }) => void;
+  }): Promise<Map<string, Candle[]>> {
+    const quote = opts.quoteAsset;
+    const maxPairs = Math.max(5, Math.min(100, opts.maxPairs ?? 50));
+    const candlesLimit = Math.max(500, (opts.limit ?? 4000) + 600);
+    const blacklistSet = new Set((opts.blacklist ?? []).map((s) => s.toUpperCase().trim()));
+
+    let targetSymbols: string[] = [];
+
+    if (Array.isArray(opts.customWhitelist) && opts.customWhitelist.length > 0) {
+      targetSymbols = opts.customWhitelist
+        .map((s) => s.toUpperCase().trim())
+        .filter((s) => s.endsWith(quote) && !blacklistSet.has(s))
+        .slice(0, maxPairs);
+    } else {
+      this.rotationBtProgress = { phase: "fetching_tickers", completed: 0, total: 0, currentSymbol: "", message: `Fetching 24h ticker for ${quote} universe...` };
+      opts.onProgress?.(this.rotationBtProgress);
+
+      const tickerRes = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
+        headers: { "User-Agent": "dynamic-grid-bn/rotation-backtest" },
+      });
+      if (!tickerRes.ok) throw new Error(`Failed to fetch 24h market ticker (HTTP ${tickerRes.status})`);
+
+      const tickers = (await tickerRes.json()) as Array<{ symbol: string; quoteVolume: string; count: number }>;
+      const minVol = quote === "FDUSD" ? 500_000 : 2_000_000;
+
+      let filtered = tickers.filter((t) => {
+        const sym = t.symbol.toUpperCase();
+        if (!sym.endsWith(quote)) return false;
+        const base = sym.slice(0, -quote.length);
+        if (STABLE_TOKENS.has(base)) return false;
+        if (blacklistSet.has(sym)) return false;
+        if (Number(t.quoteVolume) < minVol) return false;
+        return true;
+      });
+
+      filtered.sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume));
+      targetSymbols = filtered.slice(0, maxPairs).map((t) => t.symbol);
+    }
+
+    if (targetSymbols.length === 0) {
+      throw new Error(`No eligible pairs found for ${quote} universe (check volume threshold or whitelist)`);
+    }
+
+    const universeMap = new Map<string, Candle[]>();
+    const total = targetSymbols.length;
+    let completed = 0;
+    const chunkSize = 4;
+
+    for (let i = 0; i < targetSymbols.length; i += chunkSize) {
+      const chunk = targetSymbols.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (sym) => {
+          try {
+            this.rotationBtProgress = {
+              phase: "fetching_candles",
+              completed,
+              total,
+              currentSymbol: sym,
+              message: `Loading candles for ${sym} (${completed + 1}/${total})...`,
+            };
+            opts.onProgress?.(this.rotationBtProgress);
+
+            const candles = await this.fetchBinanceCandles(sym, "5m", candlesLimit);
+            if (candles && candles.length >= 300) {
+              universeMap.set(sym, candles);
+            }
+          } catch (err: any) {
+            console.warn(`[RotationBacktest] ⚠️ Failed to fetch candles for ${sym}: ${err.message}`);
+          } finally {
+            completed++;
+          }
+        })
+      );
+      await new Promise((r) => setTimeout(r, 80));
+    }
+
+    return universeMap;
+  }
+
+  /**
+   * Evaluate the 2-Stage Market Funnel Point-in-Time at a specific timestamp in history.
+   * Completely eliminates look-ahead bias by only evaluating candles up to targetTime.
+   */
+  public static evaluateHistoricalFunnelAtTime(opts: {
+    targetTime: number;
+    universeCandles: Map<string, Candle[]>;
+    activeSymbol?: string;
+    quoteAsset: "FDUSD" | "USDT";
+    gridOpts?: any;
+  }): Array<{
+    symbol: string;
+    compositeScore: number;
+    simScore: number;
+    structureScore: number;
+    positionScore: number;
+    liquidityScore: number;
+    netPnlPct: number;
+    winRate: number;
+    range24hPct: number;
+    quoteVol24h: number;
+  }> {
+    const { targetTime, universeCandles, activeSymbol, quoteAsset, gridOpts } = opts;
+    const minVol = quoteAsset === "FDUSD" ? 500_000 : 2_000_000;
+    const stage1Candidates: Array<{
+      symbol: string;
+      idx: number;
+      quoteVol24h: number;
+      range24hPct: number;
+      change24hPct: number;
+      posRatio: number;
+      activityScore: number;
+    }> = [];
+
+    // Stage 1: Point-in-Time 24h rolling window filter
+    for (const [sym, candles] of universeCandles.entries()) {
+      if (!candles || candles.length < 288) continue;
+
+      let low = 0;
+      let high = candles.length - 1;
+      let idx = -1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (candles[mid].time <= targetTime) {
+          idx = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      if (idx < 287) continue;
+
+      const slice24h = candles.slice(idx - 287, idx + 1);
+      let high24h = -Infinity;
+      let low24h = Infinity;
+      let quoteVol24h = 0;
+
+      for (const c of slice24h) {
+        if (c.high > high24h) high24h = c.high;
+        if (c.low < low24h) low24h = c.low;
+        quoteVol24h += c.volume * c.close;
+      }
+
+      if (low24h <= 0 || high24h <= low24h) continue;
+
+      const open24h = slice24h[0].open;
+      const lastPrice = slice24h[slice24h.length - 1].close;
+      const range24hPct = ((high24h - low24h) / low24h) * 100;
+      const change24hPct = open24h > 0 ? ((lastPrice - open24h) / open24h) * 100 : 0;
+      const posRatio = (lastPrice - low24h) / (high24h - low24h);
+
+      if (quoteVol24h < minVol) continue;
+      if (range24hPct < 4.0 || range24hPct > 22.0) continue;
+      if (change24hPct < -5.5 || change24hPct > 15.0) continue;
+      if (posRatio < 0.10 || posRatio > 0.65) continue;
+
+      const activityScore = quoteVol24h * (range24hPct / 100);
+      stage1Candidates.push({
+        symbol: sym,
+        idx,
+        quoteVol24h,
+        range24hPct,
+        change24hPct,
+        posRatio,
+        activityScore,
+      });
+    }
+
+    stage1Candidates.sort((a, b) => b.activityScore - a.activityScore);
+    const topCandidates = stage1Candidates.slice(0, 6);
+
+    if (activeSymbol && !topCandidates.some((c) => c.symbol === activeSymbol)) {
+      const activeCandles = universeCandles.get(activeSymbol);
+      if (activeCandles && activeCandles.length >= 288) {
+        let idx = activeCandles.findIndex((c) => c.time > targetTime);
+        idx = idx >= 0 ? idx - 1 : activeCandles.length - 1;
+        if (idx >= 287) {
+          const slice24h = activeCandles.slice(idx - 287, idx + 1);
+          let high24h = -Infinity;
+          let low24h = Infinity;
+          let quoteVol24h = 0;
+          for (const c of slice24h) {
+            if (c.high > high24h) high24h = c.high;
+            if (c.low < low24h) low24h = c.low;
+            quoteVol24h += c.volume * c.close;
+          }
+          if (high24h > low24h && low24h > 0) {
+            const open24h = slice24h[0].open;
+            const lastPrice = slice24h[slice24h.length - 1].close;
+            topCandidates.push({
+              symbol: activeSymbol,
+              idx,
+              quoteVol24h,
+              range24hPct: ((high24h - low24h) / low24h) * 100,
+              change24hPct: ((lastPrice - open24h) / open24h) * 100,
+              posRatio: (lastPrice - low24h) / (high24h - low24h),
+              activityScore: 0,
+            });
+          }
+        }
+      }
+    }
+
+    if (topCandidates.length === 0) return [];
+
+    const scoredCandidates: Array<{
+      symbol: string;
+      compositeScore: number;
+      simScore: number;
+      structureScore: number;
+      positionScore: number;
+      liquidityScore: number;
+      netPnlPct: number;
+      winRate: number;
+      range24hPct: number;
+      quoteVol24h: number;
+    }> = [];
+
+    const symCostModel = quoteAsset === "FDUSD"
+      ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
+      : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+
+    for (const cand of topCandidates) {
+      try {
+        const allSymCandles = universeCandles.get(cand.symbol);
+        if (!allSymCandles) continue;
+
+        const slice500 = allSymCandles.slice(Math.max(0, cand.idx - 499), cand.idx + 1);
+        if (slice500.length < 150) continue;
+
+        const rec = this.runDynamicGridSimulation(slice500, {
+          symbol: cand.symbol,
+          timeframe: "5m",
+          initialCapital: 200,
+          maxInventoryQuote: 200,
+          costModel: symCostModel,
+          saveToHistory: false,
+          capitalZones: gridOpts?.capitalZones ?? 2,
+          channelMode: gridOpts?.channelMode ?? "DONCHIAN_ATR",
+          minChannelWidthPct: gridOpts?.minChannelWidthPct ?? 6.0,
+          maxChannelWidthPct: gridOpts?.maxChannelWidthPct ?? 25.0,
+          zoneMinDropPct: gridOpts?.zoneMinDropPct ?? 2.5,
+          zoneStabilizeCandles: gridOpts?.zoneStabilizeCandles ?? 3,
+        });
+
+        const summary = rec.summary;
+        let simScore = 0;
+        if (summary.netPnlPct > 0 && summary.maxDrawdownPct <= 22 && summary.totalTrades >= 2) {
+          const pnlComponent = Math.min(25, summary.netPnlPct * 3.5 + summary.totalTrades * 1.5);
+          const wrComponent = Math.min(20, Math.max(0, (summary.winRate - 50) * 0.4) + Math.max(0, 16 - summary.maxDrawdownPct));
+          simScore = Math.min(45, Math.max(0, pnlComponent + wrComponent));
+        }
+
+        let structureScore = 0;
+        const recentCandles = slice500.slice(-48);
+        const donchianHigh = Math.max(...recentCandles.map((c) => c.high));
+        const donchianLow = Math.min(...recentCandles.map((c) => c.low));
+        const channelWidthPct = donchianLow > 0 ? ((donchianHigh - donchianLow) / donchianLow) * 100 : 0;
+
+        if (channelWidthPct >= 5.5 && channelWidthPct <= 16.0) {
+          structureScore += 20;
+        } else if (channelWidthPct >= 16.0 && channelWidthPct <= 22.0) {
+          structureScore += 10;
+        }
+        if (recentCandles.length >= 2 && recentCandles[recentCandles.length - 1].close > donchianLow * 1.005) {
+          structureScore += 10;
+        }
+
+        let positionScore = 0;
+        if (cand.posRatio >= 0.15 && cand.posRatio <= 0.45) {
+          positionScore = 15;
+        } else if (cand.posRatio > 0.45 && cand.posRatio <= 0.60) {
+          positionScore = 8;
+        }
+
+        const liquidityScore = Math.min(10, Math.max(0, (Math.log10(cand.quoteVol24h) - 6) * 4));
+        const compositeScore = Math.round(simScore + structureScore + positionScore + liquidityScore);
+
+        scoredCandidates.push({
+          symbol: cand.symbol,
+          compositeScore,
+          simScore: Math.round(simScore),
+          structureScore: Math.round(structureScore),
+          positionScore: Math.round(positionScore),
+          liquidityScore: Math.round(liquidityScore),
+          netPnlPct: Number(summary.netPnlPct.toFixed(2)),
+          winRate: Number(summary.winRate.toFixed(1)),
+          range24hPct: Number(cand.range24hPct.toFixed(1)),
+          quoteVol24h: cand.quoteVol24h,
+        });
+      } catch (err: any) {
+        console.warn(`[RotationBacktest] Failed scoring candidate ${cand.symbol}: ${err.message}`);
+      }
+    }
+
+    scoredCandidates.sort((a, b) => b.compositeScore - a.compositeScore);
+    return scoredCandidates;
+  }
+
+  /**
+   * Run full-fidelity Autonomous Multi-Pair Rotation Backtest Simulation
+   * Walks the timeline bar-by-bar across candidate pairs in FDUSD or USDT universe.
+   */
+  public static async runMultiPairRotationSimulation(opts: MultiPairRotationOptions): Promise<MultiPairRotationResult> {
+    const quote = opts.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+    const timeframe = opts.timeframe || "5m";
+    const simLimit = Math.max(500, opts.limit || 4000);
+    const initialCapital = Math.max(10, opts.initialCapital || 200);
+    const cooldownSec = (opts.rotationIntervalMinutes || 180) * 60;
+    const scoreMarginPct = opts.rotationScoreMarginPct || 15;
+
+    // 1. Fetch Top 50 Universe Candles
+    const universeCandles = await this.fetchTopUniverseCandles({
+      quoteAsset: quote,
+      maxPairs: opts.maxUniversePairs || 50,
+      limit: simLimit,
+      customWhitelist: opts.customWhitelist,
+      blacklist: opts.blacklist,
+    });
+
+    if (universeCandles.size === 0) {
+      throw new Error(`Failed to load candles for ${quote} universe`);
+    }
+
+    // 2. Compute common overlapping time boundaries
+    let minCommonTime = -Infinity;
+    let maxCommonTime = Infinity;
+
+    for (const candles of universeCandles.values()) {
+      if (candles.length > 0) {
+        if (candles[0].time > minCommonTime) minCommonTime = candles[0].time;
+        if (candles[candles.length - 1].time < maxCommonTime) maxCommonTime = candles[candles.length - 1].time;
+      }
+    }
+
+    const simStartTime = Math.max(minCommonTime + 600 * 300, maxCommonTime - simLimit * 300);
+    const simEndTime = maxCommonTime;
+
+    this.rotationBtProgress = {
+      phase: "simulating",
+      completed: 0,
+      total: 100,
+      currentSymbol: "",
+      message: `Starting Walk-Forward simulation from ${new Date(simStartTime * 1000).toISOString().slice(0, 10)}...`,
+    };
+
+    // 3. Evaluate initial symbol at simStartTime
+    const initialCandidates = this.evaluateHistoricalFunnelAtTime({
+      targetTime: simStartTime,
+      universeCandles,
+      quoteAsset: quote,
+      gridOpts: opts,
+    });
+
+    let activeCandidate = initialCandidates[0] || {
+      symbol: quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT",
+      compositeScore: 70,
+    };
+    let activeSymbol = activeCandidate.symbol;
+    let currentCash = initialCapital;
+    let currentTime = simStartTime;
+    let lastRotationTime = currentTime;
+    let previousSymbol: string | undefined = undefined;
+    let previousSymbolScore: number | undefined = undefined;
+
+    const legs: RotationLegRecord[] = [];
+    const allTrades: Array<BacktestTrade & { symbol: string; legIndex: number }> = [];
+    const equityCurve: Array<{ time: number; equity: number; symbol: string; drawdownPct: number }> = [];
+    let peakEquity = currentCash;
+    let maxPortfolioDrawdownPct = 0;
+    let legIndex = 0;
+
+    // 4. Walk-forward simulation loop across legs
+    while (currentTime < simEndTime - 3600 && legIndex < 50) {
+      legIndex++;
+      const currentLegStartTime = currentTime;
+      const symCandles = universeCandles.get(activeSymbol);
+      if (!symCandles || symCandles.length < 100) break;
+
+      const startBarIdx = symCandles.findIndex((c) => c.time >= currentTime);
+      if (startBarIdx < 0 || startBarIdx >= symCandles.length - 10) break;
+
+      const warmupBars = Math.min(200, startBarIdx);
+      const legCandles = symCandles.slice(startBarIdx - warmupBars);
+      const simStartIdx = warmupBars;
+
+      let legStopReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" = "POST_ROUND_EXIT";
+      let nextSymbol: string | undefined = undefined;
+      let nextSymbolScore = 0;
+      let currentScoreAtExit = activeCandidate?.compositeScore || 65;
+      let scoresSnapshot: any[] = [];
+
+      const legRecord = this.runDynamicGridSimulation(legCandles, {
+        symbol: activeSymbol,
+        timeframe,
+        initialCapital: currentCash,
+        maxInventoryQuote: currentCash,
+        capitalZones: opts.capitalZones ?? 2,
+        channelMode: opts.channelMode ?? "DONCHIAN_ATR",
+        minChannelWidthPct: opts.minChannelWidthPct ?? 6.0,
+        maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
+        zoneMinDropPct: opts.zoneMinDropPct ?? 2.5,
+        zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
+        lockChannelInPosition: opts.lockChannelInPosition ?? false,
+        enableBaseConfirmationFilter: opts.enableBaseConfirmation ?? false,
+        gridCutLossMode: opts.gridCutLossMode ?? "none",
+        costModel: quote === "FDUSD"
+          ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
+          : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 },
+        saveToHistory: false,
+        startTradingBarIndex: simStartIdx,
+        onFlatCheckStop: (state) => {
+          const timeSinceRot = state.time - lastRotationTime;
+          if (timeSinceRot < cooldownSec) {
+            return false;
+          }
+
+          const candidates = this.evaluateHistoricalFunnelAtTime({
+            targetTime: state.time,
+            universeCandles,
+            activeSymbol,
+            quoteAsset: quote,
+            gridOpts: opts,
+          });
+
+          if (candidates.length === 0) return false;
+          scoresSnapshot = candidates.slice(0, 5);
+
+          const best = candidates[0];
+          const curItem = candidates.find((c) => c.symbol === activeSymbol);
+          const curScore = curItem ? curItem.compositeScore : 0;
+          currentScoreAtExit = curScore;
+
+          const requiredScore = curScore * (1 + scoreMarginPct / 100);
+          if (best.symbol !== activeSymbol && best.compositeScore >= 55 && best.compositeScore >= requiredScore) {
+            legStopReason = state.trigger;
+            nextSymbol = best.symbol;
+            nextSymbolScore = best.compositeScore;
+            return true;
+          }
+
+          return false;
+        },
+      });
+
+      const legEndTime = legRecord.candles.length > simStartIdx
+        ? legRecord.candles[legRecord.candles.length - 1].time
+        : currentTime + 3600;
+
+      const startingCapital = currentCash;
+      const endingCapital = legRecord.summary.finalCapital;
+      const legNetPnlQuote = endingCapital - startingCapital;
+      const legNetPnlPct = startingCapital > 0 ? (legNetPnlQuote / startingCapital) * 100 : 0;
+
+      for (const t of legRecord.trades) {
+        allTrades.push({ ...t, symbol: activeSymbol, legIndex });
+      }
+
+      const legCandlesActive = legRecord.candles.slice(simStartIdx);
+      const sampleStep = Math.max(1, Math.floor(legCandlesActive.length / 50));
+      for (let ci = 0; ci < legCandlesActive.length; ci += sampleStep) {
+        const c = legCandlesActive[ci];
+        const matchingTrades = legRecord.trades.filter((t) => t.exitTime <= c.time);
+        const closedPnl = matchingTrades.reduce((sum, t) => sum + t.pnlQuote, 0);
+        const eq = startingCapital + closedPnl;
+        if (eq > peakEquity) peakEquity = eq;
+        const dd = peakEquity > 0 ? ((peakEquity - eq) / peakEquity) * 100 : 0;
+        if (dd > maxPortfolioDrawdownPct) maxPortfolioDrawdownPct = dd;
+        equityCurve.push({
+          time: c.time,
+          equity: Number(eq.toFixed(2)),
+          symbol: activeSymbol,
+          drawdownPct: Number(dd.toFixed(2)),
+        });
+      }
+
+      const legItem: RotationLegRecord = {
+        legIndex,
+        symbol: activeSymbol,
+        startTime: currentLegStartTime,
+        endTime: legEndTime,
+        durationHours: Number(((legEndTime - currentLegStartTime) / 3600).toFixed(1)),
+        triggerReason: legIndex === 1 ? "INITIAL_SELECTION" : legStopReason,
+        entryScore: activeCandidate?.compositeScore || 65,
+        previousSymbol,
+        previousSymbolScore,
+        startingCapital: Number(startingCapital.toFixed(2)),
+        endingCapital: Number(endingCapital.toFixed(2)),
+        netPnlQuote: Number(legNetPnlQuote.toFixed(2)),
+        netPnlPct: Number(legNetPnlPct.toFixed(2)),
+        tradesCount: legRecord.trades.length,
+        winCount: legRecord.summary.winTrades,
+        lossCount: legRecord.summary.lossTrades,
+        winRate: Number(legRecord.summary.winRate.toFixed(1)),
+        maxDrawdownPct: Number(legRecord.summary.maxDrawdownPct.toFixed(1)),
+        topCandidatesSnapshot: scoresSnapshot,
+        trades: legRecord.trades,
+        candles: legCandlesActive,
+        markers: legRecord.markers.filter((m) => m.time >= currentLegStartTime),
+      };
+
+      legs.push(legItem);
+
+      currentCash = endingCapital;
+      currentTime = legEndTime;
+      lastRotationTime = currentTime;
+      previousSymbol = activeSymbol;
+      previousSymbolScore = currentScoreAtExit;
+
+      if (nextSymbol && nextSymbol !== activeSymbol) {
+        activeCandidate = { symbol: nextSymbol, compositeScore: nextSymbolScore } as any;
+        activeSymbol = nextSymbol;
+      } else {
+        const candidates = this.evaluateHistoricalFunnelAtTime({
+          targetTime: currentTime,
+          universeCandles,
+          quoteAsset: quote,
+          gridOpts: opts,
+        });
+        if (candidates.length > 0 && candidates[0].symbol !== activeSymbol) {
+          activeCandidate = candidates[0];
+          activeSymbol = candidates[0].symbol;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // 5. Per-Pair Contribution Breakdown
+    const pairMap = new Map<string, PairContributionItem>();
+    for (const leg of legs) {
+      const existing = pairMap.get(leg.symbol) || {
+        symbol: leg.symbol,
+        legsCount: 0,
+        totalHoursHeld: 0,
+        tradesCount: 0,
+        winRate: 0,
+        totalNetPnlQuote: 0,
+        totalNetPnlPct: 0,
+      };
+      existing.legsCount += 1;
+      existing.totalHoursHeld = Number((existing.totalHoursHeld + leg.durationHours).toFixed(1));
+      existing.tradesCount += leg.tradesCount;
+      existing.totalNetPnlQuote = Number((existing.totalNetPnlQuote + leg.netPnlQuote).toFixed(2));
+      pairMap.set(leg.symbol, existing);
+    }
+
+    const pairContributions = Array.from(pairMap.values()).map((p) => {
+      const legMatches = legs.filter((l) => l.symbol === p.symbol);
+      const totalWins = legMatches.reduce((sum, l) => sum + l.winCount, 0);
+      const winRate = p.tradesCount > 0 ? Number(((totalWins / p.tradesCount) * 100).toFixed(1)) : 0;
+      const netPct = initialCapital > 0 ? Number(((p.totalNetPnlQuote / initialCapital) * 100).toFixed(2)) : 0;
+      return { ...p, winRate, totalNetPnlPct: netPct };
+    });
+
+    pairContributions.sort((a, b) => b.totalNetPnlQuote - a.totalNetPnlQuote);
+
+    // 6. Benchmark Single-Pair Comparison
+    const benchmarkSymbol = legs.length > 0 ? legs[0].symbol : (quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT");
+    let benchmarkPnlPct = 0;
+    try {
+      const bCandles = universeCandles.get(benchmarkSymbol);
+      if (bCandles && bCandles.length > 100) {
+        const bStartIdx = bCandles.findIndex((c) => c.time >= simStartTime);
+        if (bStartIdx >= 0) {
+          const bWarmup = Math.min(200, bStartIdx);
+          const bRec = this.runDynamicGridSimulation(bCandles.slice(bStartIdx - bWarmup), {
+            symbol: benchmarkSymbol,
+            timeframe,
+            initialCapital,
+            maxInventoryQuote: initialCapital,
+            startTradingBarIndex: bWarmup,
+            capitalZones: opts.capitalZones ?? 2,
+            channelMode: opts.channelMode ?? "DONCHIAN_ATR",
+            gridCutLossMode: opts.gridCutLossMode ?? "none",
+            saveToHistory: false,
+          });
+          benchmarkPnlPct = bRec.summary.netPnlPct;
+        }
+      }
+    } catch {}
+
+    const totalNetPnlQuote = currentCash - initialCapital;
+    const totalNetPnlPct = initialCapital > 0 ? (totalNetPnlQuote / initialCapital) * 100 : 0;
+    const winningTrades = allTrades.filter((t) => t.pnlQuote > 0).length;
+    const losingTrades = allTrades.filter((t) => t.pnlQuote <= 0).length;
+    const tradeWinRate = allTrades.length > 0 ? (winningTrades / allTrades.length) * 100 : 0;
+    const profitableLegs = legs.filter((l) => l.netPnlQuote > 0).length;
+    const legWinRate = legs.length > 0 ? (profitableLegs / legs.length) * 100 : 0;
+
+    const grossProfit = allTrades.filter((t) => t.pnlQuote > 0).reduce((sum, t) => sum + t.pnlQuote, 0);
+    const grossLoss = allTrades.filter((t) => t.pnlQuote < 0).reduce((sum, t) => sum + Math.abs(t.pnlQuote), 0);
+    const profitFactor = grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(2)) : (grossProfit > 0 ? 99 : 0);
+    const totalFeesPaid = allTrades.reduce((sum, t) => sum + (t.costQuote || 0), 0);
+
+    const result: MultiPairRotationResult = {
+      id: `rot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: Date.now(),
+      options: opts,
+      summary: {
+        quoteAsset: quote,
+        universeScannedCount: universeCandles.size,
+        initialCapital: Number(initialCapital.toFixed(2)),
+        finalEquity: Number(currentCash.toFixed(2)),
+        netPnlQuote: Number(totalNetPnlQuote.toFixed(2)),
+        netPnlPct: Number(totalNetPnlPct.toFixed(2)),
+        totalRotations: Math.max(0, legs.length - 1),
+        totalLegs: legs.length,
+        profitableLegs,
+        legWinRate: Number(legWinRate.toFixed(1)),
+        totalTrades: allTrades.length,
+        winningTrades,
+        losingTrades,
+        tradeWinRate: Number(tradeWinRate.toFixed(1)),
+        maxPortfolioDrawdownPct: Number(maxPortfolioDrawdownPct.toFixed(1)),
+        profitFactor,
+        totalFeesPaid: Number(totalFeesPaid.toFixed(2)),
+        bestPairSymbol: pairContributions.length > 0 ? pairContributions[0].symbol : benchmarkSymbol,
+        bestPairPnlPct: pairContributions.length > 0 ? pairContributions[0].totalNetPnlPct : 0,
+        benchmarkSinglePairSymbol: benchmarkSymbol,
+        benchmarkSinglePairPnlPct: Number(benchmarkPnlPct.toFixed(2)),
+        alphaVsBenchmarkPct: Number((totalNetPnlPct - benchmarkPnlPct).toFixed(2)),
+      },
+      legs,
+      pairContributions,
+      equityCurve,
+      allTrades,
+    };
+
+    this.latestRotationResult = result;
+    this.rotationBtProgress = { phase: "complete", completed: 100, total: 100, currentSymbol: "", message: "Simulation completed successfully!" };
+    return result;
   }
 }
