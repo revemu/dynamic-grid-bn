@@ -1217,7 +1217,8 @@ body {
   font-weight: 600;
 }
 
-.scanner-ctrl-group select {
+.scanner-ctrl-group select,
+.scanner-ctrl-group input {
   padding: 8px 12px;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1228,7 +1229,8 @@ body {
   outline: none;
 }
 
-.scanner-ctrl-group select:focus {
+.scanner-ctrl-group select:focus,
+.scanner-ctrl-group input:focus {
   border-color: #38bdf8;
 }
 

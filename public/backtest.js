@@ -1916,6 +1916,7 @@
         if (inpFeeTier) {
           inpFeeTier.value = (cfg.symbol && cfg.symbol.endsWith("FDUSD")) ? "zero" : "bnb";
         }
+        updateOptionVisibility(inpTradeMode ? inpTradeMode.value : "dual_hybrid", ".bt-controls-bar");
       }
 
       // 2. Sync to Market Scanner
@@ -1928,7 +1929,7 @@
         if (scCircuitBreaker) scCircuitBreaker.value = cfg.maFanCircuitBreaker !== false ? "on" : "off";
         if (scUpsideFloor) scUpsideFloor.value = cfg.maFanUpsideFloor !== false ? "on" : "off";
         if (scMacroGate && cfg.maFanMacroGate) scMacroGate.value = cfg.maFanMacroGate;
-        if (scTradeMode && cfg.maFanTradeMode) scTradeMode.value = cfg.maFanTradeMode;
+        if (scTradeMode && (cfg.strategyType || cfg.maFanTradeMode)) scTradeMode.value = cfg.strategyType || cfg.maFanTradeMode;
         if (scTradeDirection && cfg.maFanTradeDirection) scTradeDirection.value = cfg.maFanTradeDirection;
         if (scBaseConfirmation && cfg.enableBaseConfirmationFilter !== undefined) {
           scBaseConfirmation.value = cfg.enableBaseConfirmationFilter ? "on" : "off";
@@ -1936,8 +1937,21 @@
         if (scLockChannel && cfg.lockChannelInPosition !== undefined) {
           scLockChannel.value = cfg.lockChannelInPosition !== false ? "locked" : "dynamic";
         }
+        if (scCapitalZones && cfg.capitalZones !== undefined) {
+          scCapitalZones.value = String(cfg.capitalZones);
+        }
+        if (scGridCutLossMode && cfg.gridCutLossMode !== undefined) {
+          scGridCutLossMode.value = String(cfg.gridCutLossMode);
+        }
         if (scFastCut) scFastCut.value = "on";
         if (scMaxSl) scMaxSl.value = "1.8";
+        if (scFeeTier) {
+          scFeeTier.value = (cfg.symbol && cfg.symbol.endsWith("FDUSD")) ? "zero" : "bnb";
+        }
+        if (scBudget) {
+          scBudget.value = String(cfg.maxInventoryQuote || cfg.maFanMaxBudgetUsd || 200);
+        }
+        updateOptionVisibility(scTradeMode ? scTradeMode.value : "dual_hybrid", ".scanner-controls-bar");
       }
 
       if (triggerBtn) {
@@ -2063,13 +2077,14 @@
       if (inpCapitalZones) inpCapitalZones.value = "2";
       if (inpGridCutLossMode) inpGridCutLossMode.value = "none";
       if (inpLockChannel) inpLockChannel.value = "dynamic";
+      updateOptionVisibility(engine, ".bt-controls-bar");
     }
 
     // 2. Market Scanner Form
     if (target === "scanner" || target === "both") {
       if (scTradeMode) scTradeMode.value = engine;
       if (scTimeframe) scTimeframe.value = "5m";
-      if (scSpread) scSpread.value = "0.50";
+      if (scSpread) scSpread.value = engine === "dynamic_grid" ? "0.25" : "0.50";
       if (scSlMode) scSlMode.value = "ratchet";
       if (scMacroGate) scMacroGate.value = "noDeepBear";
       if (scCircuitBreaker) scCircuitBreaker.value = "on";
@@ -2077,7 +2092,13 @@
       if (scFastCut) scFastCut.value = "on";
       if (scMaxSl) scMaxSl.value = "1.8";
       if (scTradeDirection) scTradeDirection.value = "long";
+      if (scFeeTier) scFeeTier.value = "bnb";
+      if (scBudget) scBudget.value = "200";
       if (scBaseConfirmation) scBaseConfirmation.value = "off";
+      if (scCapitalZones) scCapitalZones.value = "2";
+      if (scGridCutLossMode) scGridCutLossMode.value = "none";
+      if (scLockChannel) scLockChannel.value = "dynamic";
+      updateOptionVisibility(engine, ".scanner-controls-bar");
     }
   }
 
@@ -2089,7 +2110,9 @@
     if (inpTradeMode) {
       inpTradeMode.addEventListener("change", (e) => {
         applyOptimalPreset(e.target.value, "main");
+        updateOptionVisibility(e.target.value, ".bt-controls-bar");
       });
+      updateOptionVisibility(inpTradeMode.value, ".bt-controls-bar");
     }
 
     const btnResetBestPreset = document.getElementById("btnResetBestPreset");
@@ -2169,7 +2192,31 @@
   const scTradeDirection = document.getElementById("scTradeDirection");
   const scBaseConfirmation = document.getElementById("scBaseConfirmation");
   const scLockChannel = document.getElementById("scLockChannel");
+  const scCapitalZones = document.getElementById("scCapitalZones");
+  const scGridCutLossMode = document.getElementById("scGridCutLossMode");
+  const scFeeTier = document.getElementById("scFeeTier");
+  const scBudget = document.getElementById("scBudget");
   const scannerProgressFill = document.getElementById("scannerProgressFill");
+
+  // Dynamic visibility for trading engine options
+  function updateOptionVisibility(engine, containerSelector) {
+    const root = containerSelector ? document.querySelector(containerSelector) : document;
+    if (!root) return;
+
+    const isGridOnly = engine === "dynamic_grid";
+    const isSniperOnly = engine === "dip_hunter" || engine === "trend_rider" || engine === "dual";
+    const isDualHybrid = engine === "dual_hybrid";
+
+    // Grid options
+    root.querySelectorAll('[data-mode="grid"]').forEach((el) => {
+      el.style.display = (isGridOnly || isDualHybrid) ? "" : "none";
+    });
+
+    // Sniper options
+    root.querySelectorAll('[data-mode="sniper"]').forEach((el) => {
+      el.style.display = (isSniperOnly || isDualHybrid) ? "" : "none";
+    });
+  }
 
   function initScannerEvents() {
     loadLatestScannerResults();
@@ -2178,6 +2225,7 @@
       btnOpenScanner.addEventListener("click", () => {
         scannerModalBackdrop.style.display = "flex";
         loadLatestScannerResults();
+        if (scTradeMode) updateOptionVisibility(scTradeMode.value, ".scanner-controls-bar");
       });
     }
 
@@ -2205,7 +2253,9 @@
     if (scTradeMode) {
       scTradeMode.addEventListener("change", (e) => {
         applyOptimalPreset(e.target.value, "scanner");
+        updateOptionVisibility(e.target.value, ".scanner-controls-bar");
       });
+      updateOptionVisibility(scTradeMode.value, ".scanner-controls-bar");
     }
 
     const btnScannerResetBestPreset = document.getElementById("btnScannerResetBestPreset");
@@ -2226,18 +2276,20 @@
         const timeframe = scTimeframe?.value || "5m";
         const limit = Number(scLimit?.value) || 1000;
         const spread = scSpread?.value || "auto";
-        const budget = Number(inpBudget?.value) || 200;
+        const budget = Number(scBudget?.value) || Number(inpBudget?.value) || 200;
         const useRatchetSl = scSlMode ? scSlMode.value === "ratchet" : (inpSlMode ? inpSlMode.value === "ratchet" : true);
-        const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
+        const feeTier = scFeeTier ? scFeeTier.value : (inpFeeTier ? inpFeeTier.value : "bnb");
         const macroGateMode = scMacroGate ? scMacroGate.value : (inpMacroGate ? inpMacroGate.value : "off");
         const enableCircuitBreaker = scCircuitBreaker ? scCircuitBreaker.value === "on" : (inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true);
         const enableUpsideFloor = scUpsideFloor ? scUpsideFloor.value === "on" : (inpUpsideFloor ? inpUpsideFloor.value === "on" : true);
         const enableFastCut = scFastCut ? scFastCut.value === "on" : (inpFastCut ? inpFastCut.value === "on" : true);
         const maxSlPct = scMaxSl ? Number(scMaxSl.value) : (inpMaxSl ? Number(inpMaxSl.value) : 1.80);
-        const tradeMode = scTradeMode ? scTradeMode.value : (inpTradeMode ? inpTradeMode.value : "dip_hunter");
+        const tradeMode = scTradeMode ? scTradeMode.value : (inpTradeMode ? inpTradeMode.value : "dual_hybrid");
         const tradeDirection = scTradeDirection ? scTradeDirection.value : (inpTradeDirection ? inpTradeDirection.value : "long");
         const enableBaseConfirmationFilter = scBaseConfirmation ? scBaseConfirmation.value === "on" : false;
         const lockChannelInPosition = scLockChannel ? scLockChannel.value === "locked" : false;
+        const capitalZones = scCapitalZones ? (Number(scCapitalZones.value) || 2) : (inpCapitalZones ? (Number(inpCapitalZones.value) || 2) : 2);
+        const gridCutLossMode = scGridCutLossMode ? scGridCutLossMode.value : (inpGridCutLossMode ? inpGridCutLossMode.value : "none");
 
         btnStartScan.disabled = true;
         let pollInterval = null;
@@ -2291,6 +2343,12 @@
               enableBaseConfirmationFilter,
               enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
               lockChannelInPosition,
+              capitalZones,
+              gridCutLossMode,
+              minChannelWidthPct: 6.0,
+              maxChannelWidthPct: 25.0,
+              donchianPeriod: 48,
+              channelMode: "DONCHIAN_ATR",
             }),
           });
 

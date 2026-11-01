@@ -882,6 +882,12 @@ export class DashboardServer {
           const maxSlPct = parsed.maxSlPct !== undefined ? Number(parsed.maxSlPct) : 1.80;
           const lockChannelInPosition = parsed.lockChannelInPosition !== undefined ? Boolean(parsed.lockChannelInPosition) : (liveCfg.lockChannelInPosition !== false);
           const enableBaseConfirmationFilter = parsed.enableBaseConfirmationFilter !== undefined ? Boolean(parsed.enableBaseConfirmationFilter) : false;
+          const capitalZones = parsed.capitalZones !== undefined ? (Number(parsed.capitalZones) || 2) : (Number(liveCfg.capitalZones) || 2);
+          const gridCutLossMode = parsed.gridCutLossMode || (liveCfg.gridCutLossMode as any) || "none";
+          const minChannelWidthPct = Number(parsed.minChannelWidthPct) || 6.0;
+          const maxChannelWidthPct = Number(parsed.maxChannelWidthPct) || 25.0;
+          const donchianPeriod = Number(parsed.donchianPeriod) || 48;
+          const channelMode = parsed.channelMode || "DONCHIAN_ATR";
 
           let scanCostModel: { feePctPerSide: number; slippagePctPerFill: number } | undefined;
           if (parsed.feeTier === "zero" || parsed.feeTier === "none") {
@@ -924,6 +930,12 @@ export class DashboardServer {
             tradeDirection: parsed.tradeDirection || (liveCfg.maFanTradeDirection as any) || "long",
             enableBaseConfirmationFilter,
             lockChannelInPosition,
+            capitalZones,
+            gridCutLossMode,
+            minChannelWidthPct,
+            maxChannelWidthPct,
+            donchianPeriod,
+            channelMode,
             onProgress: (p) => {
               this.currentScanProgress = p;
               this.broadcast("scan_progress", p);

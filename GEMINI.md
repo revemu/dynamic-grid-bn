@@ -7125,4 +7125,42 @@ When investigating live production behavior, debugging issues, or analyzing trad
   3. **Bump Version**:
      - ปรับ Version เป็น `0.2.217` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 244. Market Scanner Options Alignment & Dynamic Mode-Based Visibility (v0.2.218)
+
+- **สาเหตุและความต้องการ**:
+  1. **Market Scanner ขาด Options สำหรับ Dynamic Grid**:
+     - เดิมในแถบควบคุมของ Market Scanner (`public/backtest.html`) ขาดตัวเลือก:
+       - `scCapitalZones` (แบ่งเงินทุนโซน: 1..5 โซน)
+       - `scGridCutLossMode` (การตัดขาดทุน: none, final_zone_floor, entry_floor)
+       - `scFeeTier` (ค่าฟี: bnb, standard, zero)
+       - `scBudget` (เงินทุน $)
+     - ส่งผลให้เวลาสแกนเหรียญด้วยโหมด `dynamic_grid` หรือ `dual_hybrid` ระบบไม่สามารถส่งหรือใช้ค่า Capital Zones หรือ Cut Loss Mode ได้
+  2. **ความต้องการซ่อน Option ที่ไม่ได้ใช้ในแต่ละระบบเทรด (Dynamic Visibility)**:
+     - ผู้ใช้ต้องการให้ UI ซ่อนตัวเลือกที่ไม่เกี่ยวข้องกับระบบเทรดที่เลือก เพื่อความสะอาดและไม่สับสน
+- **การจำแนก Options ตามระบบเทรด**:
+  - **โหมด 🕸️ Dynamic Grid (`dynamic_grid`)**:
+    - **แสดง (Option ที่ใช้)**: Timeframe, Limit, Fee Tier, Budget, Engine, HL Filter (`enableBaseConfirmationFilter`), Channel (`lockChannel`), Capital Zones (`capitalZones`), Cut Loss Mode (`gridCutLossMode`)
+    - **ซ่อน (Option ที่ไม่ได้ใช้)**: Min Fan Spread, SL Mode, Macro Gate (1H), Circuit Breaker, Upside Floor, Fast Cut, Max SL Cap, Trade Direction
+  - **โหมด 🎯 MA Fan Sniper (`dip_hunter`, `trend_rider`, `dual`)**:
+    - **แสดง (Option ที่ใช้)**: Timeframe, Limit, Fee Tier, Budget, Engine, Min Fan Spread, SL Mode, Macro Gate (1H), Circuit Breaker, Upside Floor, Fast Cut, Max SL Cap, Trade Direction
+    - **ซ่อน (Option ที่ไม่ได้ใช้)**: HL Filter, Channel, Capital Zones, Cut Loss Mode
+  - **โหมด ⚡🕸️ Dual Hybrid (`dual_hybrid`)**:
+    - **แสดงครบทุกตัวเลือก** ทั้งส่วนของ Grid และ Sniper
+- **การแก้ไข (v0.2.218)**:
+  1. **เพิ่ม Options ที่ขาดใน `public/backtest.html`**:
+     - เพิ่ม `scCapitalZones`, `scGridCutLossMode`, `scFeeTier`, `scBudget`
+     - กำหนดแอตทริบิวต์ `data-mode="grid"` และ `data-mode="sniper"` ทั้งใน Backtest Header (`.bt-input-group`) และ Scanner (`.scanner-ctrl-group`)
+  2. **ระบบซ่อน/แสดงอัตโนมัติ (`updateOptionVisibility` ใน `public/backtest.js`)**:
+     - เมื่อผู้ใช้เปลี่ยน Engine ใน Backtest หรือ Scanner ระบบจะสลับการแสดงผลของตัวเลือก Grid และ Sniper แบบเรียลไทม์ทันที
+     - ซิงค์ค่าไปยัง `applyOptimalPreset` และ `syncLiveBotConfigToForms`
+     - ส่งต่อ `capitalZones`, `gridCutLossMode`, `minChannelWidthPct: 6.0`, `donchianPeriod: 48`, `channelMode: "DONCHIAN_ATR"` จาก Scanner ไปยัง API `/api/backtest/scan`
+  3. **Backend Support (`src/server.ts` & `src/backtest-service.ts`)**:
+     - ใน `/api/backtest/scan`: parse `capitalZones`, `gridCutLossMode`, `minChannelWidthPct`, `donchianPeriod`, `channelMode`
+     - ใน `scanMarket` และ `runDualHybridSimulation`: ส่งต่อ options ทั้งหมดให้ระบบประมวลผลจำลองอย่างเที่ยงตรง
+  4. **Bump Version**:
+     - ปรับ Version เป็น `0.2.218` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+
 

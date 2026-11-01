@@ -95,6 +95,14 @@ export interface MarketScanOptions {
   tradeDirection?: "long" | "short" | "both";
   enableBaseConfirmationFilter?: boolean;
   lockChannelInPosition?: boolean;
+  capitalZones?: number;
+  gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+  channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
+  donchianPeriod?: number;
+  minChannelWidthPct?: number;
+  maxChannelWidthPct?: number;
+  zoneMinDropPct?: number;
+  zoneStabilizeCandles?: number;
   onProgress?: (info: { index: number; total: number; symbol: string; candlesCount: number; pnlPct?: number; winRate?: number; tradesCount?: number }) => void;
 }
 
@@ -942,6 +950,11 @@ export class BacktestService {
       candlesHtf?: Candle[];
       enableBaseConfirmationFilter?: boolean;
       lockChannelInPosition?: boolean;
+      channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
+      donchianPeriod?: number;
+      minChannelWidthPct?: number;
+      maxChannelWidthPct?: number;
+      floorBufferPct?: number;
       capitalZones?: number;
       zoneStabilizeCandles?: number;
       zoneMinDropPct?: number;
@@ -1100,7 +1113,14 @@ export class BacktestService {
       const c = candles[i];
       dow.addCandle(c);
 
-      const structure = dow.getStructure(c.close, undefined, { useOnlyClosedCandles: true });
+      const structure = dow.getStructure(c.close, undefined, {
+        useOnlyClosedCandles: true,
+        mode: opts.channelMode ?? "DONCHIAN_ATR",
+        donchianLookback: opts.donchianPeriod ?? 48,
+        minChannelWidthPct: opts.minChannelWidthPct ?? 6.0,
+        maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
+        floorBufferPct: opts.floorBufferPct ?? 0.0,
+      });
       let floor: number;
       let ceiling: number;
       let center: number;
@@ -1927,6 +1947,11 @@ export class BacktestService {
         candlesHtf: opts.candlesHtf,
         enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
         lockChannelInPosition: opts.lockChannelInPosition,
+        channelMode: opts.channelMode,
+        donchianPeriod: opts.donchianPeriod,
+        minChannelWidthPct: opts.minChannelWidthPct,
+        maxChannelWidthPct: opts.maxChannelWidthPct,
+        floorBufferPct: opts.floorBufferPct,
         capitalZones: opts.capitalZones,
         zoneStabilizeCandles: opts.zoneStabilizeCandles,
         zoneMinDropPct: opts.zoneMinDropPct,
@@ -2847,6 +2872,14 @@ export class BacktestService {
               trimWarmupPrefix: isAutoSpread && actualWarmup > 0,
               enableBaseConfirmationFilter: opts.enableBaseConfirmationFilter,
               lockChannelInPosition: opts.lockChannelInPosition,
+              capitalZones: opts.capitalZones ?? 2,
+              gridCutLossMode: opts.gridCutLossMode ?? "none",
+              channelMode: opts.channelMode ?? "DONCHIAN_ATR",
+              donchianPeriod: opts.donchianPeriod ?? 48,
+              minChannelWidthPct: opts.minChannelWidthPct ?? 6.0,
+              maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
+              zoneMinDropPct: opts.zoneMinDropPct ?? 2.5,
+              zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
             });
 
             results.push({
