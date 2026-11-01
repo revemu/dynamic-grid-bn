@@ -934,8 +934,8 @@ export class BacktestService {
         }
       }
 
-      // 1.5 Evaluate Signal Invalidation Check while holding lots
-      if (isTradingActive && opts.onSignalInvalidationCheck && heldLots.length > 0) {
+      // 1.5 Evaluate Signal Invalidation Check while holding lots (Checked every 12 bars = 1 hour)
+      if (isTradingActive && opts.onSignalInvalidationCheck && heldLots.length > 0 && i % 12 === 0) {
         let change24hPct = 0;
         let posRatio24h = 0.5;
         if (i >= 288) {
@@ -958,8 +958,8 @@ export class BacktestService {
         const currentPosVal = totalHeldQty * c.close * (1 - costPerFill);
         const unrealizedPnlPct = totalInvestQuote > 0 ? ((currentPosVal - totalInvestQuote) / totalInvestQuote) * 100 : 0;
 
-        const isDangerBar = (i % 6 === 0) || (c.close < floor * 0.985) || (change24hPct < -5.5);
-        if (isDangerBar) {
+        const isDanger = (c.close < floor * 0.985) || (change24hPct < -5.5) || (posRatio24h < 0.08 && unrealizedPnlPct < -2.5);
+        if (isDanger) {
           const shouldExitDisqualified = opts.onSignalInvalidationCheck({
             barIndex: i,
             time: c.time,
