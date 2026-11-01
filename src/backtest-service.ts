@@ -9,6 +9,7 @@ import path from "path";
 import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, RollingSpreadCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState, WaterfallGuardMode } from "./strategy/ma-fan/index.js";
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
 import { DowStructureEngine } from "./market-structure.js";
+import { getActiveBinanceTradingSymbols } from "./exchange/binance/client.js";
 
 export const STABLE_TOKENS = new Set([
   "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
@@ -3117,7 +3118,13 @@ export class BacktestService {
       count: number;
     }>;
 
-    let targetTickers = tickers.filter((t) => Number(t.quoteVolume) > 10_000 && Number(t.count) > 100);
+    const activeTradingSymbols = await getActiveBinanceTradingSymbols();
+
+    let targetTickers = tickers.filter((t) => {
+      const sym = t.symbol.toUpperCase();
+      if (activeTradingSymbols.size > 0 && !activeTradingSymbols.has(sym)) return false;
+      return Number(t.quoteVolume) > 10_000 && Number(t.count) > 100;
+    });
 
     if (scope === "fdusd") {
       targetTickers = targetTickers.filter((t) => t.symbol.endsWith("FDUSD") && !STABLE_TOKENS.has(t.symbol.slice(0, -5)));
@@ -3321,9 +3328,11 @@ export class BacktestService {
 
       const tickers = (await tickerRes.json()) as Array<{ symbol: string; quoteVolume: string; count: number }>;
       const minVol = quote === "FDUSD" ? 500_000 : 2_000_000;
+      const activeTradingSymbols = await getActiveBinanceTradingSymbols();
 
       let filtered = tickers.filter((t) => {
         const sym = t.symbol.toUpperCase();
+        if (activeTradingSymbols.size > 0 && !activeTradingSymbols.has(sym)) return false;
         if (!sym.endsWith(quote)) return false;
         const base = sym.slice(0, -quote.length);
         if (STABLE_TOKENS.has(base)) return false;

@@ -3079,7 +3079,12 @@
     }
 
     // Live Bot Action / Waiting Indicator Banner
-    if (data.isPaused && elBotStatusBanner) {
+    if (data.symbolStatus && data.symbolStatus !== "TRADING" && elBotStatusBanner) {
+      elBotStatusBanner.className = "bot-status-banner banner-danger";
+      if (elBannerStatusTitle) elBannerStatusTitle.textContent = `⚠️ คู่เหรียญ ${rawSymbol} ถูกระงับการซื้อขายบน Binance (Status: ${data.symbolStatus})`;
+      if (elBannerReasonText) elBannerReasonText.textContent = "Binance ได้ระงับการจับคู่คำสั่งของคู่นี้ (Orderbook ว่างเปล่า) บอทไม่สามารถวาง Order ได้";
+      if (elBannerTriggerText) elBannerTriggerText.textContent = "กรุณากดสลับคู่เหรียญด้านบนไปเป็นเหรียญที่มีการซื้อขายปกติ";
+    } else if (data.isPaused && elBotStatusBanner) {
       elBotStatusBanner.className = "bot-status-banner banner-warning";
       if (elBannerStatusTitle) elBannerStatusTitle.textContent = "⏸️ Strategy Paused (Monitoring Mode)";
       if (elBannerReasonText) elBannerReasonText.textContent = "Chart & market structure active. Order placement/cancellation suspended.";

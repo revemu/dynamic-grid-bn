@@ -9,6 +9,7 @@
 import fs from "fs";
 import path from "path";
 import { BacktestService } from "./backtest-service.js";
+import { getActiveBinanceTradingSymbols } from "./exchange/binance/client.js";
 import type { Config } from "./config.js";
 
 export interface RotationCandidateScore {
@@ -197,9 +198,12 @@ export class AutonomousPairRotator {
       (cfg.rotationWhitelist || []).map((s) => s.toUpperCase().replace(/[\/\-_:]/g, ""))
     );
 
+    const activeTradingSymbols = await getActiveBinanceTradingSymbols();
+
     // Filter tickers matching target Quote Asset
     const prefiltered = tickers.filter((t) => {
       const sym = t.symbol.toUpperCase();
+      if (activeTradingSymbols.size > 0 && !activeTradingSymbols.has(sym)) return false;
       if (!sym.endsWith(targetQuote)) return false;
       const base = sym.slice(0, -targetQuote.length);
       if (STABLE_BASE_TOKENS.has(base)) return false;

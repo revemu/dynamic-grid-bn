@@ -273,6 +273,7 @@ export class MaFanTradingStrategy implements IStrategy {
       strategyType: "ma_fan",
       strategyMode: "ma_fan",
       symbol: this.symbolInfo.symbol,
+      symbolStatus: this.symbolInfo.status || "TRADING",
       executionTimeframe: this.cfg.maFanExecutionTimeframe || "5m",
       supervisorTimeframe: this.cfg.maFanSupervisorTimeframe || "15m",
       baseAsset: this.symbolInfo.baseAsset,

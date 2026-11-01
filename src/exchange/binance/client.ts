@@ -105,6 +105,37 @@ export function formatPrecisionString(val: number, precision: number): string {
   return val.toFixed(precision);
 }
 
+let activeSymbolsCache: { time: number; set: Set<string> } | null = null;
+
+/**
+ * Fetch and cache the list of active TRADING spot symbols from Binance exchangeInfo.
+ * Filters out suspended (BREAK), halted, or delisted symbols.
+ */
+export async function getActiveBinanceTradingSymbols(forceFresh = false): Promise<Set<string>> {
+  const now = Date.now();
+  if (!forceFresh && activeSymbolsCache && now - activeSymbolsCache.time < 300_000) {
+    return activeSymbolsCache.set;
+  }
+  try {
+    const res = await fetch("https://api.binance.com/api/v3/exchangeInfo", {
+      headers: { "User-Agent": "dynamic-grid-bn/symbols" },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as any;
+      const set = new Set<string>(
+        (data.symbols || [])
+          .filter((s: any) => s.status === "TRADING" && s.isSpotTradingAllowed !== false)
+          .map((s: any) => s.symbol.toUpperCase()),
+      );
+      activeSymbolsCache = { time: now, set };
+      return set;
+    }
+  } catch (err: any) {
+    console.warn(`[Binance] Failed to fetch active exchangeInfo symbols: ${err.message}`);
+  }
+  return activeSymbolsCache ? activeSymbolsCache.set : new Set();
+}
+
 /**
  * Helper to sanitize raw HTTP error response bodies (especially multi-line HTML from CloudFront, WAF, or Nginx)
  * into a clean, concise single-line error message.
@@ -484,6 +515,12 @@ export class BinanceClient implements IExchangeClient {
   public async placeOrder(params: PlaceOrderParams): Promise<BinanceOrderResult> {
     const info = await this.getExchangeInfo(params.symbol);
     const sym = info.symbol;
+
+    if (info.status && info.status !== "TRADING") {
+      throw new Error(
+        `[Binance] Symbol ${sym} trading is suspended/halted by Binance (Status: ${info.status}). Orders cannot be placed.`,
+      );
+    }
 
     // Format quantity according to stepSize
     const cleanQty = roundToStep(params.qty, info.stepSize, info.qtyPrecision);

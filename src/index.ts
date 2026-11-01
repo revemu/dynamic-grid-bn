@@ -435,6 +435,9 @@ async function main(): Promise<void> {
           }
 
           const nextInfo = await exchange.getExchangeInfo(targetSymbol);
+          if (exchange.exchangeName === "binance" && nextInfo.status && nextInfo.status !== "TRADING") {
+            throw new Error(`Symbol ${nextInfo.symbol} is currently suspended/halted by Binance (Status: ${nextInfo.status}). Cannot trade.`);
+          }
           symbolInfo = nextInfo;
           await initFeeds(nextInfo.symbol);
           grid.updateExchangeClient(newExchange, nextInfo, atrSource!);
@@ -470,6 +473,9 @@ async function main(): Promise<void> {
         try {
           // Validate symbol on exchange first before cancelling existing orders
           const nextInfo = await exchange.getExchangeInfo(nextSymbolStr);
+          if (exchange.exchangeName === "binance" && nextInfo.status && nextInfo.status !== "TRADING") {
+            throw new Error(`Symbol ${nextInfo.symbol} is currently suspended/halted by Binance (Status: ${nextInfo.status}). Cannot trade.`);
+          }
           // Cancel all resting orders on the old pair (and sweep any orphan quote-locking orders) before switching
           await grid.prepareForSymbolSwitch(nextInfo.symbol);
           symbolInfo = nextInfo;

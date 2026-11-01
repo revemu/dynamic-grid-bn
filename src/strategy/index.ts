@@ -3749,17 +3749,18 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     let isHighBidOpportunity = false;
     let laggardState: "PARITY" | "CHEAP_ASK" | "HIGH_BID" | "LAGGING_OVERPRICED" | "LAGGING_UNDERPRICED" = "PARITY";
 
-    if (binancePrice !== undefined && binancePrice > 0) {
+    const isDexExchange = this.binance.exchangeName === "dreamdex" || this.binance.isDex;
+    if (isDexExchange && binancePrice !== undefined && binancePrice > 0) {
       dislocationPct = mid !== undefined ? ((mid - binancePrice) / binancePrice) * 100 : 0;
-      if (bestAsk !== undefined) {
+      if (bestAsk !== undefined && bestAsk > 0) {
         askDiscountPct = ((binancePrice - bestAsk) / binancePrice) * 100;
       }
-      if (bestBid !== undefined) {
+      if (bestBid !== undefined && bestBid > 0) {
         bidPremiumPct = ((bestBid - binancePrice) / binancePrice) * 100;
       }
 
-      isCheapAskOpportunity = askDiscountPct >= this.cfg.laggardThresholdPct;
-      isHighBidOpportunity = bidPremiumPct >= this.cfg.laggardThresholdPct;
+      isCheapAskOpportunity = bestAsk !== undefined && bestAsk > 0 && askDiscountPct >= this.cfg.laggardThresholdPct;
+      isHighBidOpportunity = bestBid !== undefined && bestBid > 0 && bidPremiumPct >= this.cfg.laggardThresholdPct;
 
       if (isCheapAskOpportunity) {
         laggardState = "CHEAP_ASK";
@@ -4517,6 +4518,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           p2: { time: uptrendLine.p2.time, price: uptrendLine.p2.price },
         } : undefined,
         symbol: this.symbol,
+        symbolStatus: this.symbolInfo.status || "TRADING",
         exchange: this.binance.exchangeName,
         binanceSymbol: this.cfg.binanceSymbol,
         baseAsset: this.symbolInfo.baseAsset,

@@ -7547,3 +7547,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่มกล่องยืนยันถามผู้ใช้ว่าต้องการสั่ง Resume บอทและเริ่มวางออเดอร์ทันทีเลยหรือไม่ เพื่อความสะดวกในการเริ่มเทรดโดยไม่ต้องกด Resume ซ้ำที่หน้าแดชบอร์ด
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.5`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+
+---
+
+### 256. Real-Time Binance Active Trading Symbols Gating, Delisted/Halted Symbol Isolation & Laggard Guard Refinement (v0.3.0.6)
+
+- **สาเหตุที่บอทไม่ตั้ง Order บน ENSOFDUSD (Root Cause Analysis)**:
+  1. **สัญลักษณ์ถูกระงับการซื้อขายบน Binance (`Status: BREAK`)**: Binance ได้ทำการพักการซื้อขายคู่ `ENSOFDUSD` ตั้งแต่วันที่ 30 มกราคม 2026 โดยมีสถานะเป็น `BREAK`, Orderbook ฝั่ง Bid และ Ask เป็น `0.00000000`, และไม่มีแท่งเทียนใหม่เกิดขึ้นเลยนับจากนั้น
+  2. **Empty Book Safety Dislocation**: ใน `src/strategy/index.ts` เมื่อบอทพบว่า `bestBid <= 0 || bestAsk <= 0` ระบบความปลอดภัยจะตั้งค่า `isSpreadDislocated = true` ("one-sided or empty book") และสั่ง `return` ออกจากการทำงานของ `tick()` ทันทีเพื่อป้องกันการส่งออเดอร์เข้ากระดานที่ไม่มีสภาพคล่อง ส่งผลให้บอทไม่ตั้ง Order ใดๆ ทั้งสิ้น
+  3. **Laggard Arbitrage Fake Trigger**: เมื่อ `bestAsk === 0` สูตรคำนวณส่วนลด `((binancePrice - bestAsk) / binancePrice) * 100` ได้ผลลัพธ์เป็น 100% discount ทำให้เกิดข้อความแจ้งเตือนที่ผิดปกติ `⚡ Cheap Ask: DEX Ask 100.0% < Binance — Executing snipe buy` บนกระดาน Binance CEX ซึ่งไม่มี DEX อยู่จริง
+  4. **หลุดเข้ามาใน Scanner & Rotation ได้อย่างไร**: เดิมที Market Scanner, Multi-Pair Rotation Backtest และ Auto-Rotation Engine ดึงรายชื่อเหรียญจาก `https://api.binance.com/api/v3/ticker/24hr` ซึ่ง API เส้นนี้ส่งกลับทุกเหรียญในระบบรวมถึงเหรียญที่ถูกพักหรือปิดการซื้อขายไปแล้ว
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **ระบบคัดกรองเหรียญที่เทรดได้จริงแบบ Real-time (`getActiveBinanceTradingSymbols` ใน `src/exchange/binance/client.ts`)**:
+     - เพิ่มฟังก์ชันดึงและแคช (5 นาที) ข้อมูลจาก `https://api.binance.com/api/v3/exchangeInfo`
+     - กรองเฉพาะเหรียญที่ `status === "TRADING"` และ `isSpotTradingAllowed !== false` เท่านั้น (ตัดเหรียญ `BREAK`, `HALT`, `DELISTED` ทิ้ง 100%)
+     - ป้องกันที่ระดับ Adapter: ใน `placeOrder()` หากเหรียญไม่ใช่ `TRADING` จะปฏิเสธการส่งออเดอร์ทันที
+  2. **เชื่อมต่อตัวกรองเข้ากับ Market Scanner & Backtest (`src/backtest-service.ts`)**:
+     - ใน `scanMarket()`: กรองเหรียญทั้งหมวด **FDUSD** (29 คู่ที่เทรดได้จริง) และ **USDT** ผ่าน `getActiveBinanceTradingSymbols()` ตัดเหรียญที่ไม่แอคทีฟทิ้งทั้งหมด 100%
+     - ใน `fetchTopUniverseCandles()`: กรอง Universe ของการสลับเหรียญ Multi-Pair Rotation ให้มีเฉพาะเหรียญที่เปิดซื้อขายปกติ
+  3. **เชื่อมต่อตัวกรองเข้ากับ Auto-Rotation จริง (`src/pair-rotator.ts`)**:
+     - คัดกรองคู่เหรียญที่ผ่านเข้าสู่ Stage 1 ด้วย `getActiveBinanceTradingSymbols()` ป้องกันไม่ให้บอทจริงสลับไปถือเหรียญที่ถูกระงับ
+  4. **ปิดระบบ Laggard Arbitrage บน CEX (`src/strategy/index.ts`)**:
+     - บังคับเงื่อนไข `isDexExchange = this.binance.exchangeName === "dreamdex" || this.binance.isDex` และต้องมี `bestAsk > 0 && bestBid > 0` จึงจะเปิดใช้งานตรรกะ Cheap Ask / High Bid ตัดปัญหาข้อความ "DEX Ask 100% < Binance" บน Binance โดยเด็ดขาด
+  5. **เพิ่มการแจ้งเตือนบนหน้าแดชบอร์ด (`public/app.js` & `src/index.ts`)**:
+     - ส่ง `symbolStatus` ผ่าน Telemetry Tick: หากเหรียญปัจจุบันติดสถานะไม่ปกติ (เช่น `BREAK`) แถบสถานะด้านบนจะเปลี่ยนเป็นสีแดงเตือนทันที: `⚠️ คู่เหรียญ ${symbol} ถูกระงับการซื้อขายบน Binance (Status: ${status})`
+     - ใน `src/index.ts`: หากผู้ใช้พยายามสลับเหรียญไปเป็นเหรียญที่ไม่ใช่ `TRADING` บน Binance ระบบจะปฏิเสธคำขอทันที
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.6`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
