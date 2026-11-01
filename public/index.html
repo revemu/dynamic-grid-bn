@@ -2391,9 +2391,14 @@
               <div class="tm-pill text-cyan">Holding Qty: <b id="tmSummaryLotsQty">0.00 BASE</b></div>
               <div class="tm-pill text-purple">Avg Entry: <b id="tmSummaryLotsAvgPrice">$0.0000</b></div>
             </div>
-            <button class="btn btn-primary btn-sm" id="tmBtnOpenAddLot">
-              <span>➕ เพิ่ม Holding Lot</span>
-            </button>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-outline-danger btn-sm" id="tmBtnClearLots" title="ล้างล็อตและเศษเหรียญคงค้างทั้งหมด (Reset 0 Lots)" style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; font-size: 11px; padding: 4px 10px; border-radius: 6px; cursor: pointer;">
+                <span>🧹 ล้างเศษล็อตคงค้าง (0 Lots)</span>
+              </button>
+              <button class="btn btn-primary btn-sm" id="tmBtnOpenAddLot">
+                <span>➕ เพิ่ม Holding Lot</span>
+              </button>
+            </div>
           </div>
 
           <div class="tm-lots-grid" id="tmLotsGrid">

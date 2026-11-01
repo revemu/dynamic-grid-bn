@@ -372,15 +372,26 @@ async function main(): Promise<void> {
 
       const symbolChanged = Boolean(normNextSymbol && normNextSymbol !== normPrevSymbol);
 
-      // Lock Trading Pair & Exchange switch when bot holds an active position
-      const isHoldingPosition = grid.baseHeld() > (symbolInfo?.minQty ?? 0.0001) || grid.getLots().length > 0;
-      if ((symbolChanged || exchangeChanged) && isHoldingPosition) {
-        const heldAmount = grid.baseHeld();
-        const lotCount = grid.getLots().length;
-        const baseName = symbolInfo?.baseAsset || "tokens";
-        const errMsg = `Cannot switch trading pair or exchange while holding active position (${heldAmount.toFixed(4)} ${baseName} held across ${lotCount} lot(s)). Please exit or close position first.`;
-        log(`⛔ [PAIR SWITCH BLOCKED] ${errMsg}`);
-        throw new Error(errMsg);
+      // Lock Trading Pair & Exchange switch when bot holds a REAL active position (ignore residual dust < $1.00)
+      const refPrice = grid.lastRefPrice || grid.getAvgEntryPrice?.() || 1;
+      const heldAmount = grid.baseHeld();
+      const notionalHeld = heldAmount * refPrice;
+      const minQty = symbolInfo?.minQty ?? 0.0001;
+      const isDust = notionalHeld < 1.0 || (heldAmount < minQty * 2 && notionalHeld < 2.0);
+      const isHoldingPosition = !isDust && heldAmount >= minQty && grid.getLots().length > 0;
+
+      if (symbolChanged || exchangeChanged) {
+        if (isHoldingPosition) {
+          const lotCount = grid.getLots().length;
+          const baseName = symbolInfo?.baseAsset || "tokens";
+          const errMsg = `Cannot switch trading pair or exchange while holding active position (${heldAmount.toFixed(4)} ${baseName} | ${notionalHeld.toFixed(2)} held across ${lotCount} lot(s)). Please exit or close position first.`;
+          log(`⛔ [PAIR SWITCH BLOCKED] ${errMsg}`);
+          throw new Error(errMsg);
+        } else if (isDust && (heldAmount > 0 || grid.getLots().length > 0)) {
+          log(`🧹 [PAIR SWITCH] Auto-cleared residual dust position (${heldAmount.toFixed(4)} ${symbolInfo?.baseAsset || "tokens"} | ${notionalHeld.toFixed(4)}) before switching trading pair.`);
+          grid.clearPositionState?.();
+          grid.saveState(true);
+        }
       }
 
       const res = grid.updateRuntimeSettings(s);
@@ -735,7 +746,13 @@ async function main(): Promise<void> {
     onCancelAll: () => grid.cancelAllOrdersUser(),
     onSellAll: () => grid.sellAllUser(),
     onResetBot: (opts) => grid.resetBotState(opts),
-    onResetPosition: () => grid.resetPosition(),
+    onResetPosition: async () => {
+      const res = await grid.resetPosition();
+      const currentSym = grid.getRuntimeConfig().symbol || activeSymbol;
+      grid.getDatabase().clearLots(currentSym);
+      if (grid.getSymbolKey) grid.getDatabase().clearLots(grid.getSymbolKey());
+      return res;
+    },
     onReloadState: () => {
       grid.reloadState();
       grid.emitTelemetryTick();

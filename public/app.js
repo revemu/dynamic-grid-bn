@@ -7623,6 +7623,33 @@
       elAddLotModal.style.display = "none";
     }
   };
+  const elTmBtnClearLots = document.getElementById("tmBtnClearLots");
+  if (elTmBtnClearLots) {
+    elTmBtnClearLots.addEventListener("click", async () => {
+      if (!confirm("ต้องการล้างล็อตและเศษเหรียญคงค้างทั้งหมด (Reset to 0 Lots) ใช่หรือไม่?")) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/bot/reset-position`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol: activeSymbol || activeBaseAsset }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (typeof showNotification === "function") {
+            showNotification("ล้างเศษล็อตคงค้างสำเร็จ (0 Lots)", "success");
+          } else {
+            alert("ล้างเศษล็อตคงค้างสำเร็จ (0 Lots)");
+          }
+          fetchTradeManagerData(activeSymbol || activeBaseAsset);
+        } else {
+          alert(`ไม่สามารถล้างล็อตได้: ${data.error || "Unknown error"}`);
+        }
+      } catch (err) {
+        alert(`เกิดข้อผิดพลาด: ${err.message}`);
+      }
+    });
+  }
+
   if (elTmBtnOpenAddLot)
     elTmBtnOpenAddLot.addEventListener("click", () => {
       if (elAddLotStatus) elAddLotStatus.textContent = "";

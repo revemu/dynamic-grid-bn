@@ -102,10 +102,13 @@ export class LotTracker {
       if (lot.qty <= 1e-12) this.host.lots.shift();
     }
 
-    // If remaining inventory is less than half minQty or 1e-6, treat position as completely flat/closed
+    // If remaining inventory is less than half minQty or notional value < $1.00, treat position as completely flat/closed
+    const remainingHeld = this.baseHeld();
+    const remainingValue = remainingHeld * exitPrice;
     const dustThreshold = (this.host.minQty ? this.host.minQty * 0.5 : 1e-6);
-    if (this.baseHeld() < dustThreshold) {
+    if (remainingHeld < dustThreshold || remainingValue < 1.0) {
       this.host.clearPositionState();
+      this.host.saveState(true);
     }
 
     return { closedQty: qty - remaining, roundPnl };

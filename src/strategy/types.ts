@@ -233,6 +233,10 @@ export interface IStrategy {
   saveState(immediate?: boolean): void;
 
   // Portfolio & Balances
+  lastRefPrice?: number;
+  getAvgEntryPrice?(): number;
+  clearPositionState?(): void;
+  getSymbolKey?(): string;
   baseHeld(): number;
   getLots(): Lot[];
   refreshWalletBalances(): Promise<any>;

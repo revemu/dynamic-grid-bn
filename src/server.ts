@@ -550,6 +550,27 @@ export class DashboardServer {
       return;
     }
 
+    // Lot Manager: Clear All Lots / Dust Reset
+    if (pathname === "/api/db/lots/clear" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          const symbol = parsed.symbol || (this.opts.getSettings ? this.opts.getSettings().symbol : undefined);
+          const result = this.db.clearLots(symbol);
+          this.opts.onReloadState?.();
+          this.broadcast("lots_updated", { lots: [] });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, lots: [] }));
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        }
+      });
+      return;
+    }
+
     // Lot Manager: Add Lot
     if (pathname === "/api/db/lots/add" && req.method === "POST") {
       let body = "";

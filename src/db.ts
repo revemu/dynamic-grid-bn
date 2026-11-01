@@ -1842,9 +1842,24 @@ export class BotDatabase {
 
   // ── Strategy State CRUD ───────────────────────────────────────────────────
 
+  public resolveSymbolStateKey(symbolKey?: string): string | undefined {
+    if (!symbolKey || !this.data.statesBySymbol) return undefined;
+    if (this.data.statesBySymbol[symbolKey]) return symbolKey;
+
+    const normQuery = symbolKey.toUpperCase().replace(/[\/\-_:]/g, "");
+    for (const key of Object.keys(this.data.statesBySymbol)) {
+      const normKey = key.toUpperCase().replace(/[\/\-_:]/g, "");
+      if (normKey === normQuery || normKey.endsWith(normQuery) || normQuery.endsWith(normKey)) {
+        return key;
+      }
+    }
+    return undefined;
+  }
+
   public getState(symbolKey?: string): StrategyStateRecord {
-    if (symbolKey && this.data.statesBySymbol && this.data.statesBySymbol[symbolKey]) {
-      return { ...this.data.state, ...this.data.statesBySymbol[symbolKey] };
+    const targetKey = this.resolveSymbolStateKey(symbolKey);
+    if (targetKey && this.data.statesBySymbol && this.data.statesBySymbol[targetKey]) {
+      return { ...this.data.state, ...this.data.statesBySymbol[targetKey] };
     }
     return { ...this.data.state };
   }
@@ -1859,11 +1874,15 @@ export class BotDatabase {
       if (!this.data.statesBySymbol) {
         this.data.statesBySymbol = {};
       }
-      this.data.statesBySymbol[symbolKey] = {
-        ...(this.data.statesBySymbol[symbolKey] || {}),
+      const targetKey = this.resolveSymbolStateKey(symbolKey) || symbolKey;
+      this.data.statesBySymbol[targetKey] = {
+        ...(this.data.statesBySymbol[targetKey] || {}),
         ...state,
         lastUpdated: Date.now(),
       };
+      if (Array.isArray(state.lots)) {
+        this.data.state.lots = [...state.lots];
+      }
     }
     if (immediate) {
       this.flushSync();
@@ -2689,10 +2708,23 @@ export class BotDatabase {
     return { success: true, order: record };
   }
 
+  public clearLots(symbolKey?: string): { success: boolean; lots: Lot[] } {
+    if (this.data.state) {
+      this.data.state.lots = [];
+    }
+    const targetKey = this.resolveSymbolStateKey(symbolKey) || symbolKey;
+    if (targetKey && this.data.statesBySymbol && this.data.statesBySymbol[targetKey]) {
+      this.data.statesBySymbol[targetKey]!.lots = [];
+    }
+    this.flushSync();
+    return { success: true, lots: [] };
+  }
+
   public updateLot(index: number, lot: Lot, symbolKey?: string): { success: boolean; lots: Lot[]; error?: string } {
+    const targetKey = this.resolveSymbolStateKey(symbolKey) || symbolKey;
     let targetLots = this.data.state?.lots;
-    if (symbolKey && this.data.statesBySymbol && this.data.statesBySymbol[symbolKey]?.lots) {
-      targetLots = this.data.statesBySymbol[symbolKey]!.lots;
+    if (targetKey && this.data.statesBySymbol && this.data.statesBySymbol[targetKey]?.lots) {
+      targetLots = this.data.statesBySymbol[targetKey]!.lots;
     }
     if (!targetLots || index < 0 || index >= targetLots.length) {
       return { success: false, lots: targetLots || [], error: "Lot index out of bounds" };
@@ -2710,9 +2742,10 @@ export class BotDatabase {
   }
 
   public deleteLot(index: number, symbolKey?: string): { success: boolean; lots: Lot[]; error?: string } {
+    const targetKey = this.resolveSymbolStateKey(symbolKey) || symbolKey;
     let targetLots = this.data.state?.lots;
-    if (symbolKey && this.data.statesBySymbol && this.data.statesBySymbol[symbolKey]?.lots) {
-      targetLots = this.data.statesBySymbol[symbolKey]!.lots;
+    if (targetKey && this.data.statesBySymbol && this.data.statesBySymbol[targetKey]?.lots) {
+      targetLots = this.data.statesBySymbol[targetKey]!.lots;
     }
     if (!targetLots || index < 0 || index >= targetLots.length) {
       return { success: false, lots: targetLots || [], error: "Lot index out of bounds" };
@@ -2735,10 +2768,11 @@ export class BotDatabase {
     };
     let targetLots = this.data.state.lots;
     if (symbolKey) {
+      const targetKey = this.resolveSymbolStateKey(symbolKey) || symbolKey;
       if (!this.data.statesBySymbol) this.data.statesBySymbol = {};
-      if (!this.data.statesBySymbol[symbolKey]) this.data.statesBySymbol[symbolKey] = this.getDefaultState();
-      if (!this.data.statesBySymbol[symbolKey]!.lots) this.data.statesBySymbol[symbolKey]!.lots = [];
-      targetLots = this.data.statesBySymbol[symbolKey]!.lots!;
+      if (!this.data.statesBySymbol[targetKey]) this.data.statesBySymbol[targetKey] = this.getDefaultState();
+      if (!this.data.statesBySymbol[targetKey]!.lots) this.data.statesBySymbol[targetKey]!.lots = [];
+      targetLots = this.data.statesBySymbol[targetKey]!.lots!;
       targetLots.push(newLot);
       if (this.data.state.lots !== targetLots) {
         this.data.state.lots.push(newLot);

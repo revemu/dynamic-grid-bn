@@ -7197,5 +7197,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
   5. **Bump Version**:
      - ปรับ Version เป็น `0.2.219` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
 
+### 246. Residual Dust Protection, Prefix-Agnostic State Lookup & 0-Lot Auto Clearance (v0.2.220)
 
+- **สาเหตุของปัญหา**:
+  1. **สลับคู่เหรียญไม่ได้เพราะติดเศษเหรียญ (Residual Dust Blocks Symbol Switching)**:
+     - ใน `src/index.ts` เมธอด `onUpdateSettings` ตรวจสอบเฉพาะ `baseHeld > minQty`
+     - สำหรับคู่เทรด INITUSDT มี `minQty = 0.1 INIT` เมื่อบอทขายทำกำไร 4 ไม้สำเร็จ เหลือเศษปัดเศษเพียง `0.2 INIT` (มูลค่าเพียง ~$0.034 หรือประมาณ 1 บาทไทย)
+     - เนื่องจาก 0.2 > 0.1 ระบบจึงมองว่ามี Position ค้างอยู่และบล็อกไม่ให้เปลี่ยนคู่เหรียญ ทั้งที่บนกระดาน Binance มีขั้นต่ำ Notional $5.00 USDT ซึ่งไม่สามารถส่งคำสั่งขายเศษ 3 เซนต์นี้ได้อยู่แล้ว
+  2. **เข้าใจผิดว่ารอบการเทรดขาดทุน (Round #2 Net PnL vs Today's Sale Profit)**:
+     - การขาย 4 ไม้วันนี้ที่ราคา $0.18387–$0.18468 ทำกำไรได้จริง (+$0.8376 Gross Profit) เทียบกับทุนเฉลี่ยพอร์ต $0.18285
+     - แต่ Round #2 นับรวมออเดอร์ตั้งแต่วันที่ 30 ต.ค. ซึ่งมีไม้ขายเก่า `fill_1793371147085_ufo9t` ขายตัดขาดทุน (-$1.2064) ก่อนที่จะมีระบบ Capital Zones + ค่าธรรมเนียมเทรด Binance รวม $0.2113 ดึงให้ผลรวมทั้งรอบ 2 วันสุทธิติดลบ (-$0.5371)
+  3. **หน้าต่าง Trade Fills & Lots Manager ยังค้าง 7 ไม้ (Key Mismatch in DB & Dust Lot Retention)**:
+     - Strategy บันทึกสถานะลงใน `statesBySymbol['binance:INITUSDT']`
+     - แต่ API `/api/db/trade-manager?symbol=INITUSDT` ค้นหาด้วย `'INITUSDT'` ทำให้ Fallback กลับไปอ่านข้อมูลล็อตเก่า 7 ไม้ใน `state.lots`
+     - เศษ 0.2 INIT ไม่ถูก Auto-clear เนื่องจาก `dustThreshold = minQty * 0.5` (0.05) โดยไม่ได้ตรวจเช็คมูลค่าจริงในหน่วยดอลลาร์
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.220)**:
+  1. **Dust-Tolerant Symbol Switching (`src/index.ts`)**:
+     - ตรวจสอบมูลค่าเงินจริง Notional Value (`baseHeld * refPrice`): หากน้อยกว่า $1.00 USDT หรือน้อยกว่า 2*minQty (Notional < $2.00) ให้ถือว่าเป็น **Residual Dust**
+     - หากผู้ใช้สั่งเปลี่ยนคู่เหรียญ ระบบจะ Auto-clear เศษล็อตเดิมอัตโนมัติ (`clearPositionState()` + `saveState(true)`) และอนุญาตให้เปลี่ยนเหรียญได้ทันที ไม่บล็อกผู้ใช้อีกต่อไป
+  2. **Prefix-Agnostic State Lookup & Synchronization (`src/db.ts` & `src/server.ts`)**:
+     - เพิ่มฟังก์ชัน `resolveSymbolStateKey(symbolKey)` ใน `BotDatabase` รองรับการจับคู่สลับไปมาระหว่าง `INITUSDT` กับ `binance:INITUSDT` แบบไร้รอยต่อ
+     - ซิงค์ `state.lots` ให้ตรงกับ `statesBySymbol` เสมอใน `saveState()` ป้องกันล็อตผีค้าง
+     - เพิ่มเมธอด `clearLots(symbolKey)` ในฐานข้อมูล และสร้าง Endpoint `POST /api/db/lots/clear`
+  3. **Notional Dust Auto-Clear in Strategy & LotTracker (`src/strategy/lot-tracker.ts` & `src/strategy/index.ts`)**:
+     - ใน `LotTracker.closeLots`: หากเหลือเหรียญมูลค่า < $1.00 USD หรือน้อยกว่า dustThreshold ให้เรียก `clearPositionState()` และ `saveState(true)` ทันที
+     - ใน `DynamicGridStrategy.clearPositionState()`: สั่งล้างล็อตในฐานข้อมูล `this.db.saveState({ lots: [] }, true, symbolKey)` ทันที
+  4. **ปุ่มล้างเศษล็อตคงค้างใน UI Dashboard (`public/index.html` & `public/app.js`)**:
+     - เพิ่มปุ่ม `🧹 ล้างเศษล็อตคงค้าง (0 Lots)` ในแถบ Holding Lots เพื่อให้ผู้ใช้สามารถเคลียร์เศษเหรียญและรีเซ็ตล็อตในฐานข้อมูลได้ทันทีด้วยการคลิกเพียงครั้งเดียว
+  5. **Version Bump**:
+     - อัปเดตเวอร์ชันเป็น `0.2.220` ใน `package.json` และ `src/version.ts`

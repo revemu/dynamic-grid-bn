@@ -1703,7 +1703,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     this.lastStabilizeCandleTime = 0;
     this.lastZoneUnlockFloor = undefined;
     this.prevCandidateFloor = undefined;
-    this.db.saveLockedChannel(this.getSymbolKey(), undefined);
+    const symbolKey = this.getSymbolKey();
+    this.db.saveLockedChannel(symbolKey, undefined);
+    this.db.saveState({ lots: [] }, true, symbolKey);
   }
 
   public clampLotsTo(maxAllowedQty: number): void {
@@ -2844,13 +2846,13 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     const totalHeldBase = this.baseHeld();
     const totalHeldUsdso = totalHeldBase * refPrice;
     const dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6;
-    const isDustPosition = totalHeldBase < dustThreshold || (totalHeldUsdso < 0.05 && totalHeldBase < this.minQty);
+    const isDustPosition = totalHeldBase < dustThreshold || totalHeldUsdso < 1.0;
     if (this.lots.length > 0 && isDustPosition) {
       this.log(
         `🧹 Auto-cleared residual dust position (${totalHeldBase.toFixed(4)} ${this.baseAsset} | $${totalHeldUsdso.toFixed(4)})`,
       );
       this.clearPositionState();
-      this.saveState();
+      this.saveState(true);
     }
 
     // ── Dynamic Channel Hysteresis & Position Lock ──────────────────────────
