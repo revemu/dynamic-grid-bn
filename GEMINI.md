@@ -7442,4 +7442,39 @@ When investigating live production behavior, debugging issues, or analyzing trad
   6. **Version Bump**:
      - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.2`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 253. Market Funnel Upgrades: Dow Theory Regime Filter, HTF Overextension Guard & Rapid Idle Evaluation (v0.3.0.3)
+
+- **สาเหตุของปัญหาและข้อสังเกตจากผู้ใช้ (Motivation & Root Cause)**:
+  1. ในการทดสอบ Multi-Pair Rotation Backtest (`v0.3.0.2`) พอร์ตมี Drawdown ก้อนใหญ่มาจากเหรียญ `BEAMXUSDT` เพียงเหรียญเดียว (`-$15.47`)
+  2. จากการตรวจสอบเจาะลึกแท่งเทียน ณ วินาทีที่ Funnel คัดเลือก `BEAMXUSDT` เข้าพอร์ต พบว่า:
+     - โครงสร้าง Dow Theory แท้จริงอยู่ในสถานะ **`regime: 'DOWNTREND'`** กำลังทุบหลุดแนวรับ
+     - ราคาลอยสูงกว่าเส้นค่าเฉลี่ย **1-Hour SMA 200 ถึง +21.8%** (ภาวะ Overextension รุนแรง)
+     - Funnel เดิมหลงเชื่อผลจำลองย้อนหลัง 500 แท่ง (`simScore = 45`) ซึ่งเป็นผลกำไรจากการปั๊มในอดีตที่จบไปแล้ว (Lagging Recency Bias)
+     - และใน Stage 1 เพดาน `change24hPct` เปิดกว้างถึง `+15.0%` ทำให้เหรียญที่บินสูงปลายคลื่นหลุดเข้ามาได้
+  3. ปัญหาคอขวดประสิทธิภาพ: เมื่อเงินสดว่างเกิน 2 ชม. (`IDLE_CASH_TIMEOUT`) ตัวแปร `lastFlatTime` ไม่ได้อัปเดต ทำให้ระบบเรียก Funnel ย่อย 6 ตัวในทุกแท่ง 5 นาที ส่งผลให้การจำลองช้าลง
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **Dow Theory Regime Gate in Historical Funnel (`src/backtest-service.ts`)**:
+     - ตรวจสอบโครงสร้าง Dow Theory ผ่าน `DowStructureEngine` ในแท่ง 500 แท่งย้อนหลังก่อนรับเหรียญเข้าพอร์ต
+     - บังคับตัดสิทธิ์เหรียญที่มี **`struct.regime === "DOWNTREND"`** ออกจากการคัดเลือกทันที (ให้บอทคัดเฉพาะเหรียญที่เป็น `RANGE` ไซด์เวย์ หรือ `UPTREND` เท่านั้น)
+  2. **HTF Overextension Guard (`distSma24hPct <= 10.0%`)**:
+     - คำนวณระยะห่างระหว่างราคาปัจจุบันกับค่าเฉลี่ย 24 ชั่วโมง (288 แท่ง SMA): หากราคายืดห่างเกิน `+10.0%` จะตัดสิทธิ์ทันที เพื่อป้องกันการไปรับมีดในจังหวะแจกจ่ายของเจ้ามือ (Blow-off Top Distribution)
+  3. **Stage 1 Pump & Waterfall Guard**:
+     - ปรับลดเพดาน `change24hPct` จาก `15.0%` เหลือ `9.0%` เพื่อเน้นเหรียญสะสมพลัง
+     - เพิ่มตัวกรองโมเมนตัม 4 ชั่วโมงล่าสุด: `return4hPct >= -3.5%` ตัดเหรียญที่กำลังดิ่งลงเร็วใน 4 ชม. ล่าสุดออกไป
+  4. **Emergency Signal Exit Threshold Relaxation**:
+     - ปรับลดเกณฑ์คะแนนเหรียญทางเลือกจาก `best.compositeScore >= 60` เหลือ `>= 45` เพื่อให้บอทสามารถหมุนหนีเหรียญที่สัญญาณเสียได้รวดเร็วทันท่วงทีในภาวะตลาดดิ่งรวม
+  5. **Idle Cash Timeout Performance Optimization**:
+     - ใน `runDynamicGridSimulation`: อัปเดต `lastFlatTime = c.time` เมื่อตรวจเช็คแล้วไม่หยุด ช่วยลดการรัน Funnel ซ้ำซ้อน ส่งผลให้เวลาในการรัน Backtest 14 วัน (20 คู่) ลดลงเหลือเพียง **78.3 วินาที** (เร็วขึ้นเกือบ 5 เท่า)!
+  6. **ผลการทดสอบเชิงประจักษ์ (Empirical Backtest Results)**:
+     - พอร์ตจำลอง 14 วัน (18 ต.ค. – 1 พ.ย.): Final Equity เพิ่มขึ้นจาก `$179.91` เป็น **`$189.95`**
+     - Max Drawdown ลดลงจาก `13.6%` เหลือ **`9.6%`**
+     - ผลตอบแทนเทียบ Benchmark (BTCUSDT ติดลบ `-5.79%`) พลิกกลับมาเป็น **Alpha เป็นบวก (`+0.76%`)**
+     - คู่เหรียญที่ทำกำไรโดดเด่น: `ENAUSDT` (+5.53% / 14 ชนะรวด), `ZECUSDT` (+4.03% / 13 ชนะรวด), `NEARUSDT` (+0.79% / 4 ชนะรวด)
+  7. **Version Bump**:
+     - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.3`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+
 

@@ -931,6 +931,7 @@ export class BacktestService {
             trigger: "IDLE_CASH_TIMEOUT",
           });
           if (shouldStop) break;
+          lastFlatTime = c.time; // Reset so next check is after another interval, NOT on every 5m bar!
         }
       }
 
@@ -3448,10 +3449,15 @@ export class BacktestService {
       const change24hPct = open24h > 0 ? ((lastPrice - open24h) / open24h) * 100 : 0;
       const posRatio = (lastPrice - low24h) / (high24h - low24h);
 
+      // Check 4-hour return (recent 48 bars): avoid catching falling knives currently dumping
+      const open4h = slice24h[Math.max(0, slice24h.length - 48)]?.open ?? open24h;
+      const return4hPct = open4h > 0 ? ((lastPrice - open4h) / open4h) * 100 : 0;
+
       if (quoteVol24h < minVol) continue;
       if (range24hPct < 4.0 || range24hPct > 22.0) continue;
-      if (change24hPct < -5.5 || change24hPct > 15.0) continue;
+      if (change24hPct < -5.5 || change24hPct > 9.0) continue; // Capped at 9.0% to prevent buying blow-off tops
       if (posRatio < 0.10 || posRatio > 0.65) continue;
+      if (return4hPct < -3.5) continue; // Reject coins in active waterfall dump over past 4 hours
 
       const activityScore = quoteVol24h * (range24hPct / 100);
       stage1Candidates.push({
@@ -3526,6 +3532,31 @@ export class BacktestService {
 
         const slice500 = allSymCandles.slice(Math.max(0, cand.idx - 499), cand.idx + 1);
         if (slice500.length < 150) continue;
+
+        const lastBar = slice500[slice500.length - 1];
+
+        // 🌟 RULE 1: Dow Theory Regime Filter
+        // Dynamic Grid thrives in RANGE or UPTREND, but gets destroyed in DOWNTREND!
+        const dow = new DowStructureEngine(3, true, 20.0, 300);
+        for (const sc of slice500) {
+          dow.addCandle(sc);
+        }
+        const struct = dow.getStructure(lastBar.close, undefined, {
+          useOnlyClosedCandles: true,
+          mode: gridOpts?.channelMode ?? "DONCHIAN_ATR",
+        });
+        if (struct.regime === "DOWNTREND") {
+          continue; // Disqualify coins in confirmed Dow Theory Downtrend!
+        }
+
+        // 🌟 RULE 2: HTF Overextension Guard
+        // If price is > 10% above its 24h SMA (288 bars), skip overbought blow-off tops
+        const slice288 = slice500.slice(-288);
+        const sma288 = slice288.reduce((s, c) => s + c.close, 0) / slice288.length;
+        const distSma24hPct = ((lastBar.close - sma288) / sma288) * 100;
+        if (distSma24hPct > 10.0) {
+          continue;
+        }
 
         const rec = this.runDynamicGridSimulation(slice500, {
           symbol: cand.symbol,
@@ -3827,7 +3858,7 @@ export class BacktestService {
           const curScore = curItem ? curItem.compositeScore : 0;
           const best = candidates[0];
 
-          if (curScore < 45 && best && best.symbol !== activeSymbol && best.compositeScore >= 60) {
+          if (curScore < 45 && best && best.symbol !== activeSymbol && best.compositeScore >= 45) {
             console.log(`[RotationBacktest] 🚨 [Leg #${legIndex}] EMERGENCY ROTATION: ${activeSymbol} signal disqualified (24h=${state.change24hPct.toFixed(2)}%, close=$${state.closePrice.toFixed(4)}, score=${curScore}) ➔ Liquidating ${state.heldLotsCount} lots to rotate into ${best.symbol} (score=${best.compositeScore})`);
             scoresSnapshot = candidates.slice(0, 5);
             legStopReason = "SIGNAL_DISQUALIFIED";
