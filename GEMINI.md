@@ -9,7 +9,7 @@ This document is the persistent operational and architectural knowledge base for
 > 1. **ก่อนเริ่มแก้ไขโค้ด (Before Code Edits)**: ต้องอธิบายสาเหตุของปัญหาและแนวทางแก้ไขให้ชัดเจน จากนั้นถามยืนยันกับผู้ใช้ก่อนแตะต้องหรือแก้ไขไฟล์โค้ดเสมอ
 > 2. **การ Commit และ Push ขึ้น Git (Automated Commit & Push)**: เมื่อแก้ไขโค้ดเสร็จและรัน `npm run typecheck` ผ่าน 100% แล้ว ให้อัปเดตเวอร์ชัน, บันทึก Persistent Knowledge ใน `GEMINI.md` แล้วทำการ `git commit` และ `git push` ขึ้น GitHub ทันทีได้เลยโดยไม่ต้องหยุดถามยืนยันผ่าน `ask_question` ซ้ำซ้อน (ตามคำสั่งผู้ใช้) เพื่อความรวดเร็วสูงสุด
 > 3. **อัปเดต Persistent Knowledge (`GEMINI.md`) เสมอ**: เมื่อใดก็ตามที่มีการแก้ไขโค้ด, ปรับแต่งตรรกะ, แก้ไขบั๊ก หรือเพิ่มฟีเจอร์ ต้องอัปเดตเนื้อหาลงใน `GEMINI.md` ทันที เพื่อให้ Memory ของ AI ตรงกับโค้ดปัจจุบันเสมอ
-> 4. **อัปเดตเวอร์ชันทุกครั้งที่มีการแก้โค้ด (ALWAYS BUMP VERSION)**: ทุกครั้งที่มีการแก้ไขโค้ด บั๊ก หรือเพิ่มฟีเจอร์ ต้องขยับเลข patch version ใน `package.json` และ `src/version.ts` เสมอ (เช่น `0.2.0` -> `0.2.1`) โดยไม่ต้องรอให้ผู้ใช้มาเตือน เพื่อให้ผู้ใช้ตรวจสอบผ่านหน้าแดชบอร์ดและ API ได้ทันทีว่าเซิร์ฟเวอร์รันโค้ดล่าสุดตรงกัน
+> 4. **อัปเดตเวอร์ชันทุกครั้งที่มีการแก้โค้ด (ALWAYS BUMP VERSION - 4-TIER FORMAT)**: ทุกครั้งที่มีการแก้ไขโค้ด บั๊ก หรือเพิ่มฟีเจอร์ ต้องขยับเลขเวอร์ชันใน `package.json` และ `src/version.ts` เสมอ โดยใช้มาตรฐาน **4 หลัก** (`MAJOR.MINOR.FEATURE.PATCH` เช่น `0.3.0.0` ➔ `0.3.0.1` ➔ `0.3.0.2`... และเมื่อ Patch ครบ 100 ให้ขยับหลักก่อนหน้า เช่น `0.3.1.0`) โดยไม่ต้องรอให้ผู้ใช้มาเตือน เพื่อให้ผู้ใช้ตรวจสอบผ่านหน้าแดชบอร์ดและ API ได้ทันทีว่าเซิร์ฟเวอร์รันโค้ดล่าสุดตรงกัน
 
 ---
 
@@ -7392,7 +7392,7 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-### 251. Fix Multi-Pair Rotation Backtest Simulation Window, Viable Pair Switching & Server Logging (v0.3.1)
+### 251. Fix Multi-Pair Rotation Backtest Simulation Window, Viable Pair Switching & Server Logging (v0.3.0.1)
 
 - **สาเหตุของปัญหา (Root Cause)**:
   1. ในการรัน Autonomous Multi-Pair Rotation Backtest บน Universe Top 50 ของกระดาน (โดยเฉพาะ FDUSD) มีบางเหรียญที่เพิ่งลิสต์เข้า Binance ได้ไม่กี่วัน (เช่น มีประวัติเพียง 1-2 วัน)
@@ -7413,6 +7413,6 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่ม Log รายละเอียดขั้นตอนต่างๆ บน Node.js Server: จุดเริ่มต้น/สิ้นสุด Timeline, จำนวนเหรียญใน Funnel, คะแนนและการเริ่ม Leg แต่ละรอบ, สัญญาณและเหตุผลการ Rotate, ผลลัพธ์ PnL และสถิติไม้ของแต่ละ Leg
   4. **Frontend Poller Guard (`public/backtest.js`)**:
      - เพิ่ม Flag `rotationPollerActive` เพื่อป้องกันไม่ให้ Async Poll Response ที่ตกค้างมาเขียนทับความคืบหน้า 100%
-  5. **Version Bump**:
-     - ปรับเวอร์ชันเป็น **`0.3.1`** ใน `package.json` และ `src/version.ts`
+  5. **4-Tier Versioning Transition**:
+     - ปรับเข้าสู่มาตรฐานเลขเวอร์ชัน 4 หลัก: **`0.3.0.1`** ใน `package.json` และ `src/version.ts` (Major 0, Minor 3, Feature 0, Patch 1)
 
