@@ -888,7 +888,12 @@ async function main(): Promise<void> {
         if (cfg.enableAutoRotation && !grid.getIsPaused() && exchange.exchangeName === "binance") {
           const refP = grid.lastRefPrice || grid.getAvgEntryPrice?.() || 1;
           const heldVal = grid.baseHeld() * refP;
-          const isFlat = heldVal < 1.0 && grid.getLots().length === 0;
+          if (heldVal < 1.0 && grid.getLots().length > 0) {
+            log(`🧹 [AUTO-ROTATION] Auto-cleared residual dust lots (${grid.baseHeld().toFixed(4)} tokens | ${heldVal.toFixed(3)}) before idle cash evaluation.`);
+            grid.clearPositionState?.();
+            grid.saveState(true);
+          }
+          const isFlat = grid.baseHeld() * refP < 1.0 && grid.getLots().length === 0;
           if (isFlat) {
             const flatDurationMs = Date.now() - (grid.lastFlatCashTime || Date.now());
             const maxIdleMs = (cfg.rotationIdleCashMinutes || 120) * 60_000;

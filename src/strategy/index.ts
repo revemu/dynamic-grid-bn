@@ -1221,16 +1221,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         }
       }
 
-      // Reconcile database OPEN order records against live exchange state
-      if (typeof (this.db as any).reconcileOpenOrdersWithExchange === "function") {
-        const reconciledCount = (this.db as any).reconcileOpenOrdersWithExchange(onChainIdSet, this.symbol);
-        if (reconciledCount > 0) {
-          this.recentOrders = this.db.getOrders(5000);
-          this.log(`🧹 [sync] Reconciled ${reconciledCount} stale OPEN order record(s) in database`);
-        }
-      }
-
-      // Note: Reconciled below via staleTracked inspection so fills are detected and lots closed
+      // Note: Reconciled after staleTracked inspection below so fills are detected and lots closed
 
       // In IOC_BRACKET mode, resting BUY maker orders should never exist on the book
       if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
@@ -1531,6 +1522,15 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
 
       this.openOrders = this.openOrders.filter((o) => !staleTracked.includes(o));
 
+      // Reconcile database OPEN order records against live exchange state (after staleTracked fills are processed)
+      if (typeof (this.db as any).reconcileOpenOrdersWithExchange === "function") {
+        const reconciledCount = (this.db as any).reconcileOpenOrdersWithExchange(onChainIdSet, this.symbol);
+        if (reconciledCount > 0) {
+          this.recentOrders = this.db.getOrders(5000);
+          this.log(`🧹 [sync] Reconciled ${reconciledCount} stale OPEN order record(s) in database`);
+        }
+      }
+
       // 6. Pillar 3: On-Chain History Sync & Database Reconciliation (Supports DreamDEX Indexer & Binance)
       try {
         if (typeof (this.binance as any).getIndexer === "function" && typeof (this.binance as any).getWalletAddress === "function") {
@@ -1635,6 +1635,20 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       const memoryHeld = this.baseHeld();
       const tolerance = Math.max(0.5, (this.minQty || 1) * 0.5);
 
+      // 🛡️ Dust Position Guard: If total trading capacity owned is residual dust (< $1.00), clear phantom lots
+      const refP = this.lastRefPrice || (this.lots.length > 0 ? this.getAvgEntryPrice() : (this.lastBestBid || 0));
+      const totalOwnedNotional = totalOwnedBase * (refP > 0 ? refP : 0);
+      const minNotional = Math.max(this.minNotional || 5.0, 2.0);
+
+      if (totalOwnedNotional < 1.0 && refP > 0) {
+        if (this.lots.length > 0) {
+          this.log(`🧹 [INVENTORY RECONCILE] Total held value ${totalOwnedNotional.toFixed(3)}${totalOwnedNotional.toFixed(3)} (${totalOwnedBase.toFixed(4)} ${this.baseAsset}) is below dust threshold ($1.00). Clearing residual lots.`);
+          this.clearPositionState();
+          this.saveState();
+        }
+        return;
+      }
+
       // 1. Auto-compensate from lots: smoothly clamp lots to available trading capacity
       const dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6;
       if (memoryHeld > maxAllowedTradingBase && maxAllowedTradingBase >= 0) {
@@ -1668,7 +1682,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           return;
         }
         const unallocatedQty = roundToStep(rawUnallocated, this.stepSize || dustThreshold, this.qtyPrecision);
-        if (unallocatedQty >= this.minQty) {
+        const unallocatedNotional = unallocatedQty * refP;
+        if (unallocatedQty >= this.minQty && unallocatedNotional >= minNotional) {
           const recentOrders = this.db.getOrders(50);
           const currentSymNorm = (this.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
           const currentBaseNorm = (this.baseAsset || "").toUpperCase();

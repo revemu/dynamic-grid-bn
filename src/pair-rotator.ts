@@ -380,6 +380,7 @@ export class AutonomousPairRotator {
       } catch (e: any) {
         this.log(`Error simulating candidate ${sym}: ${e.message}`);
       }
+      await new Promise((r) => setImmediate(r));
     }
 
     // Sort report descending by composite score

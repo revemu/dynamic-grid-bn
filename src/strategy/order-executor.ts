@@ -920,12 +920,16 @@ export class OrderExecutor {
       const basePrice = (execPrice > 0) ? execPrice : targetPrice;
       let limitPrice = Math.max(minAllowedPrice, basePrice * (1 - slippagePct));
       limitPrice = roundToTick(limitPrice, this.host.tickSize || 0.0001);
+      const iocClientOrderId = `ioc_sell_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      this.host.handledExitOrderIds.set(iocClientOrderId, Date.now());
+
       const res = await this.host.binance.placeOrder({
         symbol: this.host.symbol,
         side: "SELL",
         type: "IOC",
         price: limitPrice,
         qty: finalQty,
+        clientOrderId: iocClientOrderId,
       });
 
       const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
@@ -939,6 +943,8 @@ export class OrderExecutor {
         : (isConfirmedSuccess ? finalQty : 0);
 
       if (filledQty <= 0 && !isConfirmedSuccess) {
+        this.host.handledExitOrderIds.delete(iocClientOrderId);
+        if (orderIdStr) this.host.handledExitOrderIds.delete(orderIdStr);
         this.host.log(
           `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${finalQty}).`,
         );
@@ -1099,12 +1105,16 @@ export class OrderExecutor {
       const basePrice = (execPrice > 0) ? execPrice : targetPrice;
       let limitPrice = Math.min(maxAllowedPrice, basePrice * (1 + slippagePct));
       limitPrice = roundToTick(limitPrice, this.host.tickSize || 0.0001);
+      const iocClientOrderId = `ioc_buy_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      this.host.handledExitOrderIds.set(iocClientOrderId, Date.now());
+
       const res = await this.host.binance.placeOrder({
         symbol: this.host.symbol,
         side: "BUY",
         type: "IOC",
         price: limitPrice,
         qty: finalQty,
+        clientOrderId: iocClientOrderId,
       });
 
       const orderIdStr = res.orderId ? String(res.orderId) : (res.txHash ? String(res.txHash) : undefined);
@@ -1118,6 +1128,8 @@ export class OrderExecutor {
         : (isConfirmedSuccess ? finalQty : 0);
 
       if (filledQty <= 0 && !isConfirmedSuccess) {
+        this.host.handledExitOrderIds.delete(iocClientOrderId);
+        if (orderIdStr) this.host.handledExitOrderIds.delete(orderIdStr);
         this.host.log(
           `⚠️ [IOC UNFILLED] ${actionLabel} order #${orderIdStr || "N/A"} was not filled on exchange (status: ${res.status || "UNFILLED"}, executedQty: ${filledQty}/${finalQty}).`,
         );

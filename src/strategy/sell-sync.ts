@@ -77,6 +77,14 @@ export class SellOrderSynchronizer {
     const currentHoldFraction = maxInv > 0 ? (currentHeldQuote / maxInv) : 0;
     const qtyTol = (this.host.cfg.orderQtyTolerancePct ?? 20) / 100;
 
+    let mode = this.host.cfg.sellProfitMode || (this.host.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
+    let avgEntry = this.lotTracker.getAvgEntryPrice();
+    let minProfitMulti = this.host.getMinProfitMultiplier();
+    let minAllowedSellPrice = Math.max(currentBestBid, refPrice);
+    if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
+      minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
+    }
+
     const minReserveBase = this.host.getEffectiveGasReserveBase();
     const totalBaseInOpenSellsInit = this.host.openOrders.filter((o) => !o.isBid).reduce((sum, o) => sum + (o.qty || 0), 0);
     const totalTradingCapacity = Math.max(0, (this.host.walletBaseBalance + totalBaseInOpenSellsInit) - minReserveBase);
@@ -205,9 +213,11 @@ export class SellOrderSynchronizer {
       const drawdownPct = avgEntry > 0 ? ((avgEntry - refPrice) / avgEntry) * 100 : 0;
       const isHeavyDrawdown = Boolean(drawdownPct >= 2.0 && currentHoldFraction >= 0.60);
       const isDowntrendEscape = Boolean(isHeavyDrawdown || isStuckPosition);
+      const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
+      const feeBufferPct = isDex ? 0 : 0.16;
       const effectiveMinProfitPct = isDowntrendEscape
-        ? (this.host.cfg.breakevenEscapeProfitPct ?? 0.06)
-        : Math.max(0.20, this.host.cfg.minNetProfitPct ?? 0.25);
+        ? (this.host.cfg.breakevenEscapeProfitPct ?? 0.06) + feeBufferPct
+        : Math.max(0.20, this.host.cfg.minNetProfitPct ?? 0.25) + feeBufferPct;
       const minProfitTargetPrice = avgEntry > 0 ? avgEntry * (1 + effectiveMinProfitPct / 100) : 0;
 
       // Clamp target sell price to at least minProfitTargetPrice if resistance is close to target (prevents cancel/place flapping on downward trendline drift)
@@ -390,8 +400,8 @@ export class SellOrderSynchronizer {
           this.host.saveState();
         }
 
-        let minAllowedSellPrice = Math.max(currentBestBid, refPrice);
-        const minProfitMulti = this.host.getMinProfitMultiplier();
+        minAllowedSellPrice = Math.max(currentBestBid, refPrice);
+        minProfitMulti = this.host.getMinProfitMultiplier();
         if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
           minAllowedSellPrice = Math.max(minAllowedSellPrice, avgEntry * minProfitMulti);
         }
@@ -565,7 +575,7 @@ export class SellOrderSynchronizer {
               if (heldNow >= this.host.minQty) {
                 const maxBidDiscount = (this.host.cfg.cutLossMaxBidDiscountPct ?? 2.5) / 100;
                 const isBidHealthy = currentBestBid > 0 && ((refPrice - currentBestBid) / refPrice) <= maxBidDiscount;
-                const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || currentBestBid >= avgEntry * 1.001;
+                const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || currentBestBid >= avgEntry * minProfitMulti;
 
                 if (isBidHealthy && isProfitOk) {
                   const iocCooldownKey = `ioc_sell_${sellNames[i]}`;
@@ -626,7 +636,7 @@ export class SellOrderSynchronizer {
           if (desiredSellQty < this.host.minQty) continue;
 
           let effLvlPrice = lvlPrice;
-          const minProfitMulti = this.host.getMinProfitMultiplier();
+          minProfitMulti = this.host.getMinProfitMultiplier();
           if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
             const minNetProfitPct = Math.max(0.15, this.host.cfg.minNetProfitPct ?? 0.25);
             const targetProfitPct = minNetProfitPct + (activeRank * 0.15);
@@ -695,11 +705,11 @@ export class SellOrderSynchronizer {
         });
 
 
-    const mode = this.host.cfg.sellProfitMode || (this.host.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
-    const avgEntry = this.lotTracker.getAvgEntryPrice();
-    const minProfitMulti = this.host.getMinProfitMultiplier();
+    mode = this.host.cfg.sellProfitMode || (this.host.cfg.requireProfitAboveAvgEntry ? "PORTFOLIO_AVG_PROFIT" : "GRID_CASHFLOW");
+    avgEntry = this.lotTracker.getAvgEntryPrice();
+    minProfitMulti = this.host.getMinProfitMultiplier();
     const lowestLotPrice = this.host.lots.length > 0 ? Math.min(...this.host.lots.map((l) => l.price)) : 0;
-    let minAllowedSellPrice = Math.max(
+    minAllowedSellPrice = Math.max(
       currentBestBid,
       refPrice,
       lowestLotPrice > 0 ? lowestLotPrice * minProfitMulti : 0,
@@ -858,7 +868,7 @@ export class SellOrderSynchronizer {
           if (heldNow >= this.host.minQty) {
             const maxBidDiscount = (this.host.cfg.cutLossMaxBidDiscountPct ?? 2.5) / 100;
             const isBidHealthy = currentBestBid > 0 && ((refPrice - currentBestBid) / refPrice) <= maxBidDiscount;
-            const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || currentBestBid >= avgEntry * 1.001;
+            const isProfitOk = mode !== "PORTFOLIO_AVG_PROFIT" || avgEntry <= 0 || currentBestBid >= avgEntry * minProfitMulti;
 
             if (isBidHealthy && isProfitOk) {
               const iocCooldownKey = `ioc_sell_${sellNames[i]}`;

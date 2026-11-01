@@ -7297,3 +7297,56 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ป้องกัน `position_flat` ไม่ให้ถูกส่งออกไปหากไม่มี position ตั้งแต่แรก หรือกำลังอยู่ในขั้นตอนสลับเหรียญ
   5. **Version Bump**:
      - อัปเดตเวอร์ชันเป็น `0.2.222` ใน `package.json` และ `src/version.ts`
+
+---
+
+### 249. Critical Logic Audit: IOC Race Condition Elimination, Inventory Dust Shield, and Strategy Switch Synchronization (v0.2.223)
+
+- **สาเหตุของปัญหาเชิงลึกที่ตรวจสอบพบ (Audit Findings)**:
+  1. **Race Condition ระหว่าง WebSocket Execution Report กับ HTTP Response ใน IOC Orders (`src/strategy/order-executor.ts`)**:
+     - ใน `buyTrancheIOC` (บรรทัด 1102) และ `sellTrancheIOC` (บรรทัด 923): โค้ดส่งคำสั่ง `placeOrder` โดยไม่ส่ง `clientOrderId` และลงทะเบียน `handledExitOrderIds` หลังจาก `await placeOrder` ตอบกลับมาเท่านั้น
+     - บน Binance สตรีม WebSocket (`executionReport`) ตอบกลับมาเร็วกว่า HTTP REST response (~15ms vs ~80ms) เมื่อไม่มี `clientOrderId` ใน `handledExitOrderIds` ตัว `handleWsExecutionReport` จึงเข้าใจว่าเป็น Fill ใหม่อีกอันและเรียก `processBuyFill` เพิ่มล๊อต Lot #3
+     - เมื่อ HTTP response ตอบกลับมา `buyTrancheIOC` ก็เรียก `processBuyFill` ซ้ำอีกครั้ง ส่งผลให้เกิดล๊อตเบิ้ล (Lot #3 และ Lot #4 ที่ราคาและเวลาเดียวกัน) ตามภาพที่ผู้ใช้ส่งมา
+  2. **TDZ ReferenceError และการขายต่ำกว่าราคาทุนใน IOC Sell Checks (`src/strategy/sell-sync.ts`)**:
+     - ใน `sell-sync.ts` บรรทัด 242 มีการเรียกใช้ `minAllowedSellPrice` ก่อนการประกาศตัวแปรที่บรรทัด 393 และ 702 ส่งผลให้เกิดข้อผิดพลาด `ReferenceError: Cannot access 'minAllowedSellPrice' before initialization`
+     - ในบรรทัด 568 และ 861 ใช้โค้ดฮาร์ดโค้ด `avgEntry * 1.001` (+0.1%) แทนที่จะใช้ `minProfitMulti` ซึ่งคำนวณค่าธรรมเนียม CEX Maker/Taker (0.15% - 0.20%) ทำให้เมื่อขายทำกำไรที่ +0.1% กำไรสุทธิหลังหักค่าธรรมเนียมจึงติดลบ
+  3. **การ Re-adopt เศษเหรียญ Dust เข้าล๊อตไม่รู้จบ (`src/strategy/index.ts`)**:
+     - ใน `reconcileInventory` (บรรทัด 1640-1695): เมื่อบอทขายทุกไม้ออกไปหมดแล้ว แต่มีเศษเหรียญเหลือในกระเป๋า (เช่น 0.2 INIT = $0.036 USD) โค้ดตรวจสอบเห็น `0.2 >= minQty (0.1)` จึงเรียก `this.lots.push()` รับเศษเหรียญกลับมาเป็น Holding Lot ใหม่ทุก Tick
+     - ส่งผลให้พอร์ตไม่มีวัน Flat (`isFlat === false`) การสลับคู่เหรียญทำงานไม่ได้ และมี Holding Lot ตกค้างในระบบตลอดเวลา
+  4. **ลำดับการสลับคู่เหรียญและการยกเลิกออเดอร์ผิดพลาด (`src/index.ts` & `src/db.ts`)**:
+     - ใน `onUpdateSettings`: มีการเรียก `grid.updateRuntimeSettings(s)` ก่อน `prepareForSymbolSwitch` ทำให้ `this.symbol` ถูกเปลี่ยนเป็นเหรียญใหม่ล่วงหน้า ส่งผลให้ `cancelAllOpenOrders` ไปสั่งยกเลิกเหรียญใหม่แทนที่จะเป็นเหรียญเดิม ทำให้คำสั่งเก่าบนเหรียญเดิม (เช่น INITUSDT) ค้างอยู่บน Binance
+     - ใน `db.ts`: `reconcileOpenOrdersWithExchange` ไม่ได้ตรวจสอบ `activeSymbol` ทำให้เมื่อสลับคู่เหรียญ ออเดอร์ของคู่เดิมถูกเปลี่ยนสถานะเป็น `CANCELLED` ทันที
+     - ใน `strategy/index.ts`: `reconcileOpenOrdersWithExchange` ทำงานก่อน `staleTracked` ทำให้คำสั่งที่ถูกแมตช์บน Binance ถูกเปลี่ยนเป็น `CANCELLED` ก่อนที่จะมีโอกาสบันทึกเป็น `FILLED`
+  5. **Backtest Multi-Zone Unlocking และความเร็วของ Pair Rotator (`src/backtest-service.ts` & `src/pair-rotator.ts`)**:
+     - ใน `backtest-service.ts`: `lockChannelInPosition` บล็อกการเลื่อนกรอบราคาเมื่อราคาหลุดลงต่ำ ทำให้ไม่สามารถปลดล็อก Zone 2 / Zone 3 ในการจำลอง Multi-zone ได้
+     - ใน `pair-rotator.ts`: การดึงแท่งเทียน 1,000 แท่ง 5m + 350 แท่ง 15m ต่อเหรียญ ทำให้สแกนช้าเกินไปและบล็อก Event Loop
+  6. **UI ปุ่มเปิดแท็บ Auto-Rotation (`public/app.js`)**:
+     - ปุ่ม `btnOpenRotationModal` พยายามเปิด modal ผ่าน `openSettingsBtn.click()` แต่ไม่ได้เปิด `settingsModal.classList.add('active')` โดยตรง และไม่ได้เรียกโหลดข้อมูล candidate scores ขึ้นมาแสดงผลทันที
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (v0.2.223)**:
+  1. **Pre-generated clientOrderId IOC De-duplication (`src/strategy/order-executor.ts`)**:
+     - ใน `buyTrancheIOC` และ `sellTrancheIOC`: สร้าง `iocClientOrderId` (เช่น `ioc_buy_${Date.now()}_${rand}`) และลงทะเบียนเข้า `this.host.handledExitOrderIds` *ก่อน* เรียก `binance.placeOrder` เสมอ
+     - ส่ง `clientOrderId: iocClientOrderId` ไปยัง Binance เพื่อให้ทั้ง WebSocket `executionReport` และ HTTP response ใช้ ID เดียวกัน
+     - เมื่อ WebSocket ตอบกลับมาเร็ว ระบบจะตรวจสอบ `handledExitOrderIds` พบและข้ามการประมวลผลซ้ำ 100% ป้องกันปัญหาล๊อตเบิ้ลอย่างเด็ดขาด
+     - หากคำสั่งไม่สำเร็จ ลบ ID ออกจาก `handledExitOrderIds` คืนสถานะให้ระบบ
+  2. **TDZ Elimination & Strict Profit Multiplier (`src/strategy/sell-sync.ts`)**:
+     - ประกาศและ Hoist ตัวแปร `mode`, `avgEntry`, `minProfitMulti`, และ `minAllowedSellPrice` ไว้ที่ระดับบนสุดของ `syncSellOrders` ก่อนการเรียกใช้ resistance checks ทั้งหมด ขจัด `ReferenceError` และปัญหา variable shadowing 100%
+     - แทนที่ฮาร์ดโค้ด `1.001` ด้วย `minProfitMulti` ในทุกจุดของการตรวจสอบ IOC sell
+     - เพิ่ม CEX `feeBufferPct` (0.16%) ในการคำนวณราคาหนีตาย Downtrend Escape (`breakevenEscapeProfitPct + feeBufferPct`) รับประกันว่าไม้ขายจะไม่ตัดขาดทุนหรือขายต่ำกว่าค่าธรรมเนียม
+  3. **Dust Inventory Shield (`src/strategy/index.ts` & `src/index.ts`)**:
+     - ใน `reconcileInventory`: หากมูลค่าเหรียญทั้งหมดในกระเป๋าต่ำกว่า Dust Threshold ($1.00 USD) ให้สั่ง `clearPositionState()` ล้างล๊อตคงค้างในหน่วยความจำทันที
+     - ในการรับเหรียญเข้าล๊อต (Adopt Unallocated Inventory): กำหนดเงื่อนไข `unallocatedNotional >= Math.max(minNotional, 2.0)` เท่านั้น เศษเหรียญมูลค่าไม่กี่เซนต์ (เช่น 0.2 INIT = $0.036) จะไม่ถูกดึงกลับมาเป็นล๊อตอีกต่อไป
+     - ใน `src/index.ts`: ตรวจสอบและเคลียร์เศษเหรียญฝุ่นก่อนการประเมิน `isFlat` ใน Idle Cash Timeout และการสลับคู่เหรียญ
+  4. **Strict Symbol Switch Sequence & Cross-Symbol Guard (`src/index.ts` & `src/db.ts`)**:
+     - ใน `onUpdateSettings`: กรองตัวแปร `symbol` ออกจากอ็อบเจกต์ที่ส่งเข้า `grid.updateRuntimeSettings` ขณะสลับเหรียญ เพื่อให้ `grid.symbol` ยังคงเป็นเหรียญเดิมจนกว่า `prepareForSymbolSwitch` จะสั่งยกเลิกออเดอร์เก่าบน Binance สำเร็จเรียบร้อย
+     - อัปเดต `activeSymbol = nextInfo.symbol` ให้ตรงกันทุกจุดในสตรีมและการประเมินสลับคู่
+     - ใน `src/db.ts`: เพิ่มการตรวจสอบ `normActiveSymbol` ใน `reconcileOpenOrdersWithExchange` เพื่อไม่ให้กระทบออเดอร์ของเหรียญอื่น
+     - ใน `src/strategy/index.ts`: ย้าย `reconcileOpenOrdersWithExchange` ไปทำงานหลังจากการตรวจสอบการจับคู่ `staleTracked` เสร็จสิ้น
+  5. **Backtest Multi-Zone Unlock & Rotator Yielding (`src/backtest-service.ts` & `src/pair-rotator.ts`)**:
+     - ใน `backtest-service.ts`: อนุญาตให้กรอบราคาขยับลงและปลดล็อก Zone 2 ได้เมื่อ `totalZones > 1` และแก้ไข `dropFromActiveFloorPct` ให้ใช้ `currentActiveFloor`
+     - ใน `pair-rotator.ts`: ปรับการดึงแท่งเทียน 5m เป็น 500 แท่ง (~41.6 ชั่วโมง) และตัดการดึง 15m ที่ไม่ได้ใช้ออกไป พร้อมเพิ่ม `setImmediate` ระหว่างการประเมินแต่ละคู่เหรียญ ป้องกันการค้างของ Event Loop
+  6. **Modal & Auto-Rotate UI Direct Activation (`public/app.js`)**:
+     - แก้ไข `btnOpenRotationModal` ให้เปิด `#settingsModal` ด้วย `classList.add('active')` และเรียกใช้ `activateSettingsTab('tab-rotation')` พร้อมโหลดข้อมูลสถานะสด
+     - สร้างฟังก์ชัน `loadRotationStatus()` และแยก `renderRotationReport(report)` เพื่อให้แสดงผลตารางคะแนนเหรียญได้ทันทีที่เปิดหน้าต่าง
+  7. **Version Bump**:
+     - อัปเดตเวอร์ชันเป็น `0.2.223` ใน `package.json` และ `src/version.ts`

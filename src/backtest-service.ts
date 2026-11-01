@@ -509,7 +509,7 @@ export class BacktestService {
           floor + channelSpan * 0.92,
         ];
         activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
-      } else if (lockChannelInPosition && lockedChannel) {
+      } else if (lockChannelInPosition && lockedChannel && (totalZones <= 1 || structure.bottomBound >= (activeChannel?.floor ?? 0) * 0.999)) {
         // Position Lock: Freeze channel until all lots exit
         floor = lockedChannel.floor;
         ceiling = lockedChannel.ceiling;
@@ -535,7 +535,7 @@ export class BacktestService {
           const isPillar2Ok = !structure.isDowntrendDropActive && (c.close >= c.open || structure.gridZone?.canEstablishChannel !== false);
 
           // Pillar 3: Min drop % from active floor or lowest held lot
-          const dropFromActiveFloorPct = floor > 0 ? ((floor - candidateFloor) / floor) * 100 : 0;
+          const dropFromActiveFloorPct = currentActiveFloor > 0 ? ((currentActiveFloor - candidateFloor) / currentActiveFloor) * 100 : 0;
           const lowestHeldLotPrice = heldLots.length > 0 ? Math.min(...heldLots.map((l) => l.buyPrice)) : 0;
           const dropFromLowestLotPct = lowestHeldLotPrice > 0 ? ((lowestHeldLotPrice - candidateFloor) / lowestHeldLotPrice) * 100 : 0;
           const isPillar3Ok =

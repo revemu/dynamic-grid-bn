@@ -1247,8 +1247,13 @@ export class BotDatabase {
     if (!this.data || !Array.isArray(this.data.orders)) return 0;
     const now = Date.now();
     let updated = 0;
+    const normActiveSymbol = activeSymbol ? activeSymbol.toUpperCase().replace(/[\/\-_:]/g, "") : undefined;
     for (const o of this.data.orders) {
       if (o.status === "OPEN") {
+        if (normActiveSymbol) {
+          const oSym = (o.symbol || "").toUpperCase().replace(/[\/\-_:]/g, "");
+          if (oSym && oSym !== normActiveSymbol) continue;
+        }
         if (!o.orderId || !liveOrderIds.has(String(o.orderId))) {
           // Allow 15s grace period for newly placed orders
           if (now - (o.placedTime || o.time || 0) > 15_000) {

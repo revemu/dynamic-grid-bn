@@ -5250,6 +5250,9 @@
         p.classList.remove("active");
       }
     });
+    if (tabId === "tab-rotation") {
+      loadRotationStatus();
+    }
   }
 
   function updateStrategyTabsVisibility(autoActivatePrimary = false) {
@@ -7985,6 +7988,39 @@
   const rotationScanResultsTable = document.getElementById("rotationScanResultsTable");
   const rotationScanResultsBody = document.getElementById("rotationScanResultsBody");
 
+  function renderRotationReport(report) {
+    if (!report || report.length === 0 || !rotationScanResultsTable || !rotationScanResultsBody) return;
+    rotationScanResultsTable.style.display = "block";
+    rotationScanResultsBody.innerHTML = report.map((item, idx) => {
+      const isTop = idx === 0;
+      const pnlColor = item.netPnlPct >= 0 ? "#10b981" : "#ef4444";
+      const chgColor = item.change24hPct >= 0 ? "#10b981" : "#ef4444";
+      return `
+        <tr style="${isTop ? 'background: rgba(16, 185, 129, 0.12); font-weight: bold;' : ''}">
+          <td style="text-align: center;">${isTop ? '⭐ ' : ''}#${idx + 1}</td>
+          <td style="color: #38bdf8;">${item.symbol}</td>
+          <td><span class="badge" style="background: ${item.compositeScore >= 60 ? '#10b981' : '#f59e0b'}; color: #fff; padding: 2px 6px; border-radius: 4px;">${item.compositeScore}/100</span></td>
+          <td style="color: ${pnlColor};">${item.netPnlPct >= 0 ? '+' : ''}${item.netPnlPct.toFixed(2)}%</td>
+          <td>${item.winRate.toFixed(1)}%</td>
+          <td>${item.tradesCount} ไม้</td>
+          <td style="color: #fca5a5;">${item.maxDrawdownPct.toFixed(1)}%</td>
+          <td><span style="color:${chgColor};">${item.change24hPct >= 0 ? '+' : ''}${item.change24hPct.toFixed(1)}%</span> / ${(item.quoteVolume24h / 1e6).toFixed(1)}M</td>
+          <td style="font-size: 10px; color: #94a3b8;">${item.reason}</td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  async function loadRotationStatus() {
+    try {
+      const res = await fetch(`${API_BASE}/api/rotation/status`);
+      const data = await res.json();
+      if (data && data.success && Array.isArray(data.latestCandidates) && data.latestCandidates.length > 0) {
+        renderRotationReport(data.latestCandidates);
+      }
+    } catch {}
+  }
+
   async function triggerRotationScan(forceRotate = false) {
     if (rotationScanStatus) {
       rotationScanStatus.innerHTML = '<span style="color:#38bdf8;">⏳ กำลังสแกน 2-Stage Market Funnel และจำลองผลเทรด 5m/15m กรุณารอสักครู่ (ใช้เวลา 3-5 วินาที)...</span>';
@@ -8008,26 +8044,8 @@
         rotationScanStatus.innerHTML = `<span style="color:#10b981;">✅ สแกนสำเร็จ: ${data.reason || "ประเมินเสร็จสิ้น"}</span>`;
       }
 
-      if (data.report && data.report.length > 0 && rotationScanResultsTable && rotationScanResultsBody) {
-        rotationScanResultsTable.style.display = "block";
-        rotationScanResultsBody.innerHTML = data.report.map((item, idx) => {
-          const isTop = idx === 0;
-          const pnlColor = item.netPnlPct >= 0 ? "#10b981" : "#ef4444";
-          const chgColor = item.change24hPct >= 0 ? "#10b981" : "#ef4444";
-          return `
-            <tr style="${isTop ? 'background: rgba(16, 185, 129, 0.12); font-weight: bold;' : ''}">
-              <td style="text-align: center;">${isTop ? '⭐ ' : ''}#${idx + 1}</td>
-              <td style="color: #38bdf8;">${item.symbol}</td>
-              <td><span class="badge" style="background: ${item.compositeScore >= 60 ? '#10b981' : '#f59e0b'}; color: #fff; padding: 2px 6px; border-radius: 4px;">${item.compositeScore}/100</span></td>
-              <td style="color: ${pnlColor};">${item.netPnlPct >= 0 ? '+' : ''}${item.netPnlPct.toFixed(2)}%</td>
-              <td>${item.winRate.toFixed(1)}%</td>
-              <td>${item.tradesCount} ไม้</td>
-              <td style="color: #fca5a5;">${item.maxDrawdownPct.toFixed(1)}%</td>
-              <td><span style="color:${chgColor};">${item.change24hPct >= 0 ? '+' : ''}${item.change24hPct.toFixed(1)}%</span> / ${(item.quoteVolume24h / 1e6).toFixed(1)}M</td>
-              <td style="font-size: 10px; color: #94a3b8;">${item.reason}</td>
-            </tr>
-          `;
-        }).join("");
+      if (data.report && data.report.length > 0) {
+        renderRotationReport(data.report);
       }
 
       if (forceRotate && data.rotated) {
@@ -8081,12 +8099,10 @@
   const btnOpenRotationModal = document.getElementById("btnOpenRotationModal");
   if (btnOpenRotationModal) {
     btnOpenRotationModal.addEventListener("click", () => {
-      const openBtn = document.getElementById("openSettingsBtn");
-      if (openBtn) openBtn.click();
-      setTimeout(() => {
-        const tabBtn = document.getElementById("tabBtnRotation");
-        if (tabBtn) tabBtn.click();
-      }, 100);
+      const modal = document.getElementById("settingsModal");
+      if (modal) modal.classList.add("active");
+      activateSettingsTab("tab-rotation");
+      loadRotationStatus();
     });
   }
 
