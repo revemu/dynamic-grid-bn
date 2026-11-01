@@ -7082,3 +7082,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **ปรับการแสดงผล Axis Label ของระดับกริด (`public/app.js`)**:
      - หากราคาของ Grid Level ตรงกับ `data.upperBound` หรือ `data.bottomBound` จะซ่อน Axis Label ของเส้นประ เพื่อให้ป้าย Solid Fuchsia (`#d946ef`) ของ Upper Bound และ Solid Purple (`#c084fc`) ของ Floor โดดเด่น ชัดเจน ไม่โดนทับ
   5. **Bump Version**: ขยับเป็น `0.2.215` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 242. Backtest Studio `clearSelectedTradeLines is not defined` Scope Bugfix (v0.2.216)
+
+- **สาเหตุของปัญหา**:
+  - เมื่อผู้ใช้กดปุ่มรัน Backtest บนหน้าเว็บ `http://210.246.253.13:3334/backtest.html` เกิดกล่องข้อความแจ้งเตือน:
+    `❌ เกิดข้อผิดพลาดในการรัน Backtest: clearSelectedTradeLines is not defined`
+  - จากการตรวจสอบโค้ดใน `public/backtest.js`:
+    - ในฟังก์ชัน `displayRecord(record)` (บรรทัดที่ 490) มีการเรียก `clearSelectedTradeLines();` เพื่อล้างเส้นราคากรอบ Floor, Ceil, Mid, Entry Price เดิมออกก่อนวาดแท่งเทียนชุดใหม่
+    - ทว่า ตัวแปร `let selectedTradeLines = [];` และฟังก์ชัน `clearSelectedTradeLines()`, `displayTradeEntryChannel(trade)` ถูกประกาศไว้ใน Local Scope ด้านในของฟังก์ชัน `renderTradesTable(trades)` (บรรทัดที่ 1572-1643)
+    - ภายใต้ `"use strict";` ของ IIFE ฟังก์ชันและตัวแปรที่ประกาศด้านใน `renderTradesTable` จะไม่สามารถถูกเข้าถึงจากฟังก์ชันภายนอก (`displayRecord`) ได้ ทำให้เกิด `ReferenceError: clearSelectedTradeLines is not defined` และการรัน Backtest หยุดชะงัก
+- **การแก้ไข (v0.2.216)**:
+  - ย้ายการประกาศ `let selectedTradeLines = [];`, `function clearSelectedTradeLines()`, และ `function displayTradeEntryChannel(trade)` ออกมาไว้ที่ Scope ด้านบนของสคริปต์ (ก่อนฟังก์ชัน `displayRecord`) ใน `public/backtest.js`
+  - นำการประกาศที่ซ้ำซ้อนภายใน `renderTradesTable` ออก โดยคงฟังก์ชัน `bindRowClickEvents()` ไว้ตามเดิม ซึ่งสามารถเรียก `displayTradeEntryChannel(trade)` จาก Scope ส่วนกลางได้อย่างสมบูรณ์
+  - ตรวจสอบความถูกต้องของ JavaScript Syntax ด้วย `node -c public/backtest.js`
+  - ตรวจสอบระบบด้วย `npm run typecheck` ผ่าน 100%
+  - Bump Version เป็น `0.2.216` ใน `package.json` และ `src/version.ts`
+

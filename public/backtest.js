@@ -465,6 +465,80 @@
     }
   }
 
+  // Selected trade entry lines on chart
+  let selectedTradeLines = [];
+
+  function clearSelectedTradeLines() {
+    if (!candleSeries || selectedTradeLines.length === 0) return;
+    selectedTradeLines.forEach((l) => {
+      try { candleSeries.removePriceLine(l); } catch {}
+    });
+    selectedTradeLines = [];
+  }
+
+  function displayTradeEntryChannel(trade) {
+    if (!candleSeries || !trade) return;
+    clearSelectedTradeLines();
+
+    // 1. Channel Floor (0%)
+    if (typeof trade.channelFloor === "number" && trade.channelFloor > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.channelFloor,
+        color: "#ef4444",
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title: `Floor 0% ($${fmtPrice(trade.channelFloor)})`,
+      });
+      if (l) selectedTradeLines.push(l);
+    }
+
+    // 2. Channel Ceil (100%)
+    if (typeof trade.channelCeil === "number" && trade.channelCeil > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.channelCeil,
+        color: "#10b981",
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Solid,
+        axisLabelVisible: true,
+        title: `Ceil 100% ($${fmtPrice(trade.channelCeil)})`,
+      });
+      if (l) selectedTradeLines.push(l);
+    }
+
+    // 3. Channel Center (50%)
+    if (typeof trade.channelMid === "number" && trade.channelMid > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.channelMid,
+        color: "rgba(255, 255, 255, 0.45)",
+        lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `Center 50% ($${fmtPrice(trade.channelMid)})`,
+      });
+      if (l) selectedTradeLines.push(l);
+    }
+
+    // 4. Trade Entry Price
+    if (typeof trade.entryPrice === "number" && trade.entryPrice > 0) {
+      const l = candleSeries.createPriceLine({
+        price: trade.entryPrice,
+        color: "#38bdf8",
+        lineWidth: 2,
+        lineStyle: LightweightCharts.LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: `Entry #${trade.id} ($${fmtPrice(trade.entryPrice)})`,
+      });
+      if (l) selectedTradeLines.push(l);
+    }
+
+    if (overlayInfo && trade.channelFloor) {
+      const spanStr = trade.channelSpanPct ? ` (กว้าง ${trade.channelSpanPct}%)` : "";
+      const zoneStr = trade.zoneIndex ? ` [โซน ${trade.zoneIndex}]` : "";
+      overlayInfo.innerHTML = `<span style="color:#38bdf8; font-weight:700;">ไม้ #${trade.id}</span> | ซื้อ: $${fmtPrice(trade.entryPrice)} | กรอบ: [$${fmtPrice(trade.channelFloor)} - $${fmtPrice(trade.channelCeil)}]${spanStr}${zoneStr}`;
+    }
+  }
+
   // Display Backtest Record on Chart & Dashboard
   function displayRecord(record) {
     if (!record) return;
@@ -1569,80 +1643,7 @@
       });
     }
 
-  let selectedTradeLines = [];
-
-  function clearSelectedTradeLines() {
-    if (!candleSeries || selectedTradeLines.length === 0) return;
-    selectedTradeLines.forEach((l) => {
-      try { candleSeries.removePriceLine(l); } catch {}
-    });
-    selectedTradeLines = [];
-  }
-
-  function displayTradeEntryChannel(trade) {
-    if (!candleSeries || !trade) return;
-    clearSelectedTradeLines();
-
-    // 1. Channel Floor (0%)
-    if (typeof trade.channelFloor === "number" && trade.channelFloor > 0) {
-      const l = candleSeries.createPriceLine({
-        price: trade.channelFloor,
-        color: "#ef4444",
-        lineWidth: 2,
-        lineStyle: LightweightCharts.LineStyle.Solid,
-        axisLabelVisible: true,
-        title: `Floor 0% ($${fmtPrice(trade.channelFloor)})`,
-      });
-      if (l) selectedTradeLines.push(l);
-    }
-
-    // 2. Channel Ceil (100%)
-    if (typeof trade.channelCeil === "number" && trade.channelCeil > 0) {
-      const l = candleSeries.createPriceLine({
-        price: trade.channelCeil,
-        color: "#10b981",
-        lineWidth: 2,
-        lineStyle: LightweightCharts.LineStyle.Solid,
-        axisLabelVisible: true,
-        title: `Ceil 100% ($${fmtPrice(trade.channelCeil)})`,
-      });
-      if (l) selectedTradeLines.push(l);
-    }
-
-    // 3. Channel Center (50%)
-    if (typeof trade.channelMid === "number" && trade.channelMid > 0) {
-      const l = candleSeries.createPriceLine({
-        price: trade.channelMid,
-        color: "rgba(255, 255, 255, 0.45)",
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: `Center 50% ($${fmtPrice(trade.channelMid)})`,
-      });
-      if (l) selectedTradeLines.push(l);
-    }
-
-    // 4. Trade Entry Price
-    if (typeof trade.entryPrice === "number" && trade.entryPrice > 0) {
-      const l = candleSeries.createPriceLine({
-        price: trade.entryPrice,
-        color: "#38bdf8",
-        lineWidth: 2,
-        lineStyle: LightweightCharts.LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: `Entry #${trade.id} ($${fmtPrice(trade.entryPrice)})`,
-      });
-      if (l) selectedTradeLines.push(l);
-    }
-
-    if (overlayInfo && trade.channelFloor) {
-      const spanStr = trade.channelSpanPct ? ` (กว้าง ${trade.channelSpanPct}%)` : "";
-      const zoneStr = trade.zoneIndex ? ` [โซน ${trade.zoneIndex}]` : "";
-      overlayInfo.innerHTML = `<span style="color:#38bdf8; font-weight:700;">ไม้ #${trade.id}</span> | ซื้อ: $${fmtPrice(trade.entryPrice)} | กรอบ: [$${fmtPrice(trade.channelFloor)} - $${fmtPrice(trade.channelCeil)}]${spanStr}${zoneStr}`;
-    }
-  }
-
-  function bindRowClickEvents() {
+    function bindRowClickEvents() {
     tradesTableBody.querySelectorAll("tr[data-entry-time]").forEach((row) => {
       row.addEventListener("click", () => {
         const tradeId = Number(row.getAttribute("data-trade-id"));
