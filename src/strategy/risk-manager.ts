@@ -67,6 +67,10 @@ export class RiskManager {
     const isBelowFloor = isChannelReady && refPrice < lowerBound;
     const uptrendLine = dow?.uptrendLine;
     const isExitOnTrendSupportBreak = this.host.cfg.enableExitOnTrendSupportBreak !== false;
+    if (!isExitOnTrendSupportBreak && this.host.isTrendSupportExitActive) {
+      this.host.isTrendSupportExitActive = false;
+      this.host.trendSupportBreakPrice = undefined;
+    }
     const uptrendKey = uptrendLine ? `${uptrendLine.p1.time}_${uptrendLine.p2.time}` : undefined;
     const isNewUptrendBreak = uptrendKey ? (this.host.lastTrendSupportBreakKey !== uptrendKey) : true;
 

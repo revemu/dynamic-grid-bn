@@ -67,13 +67,14 @@ export class RegimeChannelGate {
 
     const choChLevel = lastLh?.price;
     const isChoChBullish = !lastLh || lastLh.price <= 0 || price >= lastLh.price * 0.999;
+    const allowBaseBypass = params.enableBaseConfirmationFilter === false;
 
-    // If gating is explicitly disabled, allow all valid channels
-    if (enableTrendGating === false) {
+    // If gating is explicitly disabled or base confirmation is bypassed, allow all valid channels
+    if (enableTrendGating === false || allowBaseBypass) {
       return {
         canEstablishChannel: proposedFloor > 0,
         gateStatus: proposedFloor > 0 ? "VALID_CHANNEL" : "WARMUP",
-        gateReason: "Trend gating disabled by configuration",
+        gateReason: allowBaseBypass ? "Base confirmation & trend gating bypassed by configuration" : "Trend gating disabled by configuration",
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: actualProximityPct,
         isChoChBullish,
@@ -95,17 +96,17 @@ export class RegimeChannelGate {
 
     // ── Pillar 1: Dow ChoCh & Downtrend Gate (Horizontal Last LH Breakout) ─────
     // In Dow Theory, a downtrend is broken only when price breaks above the last Lower High (ChoCh).
-    const allowBaseBypass = params.enableBaseConfirmationFilter === false;
     const isUnderLastLh = !allowBaseBypass && Boolean(lastLh && lastLh.price > 0 && price < lastLh.price * 0.999);
     const isDowntrendStructure = !allowBaseBypass && (regime === "DOWNTREND" ||
       (lastCanonicalLow?.dowLabel === "LL" && lastCanonicalHigh?.dowLabel === "LH") ||
       Boolean(waveCycle?.activeCycleSummary?.includes("ขาลง")));
 
     if (isUnderLastLh && isDowntrendStructure) {
+      const lhStr = lastLh.price < 0.01 ? lastLh.price.toFixed(8) : lastLh.price.toFixed(4);
       return {
         canEstablishChannel: false,
         gateStatus: "DOWNTREND_NO_CHANNEL",
-        gateReason: `Downtrend active under last LH ($${lastLh.price.toFixed(4)}) — Waiting for Dow ChoCh breakout before opening channel`,
+        gateReason: `Downtrend active under last LH ($${lhStr}) — Waiting for Dow ChoCh breakout before opening channel`,
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: actualProximityPct,
         isChoChBullish: false,
@@ -146,11 +147,13 @@ export class RegimeChannelGate {
     // ── Pillar 3: Safe Floor Proximity Buffer ──────────────────────────────
     // If the proposed floor is dangerously close to current price,
     // any minor random wick will trigger cut loss instantly. Reject until room exists.
-    if (actualProximityPct < minFloorProximityPct) {
+    if (!allowBaseBypass && actualProximityPct < minFloorProximityPct) {
+      const flStr = proposedFloor < 0.01 ? proposedFloor.toFixed(8) : proposedFloor.toFixed(4);
+      const prStr = price < 0.01 ? price.toFixed(8) : price.toFixed(4);
       return {
         canEstablishChannel: false,
         gateStatus: "UNSAFE_FLOOR_PROXIMITY",
-        gateReason: `Floor ($${proposedFloor.toFixed(4)}) is dangerously close (${actualProximityPct.toFixed(2)}%) to price ($${price.toFixed(4)}) — minimum safe proximity is ${minFloorProximityPct.toFixed(2)}%`,
+        gateReason: `Floor ($${flStr}) is dangerously close (${actualProximityPct.toFixed(2)}%) to price ($${prStr}) — minimum safe proximity is ${minFloorProximityPct.toFixed(2)}%`,
         safeFloorProximityPct: minFloorProximityPct,
         actualFloorProximityPct: actualProximityPct,
         isChoChBullish,
@@ -159,11 +162,12 @@ export class RegimeChannelGate {
     }
 
     // ── Pillar 4: All Clear — Valid Channel Approved! ───────────────────────
+    const choChStr = lastLh && lastLh.price < 0.01 ? lastLh.price.toFixed(8) : lastLh?.price.toFixed(4);
     return {
       canEstablishChannel: true,
       gateStatus: "VALID_CHANNEL",
       gateReason: (lastLh && price >= lastLh.price * 0.999)
-        ? `Dow ChoCh confirmed (> $${lastLh.price.toFixed(4)}) • Channel active`
+        ? `Dow ChoCh confirmed (> $${choChStr}) • Channel active`
         : "Market structure in healthy Range/Base with safe proximity buffer",
       safeFloorProximityPct: minFloorProximityPct,
       actualFloorProximityPct: actualProximityPct,

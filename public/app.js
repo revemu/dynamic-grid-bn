@@ -2947,7 +2947,11 @@
       const btnTf15m = document.getElementById("btnTf15m");
       const btnTf4h = document.getElementById("btnTf4h");
       if (btnTf15m && btnTf15m.textContent !== "15M") btnTf15m.textContent = "15M";
-      if (btnTf4h && btnTf4h.textContent !== "4H (HTF)") btnTf4h.textContent = "4H (HTF)";
+      const isHtfMode = data.channelMode === "VOLUME_PROFILE_HTF";
+      if (btnTf4h) {
+        btnTf4h.style.display = isHtfMode ? "" : "none";
+        if (btnTf4h.textContent !== "4H (HTF)") btnTf4h.textContent = "4H (HTF)";
+      }
     }
 
     // Mid Price & 50% Center
@@ -3038,7 +3042,8 @@
       if (elChannelStatusPill) {
         elChannelStatusPill.style.display = data.strategyType === "swing_trade" ? "none" : "";
       }
-      if (btnToggleHtfLines) btnToggleHtfLines.style.display = "";
+      const isHtfMode = data.channelMode === "VOLUME_PROFILE_HTF";
+      if (btnToggleHtfLines) btnToggleHtfLines.style.display = isHtfMode ? "" : "none";
       if (btnToggleWave) btnToggleWave.style.display = "";
       if (elChannelStatusText) {
         if (data.canEstablishChannel === false && !data.isChannelLocked) {
@@ -3420,7 +3425,10 @@
         elRegimeBadge.style.display = "none";
       } else if (data.regime) {
         elRegimeBadge.style.display = "";
-        elRegimeBadge.textContent = `DOW: ${data.regime}`;
+        const isDowFilterActive = Boolean(data.dowTrendFilter);
+        elRegimeBadge.textContent = isDowFilterActive ? `DOW: ${data.regime}` : `DOW: ${data.regime} (OFF)`;
+        elRegimeBadge.title = isDowFilterActive ? `Dow Trend Filter เปิดใช้งาน (${data.regime})` : "Dow Trend Filter ปิดอยู่ (ไม่ได้นำมาจำกัดการเข้าซื้อ)";
+        elRegimeBadge.style.opacity = isDowFilterActive ? "1.0" : "0.55";
         elRegimeBadge.className =
           "regime-badge " +
           (data.regime === "RANGE"
@@ -3596,7 +3604,8 @@
       }
 
       // 3.1 Cut Loss Trigger Buffer Line - Dashed Slate Silver (Grid Mode Only)
-      if (!isSwingMode && data.cutLossBound && data.cutLossBound < data.bottomBound) {
+      const isCutLossEnabled = data.gridCutLossMode && data.gridCutLossMode !== "none";
+      if (!isSwingMode && isCutLossEnabled && data.cutLossBound && data.cutLossBound < data.bottomBound) {
         const bufDelta = data.bottomBound - data.cutLossBound;
         const bufPct = (bufDelta / data.bottomBound) * 100;
         lineCutLossBound = setPriceLine(lineCutLossBound, {
@@ -3612,14 +3621,17 @@
         lineCutLossBound = null;
       }
 
-      // 3.2 4H HTF Major Support / Resistance & POC Lines
+      // 3.2 4H HTF Major Support / Resistance & POC Lines (Only when channelMode === "VOLUME_PROFILE_HTF")
+      const isHtfMode = data.channelMode === "VOLUME_PROFILE_HTF";
       const midPrice = data.mid || data.refPrice || 0;
       const maxHtfDeviation = 0.075; // 7.5% max deviation from mid to protect Y-axis scaling from ancient extremes
       const isHtfCeilValid = Boolean(
+        isHtfMode &&
         data.htfCeil && data.htfCeil > 0 &&
         (midPrice <= 0 || (data.htfCeil - midPrice) / midPrice <= maxHtfDeviation)
       );
       const isHtfFloorValid = Boolean(
+        isHtfMode &&
         data.htfFloor && data.htfFloor > 0 &&
         (midPrice <= 0 || (midPrice - data.htfFloor) / midPrice <= maxHtfDeviation)
       );
@@ -3652,7 +3664,7 @@
         lineHtfFloor = null;
       }
 
-      if (showHtfLines && data.poc && data.poc > 0) {
+      if (showHtfLines && isHtfMode && data.poc && data.poc > 0) {
         linePoc = setPriceLine(linePoc, {
           price: data.poc,
           color: "#f59e0b",

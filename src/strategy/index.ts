@@ -2760,7 +2760,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     }
 
     let htfStructure: { floor: number; ceiling: number; swings?: any[] } | undefined;
-    if (this.htfDowEngine) {
+    if (this.htfDowEngine && this.cfg.channelMode === "VOLUME_PROFILE_HTF") {
       const htfDow = this.htfDowEngine.getStructure(refPrice, undefined, {
         mode: "DOW_SWINGS",
         minChannelWidthPct: 3.0,
@@ -3945,11 +3945,11 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
 
     const gateStatus = gridZone?.gateStatus ?? dow?.gridZone?.gateStatus;
     const gateReason = gridZone?.gateReason ?? dow?.gridZone?.gateReason;
-    const allowBaseBypass = this.cfg.enableBaseConfirmationFilter === false;
+    const allowBaseBypass = this.cfg.enableBaseConfirmationFilter === false || this.cfg.enableTrendChannelGating === false;
     const isGated = Boolean(
       gateStatus &&
       gateStatus !== "VALID_CHANNEL" &&
-      !(allowBaseBypass && gateStatus === "WAITING_FOR_BASE_CONFIRMATION")
+      !allowBaseBypass
     );
 
     let botActionState: {
@@ -3962,15 +3962,26 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
 
     if (isBelowFloor) {
       if (this.baseHeld() > 0) {
-        const candlesCount = this.breakdownCandleTimes.size;
-        const requiredCandles = this.cfg.cutLossConfirmCandles ?? 1;
-        botActionState = {
-          code: "BELOW_FLOOR_CUTLOSS",
-          title: candlesCount < requiredCandles ? "⏳ Cut Loss Confirming (Waiting Closed Bar)" : "🚨 Cut Loss Triggered",
-          reason: `Price < 0% Floor ($${lowerBound.toFixed(this.pricePrecision)}) • Holding $${inventoryQuote.toFixed(1)}`,
-          nextTrigger: `Liquidating to ${this.quoteAsset} / Waiting Closed Bar (${candlesCount}/${requiredCandles} bar${requiredCandles > 1 ? "s" : ""})`,
-          severity: "alert",
-        };
+        const isCutLossDisabled = this.cfg.gridCutLossMode === "none";
+        if (isCutLossDisabled) {
+          botActionState = {
+            code: "BELOW_FLOOR_HOLDING_NO_CUT",
+            title: "🛡️ Below Floor (Cut Loss: OFF)",
+            reason: `Price < 0% Floor ($${this.formatPrice(lowerBound)}) • Holding $${inventoryQuote.toFixed(1)} (Cut Loss: OFF)`,
+            nextTrigger: "Holding inventory for rebound / Standing by for lower zone accumulation",
+            severity: "info",
+          };
+        } else {
+          const candlesCount = this.breakdownCandleTimes.size;
+          const requiredCandles = this.cfg.cutLossConfirmCandles ?? 1;
+          botActionState = {
+            code: "BELOW_FLOOR_CUTLOSS",
+            title: candlesCount < requiredCandles ? "⏳ Cut Loss Confirming (Waiting Closed Bar)" : "🚨 Cut Loss Triggered",
+            reason: `Price < 0% Floor ($${lowerBound.toFixed(this.pricePrecision)}) • Holding $${inventoryQuote.toFixed(1)}`,
+            nextTrigger: `Liquidating to ${this.quoteAsset} / Waiting Closed Bar (${candlesCount}/${requiredCandles} bar${requiredCandles > 1 ? "s" : ""})`,
+            severity: "alert",
+          };
+        }
       } else {
         botActionState = {
           code: "BELOW_FLOOR_PROTECTED",
@@ -3984,7 +3995,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       const dumpFloor = this.breakdownFloorPrice ?? lowerBound;
       const dumpLow = this.breakdownLowPrice ?? effectiveMid;
       const isFlatWait = this.isFlatChannelShiftWaiting;
-      if (this.isTrendSupportExitActive) {
+      if (this.isTrendSupportExitActive && this.cfg.enableExitOnTrendSupportBreak !== false) {
         const supPriceStr = this.trendSupportBreakPrice ? `$${this.trendSupportBreakPrice.toFixed(this.pricePrecision)}` : "Support TL";
         const dustThreshold = this.minQty ? this.minQty * 0.5 : 1e-6;
         const isHolding = this.baseHeld() >= dustThreshold;
@@ -4436,6 +4447,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         enableExitOnTrendSupportBreak: this.cfg.enableExitOnTrendSupportBreak !== false,
         liquidateOnTrendSupportBreak: Boolean(this.cfg.liquidateOnTrendSupportBreak),
         enableExitOnDowntrendRegime: Boolean(this.cfg.enableExitOnDowntrendRegime),
+        dowTrendFilter: Boolean(this.cfg.dowTrendFilter),
+        enableBaseConfirmationFilter: Boolean(this.cfg.enableBaseConfirmationFilter),
         breakevenEscapeProfitPct: this.cfg.breakevenEscapeProfitPct ?? 0.06,
         maxActiveMakerBuys: this.cfg.maxActiveMakerBuys ?? 2,
         isBelowFloor,
@@ -4450,8 +4463,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         poc: gridZone?.poc,
         vah: gridZone?.vah,
         val: gridZone?.val,
-        htfFloor: gridZone?.htfFloor,
-        htfCeil: gridZone?.htfCeil,
+        htfFloor: this.cfg.channelMode === "VOLUME_PROFILE_HTF" ? gridZone?.htfFloor : undefined,
+        htfCeil: this.cfg.channelMode === "VOLUME_PROFILE_HTF" ? gridZone?.htfCeil : undefined,
         canEstablishChannel: gridZone?.canEstablishChannel,
         gateStatus: gridZone?.gateStatus,
         gateReason: gridZone?.gateReason,

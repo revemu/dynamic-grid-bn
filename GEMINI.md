@@ -7548,6 +7548,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.6`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 258. Unsafe Floor Proximity Gate Bypass, Cut Loss Visual Cleanup & Inactive Status/HTF Isolation (v0.3.0.8)
+
+- **สาเหตุที่บอทขึ้น "Floor ชิดราคาเกินไป (พักการซื้อ)" (Root Cause Analysis)**:
+  1. **ตัวกรองแฝง `UNSAFE_FLOOR_PROXIMITY` ใน `src/market-structure/regime-gate.ts`**:
+     - มีโค้ด Pillar 3 ตรวจสอบระยะห่าง `actualProximityPct = ((price - proposedFloor) / price) * 100` หากน้อยกว่า `minFloorProximityPct` (ค่าเริ่มต้น 1.5%) จะคืนค่า `canEstablishChannel = false` และ `gateStatus = "UNSAFE_FLOOR_PROXIMITY"`
+     - เมื่อราคา PEPE อยู่ที่ `$0.00000493` และ Floor อยู่ที่ `$0.00000491` ห่างกันเพียง 0.41% ระบบสั่งปิดกรอบและระงับการเข้าซื้อ (`canBuy = false`) ยกเลิกคำสั่งซื้อทั้งหมด ทั้งๆ ที่จุดนี้คือโซนซื้อที่ดีที่สุดของกริด (Buy Level 4-5)
+     - แม้ผู้ใช้จะตั้งค่า `enableBaseConfirmationFilter: false` และ `gridCutLossMode: "none"` ไว้แล้ว แต่โค้ดเดิมไม่ได้ยกเว้นตัวกรอง `UNSAFE_FLOOR_PROXIMITY` ทำให้บอทหยุดซื้อและแสดงข้อความหลอกว่า "เสี่ยงโดน Cut Loss ทันที"
+  2. **HTF 4hr & Cut Loss แสดงสถานะรกรุงรังแม้ไม่ได้ใช้งาน**:
+     - บอทรันโหมด `DONCHIAN_ATR` ไม่ได้ใช้ 4H HTF แต่หน้าจอแสดงปุ่ม `[ 4H (HTF) ]`, ปุ่ม `[ 🏛️ 4H S/R ]` และวาดเส้นม่วง 4H S/R
+     - ผู้ใช้ตั้ง `gridCutLossMode: "none"` แต่กราฟยังวาดเส้นประ Cut Loss ใต้ Floor และขึ้นเตือน Cut Loss Confirming
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **ปลดล็อคตัวกรอง `UNSAFE_FLOOR_PROXIMITY` (`src/market-structure/regime-gate.ts` & `src/strategy/index.ts`)**:
+     - เมื่อ `enableBaseConfirmationFilter === false` หรือ `enableTrendChannelGating === false` หรือ `gridCutLossMode === "none"`:
+       - บายพาสตัวกรอง `UNSAFE_FLOOR_PROXIMITY` ทันที 100% ยอมรับกรอบราคาและเปิดให้วางคำสั่ง Maker Buy Limit ไม้ล่างได้ตามปกติ
+     - แก้ไขข้อความใน `RegimeChannelGate` ให้แสดงทศนิยม 8 หลัก ป้องกันการแสดงผล `$0.0000`
+  2. **ซ่อนสถานะ HTF 4hr เมื่อไม่ได้รันโหมด `VOLUME_PROFILE_HTF` (`public/app.js` & `src/strategy/index.ts`)**:
+     - ซ่อนปุ่ม `[ 4H (HTF) ]` และปุ่ม `[ 🏛️ 4H S/R ]` บนกราฟอัตโนมัติ
+     - ไม่วาดเส้น 4H S/R สีม่วงบนกราฟ
+     - Backend จะคำนวณและส่ง `htfFloor`/`htfCeil` เฉพาะเมื่อ `channelMode === "VOLUME_PROFILE_HTF"` เท่านั้น
+  3. **ทำความสะอาดสถานะ Cut Loss เมื่อปิดการใช้งาน (`public/app.js` & `src/strategy/index.ts`)**:
+     - เมื่อ `gridCutLossMode === "none"`: ลบเส้นประ Cut Loss ออกจากกราฟ และเปลี่ยนข้อความแจ้งเตือนเป็น `🛡️ Below Floor (Cut Loss: OFF)`
+  4. **ปรับป้ายสถานะ Dow Trend (`public/app.js`)**:
+     - เมื่อ `dowTrendFilter === false`: แสดงเป็น `DOW: RANGE (OFF)` (จางลง) พร้อม Tooltip ระบุว่าตัวกรองปิดอยู่
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.8`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+
 
 ---
 
@@ -7603,3 +7632,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ใน `src/index.ts`: หากผู้ใช้พยายามสลับเหรียญไปเป็นเหรียญที่ไม่ใช่ `TRADING` บน Binance ระบบจะปฏิเสธคำขอทันที
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.6`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 258. Unsafe Floor Proximity Gate Bypass, Cut Loss Visual Cleanup & Inactive Status/HTF Isolation (v0.3.0.8)
+
+- **สาเหตุที่บอทขึ้น "Floor ชิดราคาเกินไป (พักการซื้อ)" (Root Cause Analysis)**:
+  1. **ตัวกรองแฝง `UNSAFE_FLOOR_PROXIMITY` ใน `src/market-structure/regime-gate.ts`**:
+     - มีโค้ด Pillar 3 ตรวจสอบระยะห่าง `actualProximityPct = ((price - proposedFloor) / price) * 100` หากน้อยกว่า `minFloorProximityPct` (ค่าเริ่มต้น 1.5%) จะคืนค่า `canEstablishChannel = false` และ `gateStatus = "UNSAFE_FLOOR_PROXIMITY"`
+     - เมื่อราคา PEPE อยู่ที่ `$0.00000493` และ Floor อยู่ที่ `$0.00000491` ห่างกันเพียง 0.41% ระบบสั่งปิดกรอบและระงับการเข้าซื้อ (`canBuy = false`) ยกเลิกคำสั่งซื้อทั้งหมด ทั้งๆ ที่จุดนี้คือโซนซื้อที่ดีที่สุดของกริด (Buy Level 4-5)
+     - แม้ผู้ใช้จะตั้งค่า `enableBaseConfirmationFilter: false` และ `gridCutLossMode: "none"` ไว้แล้ว แต่โค้ดเดิมไม่ได้ยกเว้นตัวกรอง `UNSAFE_FLOOR_PROXIMITY` ทำให้บอทหยุดซื้อและแสดงข้อความหลอกว่า "เสี่ยงโดน Cut Loss ทันที"
+  2. **HTF 4hr & Cut Loss แสดงสถานะรกรุงรังแม้ไม่ได้ใช้งาน**:
+     - บอทรันโหมด `DONCHIAN_ATR` ไม่ได้ใช้ 4H HTF แต่หน้าจอแสดงปุ่ม `[ 4H (HTF) ]`, ปุ่ม `[ 🏛️ 4H S/R ]` และวาดเส้นม่วง 4H S/R
+     - ผู้ใช้ตั้ง `gridCutLossMode: "none"` แต่กราฟยังวาดเส้นประ Cut Loss ใต้ Floor และขึ้นเตือน Cut Loss Confirming
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **ปลดล็อคตัวกรอง `UNSAFE_FLOOR_PROXIMITY` (`src/market-structure/regime-gate.ts` & `src/strategy/index.ts`)**:
+     - เมื่อ `enableBaseConfirmationFilter === false` หรือ `enableTrendChannelGating === false` หรือ `gridCutLossMode === "none"`:
+       - บายพาสตัวกรอง `UNSAFE_FLOOR_PROXIMITY` ทันที 100% ยอมรับกรอบราคาและเปิดให้วางคำสั่ง Maker Buy Limit ไม้ล่างได้ตามปกติ
+     - แก้ไขข้อความใน `RegimeChannelGate` ให้แสดงทศนิยม 8 หลัก ป้องกันการแสดงผล `$0.0000`
+  2. **ซ่อนสถานะ HTF 4hr เมื่อไม่ได้รันโหมด `VOLUME_PROFILE_HTF` (`public/app.js` & `src/strategy/index.ts`)**:
+     - ซ่อนปุ่ม `[ 4H (HTF) ]` และปุ่ม `[ 🏛️ 4H S/R ]` บนกราฟอัตโนมัติ
+     - ไม่วาดเส้น 4H S/R สีม่วงบนกราฟ
+     - Backend จะคำนวณและส่ง `htfFloor`/`htfCeil` เฉพาะเมื่อ `channelMode === "VOLUME_PROFILE_HTF"` เท่านั้น
+  3. **ทำความสะอาดสถานะ Cut Loss เมื่อปิดการใช้งาน (`public/app.js` & `src/strategy/index.ts`)**:
+     - เมื่อ `gridCutLossMode === "none"`: ลบเส้นประ Cut Loss ออกจากกราฟ และเปลี่ยนข้อความแจ้งเตือนเป็น `🛡️ Below Floor (Cut Loss: OFF)`
+  4. **ปรับป้ายสถานะ Dow Trend (`public/app.js`)**:
+     - เมื่อ `dowTrendFilter === false`: แสดงเป็น `DOW: RANGE (OFF)` (จางลง) พร้อม Tooltip ระบุว่าตัวกรองปิดอยู่
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.8`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
