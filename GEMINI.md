@@ -7101,3 +7101,28 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - ตรวจสอบระบบด้วย `npm run typecheck` ผ่าน 100%
   - Bump Version เป็น `0.2.216` ใน `package.json` และ `src/version.ts`
 
+---
+
+### 243. Stabilized Channel Gate: Tick-Spam Suppression & Negative Drop Calculation Bugfix (v0.2.217)
+
+- **สาเหตุของปัญหา**:
+  1. **Log วนรัว 5 ครั้งต่อวินาที (Every 200ms)**:
+     - ใน `src/strategy/index.ts`: ตัวแปร `this.stableFloorCandleCount` ถูกเขียนคำสั่ง `this.stableFloorCandleCount++` ไว้ใน `syncDynamicLevels()` ซึ่งถูกเรียกใช้งานทุก Tick (200ms - 1 วินาที) แทนที่จะนับเฉพาะแท่งเทียนที่ปิดสมบูรณ์ (Candle Bars)
+     - ตัวเลขนับบาร์จึงขยับจาก 28 -> 29 -> 30... ทุก 200ms ทำให้ข้อความสถานะ `msg` เปลี่ยนแปลงทุก Tick ตัวกรองข้อความซ้ำ (`createStatusLogger`) จึงไม่สามารถกรองได้และพิมพ์ข้อความลงคอนโซลอย่างต่อเนื่อง
+  2. **สถานะค้างที่ `Candidate Floor $0.1668 (Drop: -1.80% | Min: 2.5%) — keeping active channel at Floor $0.1947` ตลอดกาล**:
+     - เสาหลักที่ 3 ของ Staged DCA (`isDropDistanceOk`): เขียนสูตรไว้ว่า `dropPct = ((lowestLotPrice - candidateFloor) / lowestLotPrice) * 100` โดยตั้งสมมติฐานว่าไม้ที่ถืออยู่ต้องมีราคาสูงกว่า `candidateFloor` เสมอ
+     - ในความเป็นจริง บอทได้เข้าซื้อไม้ที่ราคาต่ำลงไปแล้ว (เช่น `$0.16385`) ซึ่งต่ำกว่า `candidateFloor` ($0.1668) ทำให้ `lowestLotPrice - candidateFloor` กลายเป็นค่าติดลบ (`-1.80%`)
+     - เงื่อนไข `dropPct >= 2.5%` จึงเป็นเท็จตลอดกาล ส่งผลให้บอท freeze กรอบราคาไว้ที่กรอบเดิม (`Floor $0.1947`) ค้างไว้ตลอดกาล ทั้งที่ราคาตลาดจริงและ Candidate Channel หลุดลงมาถึง $0.1668 แล้ว (ระยะห่างจริงจาก Floor เดิม $0.1947 ถึง $0.1668 คือ -14.33% ซึ่งผ่านเกณฑ์ 2.5% อย่างชัดเจน)
+- **การแก้ไข (v0.2.217)**:
+  1. **นับแท่งเทียนเฉพาะแท่งที่ปิดสมบูรณ์แล้วจริง (`lastClosedTime`)**:
+     - เพิ่มตัวแปร `public lastStabilizeCandleTime = 0;`
+     - ตรวจสอบ `lastClosedTime > 0 && lastClosedTime !== this.lastStabilizeCandleTime` ก่อนทำการเพิ่ม `stableFloorCandleCount` ทำให้ 1 แท่งเทียนถูกนับเพียง 1 ครั้ง ไม่ขยับตาม Tick อีกต่อไป
+     - ข้อความสถานะไม่เปลี่ยนทุก Tick ทำให้ `createStatusLogger` บล็อกข้อความซ้ำได้สมบูรณ์ (แจ้งเตือนเฉพาะเมื่อมีการเปลี่ยนแท่งหรือครบ 60 วินาที)
+  2. **ปรับปรุงสูตรการตรวจสอบระยะห่างกรอบ (Drop Distance Span)**:
+     - คำนวณระยะห่างระหว่างกรอบเดิม (`activeFloor = this.lastDynamicBounds.lowerBound`) กับกรอบใหม่ (`candidateFloor`): `dropFromActiveFloorPct = ((activeFloor - candidateFloor) / activeFloor) * 100`
+     - หาก `lowestLotPrice <= candidateFloor` (เคยซื้อไม้ในโซนนี้ไว้แล้ว) หรือ `dropFromActiveFloorPct >= requiredDropPct` (กรอบใหม่ต่ำกว่ากรอบเดิมเกิน 2.5%) ให้ถือว่าผ่านเกณฑ์ `isDropDistanceOk = true` ทันที
+     - อัปเดตตรรกะแบบเดียวกันใน `src/strategy/index.ts` และ `src/backtest-service.ts`
+  3. **Bump Version**:
+     - ปรับ Version เป็น `0.2.217` ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+

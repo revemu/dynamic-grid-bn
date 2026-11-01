@@ -99,6 +99,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   public postCutSingleTrancheOnly = false;
   public unlockedCapitalZones = 1;
   public stableFloorCandleCount = 0;
+  public lastStabilizeCandleTime = 0;
   public lastZoneUnlockFloor?: number;
   public prevCandidateFloor?: number;
   public sellOrdersActive = true;
@@ -1697,6 +1698,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     this.bufferBreakStartTime = undefined;
     this.unlockedCapitalZones = 1;
     this.stableFloorCandleCount = 0;
+    this.lastStabilizeCandleTime = 0;
     this.lastZoneUnlockFloor = undefined;
     this.prevCandidateFloor = undefined;
     this.db.saveLockedChannel(this.getSymbolKey(), undefined);
@@ -2975,27 +2977,53 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       let isStabilizedDownShift = false;
       if (isShiftDownCandidate && this.lastDynamicBounds) {
         const candidateFloor = lowerBound;
-        const prevCandFloor = this.prevCandidateFloor ?? candidateFloor;
-        if (candidateFloor < prevCandFloor * 0.998) {
-          // Floor is still expanding downward -> reset stabilization counter
-          this.stableFloorCandleCount = 0;
+        const activeFloor = this.lastDynamicBounds.lowerBound;
+
+        // Count stabilization only when a new closed candle bar arrives (or when initializing)
+        const isNewClosedBar = lastClosedTime > 0 && lastClosedTime !== this.lastStabilizeCandleTime;
+        if (isNewClosedBar) {
+          this.lastStabilizeCandleTime = lastClosedTime;
+          const prevCandFloor = this.prevCandidateFloor ?? candidateFloor;
+          if (candidateFloor < prevCandFloor * 0.998) {
+            // Floor is still expanding downward -> reset stabilization counter
+            this.stableFloorCandleCount = 1;
+            this.prevCandidateFloor = candidateFloor;
+          } else {
+            this.stableFloorCandleCount++;
+          }
+        } else if (this.prevCandidateFloor === undefined) {
           this.prevCandidateFloor = candidateFloor;
-        } else {
-          this.stableFloorCandleCount++;
+          this.stableFloorCandleCount = 1;
+          if (lastClosedTime > 0) this.lastStabilizeCandleTime = lastClosedTime;
         }
 
         const requiredStableBars = Math.max(1, Number(this.cfg.zoneStabilizeCandles ?? 3));
         const isStableBarsOk = this.stableFloorCandleCount >= requiredStableBars;
         const isNotWaterfall = !this.isDowntrendDropPaused;
+
+        // Pillar 3: Min drop distance from active floor or lowest held lot
+        const dropFromActiveFloorPct = activeFloor > 0 ? ((activeFloor - candidateFloor) / activeFloor) * 100 : 0;
         const lowestLotPrice = this.lots.length > 0 ? Math.min(...this.lots.map((l) => l.price)) : 0;
-        const dropPct = lowestLotPrice > 0 ? ((lowestLotPrice - candidateFloor) / lowestLotPrice) * 100 : 0;
+        const dropFromLowestLotPct = lowestLotPrice > 0 ? ((lowestLotPrice - candidateFloor) / lowestLotPrice) * 100 : 0;
         const requiredDropPct = Number(this.cfg.zoneMinDropPct ?? 2.5);
-        const isDropDistanceOk = (this.cfg.capitalZones ?? 1) <= 1 || dropPct >= requiredDropPct;
+
+        // Drop distance is OK if:
+        // - Single zone mode (capitalZones <= 1)
+        // - Candidate floor has dropped at least requiredDropPct from active channel floor
+        // - Lowest held lot is already at or below candidate floor (meaning price already traded down here)
+        // - Drop from lowest held lot is >= requiredDropPct
+        const isDropDistanceOk =
+          (this.cfg.capitalZones ?? 1) <= 1 ||
+          dropFromActiveFloorPct >= requiredDropPct ||
+          (lowestLotPrice > 0 && lowestLotPrice <= candidateFloor) ||
+          dropFromLowestLotPct >= requiredDropPct;
+
+        const displayDropPct = lowestLotPrice > candidateFloor ? dropFromLowestLotPct : dropFromActiveFloorPct;
 
         if (isStableBarsOk && isNotWaterfall && isDropDistanceOk) {
           isStabilizedDownShift = true;
           this.log(
-            `🎯 [STABILIZED CHANNEL COMMIT] Candidate lower channel [$${lowerBound.toFixed(4)} .. $${upperBound.toFixed(4)}] stabilized (${this.stableFloorCandleCount} bars stable, drop: -${dropPct.toFixed(2)}%) — committing channel shift.`,
+            `🎯 [STABILIZED CHANNEL COMMIT] Candidate lower channel [$${lowerBound.toFixed(4)} .. $${upperBound.toFixed(4)}] stabilized (${this.stableFloorCandleCount} bars stable, drop: -${displayDropPct.toFixed(2)}%) — committing channel shift.`,
           );
           const totalZones = Math.max(1, Number(this.cfg.capitalZones ?? 1));
           if ((this.unlockedCapitalZones ?? 1) < totalZones) {
@@ -3006,6 +3034,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           }
           this.stableFloorCandleCount = 0;
           this.prevCandidateFloor = undefined;
+          this.lastStabilizeCandleTime = 0;
           this.lastZoneUnlockFloor = lowerBound;
           this.needsBuyRebalance = true;
           this.needsSellRebalance = true;
@@ -3017,7 +3046,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           buyLevels = [...this.lastDynamicBounds.buyLevels];
           sellLevels = [...this.lastDynamicBounds.sellLevels];
           this.status(
-            `⏳ WAITING FOR LOWER CHANNEL TO STABILIZE: Candidate Floor $${candidateFloor.toFixed(4)} (Stable: ${this.stableFloorCandleCount}/${requiredStableBars} bars | Drop: -${dropPct.toFixed(2)}% | Min: ${requiredDropPct}%) — keeping active channel at Floor $${lowerBound.toFixed(4)}`,
+            `⏳ WAITING FOR LOWER CHANNEL TO STABILIZE: Candidate Floor $${candidateFloor.toFixed(4)} (Stable: ${this.stableFloorCandleCount}/${requiredStableBars} bars | Drop: -${displayDropPct.toFixed(2)}% | Min: ${requiredDropPct}%) — keeping active channel at Floor $${lowerBound.toFixed(4)}`,
           );
         }
       }

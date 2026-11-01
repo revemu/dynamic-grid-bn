@@ -526,9 +526,15 @@ export class BacktestService {
           // Pillar 2: Not in dump
           const isPillar2Ok = !structure.isDowntrendDropActive && (c.close >= c.open || structure.gridZone?.canEstablishChannel !== false);
 
-          // Pillar 3: Min drop % from lowest held lot
-          const lowestHeldLotPrice = Math.min(...heldLots.map((l) => l.buyPrice));
-          const isPillar3Ok = lowestHeldLotPrice > 0 && ((lowestHeldLotPrice - candidateFloor) / lowestHeldLotPrice) * 100 >= (zoneMinDropPct - 0.1);
+          // Pillar 3: Min drop % from active floor or lowest held lot
+          const dropFromActiveFloorPct = floor > 0 ? ((floor - candidateFloor) / floor) * 100 : 0;
+          const lowestHeldLotPrice = heldLots.length > 0 ? Math.min(...heldLots.map((l) => l.buyPrice)) : 0;
+          const dropFromLowestLotPct = lowestHeldLotPrice > 0 ? ((lowestHeldLotPrice - candidateFloor) / lowestHeldLotPrice) * 100 : 0;
+          const isPillar3Ok =
+            totalZones <= 1 ||
+            dropFromActiveFloorPct >= (zoneMinDropPct - 0.1) ||
+            (lowestHeldLotPrice > 0 && lowestHeldLotPrice <= candidateFloor) ||
+            dropFromLowestLotPct >= (zoneMinDropPct - 0.1);
 
           const isStabilizedGatePassed = isPillar2Ok && isPillar3Ok && (stableFloorCandleCount >= zoneStabilizeCandles);
 
@@ -1147,8 +1153,15 @@ export class BacktestService {
           prevCandidateFloor = candidateFloor;
 
           const isPillar2Ok = !structure.isDowntrendDropActive && (c.close >= c.open || structure.gridZone?.canEstablishChannel !== false);
-          const lowestHeldLotPrice = Math.min(...heldLots.map((l) => l.buyPrice));
-          const isPillar3Ok = lowestHeldLotPrice > 0 && ((lowestHeldLotPrice - candidateFloor) / lowestHeldLotPrice) * 100 >= (zoneMinDropPct - 0.1);
+          // Pillar 3: Min drop % from active floor or lowest held lot
+          const dropFromActiveFloorPct = currentActiveFloor > 0 ? ((currentActiveFloor - candidateFloor) / currentActiveFloor) * 100 : 0;
+          const lowestHeldLotPrice = heldLots.length > 0 ? Math.min(...heldLots.map((l) => l.buyPrice)) : 0;
+          const dropFromLowestLotPct = lowestHeldLotPrice > 0 ? ((lowestHeldLotPrice - candidateFloor) / lowestHeldLotPrice) * 100 : 0;
+          const isPillar3Ok =
+            totalZones <= 1 ||
+            dropFromActiveFloorPct >= (zoneMinDropPct - 0.1) ||
+            (lowestHeldLotPrice > 0 && lowestHeldLotPrice <= candidateFloor) ||
+            dropFromLowestLotPct >= (zoneMinDropPct - 0.1);
 
           const isStabilizedGatePassed = isPillar2Ok && isPillar3Ok && (stableFloorCandleCount >= zoneStabilizeCandles);
 
