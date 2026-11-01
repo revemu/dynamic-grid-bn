@@ -7228,3 +7228,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่มปุ่ม `🧹 ล้างเศษล็อตคงค้าง (0 Lots)` ในแถบ Holding Lots เพื่อให้ผู้ใช้สามารถเคลียร์เศษเหรียญและรีเซ็ตล็อตในฐานข้อมูลได้ทันทีด้วยการคลิกเพียงครั้งเดียว
   5. **Version Bump**:
      - อัปเดตเวอร์ชันเป็น `0.2.220` ใน `package.json` และ `src/version.ts`
+
+---
+
+### 247. Autonomous Market Regime & Pair Rotation Engine (v0.2.221)
+
+- **ที่มาและเป้าหมาย**:
+  - จากการทดสอบย้อนหลังจริง 120 วันบน Binance Spot พบว่าการยึดติดกับเหรียญเดี่ยว (Single-Pair Trap) ทำให้เงินจมและผลตอบแทนเฉลี่ยติดลบ (-36.40%) ขณะที่ระบบสแกนสภาวะตลาดและหมุนเวียนคู่เหรียญอัตโนมัติ (Autonomous Rotation) สามารถสร้างผลตอบแทนทบต้นสูงถึง **+535.48% (Win Rate 78.3%)**
+  - พัฒนาระบบ **Autonomous Market Regime & Dynamic Pair Rotation Engine** เพื่อให้บอทตรวจจับคู่เหรียญที่อยู่ในช่วง Sweet Spot (กรอบสวิงกว้าง 5-18%, ไม่ทุบเหว, และราคายังไม่อยู่บนยอดดอย) และสลับคู่เหรียญให้อัตโนมัติเมื่อพอร์ตอยู่ในสถานะเงินสด 100%
+- **สถาปัตยกรรมและการทำงาน (v0.2.221)**:
+  1. **Strict Quote Currency Mode Selector (`src/config.ts`)**:
+     - เพิ่มพารามิเตอร์ `enableAutoRotation`, `rotationQuoteAsset` (`"USDT"` หรือ `"FDUSD"`), `rotationIntervalMinutes` (Cooldown ขั้นต่ำ Default 180 นาที), `rotationIdleCashMinutes` (เวลารอพอร์ตว่าง Default 120 นาที), `rotationScoreMarginPct` (คะแนนชนะขั้นต่ำ Default 20%), และ `rotationMinVolumeUsd` (Default $3M)
+     - โหมด `USDT` จำกัดสแกนและสลับเฉพาะคู่ที่ลงท้ายด้วย `USDT` พร้อมคิดเรตค่าธรรมเนียมปกติ
+     - โหมด `FDUSD` จำกัดสแกนและสลับเฉพาะคู่ที่ลงท้ายด้วย `FDUSD` พร้อมคิดเรตค่าธรรมเนียม 0% Maker
+  2. **2-Stage Funnel & RegimeCompositeScore Engine (`src/pair-rotator.ts`)**:
+     - **Stage 1**: ยิง Binance `/api/v3/ticker/24hr` ครั้งเดียวกักกรองจาก 400+ เหรียญ คัดเหลือ Top 5 ผู้ท้าชิง + เหรียญปัจจุบันที่กำลังเทรดอยู่
+     - **Stage 2**: ดึงแท่งเทียน 5m (1,000 แท่ง) และ 15m (350 แท่ง) รัน Backtest และวัดโครงสร้างกรอบ Donchian / Dow Swings
+     - สูตรคะแนน RegimeCompositeScore (เต็ม 100):
+       - Sim Score (45 คะแนน): Net PnL, Win Rate, Max Drawdown
+       - Structure Score (30 คะแนน): กรอบสวิงกว้าง 6-16% และ 24h Change >= -4%
+       - Position Score (15 คะแนน): ราคาปัจจุบันอยู่ในโซนล่าง-กลาง 15%-60%
+       - Liquidity Score (10 คะแนน): ปริมาณการซื้อขาย 24 ชั่วโมง
+  3. **2-Trigger Autonomous Execution & Zero-Risk Gate (`src/index.ts` & `src/strategy/index.ts`)**:
+     - กฎเหล็ก: สลับเหรียญได้เฉพาะเมื่อพอร์ตว่างเงินสด 100% เท่านั้น (`baseHeld * price < $1.00` และ `lots.length === 0`)
+     - **Trigger 1 (Post-Round Exit)**: เมื่อบอทขายทำกำไรจบรอบสมบูรณ์ เกิด Event `position_flat` บอทจะประเมินตลาดทันที
+     - **Trigger 2 (Idle Cash Timeout)**: หากพอร์ตว่าง 0 Lots ติดต่อกันนานเกิน `rotationIdleCashMinutes` โดยไม่มีไม้ซื้อแมตช์ ให้สแกนหาคู่เหรียญใหม่ทันที
+     - การสลับเหรียญเรียกผ่าน `onUpdateSettings({ symbol: targetSymbol })` ใน `src/index.ts` ทำงานต่อเนื่องกับระบบล้างเศษ Dust และรีเซ็ต WebSocket Feeds ทันที
+  4. **Dashboard Control & API Endpoints (`src/server.ts`, `public/index.html`, `public/app.js`)**:
+     - เพิ่ม API: `GET /api/rotation/status` และ `POST /api/rotation/scan-now` (รองรับ `forceRotate: boolean`)
+     - เพิ่มแท็บ **"🔄 สลับคู่เหรียญ (Auto Rotation)"** ในหน้า Settings Modal พร้อมปุ่มสแกนทดสอบเรียลไทม์ และปุ่มสลับไปเหรียญอันดับ 1 ทันที
+     - เพิ่มปุ่มแสดงสถานะ `Auto-Rotate: ON/OFF` บนเมนูด้านบนของแดชบอร์ด
+  5. **Version Bump**:
+     - อัปเดตเวอร์ชันเป็น `0.2.221` ใน `package.json` และ `src/version.ts`

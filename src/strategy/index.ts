@@ -79,6 +79,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   public trendSupportBreakPrice?: number;
   public lastTrendSupportBreakKey?: string;
   public wasFlatCashLastTick = true;
+  public lastFlatCashTime = Date.now();
   public lastEvaluatedFloor?: number;
   public lastEvaluatedCeil?: number;
   public breakdownFloorPrice?: number;
@@ -1703,9 +1704,18 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     this.lastStabilizeCandleTime = 0;
     this.lastZoneUnlockFloor = undefined;
     this.prevCandidateFloor = undefined;
+    this.lastFlatCashTime = Date.now();
     const symbolKey = this.getSymbolKey();
     this.db.saveLockedChannel(symbolKey, undefined);
     this.db.saveState({ lots: [] }, true, symbolKey);
+    this.emit({
+      type: "position_flat",
+      data: {
+        symbol: this.symbol,
+        exchange: this.binance?.exchangeName || this.cfg.exchange,
+        time: Date.now(),
+      },
+    });
   }
 
   public clampLotsTo(maxAllowedQty: number): void {

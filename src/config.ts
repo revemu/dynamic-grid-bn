@@ -354,6 +354,27 @@ export const defaultStrategyConfig = {
   swingBearishReversalMinProfitPct: 0.35,
   /** Tolerance % from resistance structure (Trendline/TP/Ceiling) to evaluate bearish reversal (default 0.8%). */
   swingBearishReversalResistanceTolerancePct: 0.8,
+
+  // ── Autonomous Market Regime & Pair Rotation ───────────────────────────
+  /** When true, automatically evaluates market regime on cycle exit or idle cash and rotates to the best performing pair. Default false. */
+  enableAutoRotation: false,
+  /** Quote asset to scan and trade: "USDT" or "FDUSD". Default "USDT". */
+  rotationQuoteAsset: "USDT" as "USDT" | "FDUSD",
+  /** Minimum interval (cooldown) in minutes between pair rotations (default 180 = 3h). */
+  rotationIntervalMinutes: 180,
+  /** If flat cash (0 lots held) for longer than this (minutes), trigger rotation evaluation (default 120 = 2h). */
+  rotationIdleCashMinutes: 120,
+  /** Percentage margin by which a candidate's composite score must exceed current symbol to trigger rotation (default 20%). */
+  rotationScoreMarginPct: 20,
+  /** Minimum 24h quote volume (USD) for rotation candidates (default 3,000,000). */
+  rotationMinVolumeUsd: 3_000_000,
+  /** Optional whitelist of symbols allowed for rotation (empty = all liquid pairs in selected quote asset). */
+  rotationWhitelist: [] as string[],
+  /** Blacklisted symbols excluded from rotation. */
+  rotationBlacklist: [
+    "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT", "BUSDUSDT", "EURIUSDT", "EURUSDT",
+    "USDCFDUSD", "TUSDFDUSD", "USDPFDUSD", "EURFDUSD"
+  ] as string[],
 };
 
 /**
@@ -485,6 +506,28 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
         while (merged.sellLevelWeights.length < 5) {
           merged.sellLevelWeights.push(defaultSellWeights[merged.sellLevelWeights.length] ?? 0);
         }
+      }
+      if (saved.enableAutoRotation !== undefined) merged.enableAutoRotation = Boolean(saved.enableAutoRotation);
+      if (saved.rotationQuoteAsset === "USDT" || saved.rotationQuoteAsset === "FDUSD") {
+        merged.rotationQuoteAsset = saved.rotationQuoteAsset;
+      }
+      if (saved.rotationIntervalMinutes !== undefined) {
+        merged.rotationIntervalMinutes = Math.max(15, Number(saved.rotationIntervalMinutes) || 180);
+      }
+      if (saved.rotationIdleCashMinutes !== undefined) {
+        merged.rotationIdleCashMinutes = Math.max(10, Number(saved.rotationIdleCashMinutes) || 120);
+      }
+      if (saved.rotationScoreMarginPct !== undefined) {
+        merged.rotationScoreMarginPct = Math.max(5, Number(saved.rotationScoreMarginPct) || 20);
+      }
+      if (saved.rotationMinVolumeUsd !== undefined) {
+        merged.rotationMinVolumeUsd = Math.max(100_000, Number(saved.rotationMinVolumeUsd) || 3_000_000);
+      }
+      if (Array.isArray(saved.rotationWhitelist)) {
+        merged.rotationWhitelist = saved.rotationWhitelist.map((s: any) => String(s).toUpperCase().trim()).filter(Boolean);
+      }
+      if (Array.isArray(saved.rotationBlacklist)) {
+        merged.rotationBlacklist = saved.rotationBlacklist.map((s: any) => String(s).toUpperCase().trim()).filter(Boolean);
       }
       return merged;
     }

@@ -11,6 +11,7 @@ import { BinanceAtrFeed, BinanceBookTickerFeed, BinanceUserDataFeed } from "./ex
 import { sanitizeHttpErrorBody } from "./exchange/binance/client.js";
 import { DowStructureEngine } from "./market-structure.js";
 import { DashboardServer } from "./server.js";
+import { AutonomousPairRotator } from "./pair-rotator.js";
 import type { AtrSource } from "./types.js";
 
 function formatTimestamp(d = new Date()): string {
@@ -59,6 +60,7 @@ function log(msg: string, extra?: unknown): void {
 }
 
 async function main(): Promise<void> {
+  const pairRotator = new AutonomousPairRotator((msg) => log(msg));
   let exchange = createExchangeClient({
     exchange: config.exchange || "binance",
     apiKey: config.binanceApiKey,
@@ -335,13 +337,9 @@ async function main(): Promise<void> {
   };
 
   // ── Real-Time Dashboard Server & Dynamic Config API ───────────────────────
-  dashboard = new DashboardServer({
-    port: config.dashboardPort,
-    log,
-    db: grid.getDatabase(),
-    maxCandles: config.strategyType === "ma_fan" ? 1200 : (config.maxCandleCount ?? 600),
-    getSettings: () => grid.getRuntimeConfig(),
-    onUpdateSettings: async (s) => {
+  let onUpdateSettings: (s: Record<string, any>) => Promise<Record<string, any>>;
+
+  onUpdateSettings = async (s) => {
       const prevConfig = grid.getRuntimeConfig();
       const prevInitial = prevConfig.initialCandleCount;
       const prevMax = prevConfig.maxCandleCount;
@@ -740,7 +738,15 @@ async function main(): Promise<void> {
       grid.emitTelemetryTick();
       wakeSleep?.();
       return grid.getRuntimeConfig();
-    },
+  };
+
+  dashboard = new DashboardServer({
+    port: config.dashboardPort,
+    log,
+    db: grid.getDatabase(),
+    maxCandles: config.strategyType === "ma_fan" ? 1200 : (config.maxCandleCount ?? 600),
+    getSettings: () => grid.getRuntimeConfig(),
+    onUpdateSettings: (s) => onUpdateSettings(s),
     onPauseBot: (paused) => grid.setPaused(paused),
     getIsPaused: () => grid.getIsPaused(),
     onCancelAll: () => grid.cancelAllOrdersUser(),
@@ -756,6 +762,22 @@ async function main(): Promise<void> {
     onReloadState: () => {
       grid.reloadState();
       grid.emitTelemetryTick();
+    },
+    getRotationStatus: () => pairRotator.getStatus(grid.getRuntimeConfig().symbol || activeSymbol, grid.getRuntimeConfig()),
+    onTriggerRotationScan: async (opts) => {
+      const cfg = grid.getRuntimeConfig();
+      const currentSym = cfg.symbol || activeSymbol;
+      const res = await pairRotator.evaluateAndRotate({
+        currentSymbol: currentSym,
+        trigger: "MANUAL_FORCE",
+        cfg,
+        forceRotate: opts?.forceRotate,
+      });
+      if (res.rotated && res.targetSymbol) {
+        log(`🚀 [MANUAL ROTATION] Rotating from ${currentSym} to ${res.targetSymbol} (${res.reason})`);
+        await onUpdateSettings({ symbol: res.targetSymbol });
+      }
+      return res;
     },
     onSyncExchangeTrades: async () => {
       const cfg = grid.getRuntimeConfig();
@@ -804,6 +826,27 @@ async function main(): Promise<void> {
       dashboard.addOrder(event.data);
     } else if (event.type === "order_gas") {
       dashboard.updateOrderGas(event.data.txHash, event.data.gasFeeBase, event.data.gasFeeQuote);
+    } else if (event.type === "position_flat") {
+      const cfg = grid.getRuntimeConfig();
+      if (cfg.enableAutoRotation && !grid.getIsPaused() && exchange.exchangeName === "binance") {
+        const currentSym = cfg.symbol || activeSymbol;
+        log(`🔄 [AUTO-ROTATION] Detected position flat (cycle closed) -> Evaluating market regime...`);
+        setTimeout(async () => {
+          try {
+            const res = await pairRotator.evaluateAndRotate({
+              currentSymbol: currentSym,
+              trigger: "POST_ROUND_EXIT",
+              cfg,
+            });
+            if (res.rotated && res.targetSymbol) {
+              log(`🚀 [AUTO-ROTATION] Rotating from ${currentSym} to ${res.targetSymbol} (${res.reason})`);
+              await onUpdateSettings({ symbol: res.targetSymbol });
+            }
+          } catch (e: any) {
+            log(`⚠️ [AUTO-ROTATION] Evaluation error: ${e.message}`);
+          }
+        }, 3000);
+      }
     }
   });
 
@@ -820,9 +863,42 @@ async function main(): Promise<void> {
     grid.saveState();
   });
 
+  let lastIdleCheckTime = Date.now();
+
   while (!stop) {
     try {
       await grid.tick();
+      // Periodic Idle Cash Check (every 60s) for Auto-Rotation
+      if (Date.now() - lastIdleCheckTime >= 60_000) {
+        lastIdleCheckTime = Date.now();
+        const cfg = grid.getRuntimeConfig();
+        if (cfg.enableAutoRotation && !grid.getIsPaused() && exchange.exchangeName === "binance") {
+          const refP = grid.lastRefPrice || grid.getAvgEntryPrice?.() || 1;
+          const heldVal = grid.baseHeld() * refP;
+          const isFlat = heldVal < 1.0 && grid.getLots().length === 0;
+          if (isFlat) {
+            const flatDurationMs = Date.now() - (grid.lastFlatCashTime || Date.now());
+            const maxIdleMs = (cfg.rotationIdleCashMinutes || 120) * 60_000;
+            if (flatDurationMs >= maxIdleMs) {
+              const currentSym = cfg.symbol || activeSymbol;
+              log(`⏳ [AUTO-ROTATION] Idle cash timeout (${(flatDurationMs / 60_000).toFixed(0)}m / ${cfg.rotationIdleCashMinutes}m) -> Evaluating market regime...`);
+              try {
+                const res = await pairRotator.evaluateAndRotate({
+                  currentSymbol: currentSym,
+                  trigger: "IDLE_CASH_TIMEOUT",
+                  cfg,
+                });
+                if (res.rotated && res.targetSymbol) {
+                  log(`🚀 [AUTO-ROTATION] Rotating from ${currentSym} to ${res.targetSymbol} (${res.reason})`);
+                  await onUpdateSettings({ symbol: res.targetSymbol });
+                }
+              } catch (e: any) {
+                log(`⚠️ [AUTO-ROTATION] Evaluation error: ${e.message}`);
+              }
+            }
+          }
+        }
+      }
     } catch (err) {
       log("tick error", (err as Error).message);
     }

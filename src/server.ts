@@ -31,6 +31,8 @@ export interface DashboardServerOptions {
   onResetPosition?: () => Promise<{ success: boolean; clearedLots: number }>;
   onReloadState?: () => void;
   onSyncExchangeTrades?: () => Promise<{ success: boolean; synced: number; purged?: number; error?: string }>;
+  getRotationStatus?: () => any;
+  onTriggerRotationScan?: (opts?: { forceRotate?: boolean }) => Promise<any>;
   maxCandles?: number;
 }
 
@@ -672,7 +674,38 @@ export class DashboardServer {
       return;
     }
 
-    // Bot Control: Reset Position Lots API
+    // Autonomous Pair Rotation API
+    if (pathname === "/api/rotation/status") {
+      const status = this.opts.getRotationStatus ? this.opts.getRotationStatus() : { enabled: false };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: true, ...status }));
+      return;
+    }
+
+    if (pathname === "/api/rotation/scan-now" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          const forceRotate = Boolean(parsed.forceRotate);
+          if (!this.opts.onTriggerRotationScan) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: false, error: "Rotation engine not available" }));
+            return;
+          }
+          const result = await this.opts.onTriggerRotationScan({ forceRotate });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true, ...result }));
+        } catch (e: any) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: false, error: (e as Error).message }));
+        }
+      });
+      return;
+    }
+
+        // Bot Control: Reset Position Lots API
     if (pathname === "/api/bot/reset-position" && req.method === "POST") {
       (async () => {
         try {

@@ -5415,6 +5415,14 @@
       setVal("cfg_dowTimeframe", data.dowTimeframe || "15m");
       setVal("cfg_initialCandleCount", data.initialCandleCount ?? 300);
       setVal("cfg_maxCandleCount", data.maxCandleCount ?? 600);
+      setCheck("cfg_enableAutoRotation", Boolean(data.enableAutoRotation));
+      const autoRotLabel = document.getElementById("cfg_enableAutoRotation_label");
+      if (autoRotLabel) autoRotLabel.textContent = data.enableAutoRotation ? "เปิดใช้งาน (Auto-Rotate Active)" : "ปิดใช้งาน (Manual)";
+      setVal("cfg_rotationQuoteAsset", data.rotationQuoteAsset || "USDT");
+      setVal("cfg_rotationIntervalMinutes", data.rotationIntervalMinutes ?? 180);
+      setVal("cfg_rotationIdleCashMinutes", data.rotationIdleCashMinutes ?? 120);
+      setVal("cfg_rotationScoreMarginPct", data.rotationScoreMarginPct ?? 20);
+      setVal("cfg_rotationMinVolumeUsd", data.rotationMinVolumeUsd ?? 3000000);
       setVal("cfg_channelMode", data.channelMode);
       setVal("cfg_donchianLookback", data.donchianLookback ?? 48);
       setVal("cfg_minChannelWidthPct", data.minChannelWidthPct);
@@ -5666,6 +5674,12 @@
     const maxInvVal = parseFloat(document.getElementById("cfg_maxInventoryUsdso").value);
     const payload = {
       exchange: document.getElementById("cfg_exchange") ? document.getElementById("cfg_exchange").value : "binance",
+      enableAutoRotation: document.getElementById("cfg_enableAutoRotation") ? document.getElementById("cfg_enableAutoRotation").checked : false,
+      rotationQuoteAsset: document.getElementById("cfg_rotationQuoteAsset") ? document.getElementById("cfg_rotationQuoteAsset").value : "USDT",
+      rotationIntervalMinutes: document.getElementById("cfg_rotationIntervalMinutes") ? Number(document.getElementById("cfg_rotationIntervalMinutes").value) : 180,
+      rotationIdleCashMinutes: document.getElementById("cfg_rotationIdleCashMinutes") ? Number(document.getElementById("cfg_rotationIdleCashMinutes").value) : 120,
+      rotationScoreMarginPct: document.getElementById("cfg_rotationScoreMarginPct") ? Number(document.getElementById("cfg_rotationScoreMarginPct").value) : 20,
+      rotationMinVolumeUsd: document.getElementById("cfg_rotationMinVolumeUsd") ? Number(document.getElementById("cfg_rotationMinVolumeUsd").value) : 3000000,
       strategyType: document.getElementById("cfg_strategyType") ? document.getElementById("cfg_strategyType").value : "dynamic_grid",
       symbol: (() => {
         const customInput = document.getElementById("cfg_symbol_custom");
@@ -7944,7 +7958,127 @@
       .join("");
   }
 
-  function renderLiveBottomSection() {
+  // ── Autonomous Pair Rotation UI Handlers ────────────────────────────────
+  const elAutoRotCheckbox = document.getElementById("cfg_enableAutoRotation");
+  if (elAutoRotCheckbox) {
+    elAutoRotCheckbox.addEventListener("change", (e) => {
+      const lbl = document.getElementById("cfg_enableAutoRotation_label");
+      if (lbl) lbl.textContent = e.target.checked ? "เปิดใช้งาน (Auto-Rotate Active)" : "ปิดใช้งาน (Manual)";
+    });
+  }
+
+  const btnTestRotationScan = document.getElementById("btnTestRotationScan");
+  const btnForceRotateTop1 = document.getElementById("btnForceRotateTop1");
+  const rotationScanStatus = document.getElementById("rotationScanStatus");
+  const rotationScanResultsTable = document.getElementById("rotationScanResultsTable");
+  const rotationScanResultsBody = document.getElementById("rotationScanResultsBody");
+
+  async function triggerRotationScan(forceRotate = false) {
+    if (rotationScanStatus) {
+      rotationScanStatus.innerHTML = '<span style="color:#38bdf8;">⏳ กำลังสแกน 2-Stage Market Funnel และจำลองผลเทรด 5m/15m กรุณารอสักครู่ (ใช้เวลา 3-5 วินาที)...</span>';
+    }
+    if (btnTestRotationScan) btnTestRotationScan.disabled = true;
+    if (btnForceRotateTop1) btnForceRotateTop1.disabled = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/rotation/scan-now`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ forceRotate }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        if (rotationScanStatus) rotationScanStatus.innerHTML = `<span style="color:#ef4444;">❌ เกิดข้อผิดพลาด: ${data.error || data.reason || "Unknown error"}</span>`;
+        return;
+      }
+
+      if (rotationScanStatus) {
+        rotationScanStatus.innerHTML = `<span style="color:#10b981;">✅ สแกนสำเร็จ: ${data.reason || "ประเมินเสร็จสิ้น"}</span>`;
+      }
+
+      if (data.report && data.report.length > 0 && rotationScanResultsTable && rotationScanResultsBody) {
+        rotationScanResultsTable.style.display = "block";
+        rotationScanResultsBody.innerHTML = data.report.map((item, idx) => {
+          const isTop = idx === 0;
+          const pnlColor = item.netPnlPct >= 0 ? "#10b981" : "#ef4444";
+          const chgColor = item.change24hPct >= 0 ? "#10b981" : "#ef4444";
+          return `
+            <tr style="${isTop ? 'background: rgba(16, 185, 129, 0.12); font-weight: bold;' : ''}">
+              <td style="text-align: center;">${isTop ? '⭐ ' : ''}#${idx + 1}</td>
+              <td style="color: #38bdf8;">${item.symbol}</td>
+              <td><span class="badge" style="background: ${item.compositeScore >= 60 ? '#10b981' : '#f59e0b'}; color: #fff; padding: 2px 6px; border-radius: 4px;">${item.compositeScore}/100</span></td>
+              <td style="color: ${pnlColor};">${item.netPnlPct >= 0 ? '+' : ''}${item.netPnlPct.toFixed(2)}%</td>
+              <td>${item.winRate.toFixed(1)}%</td>
+              <td>${item.tradesCount} ไม้</td>
+              <td style="color: #fca5a5;">${item.maxDrawdownPct.toFixed(1)}%</td>
+              <td><span style="color:${chgColor};">${item.change24hPct >= 0 ? '+' : ''}${item.change24hPct.toFixed(1)}%</span> / ${(item.quoteVolume24h / 1e6).toFixed(1)}M</td>
+              <td style="font-size: 10px; color: #94a3b8;">${item.reason}</td>
+            </tr>
+          `;
+        }).join("");
+      }
+
+      if (forceRotate && data.rotated) {
+        alert(`สลับคู่เหรียญสำเร็จ! กำลังหมุนเวียนไปยัง ${data.targetSymbol}`);
+        setTimeout(() => location.reload(), 1500);
+      }
+    } catch (e) {
+      if (rotationScanStatus) rotationScanStatus.innerHTML = `<span style="color:#ef4444;">❌ Network Error: ${e.message}</span>`;
+    } finally {
+      if (btnTestRotationScan) btnTestRotationScan.disabled = false;
+      if (btnForceRotateTop1) btnForceRotateTop1.disabled = false;
+    }
+  }
+
+  if (btnTestRotationScan) btnTestRotationScan.addEventListener("click", () => triggerRotationScan(false));
+  if (btnForceRotateTop1) btnForceRotateTop1.addEventListener("click", () => {
+    if (confirm("ต้องการบังคับสลับไปยังเหรียญอันดับ 1 ทันทีใช่หรือไม่? (พอร์ตต้องเป็นเงินสด 0 Lots)")) {
+      triggerRotationScan(true);
+    }
+  });
+
+  async function updateHeaderRotationPill() {
+    const pill = document.getElementById("headerRotationPill");
+    if (!pill) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/rotation/status`);
+      const data = await res.json();
+      if (data.success) {
+        if (data.enabled) {
+          pill.textContent = `Auto-Rotate: ON (${data.currentSymbolScore || 0}/100)`;
+          if (pill.parentElement) {
+            pill.parentElement.style.color = "#10b981";
+            pill.parentElement.style.borderColor = "rgba(16, 185, 129, 0.4)";
+            pill.parentElement.style.background = "rgba(16, 185, 129, 0.15)";
+          }
+        } else {
+          pill.textContent = `Auto-Rotate: OFF`;
+          if (pill.parentElement) {
+            pill.parentElement.style.color = "#94a3b8";
+            pill.parentElement.style.borderColor = "rgba(148, 163, 184, 0.2)";
+            pill.parentElement.style.background = "rgba(148, 163, 184, 0.08)";
+          }
+        }
+      }
+    } catch {}
+  }
+
+  setInterval(updateHeaderRotationPill, 30_000);
+  setTimeout(updateHeaderRotationPill, 2000);
+
+  const btnOpenRotationModal = document.getElementById("btnOpenRotationModal");
+  if (btnOpenRotationModal) {
+    btnOpenRotationModal.addEventListener("click", () => {
+      const openBtn = document.getElementById("openSettingsBtn");
+      if (openBtn) openBtn.click();
+      setTimeout(() => {
+        const tabBtn = document.getElementById("tabBtnRotation");
+        if (tabBtn) tabBtn.click();
+      }, 100);
+    });
+  }
+
+    function renderLiveBottomSection() {
     renderLiveTradesTable();
     renderLiveRoundsTable();
     renderLiveOrdersTable();

@@ -36,7 +36,7 @@ export interface OpenOrder {
 }
 
 export interface StrategyEvent {
-  type: "tick" | "order" | "order_gas";
+  type: "tick" | "order" | "order_gas" | "position_flat";
   data: any;
 }
 
@@ -233,6 +233,7 @@ export interface IStrategy {
   saveState(immediate?: boolean): void;
 
   // Portfolio & Balances
+  lastFlatCashTime?: number;
   lastRefPrice?: number;
   getAvgEntryPrice?(): number;
   clearPositionState?(): void;
