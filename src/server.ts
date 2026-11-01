@@ -266,13 +266,17 @@ export class DashboardServer {
 
     // Snapshot state
     if (pathname === "/api/state") {
+      const activeSymbol = this.opts.getSettings ? (this.opts.getSettings().symbol || "") : "";
+      const filteredOrders = activeSymbol
+        ? this.recentOrders.filter((o) => !o.symbol || this.db.matchesSymbol(o, activeSymbol))
+        : this.recentOrders;
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
           versionInfo: APP_VERSION_INFO,
           candles: this.candles,
           htfCandles: this.htfCandles,
-          orders: this.recentOrders.slice(0, 150),
+          orders: filteredOrders.slice(0, 150),
           latestTick: this.latestTick,
         }),
       );
@@ -289,7 +293,7 @@ export class DashboardServer {
     // Database: Trades History API
     if (pathname === "/api/db/trades") {
       const limit = parseInt(parsedUrl.searchParams.get("limit") || "5000", 10);
-      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      const symbolParam = parsedUrl.searchParams.get("symbol") || this.opts.getSettings?.().symbol || undefined;
       const trades = this.db.getTrades(limit, symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(trades));
@@ -299,7 +303,7 @@ export class DashboardServer {
     // Database: Order Activity History API
     if (pathname === "/api/db/orders") {
       const limit = parseInt(parsedUrl.searchParams.get("limit") || "5000", 10);
-      const symbolParam = parsedUrl.searchParams.get("symbol") || undefined;
+      const symbolParam = parsedUrl.searchParams.get("symbol") || this.opts.getSettings?.().symbol || undefined;
       const orders = this.db.getOrderActivity(limit, symbolParam);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(orders));

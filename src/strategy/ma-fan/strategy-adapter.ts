@@ -536,7 +536,13 @@ export class MaFanTradingStrategy implements IStrategy {
   }
 
   public getRecentOrders(): any[] {
-    return this.db.getOrders(100);
+    const sym = this.symbolInfo?.symbol || this.cfg.symbol;
+    return this.db.getOrders(5000, sym ? { symbol: sym } : undefined);
+  }
+
+  public getRecentTrades(): any[] {
+    const sym = this.symbolInfo?.symbol || this.cfg.symbol;
+    return this.db.getTrades(5000, sym);
   }
 
   public saveState(immediate?: boolean): void {

@@ -442,7 +442,8 @@ async function main(): Promise<void> {
           await grid.refreshWalletBalances();
           await grid.syncOnChainOrders();
           await grid.refreshWalletBalances();
-          dashboard.resetState({ clearTrades: false });
+          dashboard.resetState({ clearTrades: true });
+          dashboard.setInitialOrders(grid.getRecentOrders());
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
             macroDowEngine.addCandle(candle);
@@ -481,7 +482,8 @@ async function main(): Promise<void> {
           await grid.refreshWalletBalances();
           await grid.syncOnChainOrders();
           await grid.refreshWalletBalances();
-          dashboard.resetState({ clearTrades: false });
+          dashboard.resetState({ clearTrades: true });
+          dashboard.setInitialOrders(grid.getRecentOrders());
           dashboard.setInitialCandles(macroDowEngine.getCandles());
           macroFeed?.onCandle((candle, isClosed) => {
             macroDowEngine.addCandle(candle);

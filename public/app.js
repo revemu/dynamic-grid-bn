@@ -315,7 +315,9 @@
     let totalPnl = 0;
     let hasAnyPnl = false;
 
-    const cardsHtml = sorted
+    const displayOrders = sorted.length > 30 ? sorted.slice(-30) : sorted;
+
+    const cardsHtml = displayOrders
       .map((order) => {
         const action = order.action || "BUY";
         const isBuy = ["BUY", "BUY_FILL", "SNIPE_BUY"].includes(action);
@@ -349,6 +351,7 @@
         const txShort = order.txHash ? `${order.txHash.slice(0, 6)}...${order.txHash.slice(-4)}` : "";
         let cleanDesc = (order.levelDesc || "").replace(/\s*\(Target:[^)]+\)/i, "").trim();
         cleanDesc = cleanDesc.replace(/^IOC\s+(?:BUY|TAKE PROFIT|Sell)\s*\[(.*)\]$/i, "$1").trim();
+        const baseCoin = order.baseAsset || activeBaseAsset;
 
         return `
           <div class="cot-order-card">
@@ -362,7 +365,7 @@
             </div>
             <div class="cot-card-row">
               <span class="cot-label">Amount:</span>
-              <span class="cot-val-qty">${fmtQty(qty)} ${activeBaseAsset} <span class="cot-dim">($${notional.toFixed(2)})</span></span>
+              <span class="cot-val-qty">${fmtQty(qty)} ${baseCoin} <span class="cot-dim">($${notional.toFixed(2)})</span></span>
             </div>
             ${pnlHtml ? `
             <div class="cot-card-row">
@@ -565,7 +568,18 @@
     const grouped = new Map();
     ordersByCandleTime.clear();
 
+    const cleanActive = (activeSymbol || "").replace(/[\/\-_:]/g, "").toUpperCase();
+    const cleanActiveBase = (activeBaseAsset || "").replace(/[\/\-_:]/g, "").toUpperCase();
+
     for (const order of rawOrders) {
+      if (cleanActive && order.symbol) {
+        const cleanOrderSym = order.symbol.replace(/[\/\-_:]/g, "").toUpperCase();
+        if (cleanOrderSym !== cleanActive) continue;
+      } else if (cleanActiveBase && order.baseAsset) {
+        const cleanOrderBase = order.baseAsset.replace(/[\/\-_:]/g, "").toUpperCase();
+        if (cleanOrderBase !== cleanActiveBase) continue;
+      }
+
       const isTradeFill =
         order.status === "FILLED" ||
         (order.status !== "CANCELLED" &&
@@ -3214,10 +3228,12 @@
       if (elBtnOpenBacktestStudio) {
         elBtnOpenBacktestStudio.href = `/backtest.html?symbol=${encodeURIComponent(activeSymbol)}`;
       }
+      rebuildOrderMarkers();
       loadTradeManagerData();
       loadTradeRoundsData();
     } else if (!activeSymbol && incomingSym) {
       activeSymbol = incomingSym;
+      rebuildOrderMarkers();
     }
     activeBaseAsset = data.baseAsset || activeBaseAsset || "BASE";
     activeQuoteAsset = data.quoteAsset || activeQuoteAsset || "USDT";
@@ -4675,6 +4691,17 @@
 
   function addOrderActivity(order, isLiveUpdate = false) {
     if (!order) return;
+
+    const cleanActive = (activeSymbol || "").replace(/[\/\-_:]/g, "").toUpperCase();
+    const cleanActiveBase = (activeBaseAsset || "").replace(/[\/\-_:]/g, "").toUpperCase();
+    if (cleanActive && order.symbol) {
+      const cleanOrderSym = order.symbol.replace(/[\/\-_:]/g, "").toUpperCase();
+      if (cleanOrderSym !== cleanActive) return;
+    } else if (cleanActiveBase && order.baseAsset) {
+      const cleanOrderBase = order.baseAsset.replace(/[\/\-_:]/g, "").toUpperCase();
+      if (cleanOrderBase !== cleanActiveBase) return;
+    }
+
     const isTradeFill = order.status === "FILLED" || (order.status !== "CANCELLED" && order.status !== "OPEN" && ["BUY", "SELL", "BUY_FILL", "SELL_FILL", "CUT", "EXIT", "TAKE_PROFIT", "SNIPE_BUY", "SNIPE_SELL"].includes(order.action)) || ["BUY_HOOK", "TP1_EMA25", "TP2_RUNNER", "STOP_LOSS"].includes(order.type);
     const isOnChainAction = order.status === "OPEN" || order.status === "CANCELLED" || ["CREATE_BUY", "CREATE_SELL", "CANCEL_BUY", "CANCEL_SELL"].includes(order.action);
 

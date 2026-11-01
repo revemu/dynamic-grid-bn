@@ -2198,11 +2198,11 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   }
 
   getRecentTrades(): any[] {
-    return this.db.getTrades(5000);
+    return this.db.getTrades(5000, this.symbol);
   }
 
   getRecentOrders(): any[] {
-    return this.db.getOrders(5000);
+    return this.db.getOrders(5000, { symbol: this.symbol });
   }
 
   getLots(): Lot[] {

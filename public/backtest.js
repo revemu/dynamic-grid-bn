@@ -2046,7 +2046,41 @@
         throw new Error(err.error || `HTTP ${res.status}`);
       }
 
-      alert(`✅ นำ Config จาก Backtest ไปปรับใช้กับบอทจริง (${symbol} ${timeframe}) เรียบร้อยแล้ว!`);
+      // Check live bot state: wallet cash & paused status
+      let cashInfo = "";
+      let isPaused = false;
+      try {
+        const stateRes = await fetch("/api/state");
+        if (stateRes.ok) {
+          const stateData = await stateRes.json();
+          const tick = stateData?.latestTick;
+          const cash = Number(tick?.walletQuoteBalance ?? tick?.walletUsdsoBalance ?? 0);
+          const quoteSym = tick?.quoteAsset || "USDT";
+          isPaused = Boolean(tick?.isPaused);
+          if (cash < 5.0) {
+            cashInfo = `\n\n⚠️ ข้อสังเกต: เงินสดคงเหลือในกระเป๋าคือ $${cash.toFixed(2)} ${quoteSym} (ต่ำกว่าขั้นต่ำ Binance $5.00)\nบอทจะไม่สามารถส่งไม้ซื้อแรกได้จนกว่าจะมีเงินสดเติมเข้ามาครับ`;
+          }
+        }
+      } catch (_) {}
+
+      const shouldResume = isPaused && confirm(
+        `✅ นำ Config จาก Backtest ไปปรับใช้กับบอทจริง (${symbol} ${timeframe}) เรียบร้อยแล้ว!${cashInfo}\n\nต้องการสั่งให้บอทเริ่มเทรดทันที (Resume Bot) เลยหรือไม่?\n• กด OK: สั่ง Resume และเริ่มวางออเดอร์ทันที\n• กด Cancel: คงสถานะ PAUSED ไว้ตรวจสอบบนหน้าแดชบอร์ดก่อน`
+      );
+
+      if (shouldResume) {
+        try {
+          await fetch("/api/bot/pause", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ paused: false }),
+          });
+          alert(`▶️ สั่ง Resume บอทเรียบร้อยแล้ว! บอทกำลังเริ่มทำงานบนคู่ ${symbol}`);
+        } catch (resumeErr) {
+          console.warn("Could not auto-resume bot:", resumeErr);
+        }
+      } else if (!isPaused) {
+        alert(`✅ นำ Config จาก Backtest ไปปรับใช้กับบอทจริง (${symbol} ${timeframe}) เรียบร้อยแล้ว!${cashInfo}`);
+      }
     } catch (err) {
       alert(`❌ ไม่สามารถส่ง Config ไปยังบอทจริงได้: ${err.message}`);
     } finally {

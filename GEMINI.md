@@ -7516,3 +7516,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 
 
+
+
+---
+
+### 255. Cross-Symbol Order Marker Contamination Fix, Clean DB Order Filtering & Backtest Live Resume Enhancements (v0.3.0.5)
+
+- **สาเหตุของปัญหาออเดอร์แปลก 149 ไม้ราคา $2,413 โผล่บนเหรียญ ENSOFDUSD (Root Cause Analysis)**:
+  1. **Cross-Symbol Order Leakage**: บอทเคยเทรดคู่ `ETHFDUSD` ในอดีตบน Binance Spot เมื่อวันที่ 30 ม.ค. โดยมีประวัติการเทรด 149 ไม้ช่วงราคา $2,413 - $2,427 ถูกบันทึกไว้ในฐานข้อมูลจริง `data/grid-bot.db.json`
+  2. **getRecentOrders() ขาดการกรอง Symbol**: ใน `src/strategy/index.ts` และ `src/strategy/ma-fan/strategy-adapter.ts` เมธอด `getRecentOrders()` เรียก `this.db.getOrders(5000)` โดยไม่ได้ส่ง `{ symbol: this.symbol }` ไปกรอง ทำให้เมื่อ Dashboard เริ่มต้นหรือสลับเหรียญ ดึงออเดอร์ของทุกเหรียญในประวัติออกมาทั้งหมด
+  3. **Dashboard ไม่ได้ล้างออเดอร์เก่าตอนสลับคู่เหรียญ**: ใน `src/index.ts` เมธอด `onUpdateSettings()` ตอนสลับ Exchange หรือ Symbol เรียก `dashboard.resetState({ clearTrades: false })` ทำให้ `recentOrders` ของเหรียญเก่ายังคงค้างอยู่ใน Dashboard Server
+  4. **Frontend ขาดการตรวจสอบเหรียญก่อนวาด Order Marker**: ใน `public/app.js` ฟังก์ชัน `rebuildOrderMarkers()` นำเวลาของออเดอร์ ETH วันที่ 30 ม.ค. ไปเทียบกับแท่งเทียนของ ENSOFDUSD ตรงๆ โดยไม่ได้เช็คว่า `order.symbol === activeSymbol` หรือไม่ ทำให้ออเดอร์ ETH 149 ไม้ถูกนำไปปักหมุดทับบนแท่งเทียน 30 ม.ค. ของ ENSOFDUSD ทันที
+  5. **Tooltip Format Error**: เมื่อชี้หมุดบนหน้าเว็บ ฟังก์ชัน `renderChartOrderTooltip` นำชื่อฐานเหรียญปัจจุบัน (`activeBaseAsset = ENSO`) ไปต่อท้ายยอดซื้อขายของ ETH ทำให้แสดงผลเป็น `0.02 ENSO ($45.37)` ที่ราคา `$2413.540` ดูเหมือนประวัติเสีย
+  6. **สาเหตุที่บอทค้าง**: การกด "ส่งไปใช้กับบอทจริง" จาก Backtest Studio ส่งเฉพาะคอนฟิก `/api/config` แต่ไม่ได้สั่งปลดล็อก `/api/bot/pause` บอทจึงยังคงอยู่ในสถานะ `⏸️ PAUSED` (Monitoring Mode) และเงินสดในกระเป๋าเหลือเพียง `$0.88 FDUSD` ซึ่งต่ำกว่าเกณฑ์ขั้นต่ำ $5.00 ของ Binance Spot บอทจึงไม่สามารถส่งไม้แรกได้ ประกอบกับ Tooltip 149 ไม้ทำให้เบราว์เซอร์กระตุกชั่วคราว
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **Strict Symbol Isolation ใน Strategy Layer (`src/strategy/index.ts` & `src/strategy/ma-fan/strategy-adapter.ts`)**:
+     - ปรับปรุง `getRecentOrders()` และ `getRecentTrades()` ให้ส่งตัวกรองคู่เหรียญปัจจุบันเสมอ: `this.db.getOrders(5000, { symbol: this.symbol })` และ `this.db.getTrades(5000, this.symbol)`
+  2. **Dashboard State Reset & Reload บน Symbol Switch (`src/index.ts`)**:
+     - เมื่อมีการสลับคู่เหรียญหรือกระดาน กำหนดให้ `dashboard.resetState({ clearTrades: true })` และเรียก `dashboard.setInitialOrders(grid.getRecentOrders())` โหลดเฉพาะออเดอร์ของเหรียญใหม่เข้า Dashboard ทันที
+  3. **API Endpoint Filtering (`src/server.ts`)**:
+     - ใน `/api/state` ให้กรอง `orders: filteredOrders.slice(0, 150)` เฉพาะเหรียญที่ตรงกับ `activeSymbol`
+     - ใน `/api/db/trades` และ `/api/db/orders` หากไม่มีพารามิเตอร์ `symbol` ส่งมาใน Query ให้ Default อ้างอิงตาม Active Symbol ป้องกันข้อมูลข้ามเหรียญรั่วไหล
+  4. **Strict Symbol Gating บน Frontend Dashboard (`public/app.js`)**:
+     - ใน `rebuildOrderMarkers()`: ตรวจสอบ `order.symbol` และ `order.baseAsset` เทียบกับ `activeSymbol` และ `activeBaseAsset` หากไม่ตรงจะข้ามการวาดหมุดทันที
+     - ใน `addOrderActivity()`: คัดกรองออเดอร์ที่เข้ามาจาก SSE หรือ State หากเป็นคนละเหรียญจะไม่นำเข้า `rawOrders` และไม่นำเข้า Activity Feed
+     - ปรับปรุง `renderChartOrderTooltip()`: จำกัดการแสดงการ์ดใน Tooltip ไม่เกิน 30 ไม้ล่าสุด พร้อมสรุปยอดรวม เพื่อป้องกัน DOM Overload และอาการหน้าจอค้าง
+     - ปรับปรุง `activeSymbol` listener: เมื่อได้รับ Tick หรือ State ที่เปลี่ยนเหรียญ ให้เรียก `rebuildOrderMarkers()` ล้างและวาดหมุดใหม่ทันที
+  5. **Auto Resume & Wallet Cash Alert ใน Backtest Studio (`public/backtest.js`)**:
+     - หลังกดส่งการตั้งค่าไปยังบอทจริง ระบบจะตรวจเช็คยอดเงินสดคงเหลือ หากต่ำกว่า $5.00 จะแจ้งเตือนให้ผู้ใช้ทราบทันที
+     - เพิ่มกล่องยืนยันถามผู้ใช้ว่าต้องการสั่ง Resume บอทและเริ่มวางออเดอร์ทันทีเลยหรือไม่ เพื่อความสะดวกในการเริ่มเทรดโดยไม่ต้องกด Resume ซ้ำที่หน้าแดชบอร์ด
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.5`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
