@@ -959,7 +959,13 @@ export class BacktestService {
         const currentPosVal = totalHeldQty * c.close * (1 - costPerFill);
         const unrealizedPnlPct = totalInvestQuote > 0 ? ((currentPosVal - totalInvestQuote) / totalInvestQuote) * 100 : 0;
 
-        const isDanger = (c.close < floor * 0.985) || (change24hPct < -5.5) || (posRatio24h < 0.08 && unrealizedPnlPct < -2.5);
+        // 🛡️ Structural Floor Breakdown Check:
+        // Dynamic Grid accumulates on dips towards the floor. Dips are normal, NOT emergencies.
+        // We ONLY invoke onSignalInvalidationCheck if price structurally breaks below the channel floor (1.8% buffer)
+        // or suffers catastrophic collapse below 24h rock bottom (posRatio < 0.05 and unrealizedPnl < -5.0%).
+        const isFloorBreak = c.close < floor * 0.982;
+        const isCatastrophicDump = posRatio24h < 0.05 && unrealizedPnlPct < -5.0;
+        const isDanger = isFloorBreak || isCatastrophicDump;
         if (isDanger) {
           const shouldExitDisqualified = opts.onSignalInvalidationCheck({
             barIndex: i,
@@ -3392,6 +3398,8 @@ export class BacktestService {
     winRate: number;
     range24hPct: number;
     quoteVol24h: number;
+    posRatio: number;
+    isDipPullback: boolean;
   }> {
     const { targetTime, universeCandles, activeSymbol, quoteAsset, gridOpts } = opts;
     const minVol = quoteAsset === "FDUSD" ? 500_000 : 2_000_000;
@@ -3519,6 +3527,8 @@ export class BacktestService {
       winRate: number;
       range24hPct: number;
       quoteVol24h: number;
+      posRatio: number;
+      isDipPullback: boolean;
     }> = [];
 
     const symCostModel = quoteAsset === "FDUSD"
@@ -3597,11 +3607,20 @@ export class BacktestService {
         }
 
         let positionScore = 0;
-        if (cand.posRatio >= 0.15 && cand.posRatio <= 0.45) {
-          positionScore = 15;
-        } else if (cand.posRatio > 0.45 && cand.posRatio <= 0.60) {
-          positionScore = 8;
+        if (cand.posRatio >= 0.15 && cand.posRatio <= 0.40) {
+          positionScore = 15; // Sweet spot for pullback accumulation!
+        } else if (cand.posRatio > 0.40 && cand.posRatio <= 0.50) {
+          positionScore = 5;
+        } else if (cand.posRatio > 0.65) {
+          positionScore = -10; // Overbought climax penalty
         }
+
+        const prevBar = slice500.length >= 2 ? slice500[slice500.length - 2] : lastBar;
+        const barRange = lastBar.high - lastBar.low;
+        const lowerWick = Math.min(lastBar.open, lastBar.close) - lastBar.low;
+        const hasAbsorption = barRange > 0 ? (lowerWick / barRange) >= 0.15 : false;
+        const isGreen = lastBar.close >= lastBar.open;
+        const isDipPullback = cand.posRatio >= 0.12 && cand.posRatio <= 0.42 && (hasAbsorption || isGreen || lastBar.close >= prevBar.close);
 
         const liquidityScore = Math.min(10, Math.max(0, (Math.log10(cand.quoteVol24h) - 6) * 4));
         const compositeScore = Math.round(simScore + structureScore + positionScore + liquidityScore);
@@ -3617,6 +3636,8 @@ export class BacktestService {
           winRate: Number(summary.winRate.toFixed(1)),
           range24hPct: Number(cand.range24hPct.toFixed(1)),
           quoteVol24h: cand.quoteVol24h,
+          posRatio: Number(cand.posRatio.toFixed(3)),
+          isDipPullback,
         });
       } catch (err: any) {
         console.warn(`[RotationBacktest] Failed scoring candidate ${cand.symbol}: ${err.message}`);
@@ -3684,10 +3705,11 @@ export class BacktestService {
     });
 
     console.log(`[RotationBacktest] 🔎 Initial funnel at ${new Date(simStartTime * 1000).toISOString()} found ${initialCandidates.length} eligible candidates: ` +
-      (initialCandidates.length > 0 ? initialCandidates.slice(0, 5).map(c => `${c.symbol}(score=${c.compositeScore})`).join(", ") : "none")
+      (initialCandidates.length > 0 ? initialCandidates.slice(0, 5).map(c => `${c.symbol}(score=${c.compositeScore},pos=${c.posRatio})`).join(", ") : "none")
     );
 
-    let activeCandidate = initialCandidates[0];
+    const initialPullback = initialCandidates.find((c) => c.compositeScore >= 40 && c.posRatio <= 0.45);
+    let activeCandidate = initialPullback || initialCandidates[0];
     if (!activeCandidate) {
       const fallbackSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
       console.warn(`[RotationBacktest] ⚠️ No initial candidate passed full funnel criteria at simStartTime. Falling back to ${fallbackSym}`);
@@ -3702,6 +3724,8 @@ export class BacktestService {
         winRate: 0,
         range24hPct: 5,
         quoteVol24h: 10_000_000,
+        posRatio: 0.35,
+        isDipPullback: true,
       };
     }
     let activeSymbol = activeCandidate.symbol;
@@ -3739,12 +3763,18 @@ export class BacktestService {
         const viable = altCandidates.find((c) => {
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
+          if (c.posRatio > 0.45) return false;
+          const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
+          return idx >= 0 && idx < cCandles.length - 10;
+        }) || altCandidates.find((c) => {
+          const cCandles = universeCandles.get(c.symbol);
+          if (!cCandles) return false;
           const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
           return idx >= 0 && idx < cCandles.length - 10;
         });
 
         if (viable) {
-          console.log(`[RotationBacktest] 🔄 Swapping to viable alternative candidate: ${viable.symbol} (score=${viable.compositeScore})`);
+          console.log(`[RotationBacktest] 🔄 Swapping to viable alternative candidate: ${viable.symbol} (score=${viable.compositeScore}, pos=${viable.posRatio})`);
           activeCandidate = viable;
           activeSymbol = viable.symbol;
           symCandles = universeCandles.get(activeSymbol);
@@ -3803,19 +3833,34 @@ export class BacktestService {
           if (candidates.length === 0) return false;
           scoresSnapshot = candidates.slice(0, 5);
 
-          const best = candidates[0];
           const curItem = candidates.find((c) => c.symbol === activeSymbol);
           const curScore = curItem ? curItem.compositeScore : 0;
           currentScoreAtExit = curScore;
 
-          // If current coin has become disqualified (fell out of funnel or score < 45):
-          const isCurrentDisqualified = !curItem || curScore < 45;
-          if (isCurrentDisqualified && best.symbol !== activeSymbol && best.compositeScore >= 55) {
-            console.log(`[RotationBacktest] 🚨 [Leg #${legIndex}] Flat rotation triggered by SIGNAL_DISQUALIFIED at ${new Date(state.time * 1000).toISOString()}: ${activeSymbol} (score=${curScore}) ➔ ${best.symbol} (score=${best.compositeScore})`);
-            legStopReason = "SIGNAL_DISQUALIFIED";
-            nextSymbol = best.symbol;
-            nextSymbolScore = best.compositeScore;
-            return true;
+          // 🌟 WATCHLIST & PULLBACK SWEET SPOT LOGIC:
+          // A candidate on the watchlist is ONLY actionable if its price has pulled back into support (posRatio <= 0.42).
+          // If a candidate is pumping (posRatio > 0.42), it stays on the Watchlist; we do NOT buy at the top!
+          const pullbackCandidates = candidates.filter(
+            (c) => c.symbol !== activeSymbol && c.compositeScore >= 45 && c.posRatio <= 0.42
+          );
+
+          // 1. If current coin has become disqualified (fell out of funnel or score < 40):
+          const isCurrentDisqualified = !curItem || curScore < 40;
+          if (isCurrentDisqualified) {
+            const bestPullback = pullbackCandidates[0];
+            if (bestPullback && bestPullback.compositeScore >= 45) {
+              console.log(
+                `[RotationBacktest] 🚨 [Leg #${legIndex}] Flat rotation triggered by SIGNAL_DISQUALIFIED at ${new Date(
+                  state.time * 1000
+                ).toISOString()}: ${activeSymbol} (score=${curScore}) ➔ ${bestPullback.symbol} (score=${
+                  bestPullback.compositeScore
+                }, posRatio=${bestPullback.posRatio})`
+              );
+              legStopReason = "SIGNAL_DISQUALIFIED";
+              nextSymbol = bestPullback.symbol;
+              nextSymbolScore = bestPullback.compositeScore;
+              return true;
+            }
           }
 
           const timeSinceRot = state.time - lastRotationTime;
@@ -3823,12 +3868,25 @@ export class BacktestService {
             return false;
           }
 
+          // 2. Winning Horse Loyalty Policy:
+          // If the current coin is still performing well (curScore >= 45), require a substantial score margin
+          // to justify switching out, AND the new coin must be in the Pullback Retracement Sweet Spot!
           const requiredScore = curScore * (1 + scoreMarginPct / 100);
-          if (best.symbol !== activeSymbol && best.compositeScore >= 55 && best.compositeScore >= requiredScore) {
-            console.log(`[RotationBacktest] 🔀 [Leg #${legIndex}] Rotation triggered by ${state.trigger} at ${new Date(state.time * 1000).toISOString()}: ${activeSymbol} (${curScore}) ➔ ${best.symbol} (${best.compositeScore}, required >= ${requiredScore.toFixed(1)})`);
+          const eligibleRotationCandidate = pullbackCandidates.find(
+            (c) => c.compositeScore >= 55 && c.compositeScore >= requiredScore
+          );
+
+          if (eligibleRotationCandidate) {
+            console.log(
+              `[RotationBacktest] 🔀 [Leg #${legIndex}] Pullback rotation triggered by ${state.trigger} at ${new Date(
+                state.time * 1000
+              ).toISOString()}: ${activeSymbol} (${curScore}) ➔ ${eligibleRotationCandidate.symbol} (${
+                eligibleRotationCandidate.compositeScore
+              }, posRatio=${eligibleRotationCandidate.posRatio}, required >= ${requiredScore.toFixed(1)})`
+            );
             legStopReason = state.trigger;
-            nextSymbol = best.symbol;
-            nextSymbolScore = best.compositeScore;
+            nextSymbol = eligibleRotationCandidate.symbol;
+            nextSymbolScore = eligibleRotationCandidate.compositeScore;
             return true;
           }
 
@@ -3837,38 +3895,23 @@ export class BacktestService {
         onSignalInvalidationCheck: (state) => {
           if (opts.enableSignalInvalidationExit === false) return false;
 
-          const isExtremeDrop = state.change24hPct < -5.5;
+          // 🛡️ ONLY trigger Emergency Liquidate if price structurally breaks below the channel floor!
+          // Normal 24h dips within the channel are standard grid accumulation opportunities, NOT emergencies!
           const isFloorBreak = state.closePrice < state.floorPrice * 0.982;
-          const isPosRatioDump = state.posRatio24h < 0.08 && state.unrealizedPnlPct < -2.5;
+          const isCatastrophicDump = state.posRatio24h < 0.05 && state.unrealizedPnlPct < -5.0;
 
-          if (!isExtremeDrop && !isFloorBreak && !isPosRatioDump) {
+          if (!isFloorBreak && !isCatastrophicDump) {
             return false;
           }
 
-          const candidates = this.evaluateHistoricalFunnelAtTime({
-            targetTime: state.time,
-            universeCandles,
-            activeSymbol,
-            quoteAsset: quote,
-            gridOpts: opts,
-          });
-
-          if (candidates.length === 0) return false;
-          const curItem = candidates.find((c) => c.symbol === activeSymbol);
-          const curScore = curItem ? curItem.compositeScore : 0;
-          const best = candidates[0];
-
-          if (curScore < 45 && best && best.symbol !== activeSymbol && best.compositeScore >= 45) {
-            console.log(`[RotationBacktest] 🚨 [Leg #${legIndex}] EMERGENCY ROTATION: ${activeSymbol} signal disqualified (24h=${state.change24hPct.toFixed(2)}%, close=$${state.closePrice.toFixed(4)}, score=${curScore}) ➔ Liquidating ${state.heldLotsCount} lots to rotate into ${best.symbol} (score=${best.compositeScore})`);
-            scoresSnapshot = candidates.slice(0, 5);
-            legStopReason = "SIGNAL_DISQUALIFIED";
-            nextSymbol = best.symbol;
-            nextSymbolScore = best.compositeScore;
-            currentScoreAtExit = curScore;
-            return true;
-          }
-
-          return false;
+          console.log(
+            `[RotationBacktest] 🚨 [Leg #${legIndex}] STRUCTURAL FLOOR BREAKDOWN: ${activeSymbol} broke below floor ($${state.closePrice.toFixed(
+              4
+            )} < $${(state.floorPrice * 0.982).toFixed(4)}) ➔ Liquidating ${state.heldLotsCount} lots to protect capital`
+          );
+          legStopReason = "SIGNAL_DISQUALIFIED";
+          nextSymbol = undefined; // Will evaluate clean on flat
+          return true;
         },
       });
 
@@ -3950,13 +3993,20 @@ export class BacktestService {
         });
         const viable = candidates.find((c) => {
           if (c.symbol === activeSymbol) return false;
+          if (c.posRatio > 0.45) return false;
+          const cCandles = universeCandles.get(c.symbol);
+          if (!cCandles) return false;
+          const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
+          return idx >= 0 && idx < cCandles.length - 10;
+        }) || candidates.find((c) => {
+          if (c.symbol === activeSymbol) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
           const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
           return idx >= 0 && idx < cCandles.length - 10;
         });
         if (viable) {
-          console.log(`[RotationBacktest] 🔄 Rotating to next top viable candidate: ${viable.symbol} (score=${viable.compositeScore})`);
+          console.log(`[RotationBacktest] 🔄 Rotating to next top viable candidate: ${viable.symbol} (score=${viable.compositeScore}, pos=${viable.posRatio})`);
           activeCandidate = viable;
           activeSymbol = viable.symbol;
         } else {

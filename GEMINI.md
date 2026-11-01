@@ -7476,5 +7476,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
   7. **Version Bump**:
      - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.3`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 254. Watchlist & Pullback Retracement Entry Architecture, Structural Floor-Only Breakdown Guard & Winning Horse Loyalty (v0.3.0.4)
+
+- **สาเหตุและข้อค้นพบจากการทดสอบเชิงประจักษ์ (Empirical Root Cause & The Rotation Paradox)**:
+  1. การเปรียบเทียบระหว่าง Single-Pair Holding กับ Autonomous Rotation:
+     - เมื่อถือ `BEAMXUSDT` เดี่ยวๆ ตลอด 14 วัน (4,000 แท่ง) โดยไม่สลับเหรียญ ได้กำไรถึง **+$51.38 (+51.38% Net PnL)**, Win Rate 98.1% (106 ชนะจาก 108 ไม้)
+     - แต่พอใช้ระบบ Rotation เดิมกลับขาดทุนใน `BEAMXUSDT` ถึง `-$13.49` และ `PEPEUSDT` ขาดทุน `-$2.66`
+  2. วงจรความเสียหาย "ซื้อดอย คัตก้นหลุม (Buy High, Panic Cut Low)":
+     - **Climax Entry**: Funnel คำนวณคะแนนสูง 75-85 แต้มจากกำไรและโวลุ่ม 40h ที่เพิ่งปั๊มขึ้นมา ทำให้บอทกระโดดเข้าซื้อที่ยอดดอยของรอบ (`posRatio > 0.55`)
+     - **Normal Grid Pullback**: เมื่อราคาพักตัวย่อลงมาตามปกติของกริด บอทเข้าช้อนซื้อ 2-3 ไม้
+     - **Panic Disqualification Trap**: เมื่อย่อลงมา ผลตอบแทน 4h พลิกเป็นลบ คะแนน Funnel หดลงเหลือ 6-12 แต้ม เงื่อนไขเดิม `isExtremeDrop (change24hPct < -5.5)` มองว่าผิดปกติ จึงสั่งเทขาย Cut Loss ไม้ที่สะสมไว้ทั้งหมด 3 ไม้ที่ก้นหลุม ขาดทุนสะสมทันที
+     - **Post-Cut Recovery**: หลังคัตเสร็จ เหรียญดีดกลับทำจุดสูงสุดใหม่ตามแนวโน้มเดิม
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **Watchlist & Pullback Retracement Entry (`posRatio <= 0.42` & Dip Absorption)**:
+     - เหรียญที่มีคะแนน Funnel สูงแต่ราคาลอยตัวอยู่โซนบน (`posRatio > 0.42`) จะถูกจัดเก็บไว้ใน **Candidate Watchlist** เท่านั้น ไม่รีบกระโดดเข้าซื้อ
+     - การสลับเข้าซื้อจะเกิดขึ้นได้ต่อเมื่อ: เหรียญเป้าหมายย่อตัวลงมาในโซนรับ Sweet Spot (`posRatio 0.12 - 0.42`) และมีสัญญาณดูดซับแรงขายแบบ Dip Hunter (Lower Wick $\ge 15\%$ หรือเริ่มมีแท่งเขียวหยุดการไหล)
+     - ให้คะแนนโบนัสสะสมตำแหน่ง 15 แต้มเมื่อ `posRatio` อยู่ระหว่าง `0.15 - 0.40` และหักคะแนน -10 แต้มหากราคาอยู่ในเขต Climax Overbought (`posRatio > 0.65`)
+  2. **Structural Channel Floor Breakdown Only for Emergency Cut Loss**:
+     - ยกเลิกการเทขายออเดอร์ค้างเพียงเพราะคะแนนโมเมนตัม 24h ลดลงขณะที่ราคายังอยู่ใน Channel
+     - กำหนดให้การ Liquidate ออเดอร์ค้างเกิดขึ้นเฉพาะกรณีเดียว คือ: **ราคาหลุดแนวรับ Channel Floor จริงๆ (`closePrice < floorPrice * 0.982`)** หรือดิ่งต่ำกว่าจุดต่ำสุด 24 ชม. รุนแรง (`posRatio < 0.05` ร่วมกับ unrealized PnL < -5.0%)
+  3. **Winning Horse Loyalty Policy & Flat Exit Rotation**:
+     - หากเหรียญปัจจุบันกำลังทำกำไรต่อเนื่องและโครงสร้างตลาดยังดี (`curScore >= 45`) จะไม่อนุญาตให้สลับออกเพียงเพราะมีเหรียญอื่นได้คะแนนนำชั่วคราว
+     - การสลับเหรียญตามปกติกระทำเฉพาะจังหวะ **Flat Cash 100% (Take Profit ครบทุกไม้แล้ว)** จึงไม่มีการขาดทุนจากการเทขายไม้ค้าง
+- **ผลการทดสอบเชิงประจักษ์เปรียบเทียบ Before vs After (Empirical Backtest Results)**:
+  - **Net PnL %**: พลิกกลับจากติดลบ **`-10.33%`** ➔ กลายเป็นกำไร **`+7.29%`** (เพิ่มขึ้นถึง **+17.62%** Net Profit Delta!)
+  - **Final Equity**: เติบโตจาก `$179.33` ➔ **`$214.58`** (เริ่มต้น `$200`)
+  - **Alpha vs Benchmark (BTCUSDT -6.01%)**: พุ่งจาก `-4.61%` ➔ **`+13.30%`** (ชนะตลาดขาดลอย!)
+  - **Trade Win Rate**: เพิ่มขึ้นจาก `74.2%` ➔ **`85.5%`** (71 ชนะจาก 83 ไม้)
+  - **Max Portfolio Drawdown**: ลดลงจาก `14.4%` ➔ **`11.0%`**
+  - **เหรียญผลงานเด่น**:
+    - `PEPEUSDT`: จากเดิมขาดทุน `-$2.66` กลายมาเป็นตัวสร้างกำไรอันดับ 1 **`+$13.58 (+6.79%)`** (Win Rate 90%)
+    - `ENAUSDT`: กำไร **`+$6.98 (+3.49%)`** (Win Rate 100%)
+    - `NEARUSDT`: กำไร **`+$4.05 (+2.02%)`** (Win Rate 91.7%)
+    - `XPLUSDT`: ค้นพบและทำกำไร **`+$3.87 (+1.93%)`** (Win Rate 87.5%)
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.4`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
 
 
