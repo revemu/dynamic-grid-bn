@@ -939,6 +939,9 @@ export class DashboardServer {
           const capitalZones = Number(parsed.capitalZones) || 2;
           const channelMode = parsed.channelMode || "DONCHIAN_ATR";
           const gridCutLossMode = parsed.gridCutLossMode || "none";
+          const enableDipHunterEntryGuard = parsed.enableDipHunterEntryGuard !== false;
+          const enableSignalInvalidationExit = parsed.enableSignalInvalidationExit !== false;
+          const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
 
           const result = await BacktestService.runMultiPairRotationSimulation({
             quoteAsset,
@@ -951,6 +954,9 @@ export class DashboardServer {
             capitalZones,
             channelMode,
             gridCutLossMode,
+            enableDipHunterEntryGuard,
+            enableSignalInvalidationExit,
+            enableBaseConfirmation,
             customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
             blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
           });

@@ -7416,3 +7416,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
   5. **4-Tier Versioning Transition**:
      - ปรับเข้าสู่มาตรฐานเลขเวอร์ชัน 4 หลัก: **`0.3.0.1`** ใน `package.json` และ `src/version.ts` (Major 0, Minor 3, Feature 0, Patch 1)
 
+---
+
+### 252. Dip Hunter Entry Absorption Guard & Continuous Signal Invalidation Auto-Rotation (v0.3.0.2)
+
+- **สาเหตุของปัญหาและข้อสังเกตจากผู้ใช้ (Motivation & Root Cause)**:
+  1. ในการทดสอบ Multi-Pair Rotation Backtest เดิม (`v0.3.0.1`) พอร์ตติดลบ `-4.14%` เนื่องจากในรอบที่ 3 เหรียญ `NILUSDT` ดิ่งลง `-25%` และบอทเข้าช้อนซื้อเต็มอัตรา 4 ไม้กลางทางขาลง (Waterfall Drop)
+  2. โค้ดเดิมสลับเหรียญเฉพาะเมื่อ **"พอร์ตว่าง (`heldLots.length === 0`)"** และตรวจสอบเฉพาะ **"เวลา Cooldown (180 นาที)"** ทำให้เมื่อถือไม้ค้างอยู่ บอทจะไม่ยอมตรวจสอบสุขภาพสัญญาณของเหรียญเดิมเลย ส่งผลให้ติดดอยแช่อยู่ใน NILUSDT นานถึง **11.4 วัน (274.4 ชั่วโมง)**
+  3. บั๊กราคาขาย Take Profit: ใน Dynamic Trailing บางจังหวะ `lot.targetPrice` คำนวณต่ำกว่าต้นทุนซื้อของไม้นั้น (`lot.buyPrice`) ส่งผลให้มีไม้ `GRID_TP` ปิดด้วย PnL ติดลบ
+
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Fix Implementation)**:
+  1. **Dip Hunter Entry Absorption Guard (`runDynamicGridSimulation` in `src/backtest-service.ts`)**:
+     - เพิ่มเงื่อนไขก่อนเปิดไม้ Grid Buy: ตรวจสอบไม่ให้ซื้อในจังหวะ Waterfall Crash (แท่งแดงติดต่อกัน $\ge 4$ แท่ง หรือ 24h Change $< -5.5\%$)
+     - บังคับว่าต้องมีแรงซื้อดันกลับทำไส้ล่างอย่างน้อย 15% (`lowerWickPct >= 15%`) หรือเป็นแท่งเขียวกลับตัว (`c.close >= c.open`) จึงจะเปิดไม้ซื้อ ช่วยป้องกันการรับมีดแท่งแดงตันได้ 100%
+  2. **Continuous Signal Invalidation & Emergency Rotation (`onSignalInvalidationCheck`)**:
+     - เพิ่มระบบดักฟังสุขภาพของสัญญาณระหว่างถือไม้: หาก 24h Change หลุดต่ำกว่า `-5.5%`, ราคาปิดหลุด Floor ต่ำกว่า `1.8%`, หรือคะแนน Funnel ร่วงต่ำกว่า 45 แต้ม
+     - ระบบจะตัดขาย Liquidate ไม้ที่ถือค้างอยู่ทันที (`SIGNAL_DISQUALIFIED`) เพื่อหยุดยั้งความเสียหายแต่เนิ่นๆ (เช่น โดนเพียง `-2%` ถึง `-4%`) และปลดล็อกเงินสดสลับไปเข้าเหรียญ Top ตัวใหม่ในตลาดทันที ไม่นั่งถือแช่ข้ามสัปดาห์
+  3. **Cooldown Bypass on Signal Disqualification**:
+     - เมื่อพอร์ตว่าง (Flat) หากเหรียญเดิมคะแนนร่วงต่ำกว่า 45 หรือหลุดเกณฑ์ Funnel Stage 1 จะปลดล็อกข้าม Cooldown (180 นาที) ทันที เพื่อย้ายไปเหรียญอันดับ 1 ทันที
+  4. **Strict Individual Lot Target Price Protection**:
+     - ล็อก `lotSafeBase = Math.max(avgEntry, lot.buyPrice)` และคิดบวกค่าธรรมเนียมไป-กลับ (`roundtripFeePct + 0.20%`) ทำให้ทุกไม้ `GRID_TP` มีกำไรสุทธิเป็นบวกเสมอ
+  5. **UI & API Parameter Integration**:
+     - เพิ่มตัวเลือกใน `public/backtest.html` และ `public/backtest.js`: `rotBtDipHunterGuard` (Dip Hunter + HL Guard) และ `rotBtSignalExit` (ตัดจบ & สลับเหรียญทันที)
+     - เชื่อมต่อ API `POST /api/backtest/rotation/run` ใน `src/server.ts`
+  6. **Version Bump**:
+     - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.2`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+

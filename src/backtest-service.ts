@@ -214,6 +214,8 @@ export interface MultiPairRotationOptions {
   zoneStabilizeCandles?: number;
   lockChannelInPosition?: boolean;
   enableBaseConfirmation?: boolean;
+  enableDipHunterEntryGuard?: boolean;
+  enableSignalInvalidationExit?: boolean;
   gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
 }
 
@@ -223,7 +225,7 @@ export interface RotationLegRecord {
   startTime: number;
   endTime: number;
   durationHours: number;
-  triggerReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT";
+  triggerReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" | "SIGNAL_DISQUALIFIED";
   entryScore: number;
   previousSymbol?: string;
   previousSymbolScore?: number;
@@ -528,11 +530,22 @@ export class BacktestService {
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
       startTradingBarIndex?: number;
+      enableDipHunterEntryGuard?: boolean;
       onFlatCheckStop?: (state: {
         barIndex: number;
         time: number;
         cash: number;
         trigger: "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT";
+      }) => boolean;
+      onSignalInvalidationCheck?: (state: {
+        barIndex: number;
+        time: number;
+        closePrice: number;
+        floorPrice: number;
+        change24hPct: number;
+        posRatio24h: number;
+        heldLotsCount: number;
+        unrealizedPnlPct: number;
       }) => boolean;
     }
   ): BacktestRecord {
@@ -549,6 +562,8 @@ export class BacktestService {
     const gridCutLossMode = opts.gridCutLossMode ?? "none";
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
+    const roundtripFeePct = costPerFill * 2 * 100;
+    const effectiveMinProfitPct = Math.max(minNetProfitPct, roundtripFeePct + 0.20);
     const zoneBudgetQuote = maxInventory / totalZones;
 
     let unlockedCapitalZones = 1;
@@ -610,10 +625,16 @@ export class BacktestService {
     let lastFlatTime = candles.length > startIdx ? candles[startIdx].time : Date.now();
     let wasHolding = false;
     let lastProcessedBar = candles.length > 0 ? candles.length - 1 : 0;
+    let consecutiveReds = 0;
 
     for (let i = warmup; i < candles.length; i++) {
       lastProcessedBar = i;
       const c = candles[i];
+      if (c.close < c.open) {
+        consecutiveReds++;
+      } else {
+        consecutiveReds = 0;
+      }
       dow.addCandle(c);
 
       const isTradingActive = i >= startIdx;
@@ -758,14 +779,15 @@ export class BacktestService {
           const totalHeldQty = heldLots.reduce((sum, l) => sum + l.qty, 0);
           const totalInvestQuote = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
           const avgEntry = totalHeldQty > 0 ? (totalInvestQuote / totalHeldQty) : 0;
-          const minProfitTarget = avgEntry > 0 ? avgEntry * (1 + minNetProfitPct / 100) : 0;
 
           for (const lot of heldLots) {
             if (zoneExitMode === "ORIGINAL_TARGETS" && lot.targetPrice > 0) {
               continue;
             }
-            const dynamicTarget = sellTargets[lot.index] ?? (avgEntry * 1.015);
-            lot.targetPrice = Math.max(dynamicTarget, minProfitTarget);
+            const lotSafeBase = Math.max(avgEntry, lot.buyPrice);
+            const lotMinProfitTarget = lotSafeBase * (1 + effectiveMinProfitPct / 100);
+            const dynamicTarget = sellTargets[lot.index] ?? (lotSafeBase * 1.015);
+            lot.targetPrice = Math.max(dynamicTarget, lotMinProfitTarget);
           }
         }
       }
@@ -912,6 +934,98 @@ export class BacktestService {
         }
       }
 
+      // 1.5 Evaluate Signal Invalidation Check while holding lots
+      if (isTradingActive && opts.onSignalInvalidationCheck && heldLots.length > 0) {
+        let change24hPct = 0;
+        let posRatio24h = 0.5;
+        if (i >= 288) {
+          const c24 = candles[i - 288];
+          change24hPct = ((c.close - c24.open) / c24.open) * 100;
+          const slice24 = candles.slice(i - 288, i + 1);
+          let h24 = -Infinity;
+          let l24 = Infinity;
+          for (const sc of slice24) {
+            if (sc.high > h24) h24 = sc.high;
+            if (sc.low < l24) l24 = sc.low;
+          }
+          if (h24 > l24) {
+            posRatio24h = (c.close - l24) / (h24 - l24);
+          }
+        }
+
+        const totalHeldQty = heldLots.reduce((sum, l) => sum + l.qty, 0);
+        const totalInvestQuote = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+        const currentPosVal = totalHeldQty * c.close * (1 - costPerFill);
+        const unrealizedPnlPct = totalInvestQuote > 0 ? ((currentPosVal - totalInvestQuote) / totalInvestQuote) * 100 : 0;
+
+        const isDangerBar = (i % 6 === 0) || (c.close < floor * 0.985) || (change24hPct < -5.5);
+        if (isDangerBar) {
+          const shouldExitDisqualified = opts.onSignalInvalidationCheck({
+            barIndex: i,
+            time: c.time,
+            closePrice: c.close,
+            floorPrice: floor,
+            change24hPct,
+            posRatio24h,
+            heldLotsCount: heldLots.length,
+            unrealizedPnlPct,
+          });
+
+          if (shouldExitDisqualified) {
+            for (const lot of heldLots) {
+              const exitPrice = c.close;
+              const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+              const invest = lot.qty * lot.buyPrice;
+              const pnlQuote = proceeds - invest;
+              const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+              cash += proceeds;
+              const exitCost = lot.qty * exitPrice * costPerFill;
+              totalFeesQuote += lot.costQuote + exitCost;
+
+              if (pnlQuote >= 0) {
+                grossProfit += pnlQuote;
+                wins++;
+              } else {
+                grossLoss += Math.abs(pnlQuote);
+                losses++;
+              }
+
+              trades.push({
+                id: lot.id,
+                subsystem: "GRID",
+                side: "LONG",
+                entryTime: lot.entryTime,
+                entryPrice: lot.buyPrice,
+                stopLossPrice: floor,
+                fanSpreadAtEntry: 0,
+                exitTime: c.time,
+                exitPrice,
+                exitType: "GRID_CUT",
+                pnlQuote,
+                pnlPct,
+                holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+                costQuote: lot.costQuote + exitCost,
+                channelFloor: lot.floorAtEntry,
+                channelCeil: lot.ceilingAtEntry,
+                channelMid: lot.centerAtEntry,
+                zoneIndex: lot.zoneIndex,
+              });
+            }
+
+            markers.push({
+              time: c.time,
+              position: "aboveBar",
+              color: "#f43f5e",
+              shape: "arrowDown",
+              text: `🚨 SIGNAL DISQUALIFIED EXIT (${heldLots.length} lots @ $${c.close.toFixed(4)})`,
+            });
+
+            heldLots = [];
+            break;
+          }
+        }
+      }
+
       // 2. Evaluate Grid Buys (Tranche Size = 25% of current zone quota)
       const effectiveMaxInventory = zoneBudgetQuote * unlockedCapitalZones;
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
@@ -921,8 +1035,32 @@ export class BacktestService {
         Boolean(structure.isDowntrendDropActive)
       );
 
+      // Dip Hunter Entry Absorption Guard
+      let passesDipHunterGuard = true;
+      if (opts.enableDipHunterEntryGuard !== false) {
+        const isWaterfall = consecutiveReds >= 4;
+        const candleRange = c.high - c.low;
+        const lowerWick = Math.min(c.open, c.close) - c.low;
+        const lowerWickPct = candleRange > 0 ? (lowerWick / candleRange) * 100 : 0;
+        const isGreenCandle = c.close >= c.open;
+        const prevCandle = i > 0 ? candles[i - 1] : c;
+        const isNoFallingKnife = c.low >= prevCandle.low;
+
+        let isBad24hDrop = false;
+        if (i >= 288) {
+          const c24 = candles[i - 288];
+          const change24hPct = ((c.close - c24.open) / c24.open) * 100;
+          if (change24hPct < -5.5) isBad24hDrop = true;
+        }
+
+        const hasAbsorption = isGreenCandle || lowerWickPct >= 15 || (isNoFallingKnife && lowerWickPct >= 8);
+        if (isWaterfall || isBad24hDrop || !hasAbsorption) {
+          passesDipHunterGuard = false;
+        }
+      }
+
       const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
-      if (isTradingActive && !isHlWaiting && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
+      if (isTradingActive && !isHlWaiting && passesDipHunterGuard && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           const bl = buyLevels[lvlIdx];
           const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
@@ -936,7 +1074,8 @@ export class BacktestService {
             const totalHeldQtyBefore = heldLots.reduce((sum, l) => sum + l.qty, 0);
             const totalInvestBefore = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
             const newAvgEntry = (totalInvestBefore + invest) / (totalHeldQtyBefore + fillQty);
-            const minProfitHurdle = newAvgEntry * (1 + minNetProfitPct / 100);
+            const lotSafeBase = Math.max(newAvgEntry, buyPrice);
+            const minProfitHurdle = lotSafeBase * (1 + effectiveMinProfitPct / 100);
 
             const rawTarget = sellTargets[lvlIdx] ?? (buyPrice * 1.015);
             const targetPrice = Math.max(rawTarget, minProfitHurdle);
@@ -3595,7 +3734,7 @@ export class BacktestService {
 
       console.log(`[RotationBacktest] ▶️ [Leg #${legIndex}] Starting on ${activeSymbol} at ${new Date(currentLegStartTime * 1000).toISOString()} (cash=$${currentCash.toFixed(2)}, entryScore=${activeCandidate?.compositeScore || 65})`);
 
-      let legStopReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" = "POST_ROUND_EXIT";
+      let legStopReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" | "SIGNAL_DISQUALIFIED" = "POST_ROUND_EXIT";
       let nextSymbol: string | undefined = undefined;
       let nextSymbolScore = 0;
       let currentScoreAtExit = activeCandidate?.compositeScore || 65;
@@ -3613,7 +3752,8 @@ export class BacktestService {
         zoneMinDropPct: opts.zoneMinDropPct ?? 2.5,
         zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
         lockChannelInPosition: opts.lockChannelInPosition ?? false,
-        enableBaseConfirmationFilter: opts.enableBaseConfirmation ?? false,
+        enableBaseConfirmationFilter: opts.enableBaseConfirmation ?? true,
+        enableDipHunterEntryGuard: opts.enableDipHunterEntryGuard ?? true,
         gridCutLossMode: opts.gridCutLossMode ?? "none",
         costModel: quote === "FDUSD"
           ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
@@ -3621,11 +3761,6 @@ export class BacktestService {
         saveToHistory: false,
         startTradingBarIndex: simStartIdx,
         onFlatCheckStop: (state) => {
-          const timeSinceRot = state.time - lastRotationTime;
-          if (timeSinceRot < cooldownSec) {
-            return false;
-          }
-
           const candidates = this.evaluateHistoricalFunnelAtTime({
             targetTime: state.time,
             universeCandles,
@@ -3642,12 +3777,63 @@ export class BacktestService {
           const curScore = curItem ? curItem.compositeScore : 0;
           currentScoreAtExit = curScore;
 
+          // If current coin has become disqualified (fell out of funnel or score < 45):
+          const isCurrentDisqualified = !curItem || curScore < 45;
+          if (isCurrentDisqualified && best.symbol !== activeSymbol && best.compositeScore >= 55) {
+            console.log(`[RotationBacktest] 🚨 [Leg #${legIndex}] Flat rotation triggered by SIGNAL_DISQUALIFIED at ${new Date(state.time * 1000).toISOString()}: ${activeSymbol} (score=${curScore}) ➔ ${best.symbol} (score=${best.compositeScore})`);
+            legStopReason = "SIGNAL_DISQUALIFIED";
+            nextSymbol = best.symbol;
+            nextSymbolScore = best.compositeScore;
+            return true;
+          }
+
+          const timeSinceRot = state.time - lastRotationTime;
+          if (timeSinceRot < cooldownSec) {
+            return false;
+          }
+
           const requiredScore = curScore * (1 + scoreMarginPct / 100);
           if (best.symbol !== activeSymbol && best.compositeScore >= 55 && best.compositeScore >= requiredScore) {
             console.log(`[RotationBacktest] 🔀 [Leg #${legIndex}] Rotation triggered by ${state.trigger} at ${new Date(state.time * 1000).toISOString()}: ${activeSymbol} (${curScore}) ➔ ${best.symbol} (${best.compositeScore}, required >= ${requiredScore.toFixed(1)})`);
             legStopReason = state.trigger;
             nextSymbol = best.symbol;
             nextSymbolScore = best.compositeScore;
+            return true;
+          }
+
+          return false;
+        },
+        onSignalInvalidationCheck: (state) => {
+          if (opts.enableSignalInvalidationExit === false) return false;
+
+          const isExtremeDrop = state.change24hPct < -5.5;
+          const isFloorBreak = state.closePrice < state.floorPrice * 0.982;
+          const isPosRatioDump = state.posRatio24h < 0.08 && state.unrealizedPnlPct < -2.5;
+
+          if (!isExtremeDrop && !isFloorBreak && !isPosRatioDump) {
+            return false;
+          }
+
+          const candidates = this.evaluateHistoricalFunnelAtTime({
+            targetTime: state.time,
+            universeCandles,
+            activeSymbol,
+            quoteAsset: quote,
+            gridOpts: opts,
+          });
+
+          if (candidates.length === 0) return false;
+          const curItem = candidates.find((c) => c.symbol === activeSymbol);
+          const curScore = curItem ? curItem.compositeScore : 0;
+          const best = candidates[0];
+
+          if (curScore < 45 && best && best.symbol !== activeSymbol && best.compositeScore >= 60) {
+            console.log(`[RotationBacktest] 🚨 [Leg #${legIndex}] EMERGENCY ROTATION: ${activeSymbol} signal disqualified (24h=${state.change24hPct.toFixed(2)}%, close=$${state.closePrice.toFixed(4)}, score=${curScore}) ➔ Liquidating ${state.heldLotsCount} lots to rotate into ${best.symbol} (score=${best.compositeScore})`);
+            scoresSnapshot = candidates.slice(0, 5);
+            legStopReason = "SIGNAL_DISQUALIFIED";
+            nextSymbol = best.symbol;
+            nextSymbolScore = best.compositeScore;
+            currentScoreAtExit = curScore;
             return true;
           }
 

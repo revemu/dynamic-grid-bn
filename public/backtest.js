@@ -2726,14 +2726,22 @@
           const lPnlColor = leg.netPnlPct >= 0 ? "#10b981" : "#ef4444";
           const startD = new Date(leg.startTime * 1000).toLocaleDateString("th-TH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
           const endD = new Date(leg.endTime * 1000).toLocaleDateString("th-TH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-          const trigLabel = leg.triggerReason === "INITIAL_SELECTION" ? "⭐ เริ่มต้น" : (leg.triggerReason === "IDLE_CASH_TIMEOUT" ? "⏳ Idle Timeout" : "🎯 จบรอบ Flat");
+          const trigLabel = leg.triggerReason === "INITIAL_SELECTION"
+            ? "⭐ เริ่มต้น"
+            : leg.triggerReason === "SIGNAL_DISQUALIFIED"
+            ? "🚨 สัญญาณหลุดเกณฑ์"
+            : leg.triggerReason === "IDLE_CASH_TIMEOUT"
+            ? "⏳ Idle Timeout"
+            : "🎯 จบรอบ Flat";
+          const trigBg = leg.triggerReason === "SIGNAL_DISQUALIFIED" ? "rgba(244, 63, 94, 0.2)" : "rgba(56, 189, 248, 0.15)";
+          const trigColor = leg.triggerReason === "SIGNAL_DISQUALIFIED" ? "#fb7185" : "#38bdf8";
 
           return `
             <tr>
               <td style="font-weight: bold; text-align: center;">#${leg.legIndex}</td>
               <td style="font-size: 11px; color: #94a3b8;">${startD} ➔ ${endD} (${leg.durationHours}h)</td>
               <td style="font-weight: bold; color: #38bdf8;">${leg.symbol}</td>
-              <td><span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${trigLabel}</span></td>
+              <td><span class="badge" style="background: ${trigBg}; color: ${trigColor}; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${trigLabel}</span></td>
               <td><span class="badge" style="background: ${leg.entryScore >= 70 ? '#10b981' : '#f59e0b'}; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${leg.entryScore}/100</span></td>
               <td>${leg.startingCapital.toFixed(2)} ➔ ${leg.endingCapital.toFixed(2)}</td>
               <td style="font-weight: bold; color: ${lPnlColor};">${leg.netPnlPct >= 0 ? "+" : ""}${leg.netPnlPct.toFixed(2)}%</td>
@@ -2804,6 +2812,8 @@
         const rotationIntervalMinutes = Number(document.getElementById("rotBtCooldownMins")?.value) || 180;
         const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 15;
         const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 2;
+        const enableDipHunterEntryGuard = document.getElementById("rotBtDipHunterGuard")?.value !== "off";
+        const enableSignalInvalidationExit = document.getElementById("rotBtSignalExit")?.value !== "off";
 
         if (rotationBtProgressWrap) rotationBtProgressWrap.style.display = "block";
         if (rotationBtKpiGrid) rotationBtKpiGrid.style.display = "none";
@@ -2846,6 +2856,8 @@
               rotationIntervalMinutes,
               rotationScoreMarginPct,
               capitalZones,
+              enableDipHunterEntryGuard,
+              enableSignalInvalidationExit,
             }),
           });
 
