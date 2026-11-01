@@ -112,6 +112,8 @@ export class BuyOrderSynchronizer {
           ? "Waiting for Higher Low — cancelled resting buy orders"
           : (this.host.cfg.enableBaseConfirmationFilter !== false && this.host.isDowntrendDropPaused)
           ? "Active Downtrend Drop (LH+LL) — waiting for HL or Trendline Breakout"
+          : (this.host.cfg.zoneRequireReversal !== false && (this.host.unlockedCapitalZones ?? 1) > 1 && !this.host.isZoneReversalConfirmed)
+          ? `Zone ${this.host.unlockedCapitalZones}/${this.host.cfg.capitalZones ?? 2} waiting for reversal confirmation (HL/Valley/Breakout) before buying`
           : "Buying paused by filters (Downtrend/Trendline/Lag Guard/Offload)";
         await cancelAllRestingOrders("BUY", pauseReason);
       }

@@ -89,6 +89,9 @@ export interface StrategyStateRecord {
   appliedManualTradeIds?: string[];
   lastCutLossTime?: number;
   unlockedCapitalZones?: number;
+  isZoneReversalConfirmed?: boolean;
+  zoneReversalDumpLowPrice?: number;
+  zoneReversalTime?: number;
   stableFloorCandleCount?: number;
   lastStabilizeCandleTime?: number;
   lastZoneUnlockFloor?: number;

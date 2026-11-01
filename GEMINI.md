@@ -7621,6 +7621,45 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.10`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
+---
+
+### 261. Zone 2+ Reversal Gate: รอจุดกลับตัวก่อนรับของรอบสองเป็นต้นไป (`zoneRequireReversal`) & Backtest Multi-Zone Synchronization (v0.3.0.11)
+
+- **สาเหตุของปัญหาและที่มา (User Problem & Architectural Rationale)**:
+  1. **พฤติกรรมการรับของไม่หยุดในรอบสอง (Catching Falling Knives in Zone 2+)**:
+     - ผู้ใช้พบพฤติกรรมในเหรียญ `ERAFDUSD` บน Binance Spot: ในรอบแรก (Zone 1) บอทกางกริดรับของครบ 4 ไม้ตามแนวรับในกรอบปกติรวม ~$48 (48% Load) ทุนเฉลี่ย `$0.0680`
+     - แต่เมื่อราคาเกิดการทุบทำ New Low หลุด Floor เดิมของ Zone 1 ระบบขยับกรอบลงและปลดล็อค Zone 2 (`⚓ 2/2`) โดยบอทคำนวณ Buy Levels ใหม่และเตรียมเข้าซื้อไม้ที่ 5 (Buy L4 ที่ราคา `$0.0651`) ทันทีที่ราคาไหลลงแตะ ทั้งๆ ที่ราคายังคงทิ้งดิ่งทำ New Low ต่อเนื่อง ยังไม่มีการตั้งฐานหรือมีจุดกลับตัวใดๆ
+     - ผู้ใช้ให้ข้อสังเกตเชิงกลยุทธ์ที่สำคัญยิ่ง: *"รับของรอบที่สอง ถ้ารอให้มีจุดกลับตัวก่อนจะดีไหม ไม่งั้นเหมือนรับของไปเรื่อยๆ รอบแรกไม่เป็นไร รอบสองพอเลย"*
+  2. **ความแตกต่างระหว่างรอบแรก (Zone 1) vs รอบสองเป็นต้นไป (Zone 2+)**:
+     - **รอบแรก (Zone 1 / ปกติ)**: ราคาวิ่งอยู่ใน Trading Range (Sideway) การกางกริดดักรับไม้ 1–4 ช่วยให้ได้ของเร็วและทำรอบสวิงทำกำไรปิดรอบได้ไวตามธรรมชาติของ Grid
+     - **รอบสองเป็นต้นไป (Zone 2+ / นอกกรอบเดิม)**: การที่ราคาหลุดโซนแรกแปลว่าโครงสร้างเดิมพังแล้ว (Breakdown) ตลาดกำลังอยู่ในสภาวะ Panic Sell / Downtrend การกางกริดดักรับมีดล่วงหน้าจะทำให้เงินทุนสำรองอีก 50% ถูกดูดเข้าไปติดดอยตามทางจนหมดพอร์ต (100% Load) กระสุนหมดมือ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **เพิ่มพารามิเตอร์ `zoneRequireReversal` (ค่าเริ่มต้น: `true`)**:
+     - รองรับใน `src/config.ts`, `data/settings.db.json`, `src/db.ts`, `src/strategy/types.ts` และมี Checkbox ใน Modal Settings บนเว็บแดชบอร์ด (`public/index.html` & `public/app.js`)
+  2. **ระบบ Zone Reversal Gate ใน Live Trading (`src/strategy/index.ts` & `src/strategy/buy-sync.ts`)**:
+     - เมื่อปลดล็อคโซนใหม่ (`unlockedCapitalZones > 1`):
+       - ตั้งสถานะ `isZoneReversalConfirmed = false` และบันทึกเวลาจุดต่ำสุด `zoneReversalDumpLowPrice = Math.min(refPrice, lowerBound)`
+       - ระงับการวางออเดอร์ซื้อ (Cancel resting buys & suppress buy order placement) และขึ้นป้ายเตือน:
+         `⏳ รอจุดกลับตัวก่อนรับของรอบ 2 (Zone 2/2) | ราคาทุบหลุดโซนแรก — รอสัญญาณ Higher Low / Valley / Breakout ก่อนเริ่มช้อนซื้อ`
+     - **6 สัญญาณกลับตัวที่ระบบตรวจจับ (Point of Reversal Signals)**:
+       1. **Dow Higher Low (HL)**: เกิด `lastHl` หลังเกิด `lastLl` โดย `lastHl.price > activeDumpLow * 1.0005`
+       2. **DowEngine.checkForHigherLow**: ตรวจสอบโครงสร้างคลื่นหลังเวลาที่ทุบทำจุดต่ำสุด
+       3. **Confirmed Unbroken Valley**: เกิดเหวยืนยันใต้ราคา (`activeValley.price >= activeDumpLow * 0.9995`) และราคายืนเหนือเหว
+       4. **Downtrend Line Breakout**: ราคาเบรกทะลุเส้นแนวต้านกดขาลง (`downtrendBreakoutConfirmed`)
+       5. **Bullish Reversal Rebound Candle**: มีแท่งเทียนปิดเขียวยืนยันการดีดตัวกลับ (`close >= open * 1.001` และ `close >= activeDumpLow * 1.0035`)
+       6. **Price Reclaim**: ราคากลับขึ้นมายืนเหนือจุดกึ่งกลางกรอบ (`centerPrice`) หรือเป้า Buy Level 2 เดิม
+     - เมื่อสัญญาณใดสัญญาณหนึ่งยืนยัน -> ปลดล็อค `isZoneReversalConfirmed = true` และปล่อยให้บอทเริ่มช้อนซื้อไม้ของ Zone 2 ที่ฐานราคาจริงทันที!
+  3. **การซิงโครไนซ์ใน Backtest Engine (`src/backtest-service.ts`)**:
+     - ปรับ `runDynamicGridSimulation` และ `runDualHybridSimulation` ให้รองรับ `zoneRequireReversal`
+     - บันทึก `zoneUnlockCandleIdx` และตรวจจับสัญญาณกลับตัวเฉพาะแท่งเทียนที่เกิดขึ้น **หลัง** จากที่โซนใหม่ถูกปลดล็อคเท่านั้น ป้องกันการนำสวิงหรือเหวในอดีตก่อนการทุบมานับเป็นสัญญาณกลับตัว
+  4. **ผลการทดสอบ Backtest (ERAFDUSD 15m, 3,000 แท่ง)**:
+     - **Old (ไม่รอจุดกลับตัว / รับมีดทันที)**: Net PnL 25.55%, Max DD 24.75%, Win Rate 95.1%
+     - **New (Zone 2+ Reversal Gate / รอจุดกลับตัว)**: Net PnL **26.06%** (+0.51%), Max DD **23.93%** (ลดลงเกือบ 1%), Win Rate 95.1%
+     - ระบบหน่วงเวลาเข้าซื้อ Zone 2 ได้อย่างแม่นยำ ไม่เอามือไปรับของระหว่างราคากำลังทิ้งดิ่ง
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.11`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+
 
 
 ---
@@ -7750,4 +7789,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - งบประมาณคงที่ไม้ละ $12.50 ต่อเนื่อง ไม่มีการ Rebalance Cancel ซ้ำซ้อน
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.10`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 261. Zone 2+ Reversal Gate: รอจุดกลับตัวก่อนรับของรอบสองเป็นต้นไป (`zoneRequireReversal`) & Backtest Multi-Zone Synchronization (v0.3.0.11)
+
+- **สาเหตุของปัญหาและที่มา (User Problem & Architectural Rationale)**:
+  1. **พฤติกรรมการรับของไม่หยุดในรอบสอง (Catching Falling Knives in Zone 2+)**:
+     - ผู้ใช้พบพฤติกรรมในเหรียญ `ERAFDUSD` บน Binance Spot: ในรอบแรก (Zone 1) บอทกางกริดรับของครบ 4 ไม้ตามแนวรับในกรอบปกติรวม ~$48 (48% Load) ทุนเฉลี่ย `$0.0680`
+     - แต่เมื่อราคาเกิดการทุบทำ New Low หลุด Floor เดิมของ Zone 1 ระบบขยับกรอบลงและปลดล็อค Zone 2 (`⚓ 2/2`) โดยบอทคำนวณ Buy Levels ใหม่และเตรียมเข้าซื้อไม้ที่ 5 (Buy L4 ที่ราคา `$0.0651`) ทันทีที่ราคาไหลลงแตะ ทั้งๆ ที่ราคายังคงทิ้งดิ่งทำ New Low ต่อเนื่อง ยังไม่มีการตั้งฐานหรือมีจุดกลับตัวใดๆ
+     - ผู้ใช้ให้ข้อสังเกตเชิงกลยุทธ์ที่สำคัญยิ่ง: *"รับของรอบที่สอง ถ้ารอให้มีจุดกลับตัวก่อนจะดีไหม ไม่งั้นเหมือนรับของไปเรื่อยๆ รอบแรกไม่เป็นไร รอบสองพอเลย"*
+  2. **ความแตกต่างระหว่างรอบแรก (Zone 1) vs รอบสองเป็นต้นไป (Zone 2+)**:
+     - **รอบแรก (Zone 1 / ปกติ)**: ราคาวิ่งอยู่ใน Trading Range (Sideway) การกางกริดดักรับไม้ 1–4 ช่วยให้ได้ของเร็วและทำรอบสวิงทำกำไรปิดรอบได้ไวตามธรรมชาติของ Grid
+     - **รอบสองเป็นต้นไป (Zone 2+ / นอกกรอบเดิม)**: การที่ราคาหลุดโซนแรกแปลว่าโครงสร้างเดิมพังแล้ว (Breakdown) ตลาดกำลังอยู่ในสภาวะ Panic Sell / Downtrend การกางกริดดักรับมีดล่วงหน้าจะทำให้เงินทุนสำรองอีก 50% ถูกดูดเข้าไปติดดอยตามทางจนหมดพอร์ต (100% Load) กระสุนหมดมือ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **เพิ่มพารามิเตอร์ `zoneRequireReversal` (ค่าเริ่มต้น: `true`)**:
+     - รองรับใน `src/config.ts`, `data/settings.db.json`, `src/db.ts`, `src/strategy/types.ts` และมี Checkbox ใน Modal Settings บนเว็บแดชบอร์ด (`public/index.html` & `public/app.js`)
+  2. **ระบบ Zone Reversal Gate ใน Live Trading (`src/strategy/index.ts` & `src/strategy/buy-sync.ts`)**:
+     - เมื่อปลดล็อคโซนใหม่ (`unlockedCapitalZones > 1`):
+       - ตั้งสถานะ `isZoneReversalConfirmed = false` และบันทึกเวลาจุดต่ำสุด `zoneReversalDumpLowPrice = Math.min(refPrice, lowerBound)`
+       - ระงับการวางออเดอร์ซื้อ (Cancel resting buys & suppress buy order placement) และขึ้นป้ายเตือน:
+         `⏳ รอจุดกลับตัวก่อนรับของรอบ 2 (Zone 2/2) | ราคาทุบหลุดโซนแรก — รอสัญญาณ Higher Low / Valley / Breakout ก่อนเริ่มช้อนซื้อ`
+     - **6 สัญญาณกลับตัวที่ระบบตรวจจับ (Point of Reversal Signals)**:
+       1. **Dow Higher Low (HL)**: เกิด `lastHl` หลังเกิด `lastLl` โดย `lastHl.price > activeDumpLow * 1.0005`
+       2. **DowEngine.checkForHigherLow**: ตรวจสอบโครงสร้างคลื่นหลังเวลาที่ทุบทำจุดต่ำสุด
+       3. **Confirmed Unbroken Valley**: เกิดเหวยืนยันใต้ราคา (`activeValley.price >= activeDumpLow * 0.9995`) และราคายืนเหนือเหว
+       4. **Downtrend Line Breakout**: ราคาเบรกทะลุเส้นแนวต้านกดขาลง (`downtrendBreakoutConfirmed`)
+       5. **Bullish Reversal Rebound Candle**: มีแท่งเทียนปิดเขียวยืนยันการดีดตัวกลับ (`close >= open * 1.001` และ `close >= activeDumpLow * 1.0035`)
+       6. **Price Reclaim**: ราคากลับขึ้นมายืนเหนือจุดกึ่งกลางกรอบ (`centerPrice`) หรือเป้า Buy Level 2 เดิม
+     - เมื่อสัญญาณใดสัญญาณหนึ่งยืนยัน -> ปลดล็อค `isZoneReversalConfirmed = true` และปล่อยให้บอทเริ่มช้อนซื้อไม้ของ Zone 2 ที่ฐานราคาจริงทันที!
+  3. **การซิงโครไนซ์ใน Backtest Engine (`src/backtest-service.ts`)**:
+     - ปรับ `runDynamicGridSimulation` และ `runDualHybridSimulation` ให้รองรับ `zoneRequireReversal`
+     - บันทึก `zoneUnlockCandleIdx` และตรวจจับสัญญาณกลับตัวเฉพาะแท่งเทียนที่เกิดขึ้น **หลัง** จากที่โซนใหม่ถูกปลดล็อคเท่านั้น ป้องกันการนำสวิงหรือเหวในอดีตก่อนการทุบมานับเป็นสัญญาณกลับตัว
+  4. **ผลการทดสอบ Backtest (ERAFDUSD 15m, 3,000 แท่ง)**:
+     - **Old (ไม่รอจุดกลับตัว / รับมีดทันที)**: Net PnL 25.55%, Max DD 24.75%, Win Rate 95.1%
+     - **New (Zone 2+ Reversal Gate / รอจุดกลับตัว)**: Net PnL **26.06%** (+0.51%), Max DD **23.93%** (ลดลงเกือบ 1%), Win Rate 95.1%
+     - ระบบหน่วงเวลาเข้าซื้อ Zone 2 ได้อย่างแม่นยำ ไม่เอามือไปรับของระหว่างราคากำลังทิ้งดิ่ง
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.11`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
 

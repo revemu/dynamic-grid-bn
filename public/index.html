@@ -1208,6 +1208,15 @@
                       <option value="PER_ZONE">🏷️ Per-Zone Exits: แยกเป้าขายตามโซนที่เข้าซื้อ</option>
                     </select>
                   </div>
+
+                  <div class="form-group checkbox-group" style="grid-column: span 2;">
+                    <label class="checkbox-container">
+                      <input type="checkbox" id="cfg_zoneRequireReversal" checked />
+                      <span class="checkmark"></span>
+                      รอจุดกลับตัวก่อนรับของรอบสองเป็นต้นไป (Zone 2+ Reversal Gate)
+                    </label>
+                    <span class="field-hint">รอบแรก (Zone 1) ทำงานแบบ Grid ปกติ แต่เมื่อราคาหลุดโซนแรก บอทจะหยุดรับของชั่วคราวและรอให้เกิดจุดกลับตัว (Higher Low / Valley / Breakout / Rebound) ก่อนเริ่มเข้าถัวเฉลี่ยโซนถัดไป</span>
+                  </div>
                 </div>
               </div>
             </div>

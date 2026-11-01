@@ -527,6 +527,7 @@ export class BacktestService {
       capitalZones?: number;
       zoneStabilizeCandles?: number;
       zoneMinDropPct?: number;
+      zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
@@ -566,6 +567,10 @@ export class BacktestService {
     const roundtripFeePct = costPerFill * 2 * 100;
     const effectiveMinProfitPct = Math.max(minNetProfitPct, roundtripFeePct + 0.20);
     const zoneBudgetQuote = maxInventory / totalZones;
+    const zoneRequireReversal = opts.zoneRequireReversal !== false;
+    let isZoneReversalConfirmed = true;
+    let zoneDumpLowPrice = 0;
+    let zoneUnlockCandleIdx = 0;
 
     let unlockedCapitalZones = 1;
     let stableFloorCandleCount = 0;
@@ -660,6 +665,8 @@ export class BacktestService {
 
       if (!isHoldingPosition) {
         unlockedCapitalZones = 1;
+        isZoneReversalConfirmed = true;
+        zoneDumpLowPrice = 0;
         stableFloorCandleCount = 0;
         prevCandidateFloor = undefined;
         lastZoneUnlockFloor = undefined;
@@ -724,6 +731,11 @@ export class BacktestService {
           if (isStabilizedGatePassed) {
             if (unlockedCapitalZones < totalZones) {
               unlockedCapitalZones++;
+              if (zoneRequireReversal) {
+                isZoneReversalConfirmed = false;
+                zoneDumpLowPrice = Math.min(c.low, candidateFloor);
+                zoneUnlockCandleIdx = i;
+              }
             }
             floor = candidateFloor;
             ceiling = structure.upperBound;
@@ -1035,6 +1047,30 @@ export class BacktestService {
       }
 
       // 2. Evaluate Grid Buys (Tranche Size = 25% of current zone quota)
+      if (unlockedCapitalZones > 1 && !isZoneReversalConfirmed) {
+        if (c.low < zoneDumpLowPrice) zoneDumpLowPrice = c.low;
+        const isReboundCandle = c.close >= c.open * 1.002 && c.close >= zoneDumpLowPrice * 1.006;
+        const isValleyReversal = Boolean(
+          structure.activeValley &&
+          (structure.activeValley.index ?? 0) >= zoneUnlockCandleIdx &&
+          structure.activeValley.price >= zoneDumpLowPrice * 0.9995 &&
+          c.close >= structure.activeValley.price
+        );
+        const isBreakout = Boolean(structure.downtrendBreakoutConfirmed);
+        const lastLl = structure.waveCycle?.lastLl;
+        const lastHl = structure.waveCycle?.lastHl;
+        const isHlAfterLl = Boolean(
+          lastHl &&
+          (lastHl.index ?? 0) >= zoneUnlockCandleIdx &&
+          (!lastLl || (lastHl.index ?? 0) > (lastLl.index ?? 0)) &&
+          lastHl.price > zoneDumpLowPrice * 1.0005
+        );
+        const isCenterReclaim = center > 0 && c.close >= center * 0.999;
+        if (isReboundCandle || isValleyReversal || isBreakout || isHlAfterLl || isCenterReclaim) {
+          isZoneReversalConfirmed = true;
+        }
+      }
+
       const effectiveMaxInventory = zoneBudgetQuote * unlockedCapitalZones;
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
       const trancheQuote = zoneBudgetQuote / 4;
@@ -1042,6 +1078,7 @@ export class BacktestService {
         structure.gridZone?.canEstablishChannel === false ||
         Boolean(structure.isDowntrendDropActive)
       );
+      const isZoneWaiting = zoneRequireReversal && unlockedCapitalZones > 1 && !isZoneReversalConfirmed;
 
       // Dip Hunter Entry Absorption Guard
       let passesDipHunterGuard = true;
@@ -1068,7 +1105,7 @@ export class BacktestService {
       }
 
       const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
-      if (isTradingActive && !isHlWaiting && passesDipHunterGuard && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
+      if (isTradingActive && !isHlWaiting && !isZoneWaiting && passesDipHunterGuard && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           const bl = buyLevels[lvlIdx];
           const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
@@ -1286,6 +1323,7 @@ export class BacktestService {
       capitalZones?: number;
       zoneStabilizeCandles?: number;
       zoneMinDropPct?: number;
+      zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
@@ -1310,6 +1348,10 @@ export class BacktestService {
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const zoneBudgetQuote = gridInitialCap / totalZones;
+    const zoneRequireReversal = opts.zoneRequireReversal !== false;
+    let isZoneReversalConfirmed = true;
+    let zoneDumpLowPrice = 0;
+    let zoneUnlockCandleIdx = 0;
 
     let unlockedCapitalZones = 1;
     let stableFloorCandleCount = 0;
@@ -1459,6 +1501,8 @@ export class BacktestService {
       const isHoldingPosition = heldLots.length > 0;
       if (!isHoldingPosition) {
         unlockedCapitalZones = 1;
+        isZoneReversalConfirmed = true;
+        zoneDumpLowPrice = 0;
         stableFloorCandleCount = 0;
         prevCandidateFloor = undefined;
         lastZoneUnlockFloor = undefined;
@@ -1516,6 +1560,11 @@ export class BacktestService {
           if (isStabilizedGatePassed) {
             if (unlockedCapitalZones < totalZones) {
               unlockedCapitalZones++;
+              if (zoneRequireReversal) {
+                isZoneReversalConfirmed = false;
+                zoneDumpLowPrice = Math.min(c.low, candidateFloor);
+                zoneUnlockCandleIdx = i;
+              }
             }
             floor = candidateFloor;
             ceiling = structure.upperBound;
@@ -1731,6 +1780,30 @@ export class BacktestService {
         }
         heldLots = remainingLots;
 
+        if (unlockedCapitalZones > 1 && !isZoneReversalConfirmed) {
+          if (c.low < zoneDumpLowPrice) zoneDumpLowPrice = c.low;
+          const isReboundCandle = c.close >= c.open * 1.002 && c.close >= zoneDumpLowPrice * 1.006;
+          const isValleyReversal = Boolean(
+            structure.activeValley &&
+            (structure.activeValley.index ?? 0) >= zoneUnlockCandleIdx &&
+            structure.activeValley.price >= zoneDumpLowPrice * 0.9995 &&
+            c.close >= structure.activeValley.price
+          );
+          const isBreakout = Boolean(structure.downtrendBreakoutConfirmed);
+          const lastLl = structure.waveCycle?.lastLl;
+          const lastHl = structure.waveCycle?.lastHl;
+          const isHlAfterLl = Boolean(
+            lastHl &&
+            (lastHl.index ?? 0) >= zoneUnlockCandleIdx &&
+            (!lastLl || (lastHl.index ?? 0) > (lastLl.index ?? 0)) &&
+            lastHl.price > zoneDumpLowPrice * 1.0005
+          );
+          const isCenterReclaim = center > 0 && c.close >= center * 0.999;
+          if (isReboundCandle || isValleyReversal || isBreakout || isHlAfterLl || isCenterReclaim) {
+            isZoneReversalConfirmed = true;
+          }
+        }
+
         // ── 2. EVALUATE GRID BUYS ──
         const effectiveMaxInventory = zoneBudgetQuote * unlockedCapitalZones;
         const trancheQuote = zoneBudgetQuote / 4;
@@ -1739,15 +1812,18 @@ export class BacktestService {
           structure.gridZone?.canEstablishChannel === false ||
           Boolean(structure.isDowntrendDropActive)
         );
+        const isZoneWaiting = zoneRequireReversal && unlockedCapitalZones > 1 && !isZoneReversalConfirmed;
 
         if (heldLots.length === 0) {
           lockedChannel = null;
           unlockedCapitalZones = 1;
+          isZoneReversalConfirmed = true;
+          zoneDumpLowPrice = 0;
           stableFloorCandleCount = 0;
         }
 
         const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
-        if (!isHlWaiting && currentGridInv + trancheQuote <= effectiveMaxInventory && gridCash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
+        if (!isHlWaiting && !isZoneWaiting && currentGridInv + trancheQuote <= effectiveMaxInventory && gridCash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
 
           for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
             const bl = buyLevels[lvlIdx];
@@ -2219,6 +2295,7 @@ export class BacktestService {
       capitalZones?: number;
       zoneStabilizeCandles?: number;
       zoneMinDropPct?: number;
+      zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
@@ -2242,6 +2319,7 @@ export class BacktestService {
         capitalZones: opts.capitalZones,
         zoneStabilizeCandles: opts.zoneStabilizeCandles,
         zoneMinDropPct: opts.zoneMinDropPct,
+        zoneRequireReversal: opts.zoneRequireReversal,
         gridCutLossMode: opts.gridCutLossMode,
         zoneExitMode: opts.zoneExitMode,
         minNetProfitPct: opts.minNetProfitPct,
@@ -2283,6 +2361,7 @@ export class BacktestService {
         capitalZones: opts.capitalZones,
         zoneStabilizeCandles: opts.zoneStabilizeCandles,
         zoneMinDropPct: opts.zoneMinDropPct,
+        zoneRequireReversal: opts.zoneRequireReversal,
         gridCutLossMode: opts.gridCutLossMode,
         zoneExitMode: opts.zoneExitMode,
         minNetProfitPct: opts.minNetProfitPct,

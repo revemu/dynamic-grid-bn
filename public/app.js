@@ -5492,6 +5492,7 @@
       setVal("cfg_capitalZones", data.capitalZones ?? 4);
       setVal("cfg_zoneStabilizeCandles", data.zoneStabilizeCandles ?? 3);
       setVal("cfg_zoneMinDropPct", data.zoneMinDropPct ?? 2.5);
+      setCheck("cfg_zoneRequireReversal", data.zoneRequireReversal !== false);
       setVal("cfg_gridCutLossMode", data.gridCutLossMode || "final_zone_floor");
       setVal("cfg_zoneExitMode", data.zoneExitMode || "PORTFOLIO_AVG");
       setVal("cfg_narrowChannelThresholdPct", data.narrowChannelThresholdPct ?? 1.2);
@@ -5785,6 +5786,7 @@
       capitalZones: document.getElementById("cfg_capitalZones") ? parseInt(document.getElementById("cfg_capitalZones").value, 10) : 4,
       zoneStabilizeCandles: document.getElementById("cfg_zoneStabilizeCandles") ? parseInt(document.getElementById("cfg_zoneStabilizeCandles").value, 10) : 3,
       zoneMinDropPct: document.getElementById("cfg_zoneMinDropPct") ? parseFloat(document.getElementById("cfg_zoneMinDropPct").value) : 2.5,
+      zoneRequireReversal: document.getElementById("cfg_zoneRequireReversal") ? document.getElementById("cfg_zoneRequireReversal").checked : true,
       gridCutLossMode: document.getElementById("cfg_gridCutLossMode") ? document.getElementById("cfg_gridCutLossMode").value : "final_zone_floor",
       zoneExitMode: document.getElementById("cfg_zoneExitMode") ? document.getElementById("cfg_zoneExitMode").value : "PORTFOLIO_AVG",
       narrowChannelThresholdPct: document.getElementById("cfg_narrowChannelThresholdPct") ? parseFloat(document.getElementById("cfg_narrowChannelThresholdPct").value) : 1.2,

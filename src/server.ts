@@ -895,6 +895,7 @@ export class DashboardServer {
             capitalZones: parsed.capitalZones !== undefined ? Number(parsed.capitalZones) : (Number(liveCfg.capitalZones) || 2),
             zoneStabilizeCandles: parsed.zoneStabilizeCandles !== undefined ? Number(parsed.zoneStabilizeCandles) : (Number(liveCfg.zoneStabilizeCandles) || 3),
             zoneMinDropPct: parsed.zoneMinDropPct !== undefined ? Number(parsed.zoneMinDropPct) : (Number(liveCfg.zoneMinDropPct) || 2.5),
+            zoneRequireReversal: parsed.zoneRequireReversal !== undefined ? Boolean(parsed.zoneRequireReversal) : (liveCfg.zoneRequireReversal !== false),
             gridCutLossMode: parsed.gridCutLossMode || (liveCfg.gridCutLossMode as any) || "none",
             zoneExitMode: parsed.zoneExitMode || (liveCfg.zoneExitMode as any) || "PORTFOLIO_AVG",
             minNetProfitPct: parsed.minNetProfitPct !== undefined ? Number(parsed.minNetProfitPct) : (Number(liveCfg.minNetProfitPct) || 0.25),

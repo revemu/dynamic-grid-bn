@@ -153,6 +153,9 @@ export interface IStrategyHost {
   lastEvaluatedFloor?: number;
   lastEvaluatedCeil?: number;
   unlockedCapitalZones?: number;
+  isZoneReversalConfirmed?: boolean;
+  zoneReversalDumpLowPrice?: number;
+  zoneReversalTime?: number;
   stableFloorCandleCount?: number;
   lastStabilizeCandleTime?: number;
   lastZoneUnlockFloor?: number;

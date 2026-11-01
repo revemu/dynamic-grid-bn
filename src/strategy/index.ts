@@ -99,6 +99,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   public lastBuyFillCandleTime = 0;
   public postCutSingleTrancheOnly = false;
   public unlockedCapitalZones = 1;
+  public isZoneReversalConfirmed = true;
+  public zoneReversalDumpLowPrice?: number;
+  public zoneReversalTime?: number;
   public stableFloorCandleCount = 0;
   public lastStabilizeCandleTime = 0;
   public lastZoneUnlockFloor?: number;
@@ -1753,6 +1756,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     this.stuckSince = undefined;
     this.bufferBreakStartTime = undefined;
     this.unlockedCapitalZones = 1;
+    this.isZoneReversalConfirmed = true;
+    this.zoneReversalDumpLowPrice = undefined;
+    this.zoneReversalTime = undefined;
     this.stableFloorCandleCount = 0;
     this.lastStabilizeCandleTime = 0;
     this.lastZoneUnlockFloor = undefined;
@@ -1952,6 +1958,18 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       } else {
         this.unlockedCapitalZones = 1;
       }
+      if (typeof (data as any).isZoneReversalConfirmed === "boolean") {
+        this.isZoneReversalConfirmed = (data as any).isZoneReversalConfirmed;
+      } else {
+        const hasLotsInCurrentZone = this.lots.some((l) => (l.zoneIndex ?? 0) >= (this.unlockedCapitalZones - 1));
+        this.isZoneReversalConfirmed = this.unlockedCapitalZones <= 1 || hasLotsInCurrentZone || this.cfg.zoneRequireReversal === false;
+      }
+      if (typeof (data as any).zoneReversalDumpLowPrice === "number") {
+        this.zoneReversalDumpLowPrice = (data as any).zoneReversalDumpLowPrice;
+      }
+      if (typeof (data as any).zoneReversalTime === "number") {
+        this.zoneReversalTime = (data as any).zoneReversalTime;
+      }
       if (typeof (data as any).stableFloorCandleCount === "number" && Number.isFinite((data as any).stableFloorCandleCount)) {
         this.stableFloorCandleCount = (data as any).stableFloorCandleCount;
       } else {
@@ -2146,6 +2164,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         lastCutLossTime: this.lastCutLossTime,
         postCutSingleTrancheOnly: this.postCutSingleTrancheOnly,
         unlockedCapitalZones: this.unlockedCapitalZones,
+        isZoneReversalConfirmed: this.isZoneReversalConfirmed,
+        zoneReversalDumpLowPrice: this.zoneReversalDumpLowPrice,
+        zoneReversalTime: this.zoneReversalTime,
         stableFloorCandleCount: this.stableFloorCandleCount,
         lastStabilizeCandleTime: this.lastStabilizeCandleTime,
         lastZoneUnlockFloor: this.lastZoneUnlockFloor,
@@ -3119,6 +3140,16 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
             this.log(
               `🚀 [DCA ZONE UNLOCK] Unlocked Zone ${this.unlockedCapitalZones}/${totalZones} DCA budget ($${this.getEffectiveMaxInventoryQuote().toFixed(2)})!`,
             );
+            if (this.cfg.zoneRequireReversal !== false) {
+              this.isZoneReversalConfirmed = false;
+              this.zoneReversalDumpLowPrice = Math.min(refPrice, lowerBound);
+              this.zoneReversalTime = Math.floor(Date.now() / 1000);
+              this.log(
+                `⏳ [ZONE ${this.unlockedCapitalZones}/${totalZones} REVERSAL GATE] Waiting for point of reversal (Higher Low / Valley / Breakout / Rebound) before placing buy orders in Zone ${this.unlockedCapitalZones}!`,
+              );
+            } else {
+              this.isZoneReversalConfirmed = true;
+            }
           }
           this.stableFloorCandleCount = 0;
           this.prevCandidateFloor = undefined;
@@ -3370,7 +3401,90 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       isChannelReady,
     });
 
-    const inBuyZone = positionPct >= 0 && positionPct < 50 && !isBelowFloor && !this.waitingForHigherLow;
+    // ── Capital Zone 2+ Reversal Gate Evaluation ─────────────────────────
+    const isZoneReversalWaiting = Boolean(
+      this.cfg.zoneRequireReversal !== false &&
+      (this.unlockedCapitalZones ?? 1) > 1 &&
+      !this.isZoneReversalConfirmed
+    );
+
+    if (isZoneReversalWaiting) {
+      const dumpLow = this.zoneReversalDumpLowPrice ?? (this.breakdownLowPrice ?? lowerBound);
+      if (refPrice < dumpLow) {
+        this.zoneReversalDumpLowPrice = refPrice;
+      }
+      const activeDumpLow = this.zoneReversalDumpLowPrice ?? refPrice;
+
+      // 1. Dow Theory Higher Low (HL)
+      const lastLl = dow?.waveCycle?.lastLl;
+      const lastHl = dow?.waveCycle?.lastHl;
+      const isHlAfterDump = Boolean(
+        lastHl &&
+        lastHl.price > activeDumpLow * 1.0005 &&
+        (!lastLl || lastHl.index > lastLl.index)
+      );
+
+      // 2. DowEngine.checkForHigherLow
+      const sinceDumpTime = this.zoneReversalTime ?? (Math.floor(Date.now() / 1000) - 3600);
+      const hlCheck = this.dowEngine
+        ? this.dowEngine.checkForHigherLow(sinceDumpTime, lowerBound, activeDumpLow, refPrice)
+        : { confirmed: false };
+
+      // 3. Confirmed unbroken Valley at/above dump low
+      const activeValley = dow?.activeValley;
+      const isValleyReversal = Boolean(
+        activeValley &&
+        dow?.isSwingConfirmed &&
+        activeValley.price >= activeDumpLow * 0.9995 &&
+        refPrice >= activeValley.price
+      );
+
+      // 4. Downtrend Line Breakout
+      const tlBreakout = Boolean(
+        dow?.downtrendBreakoutConfirmed ||
+        (dow?.downtrendLine?.isBroken && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2)
+      );
+
+      // 5. Bullish Closed Reversal Candle
+      const closedList = this.dowEngine?.getClosedCandles() ?? [];
+      const lastClosed = closedList.length > 0 ? closedList[closedList.length - 1] : undefined;
+      const reboundThresholdPct = 0.35;
+      const isCandleRebound = Boolean(
+        lastClosed &&
+        lastClosed.close >= lastClosed.open * 1.001 &&
+        lastClosed.close >= activeDumpLow * (1 + reboundThresholdPct / 100) &&
+        refPrice >= activeDumpLow * (1 + (reboundThresholdPct * 0.8) / 100)
+      );
+
+      // 6. Reclaim above Zone Center or Buy Level 2 Target
+      const isCenterReclaim = Boolean(
+        (centerPrice > 0 && refPrice >= centerPrice * 0.999) ||
+        (effectiveBuyLevel2Target > 0 && refPrice >= effectiveBuyLevel2Target * 0.999)
+      );
+
+      if (isHlAfterDump || hlCheck.confirmed || isValleyReversal || tlBreakout || isCandleRebound || isCenterReclaim) {
+        const reason = isHlAfterDump
+          ? `Dow Higher Low (HL @ $${lastHl!.price.toFixed(this.pricePrecision)})`
+          : hlCheck.confirmed
+          ? `HL Confirmed (${hlCheck.reason})`
+          : isValleyReversal
+          ? `Confirmed Valley ($${activeValley!.price.toFixed(this.pricePrecision)})`
+          : tlBreakout
+          ? "Downtrend Line Breakout"
+          : isCandleRebound
+          ? `Bullish Rebound Candle (+$${(lastClosed!.close - activeDumpLow).toFixed(this.pricePrecision)})`
+          : "Price Reclaim above Zone Center";
+
+        this.isZoneReversalConfirmed = true;
+        this.log(
+          `🚀 [ZONE ${this.unlockedCapitalZones} REVERSAL CONFIRMED] Point of reversal confirmed: ${reason} — unlocking Zone ${this.unlockedCapitalZones} buy orders at base!`,
+        );
+        this.needsBuyRebalance = true;
+        this.saveState();
+      }
+    }
+
+    const inBuyZone = positionPct >= 0 && positionPct < 50 && !isBelowFloor && !this.waitingForHigherLow && !isZoneReversalWaiting;
     const inSellZone = positionPct >= 50 && !isAboveCeiling;
     const offloadOnly = this.realizedPnl <= -this.cfg.maxSessionLossUsdso;
 
@@ -4030,6 +4144,16 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           severity: "warning",
         };
       }
+    } else if (isZoneReversalWaiting) {
+      const dumpLow = this.zoneReversalDumpLowPrice ?? (this.breakdownLowPrice ?? lowerBound);
+      const totalZones = Math.max(1, Number(this.cfg.capitalZones ?? 1));
+      botActionState = {
+        code: "ZONE_REVERSAL_WAITING",
+        title: `⏳ รอจุดกลับตัวก่อนรับของรอบ ${this.unlockedCapitalZones} (Zone ${this.unlockedCapitalZones}/${totalZones})`,
+        reason: `หลุดกรอบเดิม • พักซื้อชั่วคราว รอ Higher Low / Valley / Breakout ก่อนเริ่มช้อนซื้อ Zone ${this.unlockedCapitalZones}`,
+        nextTrigger: `เฝ้ารอจุดกลับตัว > $${dumpLow.toFixed(this.pricePrecision)}${sellStatusPart ? ` | ${sellStatusPart}` : ""}`,
+        severity: "warning",
+      };
     } else if (isGated) {
       if (gateStatus === "WAITING_FOR_BASE_CONFIRMATION") {
         botActionState = {
@@ -4343,6 +4467,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         waterfallReason,
         downtrendDropPaused,
         waitingForHigherLow: this.waitingForHigherLow,
+        isZoneReversalWaiting,
         isFlatChannelShiftWaiting: this.isFlatChannelShiftWaiting,
         isTrendSupportExitActive: this.isTrendSupportExitActive,
         trendSupportBreakPrice: this.trendSupportBreakPrice,
@@ -4764,7 +4889,12 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     const isDowntrendDrop = allowBaseBypass ? false : downtrendDropPaused;
     const isChannelApproved = allowBaseBypass ? true : (gridZone?.canEstablishChannel !== false);
     const isWaterfall = (allowBaseBypass || this.cfg.enableWaterfallKnifeGuard === false) ? false : isWaterfallDropping;
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !isDowntrendDrop && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !isHlWaiting && !isBelowFloor && !isWaterfall && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && isChannelApproved;
+    const isZoneReversalWaitingNow = Boolean(
+      this.cfg.zoneRequireReversal !== false &&
+      (this.unlockedCapitalZones ?? 1) > 1 &&
+      !this.isZoneReversalConfirmed
+    );
+    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !isDowntrendDrop && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !isHlWaiting && !isBelowFloor && !isWaterfall && !isZoneReversalWaitingNow && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && isChannelApproved;
 
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
