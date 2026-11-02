@@ -8112,11 +8112,15 @@
       }
 
       if (rotationScanStatus) {
-        rotationScanStatus.innerHTML = `<span style="color:#10b981;">✅ สแกนสำเร็จ: ${data.reason || "ประเมินเสร็จสิ้น"}</span>`;
+        const isDefense = data.reason && (data.reason.includes("Gate") || data.reason.includes("Cash") || data.reason.includes("🛡️"));
+        const statusColor = isDefense ? "#38bdf8" : "#10b981";
+        rotationScanStatus.innerHTML = `<span style="color:${statusColor}; font-weight:600;">✅ สแกนสำเร็จ: ${data.reason || "ประเมินเสร็จสิ้น"}</span>`;
       }
 
       if (data.report && data.report.length > 0) {
         renderRotationReport(data.report);
+      } else {
+        if (rotationScanResultsTable) rotationScanResultsTable.style.display = "none";
       }
 
       if (forceRotate && data.rotated) {

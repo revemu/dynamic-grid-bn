@@ -8169,3 +8169,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - **Alpha vs Top 50 Market B&H (-15.36%)**: **+17.30%**
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.21`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 269. Modal CSS Scope Leak Fix (`.switch` ➔ `.toggle-switch`), Containment Defense & Safe Cash Scan UX (v0.3.0.22)
+
+- **สาเหตุของปัญหา (Root Cause Forensic)**:
+  1. **สวิตช์ Auto Rotation หลุดกรอบขยายเต็ม Modal (Modal Green Box Blowout)**:
+     - ใน `public/index.html` บรรทัดที่ 2277 สวิตช์ `cfg_enableAutoRotation` ถูกตั้งชื่อคลาสเป็น `<label class="switch">` แทนที่จะเป็น `<label class="toggle-switch">` เหมือนจุดอื่นๆ ทั่วทั้งแอป
+     - ใน `public/style.css` คลาส `.slider` มีสไตล์เป็น `position: absolute; inset: 0;` เพื่อยืดเต็มตัวสวิตช์ขนาด 42x22px
+     - เมื่อคลาส `.switch` ไม่มี CSS ระบุคุณสมบัติ `position: relative;` ตัว `.slider` สีเขียว (`linear-gradient(135deg, #10b981, #059669)`) จึงหลุดการจำกัดกรอบ (CSS Containment Breakdown) และยืดขยายออกไปครอบคลุมพื้นที่ทั้งหมดของ `.modal-card` ส่งผลให้หน้าจอตั้งค่าถูกสีเขียวกลืนจนหมดทั้งการ์ด และดันวงกลมสีขาวขนาด 16x16px (`.slider:before`) ตกไปอยู่ที่มุมล่างซ้ายสุด (`bottom: 3px; left: 3px`) ของ Modal
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **Standardize Switch Class in `public/index.html`**:
+     - เปลี่ยน `<label class="switch">` เป็น `<label class="toggle-switch">` ให้เป็นมาตรฐานเดียวกัน 100%
+  2. **Bulletproof Containment Defense in `public/style.css`**:
+     - เพิ่มคลาส `.switch` ควบคู่กับ `.toggle-switch` ในกฎ CSS:
+       ```css
+       .toggle-switch, .switch { position: relative; display: inline-block; width: 42px; height: 22px; flex-shrink: 0; }
+       .toggle-switch input, .switch input { opacity: 0; width: 0; height: 0; }
+       ```
+       ป้องกันไม่ให้เกิดปัญหา CSS Scope Leak หลุดกรอบอีกในอนาคต แม้ในกรณีที่มีการเรียกใช้ชื่อคลาสสลับกัน
+  3. **Safe Cash Scan UX Handling in `public/app.js`**:
+     - ปรับฟังก์ชัน `triggerRotationScan` เมื่อผู้ใช้กดปุ่ม "สแกนตลาดทันที":
+       - หากอยู่ในสภาวะตลาดขาลงหรือความกว้างตลาดต่ำ (< 35% Breadth Gate) ซึ่งบอทสั่งถือเงินสด 100% Cash (`data.report` ว่าง) จะทำการซ่อนตารางเดิมอัตโนมัติ (`rotationScanResultsTable.style.display = "none"`)
+       - แสดงข้อความพร้อมสีไฮไลท์ความปลอดภัย (`#38bdf8`) ให้ผู้ใช้ทราบอย่างชัดเจนว่าระบบป้องกันความเสี่ยง (Safe Cash Defense) กำลังทำงานอย่างถูกต้อง
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.22`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
