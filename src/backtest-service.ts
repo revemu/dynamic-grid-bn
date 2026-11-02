@@ -3535,7 +3535,7 @@ export class BacktestService {
 
     const SYNTHETIC_BLACKLIST = new Set([
       "RWUSDUSDT", "UUSDT", "XAUTUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT",
-      "牛来USDT", "CRCLBUSDT", "SNDKBUSDT", "SPCXBUSDT", "BEAMXUSDT"
+      "牛来USDT", "CRCLBUSDT", "SNDKBUSDT", "SPCXBUSDT", "BEAMXUSDT", "BFUSDUSDT", "USDEUSDT"
     ]);
 
     const calcEmaLocal = (candles: Candle[], endIdx: number, period: number): number => {
@@ -3936,7 +3936,14 @@ export class BacktestService {
     }
 
     scoredCandidates.sort((a, b) => b.compositeScore - a.compositeScore);
-    return scoredCandidates;
+    const minScore = gridOpts?.compositeMinScore ?? 50;
+    const viableCandidates = scoredCandidates.filter((c) => c.compositeScore >= minScore);
+    // Minimum Market Depth Rule: If fewer than 2 pairs in the universe score >= 50,
+    // the market lacks broad momentum (solitary trap). Sit out in 100% Cash!
+    if (viableCandidates.length < 2) {
+      return [];
+    }
+    return viableCandidates;
   }
 
   /**

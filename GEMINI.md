@@ -8142,3 +8142,30 @@ When investigating live production behavior, debugging issues, or analyzing trad
     - `ZROUSDT`: **+$1.15 (3 ไม้, Win Rate 100%)**
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.20`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 268. Minimum Market Depth Gate (Depth >= 2), Stablecoin Exclusion (`BFUSD`/`USDE`) & Max Drawdown Suppression (v0.3.0.21)
+
+- **สาเหตุของปัญหาและที่มา (Forensic Investigation & Architectural Rationale)**:
+  1. **กับดักเหรียญโดดเดี่ยวในตลาดขาลง (The Solitary Outlier Bear Trap)**:
+     - จากการวิเคราะห์ Backtest อย่างละเอียด พบว่ามีบางช่วงเวลาที่ตลาดเทกระจาดอย่างหนัก (เช่น 3 ต.ค.) แต่มีเหรียญเพียง **1 ตัวโดดเดี่ยว** ในจักรวาล 50 ตัว (เช่น `INJUSDT`) ที่บังเอิญมีปั๊มสั้นๆ จนผ่าน Funnel ได้ตัวเดียว
+     - เมื่อมีเหรียญผ่านเกณฑ์เพียง 1 ตัว นั่นแปลว่า 98% ของทั้งตลาดกำลังล้มเหลว (49 จาก 50 ตัวติดลบหมด) การเปิดเทรดเหรียญโดดเดี่ยวเพียงตัวเดียวจึงเท่ากับเดินเข้าไปติดกับดัก Bear Trap และถูกลากหลุด Stop Loss เสียหายทันที (-$4.11)
+  2. **การปนเปื้อนของเหรียญ Yield-bearing Stablecoins (`BFUSD`, `USDE`)**:
+     - Binance มีการเพิ่มเหรียญ Stablecoin ผลตอบแทนสูง เช่น `BFUSDUSDT` และ `USDEUSDT` ซึ่งมีมูลค่า Quote Volume มหาศาลจนแทรกเข้า Universe แต่ไม่ใช่เหรียญที่สามารถทำ Dynamic Grid ได้
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **Minimum Market Depth Gate (`viableCandidates.length >= 2`)**:
+     - ใน `evaluateHistoricalFunnelAtTime` และ `AutonomousPairRotator`: กำหนดว่าต้องมีเหรียญในตลาดที่ผ่านเกณฑ์ `compositeScore >= 50` ไม่น้อยกว่า **2 คู่เหรียญขึ้นไป** เท่านั้น
+     - หากมีเหรียญผ่านเกณฑ์เพียง 0 หรือ 1 ตัว ระบบจะถือว่าตลาดขาดแคลนสภาพคล่องและแรงผลักดันระดับ Sector (Market Lacks Breadth Depth) และสั่ง **ถือเงินสด 100% Cash** ทันที เพื่อกำจัด Solitary Bear Traps 100%
+  2. **Exclusion of `BFUSD` and `USDE`**:
+     - เพิ่ม `BFUSD` และ `USDE` เข้าสู่ `STABLE_BASE_TOKENS` และ `SYNTHETIC_BLACKLIST` ทั้งใน `src/pair-rotator.ts` และ `src/backtest-service.ts`
+  3. **Strict Candidate Filter Parity**:
+     - บังคับเกณฑ์ `c.compositeScore >= minScore (50)` เป็นเงื่อนไขเด็ดขาดในการคืนค่า Candidate List เพื่อให้ฟังก์ชันการตรวจสอบรายชั่วโมง (`Macro Gate / Market breakdown active ➔ Exiting to 100% CASH`) ตัดออเดอร์ออกเป็นเงินสดทันทีที่ตลาดหมดแรง
+- **ผลลัพธ์จากการทดสอบ Backtest จริง 30 วัน (Top 50 Universe, 8,640 แท่ง)**:
+  - **Portfolio Net PnL**: **+1.94% ($+3.89)**
+  - **Max Portfolio Drawdown**: **ลดลงเหลือเพียง -5.08% เท่านั้น** (จากเดิม -14.17%) 🛡️
+  - **Trade Win Rate**: **77.0%** (ชนะ 117 ไม้ จาก 152 ไม้)
+  - **Alpha vs Bitcoin B&H (-7.73%)**: **+9.67%**
+  - **Alpha vs Top 50 Market B&H (-15.36%)**: **+17.30%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.21`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%

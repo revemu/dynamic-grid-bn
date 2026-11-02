@@ -55,14 +55,14 @@ export interface RotationStatus {
 const ROTATION_DB_PATH = path.resolve(process.cwd(), "data", "pair-rotation.db.json");
 
 const STABLE_BASE_TOKENS = new Set([
-  "USDC", "FDUSD", "USDT", "TUSD", "BUSD", "USDP", "DAI", "EUR", "EURI", "AEUR"
+  "USDC", "FDUSD", "USDT", "TUSD", "BUSD", "USDP", "DAI", "EUR", "EURI", "AEUR", "BFUSD", "USDE"
 ]);
 
 export const isSyntheticOrStock = (sym: string): boolean => {
   if (sym.endsWith("BUSDT") && sym.length > 6) return true; // Tokenized equity derivatives (MSTRBUSDT, SOXLBUSDT, etc.)
   if (
     sym.includes("USD") &&
-    ["RWUSDUSDT", "UUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "EURUSDT", "GBPUSDT", "USDPUSDT"].includes(sym)
+    ["RWUSDUSDT", "UUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "EURUSDT", "GBPUSDT", "USDPUSDT", "BFUSDUSDT", "USDEUSDT"].includes(sym)
   ) return true;
   if (["XAUTUSDT", "PAXGUSDT", "BEAMXUSDT"].includes(sym)) return true;
   if (/[\u4e00-\u9fa5]/.test(sym)) return true; // Chinese or non-ascii characters
@@ -448,6 +448,14 @@ export class AutonomousPairRotator {
 
     if (report.length === 0) {
       return { rotated: false, report: [], reason: "No candidate scores evaluated" };
+    }
+
+    // 🛡️ Minimum Market Depth Rule: If fewer than 2 pairs score >= 50, market lacks breadth -> sit out in Cash!
+    const viableScored = report.filter((r) => r.compositeScore >= 50);
+    if (viableScored.length < 2) {
+      const reason = `🛡️ Minimum Market Depth Gate active: Only ${viableScored.length} pair(s) scored >= 50. Market lacks broad momentum. Holding 100% Cash.`;
+      this.log(reason);
+      return { rotated: false, report, reason };
     }
 
     const bestCandidate = report[0]!;
