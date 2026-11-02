@@ -3415,7 +3415,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     });
 
     // ── Capital Zone 2+ Reversal Gate Relock Guard ─────────────────────────
-    // If price breaks down to a New Low below activeDumpLow OR if holding 0 lots in current zone while in active Dow Downtrend under ChoCh:
+    // If price breaks down to a New Low below activeDumpLow OR if holding 0 lots in current zone while in active Dow Downtrend under ChoCh without trendline breakout:
     // Immediately relock reversal gate, cancel resting buy orders, and wait for a genuine base.
     const hasLotsInCurrentZone = this.lots.some((l) => (l.zoneIndex ?? 0) >= ((this.unlockedCapitalZones ?? 1) - 1));
     if (this.cfg.zoneRequireReversal !== false && (this.unlockedCapitalZones ?? 1) > 1) {
@@ -3425,8 +3425,12 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       const isDowDowntrend = activeRegime === "DOWNTREND";
       const choChPrice = dow?.gridZone?.choChLevel ?? dow?.waveCycle?.lastLh?.price;
       const isUnderChoCh = Boolean(choChPrice && refPrice < choChPrice);
+      const isTlBroken = Boolean(
+        dow?.downtrendBreakoutConfirmed ||
+        (dow?.downtrendLine?.isBroken && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2)
+      );
 
-      if (isNewLow || (!hasLotsInCurrentZone && isDowDowntrend && isUnderChoCh && this.isZoneReversalConfirmed)) {
+      if (isNewLow || (!hasLotsInCurrentZone && isDowDowntrend && isUnderChoCh && !isTlBroken && this.isZoneReversalConfirmed)) {
         if (this.isZoneReversalConfirmed) {
           const reasonStr = isNewLow
             ? `Price (${refPrice.toFixed(this.pricePrecision)}) broke below dump low (${currentDumpLow.toFixed(this.pricePrecision)})`
@@ -3455,6 +3459,11 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       const activeDumpLow = this.zoneReversalDumpLowPrice ?? refPrice;
       const sinceDumpTime = this.zoneReversalTime ?? (Math.floor(Date.now() / 1000) - 3600);
 
+      const activeRegime = dow?.regime ?? "WARMUP";
+      const isDowDowntrend = activeRegime === "DOWNTREND";
+      const choChPrice = dow?.gridZone?.choChLevel ?? dow?.waveCycle?.lastLh?.price;
+      const isUnderChoCh = Boolean(choChPrice && refPrice < choChPrice);
+
       // 1. Dow Theory Higher Low (HL): Must be formed after lowest dump trough
       const lastLl = dow?.waveCycle?.lastLl;
       const lastHl = dow?.waveCycle?.lastHl;
@@ -3470,50 +3479,35 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         ? this.dowEngine.checkForHigherLow(sinceDumpTime, lowerBound, activeDumpLow, refPrice)
         : { confirmed: false };
 
-      // 3. Confirmed unbroken Valley formed after dump low with swing confirmed
-      const activeValley = dow?.activeValley;
-      const isValleyReversal = Boolean(
-        activeValley &&
-        activeValley.time >= sinceDumpTime &&
-        dow?.isSwingConfirmed &&
-        activeValley.price >= activeDumpLow * 1.001 &&
-        refPrice >= activeValley.price
-      );
-
-      // 4. ChoCh Breakout: price breaks above previous Lower High (LH)
-      const choChPrice = dow?.gridZone?.choChLevel ?? dow?.waveCycle?.lastLh?.price;
+      // 3. ChoCh Breakout: price breaks above previous Lower High (LH)
       const isChoChBreakout = Boolean(
         choChPrice &&
         choChPrice > activeDumpLow &&
         refPrice > choChPrice * 1.0005
       );
 
-      // 5. Downtrend Line Breakout confirmed across 2+ bars
+      // 4. Downtrend Line Breakout confirmed across 2+ bars
       const tlBreakout = Boolean(
         dow?.downtrendBreakoutConfirmed ||
         (dow?.downtrendLine?.isBroken && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2)
       );
 
-      // 6. Broken Zone Floor Reclaim: price climbs back and firmly stands above previous broken zone floor
-      const prevBrokenFloor = this.breakdownFloorPrice ?? this.lastZoneUnlockFloor;
-      const isFloorReclaim = Boolean(
-        prevBrokenFloor &&
-        prevBrokenFloor > activeDumpLow * 1.005 &&
-        refPrice >= prevBrokenFloor * 1.001
-      );
+      // Only genuine structural reversals can unlock Zone 2 buys:
+      // (A) Dow Higher Low (HL)
+      // (B) Change of Character (ChoCh Breakout above LH)
+      // (C) Downtrend Line Breakout
+      const isStructuralReversal = isChoChBreakout || tlBreakout || isHlAfterDump || hlCheck.confirmed;
 
-      if (isHlAfterDump || hlCheck.confirmed || isValleyReversal || isChoChBreakout || tlBreakout || isFloorReclaim) {
-        const reason = isHlAfterDump
-          ? `Dow Higher Low (HL @ ${lastHl!.price.toFixed(this.pricePrecision)})`
-          : hlCheck.confirmed
-          ? `HL Confirmed (${hlCheck.reason})`
-          : isValleyReversal
-          ? `Confirmed Valley (${activeValley!.price.toFixed(this.pricePrecision)})`
-          : isChoChBreakout
+      // Prevent false confirmation loop: if still in active Dow Downtrend under ChoCh with 0 lots and no breakout/HL,
+      // stay locked!
+      if (isStructuralReversal && (!isDowDowntrend || !isUnderChoCh || tlBreakout)) {
+        const reason = isChoChBreakout
           ? `ChoCh Breakout above LH (${choChPrice!.toFixed(this.pricePrecision)})`
           : tlBreakout
           ? "Downtrend Line Breakout"
-          : `Floor Reclaim (${prevBrokenFloor!.toFixed(this.pricePrecision)})`;
+          : isHlAfterDump
+          ? `Dow Higher Low (HL @ ${lastHl!.price.toFixed(this.pricePrecision)})`
+          : `HL Confirmed (${hlCheck.reason})`;
 
         this.isZoneReversalConfirmed = true;
         this.log(

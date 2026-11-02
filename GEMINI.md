@@ -8029,3 +8029,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
   4. **Relative Strength Alpha Filter**: ผ่อนปรนเพดาน 24h Pump Cap เป็น 18% และเพิ่มโบนัสคะแนนตาม Relative Strength เทียบ BTC (`change24hPct - btcChange24hPct`) เพื่อเลือกเหรียญที่เป็น Leader ประจำรอบ
 - **Version Bump & Typecheck**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.17`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+
+---
+
+### 265. Elimination of False Floor Reclaim & Harmonized Reversal Gate Relock (v0.3.0.18)
+
+- **สาเหตุของปัญหาและที่มา (User Problem & Architectural Rationale)**:
+  1. **ปัญหา "ยังไม่กลับตัว แต่กลับมาตั้งซื้อ" (False Reversal Confirmation via Floor Reclaim)**:
+     - ใน v0.3.0.13 ได้มีการเพิ่มเงื่อนไขข้อ 6: `isFloorReclaim` เข้ามาใน `src/strategy/index.ts` และ `src/backtest-service.ts`
+     - เมื่อราคาดิ่งลงแรงจากยอด ($0.0723 ลงสู่ $0.0630) กรอบราคา Donchian/ATR ขยับลดระดับกรอบล่าง (`lowerBound`) จาก $0.0628 ลงไปที่ $0.0624
+     - ตัวแปร `this.breakdownFloorPrice` / `this.lastZoneUnlockFloor` ยังคงจำระดับ Floor เดิม ($0.0628) เอาไว้
+     - เมื่อราคาปัจจุบันแกว่งตัวอยู่ที่ $0.0630 ซึ่งเป็นเพียง Noise กระตุกย่อยในแท่งขาลง เงื่อนไข `isFloorReclaim` ตรวจพบว่า `refPrice (0.0630) >= prevBrokenFloor (0.0628) * 1.001`
+     - ส่งผลให้ระบบเข้าใจผิดว่าราคา "Reclaim ฐานเดิมกลับตัว" (`Point of reversal confirmed: Floor Reclaim (0.0628)`) และสั่ง `isZoneReversalConfirmed = true` เพื่อเปิดคำสั่งซื้อ Zone 2 ทันที ทั้งๆ ที่โครงสร้างตลาดยังทำ Lower Lows (LL) ใต้ ChoCh โดยไม่มีฐานกลับตัวใดๆ เลย
+  2. **ปัญหา "ติด Loop สลับ Relock กับ Confirm ทุก 200ms" (The Infinite Oscillation Loop)**:
+     - ภายใน Tick เดียวกัน:
+       - **Relock Guard** (บรรทัด 3429): พบว่าบอทยังถือ 0 ไม้ใน Zone 2 และสภาวะตลาดยังเป็น Dow Downtrend (LH+LL) ใต้ ChoCh ($0.0650) จึงสั่ง **RELOCK** (`isZoneReversalConfirmed = false`)
+       - **Confirmation Block** (บรรทัด 3505) ห่างกันเพียง 3 มิลลิวินาที: พบว่าราคา $0.0630 >= $0.0628 (`isFloorReclaim = true`) จึงสั่ง **CONFIRMED** (`isZoneReversalConfirmed = true`)
+       - เมื่อ Tick ถัดไปเข้ามาในอีก ~200ms: Relock Guard สั่ง RELOCK ➔ Confirmation Block สั่ง CONFIRMED สลับกันไปมาไม่สิ้นสุด เกิด Log สแปมหลายร้อยบรรทัดต่อนาที ส่งผลให้ระบบค้างกระตุก และพยายามตั้งคำสั่งซื้อ/ถอนคำสั่งซื้อไม่หยุด
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **ตัด `isFloorReclaim` และ `isValleyReversal` ออกจากเงื่อนไขกลับตัว Zone 2 อย่างถาวร**:
+     - การเด้งข้ามระดับ Floor ชั่วคราวในอดีตเพียงเล็กน้อย ไม่ใช่การกลับตัวตามหลัก Dow Theory
+     - ตัด `isFloorReclaim` และ `isValleyReversal` ทั้งใน `src/strategy/index.ts` และ `src/backtest-service.ts` (ทั้ง 2 จุด)
+  2. **จำกัดเงื่อนไขปลดล็อก Zone 2 เฉพาะโครงสร้างกลับตัวจริงตาม Dow Theory 3 รูปแบบเท่านั้น**:
+     - **(A) Dow Higher Low (HL)**: ต้องเกิดสวิงยกฐาน HL ยืนยันหลังจุดต่ำสุดของรอบทุบ (`isHlAfterDump` หรือ `DowEngine.checkForHigherLow`)
+     - **(B) Change of Character (ChoCh Breakout)**: ราคาวิ่งเบรกทะลุยอด Lower High (LH) ล่าสุด (`refPrice > choChPrice * 1.0005`)
+     - **(C) Downtrend Line Breakout**: ราคาวิ่งเบรกทะลุกรอบเส้นกด Downtrend Line ยืนยัน 2 แท่งขึ้นไป (`tlBreakout`)
+  3. **ซิงค์เงื่อนไขระหว่าง Relock Guard และ Confirmation Block ให้เป็นนิเสธทางคณิตศาสตร์ 100%**:
+     - ทั้งใน Relock Guard และ Confirmation Block กำหนดเงื่อนไข `(!isDowDowntrend || !isUnderChoCh || tlBreakout)`
+     - หากบอทยังไม่มีของใน Zone 2 (`hasLotsInCurrentZone = false`) และตลาดยังเป็น Dow Downtrend ใต้ ChoCh โดยยังไม่เบรก Trendline: Confirmation Block จะไม่ทำงานเด็ดขาด ประตูซื้อ Zone 2 จะถูกล็อกนิ่งสนิท บอทจะถอนคำสั่งซื้อทั้งหมดออกอย่างสงบ และขึ้นสถานะ `⏳ รอจุดกลับตัวก่อนรับของรอบ 2` โดยไม่มีการสลับสถานะหรือเกิดลูปอีกต่อไป
+- **Version Bump & Typecheck**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.18`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
