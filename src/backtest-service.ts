@@ -219,6 +219,7 @@ export interface MultiPairRotationOptions {
   enableDipHunterEntryGuard?: boolean;
   enableSignalInvalidationExit?: boolean;
   signalInvalidationMode?: "calibrated" | "strict_floor" | "off";
+  enableBtcMacroGate?: boolean;
   gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
 }
 
@@ -354,10 +355,11 @@ export class BacktestService {
         const raw = fs.readFileSync(diskPath, "utf8");
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed.candles) && parsed.candles.length >= limit) {
-          const age = nowMs - (parsed.timestamp || 0);
-          if (age < 900_000) { // Fresh within 15 minutes
+          const lastCandleTime = parsed.candles[parsed.candles.length - 1]?.time || 0;
+          const ageSec = Math.floor(nowMs / 1000) - lastCandleTime;
+          if (ageSec < 7200 || !cached) {
             console.log(`[CandleFeed] 💾 Disk Cache HIT for ${cleanSym} (${interval}) -> using ${parsed.candles.length} candles`);
-            this.candleCache.set(cacheKey, { timestamp: parsed.timestamp, candles: parsed.candles });
+            this.candleCache.set(cacheKey, { timestamp: parsed.timestamp || nowMs, candles: parsed.candles });
             return parsed.candles.slice(-limit);
           }
         }
@@ -403,7 +405,18 @@ export class BacktestService {
         if (!fs.existsSync(BacktestService.KLINE_CACHE_DIR)) {
           fs.mkdirSync(BacktestService.KLINE_CACHE_DIR, { recursive: true });
         }
-        fs.writeFileSync(diskPath, JSON.stringify({ timestamp: nowMs, candles: sorted }), "utf8");
+        let shouldWrite = true;
+        if (fs.existsSync(diskPath)) {
+          try {
+            const existing = JSON.parse(fs.readFileSync(diskPath, "utf8"));
+            if (Array.isArray(existing?.candles) && existing.candles.length > sorted.length) {
+              shouldWrite = false;
+            }
+          } catch {}
+        }
+        if (shouldWrite) {
+          fs.writeFileSync(diskPath, JSON.stringify({ timestamp: nowMs, candles: sorted }), "utf8");
+        }
       } catch {}
       console.log(`[CandleFeed] ✅ ${cleanSym} (${interval}): Loaded ${sorted.length} candles (saved to disk cache).`);
       return sorted;
@@ -3540,6 +3553,39 @@ export class BacktestService {
     isDipPullback: boolean;
   }> {
     const { targetTime, universeCandles, activeSymbol, quoteAsset, gridOpts } = opts;
+
+    // 🛡️ BTC Macro Gate: If enabled, check if Bitcoin is in a macro breakdown.
+    // If BTC is > 1.2% below its 24h SMA OR dumping > 2% over the last 4h,
+    // block altcoin entries and force capital to stay 100% in cash.
+    if (gridOpts?.enableBtcMacroGate === true) {
+      const btcCandles = universeCandles.get(`BTC${quoteAsset}`) || universeCandles.get("BTCUSDT");
+      if (btcCandles && btcCandles.length >= 288) {
+        let low = 0;
+        let high = btcCandles.length - 1;
+        let bIdx = -1;
+        while (low <= high) {
+          const mid = (low + high) >> 1;
+          if (btcCandles[mid].time <= targetTime) {
+            bIdx = mid;
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
+        if (bIdx >= 287) {
+          const btcClose = btcCandles[bIdx].close;
+          const slice288 = btcCandles.slice(bIdx - 287, bIdx + 1);
+          const sma288 = slice288.reduce((s: number, c: Candle) => s + c.close, 0) / 288;
+          const btcOpen4h = btcCandles[Math.max(0, bIdx - 48)].open;
+          const ret4hPct = ((btcClose - btcOpen4h) / btcOpen4h) * 100;
+
+          if (btcClose < sma288 * 0.988 || ret4hPct < -2.0) {
+            return []; // Macro breakdown: zero candidates allowed -> stay in Cash!
+          }
+        }
+      }
+    }
+
     const minVol = quoteAsset === "FDUSD" ? 500_000 : 2_000_000;
     const stage1Candidates: Array<{
       symbol: string;
@@ -3848,7 +3894,8 @@ export class BacktestService {
 
     const initialPullback = initialCandidates.find((c) => c.compositeScore >= 40 && c.posRatio <= 0.45);
     let activeCandidate = initialPullback || initialCandidates[0];
-    if (!activeCandidate) {
+    let activeSymbol = activeCandidate ? activeCandidate.symbol : "";
+    if (!activeCandidate && !opts.enableBtcMacroGate) {
       const fallbackSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
       console.warn(`[RotationBacktest] ⚠️ No initial candidate passed full funnel criteria at simStartTime. Falling back to ${fallbackSym}`);
       activeCandidate = {
@@ -3865,8 +3912,8 @@ export class BacktestService {
         posRatio: 0.35,
         isDipPullback: true,
       };
+      activeSymbol = activeCandidate.symbol;
     }
-    let activeSymbol = activeCandidate.symbol;
     let currentCash = initialCapital;
     let currentTime = simStartTime;
     let lastRotationTime = currentTime;
@@ -3885,12 +3932,14 @@ export class BacktestService {
       legIndex++;
       const currentLegStartTime = currentTime;
 
-      let symCandles = universeCandles.get(activeSymbol);
+      let symCandles = activeSymbol ? universeCandles.get(activeSymbol) : undefined;
       let startBarIdx = symCandles ? symCandles.findIndex((c) => c.time >= currentTime) : -1;
 
       // If activeSymbol doesn't have sufficient bars or has reached end of data, find alternative viable pair
       if (!symCandles || startBarIdx < 0 || startBarIdx >= symCandles.length - 10) {
-        console.warn(`[RotationBacktest] ⚠️ Pair ${activeSymbol} is not viable at ${new Date(currentTime * 1000).toISOString()} (startBarIdx=${startBarIdx}, total=${symCandles?.length || 0})`);
+        if (activeSymbol) {
+          console.warn(`[RotationBacktest] ⚠️ Pair ${activeSymbol} is not viable at ${new Date(currentTime * 1000).toISOString()} (startBarIdx=${startBarIdx}, total=${symCandles?.length || 0})`);
+        }
         const altCandidates = this.evaluateHistoricalFunnelAtTime({
           targetTime: currentTime,
           universeCandles,
@@ -3918,12 +3967,26 @@ export class BacktestService {
           symCandles = universeCandles.get(activeSymbol);
           startBarIdx = symCandles ? symCandles.findIndex((c) => c.time >= currentTime) : -1;
           if (!symCandles || startBarIdx < 0 || startBarIdx >= symCandles.length - 10) {
-            console.warn(`[RotationBacktest] 🛑 Alternative candidate ${activeSymbol} also lacks candles. Ending simulation loop.`);
-            break;
+            console.warn(`[RotationBacktest] 🛑 Alternative candidate ${activeSymbol} also lacks candles. Holding 100% cash.`);
+            currentTime += 3600;
+            equityCurve.push({
+              time: currentTime,
+              equity: currentCash,
+              symbol: "CASH",
+              drawdownPct: peakEquity > 0 ? ((peakEquity - currentCash) / peakEquity) * 100 : 0,
+            });
+            continue;
           }
         } else {
-          console.warn(`[RotationBacktest] 🛑 No viable pairs found with active candles at ${new Date(currentTime * 1000).toISOString()}. Ending simulation loop.`);
-          break;
+          console.warn(`[RotationBacktest] 🛡️ No viable pairs found at ${new Date(currentTime * 1000).toISOString()} (Macro Gate active or bear regime). Holding 100% cash.`);
+          currentTime += 3600;
+          equityCurve.push({
+            time: currentTime,
+            equity: currentCash,
+            symbol: "CASH",
+            drawdownPct: peakEquity > 0 ? ((peakEquity - currentCash) / peakEquity) * 100 : 0,
+          });
+          continue;
         }
       }
 
@@ -4179,6 +4242,7 @@ export class BacktestService {
           activeSymbol = viable.symbol;
         } else {
           // If no candidate is viable right now, hold 100% Cash and advance by 1 hour instead of aborting the simulation!
+          activeSymbol = "";
           if (currentTime < simEndTime - 3600) {
             currentTime += 3600;
             const cashDd = peakEquity > 0 ? ((peakEquity - currentCash) / peakEquity) * 100 : 0;

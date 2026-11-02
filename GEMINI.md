@@ -7945,11 +7945,52 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - คำนวณผลตอบแทน **Equal-Weight Universe Buy & Hold จริง** (`benchmarkEqualWeightBuyHoldPct`) ค่าเฉลี่ยผลตอบแทนตลาดของทุกเหรียญใน Universe
      - แสดงผลบนแดชบอร์ดอย่างโปร่งใส เช่น `ALPHA VS BENCHMARK` ควบคู่กับคำอธิบาย `BTC B&H: -X.XX% | ตลาดเฉลี่ย: -X.XX%`
 - **ผลการทดสอบเชิงประจักษ์เปรียบเทียบข้าม 3 ช่วงเวลา (Empirical Walk-Forward 3-Window Validation)**:
-  - **Window 1 (ตลาดกระทิง/รีบาวด์ BTC +21.9%)**:
-    - เกณฑ์เดิม (1.8% Floor Whipsaw): ขาดทุน **`-0.96%`** (โดนคัตตัดจบตั้งแต่ชั่วโมงที่ 21)
-    - เกณฑ์ใหม่ (Calibrated -4.0%): พลิกกลับเป็นกำไร **`+7.55%`** (13 Legs, 107 Trades, Win Rate 73.8%, ผ่านครบ 30 วัน)
-  - **Window 3 (ตลาดหมี/เทกระจาด BTC -7.3%)**:
-    - หากปิด Stop Loss (No Exit): ขาดทุนหนักถึง **`-20.25%`** จากเหรียญที่ไหลลงลึก
-    - เกณฑ์ใหม่ (Calibrated -4.0%): ควบคุมความเสียหาย ตัดขาดทุนตามวินัย รักษาเงินทุนที่เหลือไว้ได้ และไม่เกิดการล้างพอร์ตลึก
+  - **Window 1 (ส.ค.–ก.ย. / BTC +21.9% / ตลาดเฉลี่ย +25.2%)**:
+    - เกณฑ์เดิม (1.8% Floor Cut): ขาดทุน **`-0.96%`** (โดนคัตตัดจบตั้งแต่ชั่วโมงที่ 21)
+    - เกณฑ์ Calibrated -4.0%: กำไร **`+7.55%`** (13 Legs, 107 Trades, Win Rate 73.8%)
+    - ไม่ Stop Loss: กำไร **`+11.75%`**
+  - **Window 2 (ก.ย.–ต.ค. / BTC +8.97% / ตลาดเฉลี่ย +29.09%)**:
+    - เกณฑ์เดิม (1.8% Floor Cut): **`-3.79%`**
+    - เกณฑ์ Calibrated -4.0%: **`-7.84%`** (ผลงานดรอปลงจากการโดนคัตที่ -4% หลายครั้ง)
+    - ไม่ Stop Loss: กำไร **`+15.08%`**
+  - **Window 3 (ต.ค.–พ.ย. / BTC -7.35% / ตลาดเฉลี่ย -5.07%)**:
+    - เกณฑ์เดิม (1.8% Floor Cut): **`-7.35%`**
+    - เกณฑ์ Calibrated -4.0%: **`-7.61%`**
+    - ไม่ Stop Loss: เหรียญที่ไหลลึกอาจดิ่งถึง -20.25% (AAVE) หรือแกว่งตามจุดเริ่มต้น
+  - **ข้อสรุปสำคัญ**: การแก้เครื่องวัด (Drawdown, Benchmark, Loop) ทำให้มองเห็นความจริงว่า ระบบตัดขาดทุน 4% ไม่ได้ดีกว่าในทุกสภาวะ และผลตอบแทนแกว่งไปมาอย่างมีนัยสำคัญตามเวลาเริ่มต้นและรายชื่อเหรียญ กลยุทธ์จำเป็นต้องมีตัวกรองสภาพตลาดภาพใหญ่ (BTC Macro Regime Gate) เพื่อไม่เข้าเทรดในช่วงที่ตลาดโดยรวมเป็นขาลงชัดเจน
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.15`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### Section 266: Bitcoin Macro Regime Gate & Multi-Window Robustness Architecture (v0.3.0.16)
+
+- **ปัญหาที่พบและเป้าหมาย (Problem Statement & Goals)**:
+  1. จากการตรวจสอบเชิงลึกใน Section 265 พบว่าพฤติกรรมการเทรดของ Multi-Pair Rotator มีความอ่อนไหวสูงต่อสภาพตลาดภาพใหญ่ (Market Regime) และเวลาเริ่มต้น (Starting Offset Variance) ในช่วงที่ Bitcoin ดิ่งหนักหรือตลาดเข้าสู่สภาวะขาลง ทั้งโมเดลเดิมและ Calibrated Cut ยังคงเข้าไปหมุนเหรียญ Altcoins ที่แม้จะมีคะแนนสูสีแต่กลับโดนตลาดเททับ ทำให้เกิดผลขาดทุนสะสม
+  2. ต้องสร้างเกราะป้องกันระดับภาพรวมตลาด (BTC Macro Regime Gate) เพื่อตรวจจับสภาวะวิกฤตของ Bitcoin และสั่งให้ระบบถือเงินสด 100% (Cash Preservation) โดยอัตโนมัติ ไม่เปิดรับความเสี่ยงใน Altcoins จนกว่า Bitcoin จะยืนเหนือแนวรับหรือโมเมนตัมทรงตัว
+  3. ต้องผสานระบบนี้เข้าทั้งใน **Backtest Engine (`src/backtest-service.ts`)**, **API Server (`src/server.ts`)**, **Web Dashboard UI (`public/backtest.html`, `public/backtest.js`)**, **Config Layer (`src/config.ts`)**, และ **Live Trading Pair Rotator (`src/pair-rotator.ts`)**
+- **สถาปัตยกรรมและสิ่งที่ได้รับการปรับปรุง (Key Architectural Enhancements)**:
+  1. **BTC Macro Regime Gate Engine (`enableBtcMacroGate`)**:
+     - เพิ่มออปชัน `enableBtcMacroGate?: boolean` ใน `MultiPairRotationOptions` (เปิดใช้งานเป็นค่าเริ่มต้น)
+     - ใน `evaluateHistoricalFunnelAtTime`: ก่อนประเมินเหรียญ Altcoin ใดๆ ระบบจะตรวจสอบสภาพแท่งเทียนของ Bitcoin (`BTCUSDT` / `BTCFDUSD`) แบบ Point-in-Time:
+       - **SMA288 Distance**: หากราคาปิด BTC อยู่ต่ำกว่าเส้นค่าเฉลี่ย 24 ชม. (SMA 288 แท่ง 5m) เกิน $> 1.2\%$ (`btcClose < sma288 * 0.988`)
+       - **4-Hour Flash Dump**: หรือราคา BTC ดิ่งลงมากกว่า $> 2.0\%$ ภายในช่วง 4 ชม. ล่าสุด (`ret4hPct < -2.0%`)
+       - หากเข้าเงื่อนไขอย่างใดอย่างหนึ่ง ฟังก์ชันจะส่งคืนลิสต์ว่าง (`return []`) ทันที เพื่อสั่งให้บอทไม่เข้าซื้อเหรียญใดๆ และถือเงินสด 100%
+  2. **Zero-Candidate Cash Continuation Loop**:
+     - ใน `runMultiPairRotationSimulation`: เมื่อไม่มีเหรียญใดผ่านเกณฑ์ (รวมถึงเมื่อถูกบล็อกโดย BTC Macro Gate หรือช่วงเริ่มต้นพอร์ตที่ตลาดผันผวน) ระบบจะไม่บังคับซื้อ BTC สวนตลาด และไม่ตัดจบการจำลอง (Premature Abort)
+     - ระบบจะเดินเวลาไปข้างหน้าทีละ 1 ชม. (`currentTime += 3600`), บันทึกมูลค่าเงินสดลง `equityCurve` ด้วยสัญลักษณ์ `"CASH"` พร้อมคำนวณ Drawdown ตามจริง, และสแกนหาจังหวะใหม่อย่างต่อเนื่องจนครบอายุการจำลอง
+  3. **Live Pair Rotator Integration (`src/pair-rotator.ts` & `src/config.ts`)**:
+     - เพิ่มฟิลด์ `rotationEnableBtcMacroGate: true` ลงใน `Config` และเชื่อมโยงกับการตั้งค่าใน `data/settings.db.json`
+     - ใน `AutonomousPairRotator.evaluateAndRotate`: ตรวจสอบสถานะของ Bitcoin จาก 24h Ticker สด หาก BTC ร่วงหนัก ($< -2.5\%$ ใน 24 ชม. หรือ $< -1.2\%$ ร่วมกับราคาจมอยู่ที่กรอบล่าง 15%) บอทจะบันทึกแจ้งเตือน `🛡️ BTC Macro Gate active...` และระงับการหมุนเหรียญเพื่อถือเงินสด 100% ทันที
+  4. **Web UI & API Controls**:
+     - เพิ่มตัวเลือกตัวกรองตลาดใน Backtest Rotation Modal: `ตัวกรองตลาด BTC (Macro Gate): [🛡️ ถือเงินสดเมื่อ BTC ขาลง (แนะนำ) | ⚡ ปิดตัวกรอง]`
+     - ส่งค่า `enableBtcMacroGate` ผ่าน REST API `/api/backtest/rotation/run` และอัปเดตสถานะแบบ Real-time
+- **ผลการทดสอบ Multi-Window Walk-Forward Robustness Test (เปรียบเทียบข้าม 3 Offset: 0h, 2h, 4h)**:
+  - **Window 1 (2026-10-03 ถึง 2026-11-02: ขาลง / BTC -7.53% / ตลาดเฉลี่ย -5.70%)**:
+    - Variant A (Calibrated -4%, ไม่มี Gate): PnLs = `[-15.16%, -7.52%, -16.82%]` ➔ **Mean = -13.17%**
+    - Variant B (เปิด BTC Macro Gate): PnLs = `[-7.95%, -4.91%, -17.46%]` ➔ **Mean = -10.11%** (ชนะ Variant A เฉลี่ย **+3.06%**, ใน Offset 0 ลดการขาดทุนลงเกือบครึ่งหนึ่งจาก -15.16% เหลือ -7.95%)
+  - **Window 2 (2026-09-03 ถึง 2026-10-03: ขาขึ้น / BTC +8.94% / ตลาดเฉลี่ย +30.44%)**:
+    - Variant A (Calibrated -4%, ไม่มี Gate): PnLs = `[+3.10%, +12.10%, +11.53%]` ➔ **Mean = +8.91%**
+    - Variant B (เปิด BTC Macro Gate): PnLs = `[+1.24%, +12.10%, +11.53%]` ➔ **Mean = +8.29%** (สร้างผลตอบแทนกำไรเป็นกอบเป็นกำสอดคล้องกับ BTC ที่ +8.94% โดยมี Max Drawdown เพียง -5.56% ขณะที่ Gate มีผลกระทบต่อผลตอบแทนเพียงเล็กน้อย -0.6% จากการรอจังหวะ)
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.16`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย

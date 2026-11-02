@@ -2856,6 +2856,7 @@
         const signalExitVal = document.getElementById("rotBtSignalExit")?.value || "calibrated";
         const enableSignalInvalidationExit = signalExitVal !== "off";
         const signalInvalidationMode = signalExitVal;
+        const enableBtcMacroGate = document.getElementById("rotBtMacroGate")?.value !== "off";
 
         if (rotationBtProgressWrap) rotationBtProgressWrap.style.display = "block";
         if (rotationBtKpiGrid) rotationBtKpiGrid.style.display = "none";
@@ -2901,6 +2902,7 @@
               enableDipHunterEntryGuard,
               enableSignalInvalidationExit,
               signalInvalidationMode,
+              enableBtcMacroGate,
             }),
           });
 

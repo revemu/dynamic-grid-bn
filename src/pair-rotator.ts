@@ -198,6 +198,25 @@ export class AutonomousPairRotator {
       (cfg.rotationWhitelist || []).map((s) => s.toUpperCase().replace(/[\/\-_:]/g, ""))
     );
 
+    // 🛡️ BTC Macro Gate Check (Live):
+    if (cfg.rotationEnableBtcMacroGate !== false) {
+      const btcTicker = tickers.find((t) => t.symbol === "BTCUSDT" || t.symbol === `BTC${targetQuote}`);
+      if (btcTicker) {
+        const btcChange = Number(btcTicker.priceChangePercent);
+        const btcHigh = Number(btcTicker.highPrice);
+        const btcLow = Number(btcTicker.lowPrice);
+        const btcLast = Number(btcTicker.lastPrice);
+        const btcPos = btcHigh > btcLow ? (btcLast - btcLow) / (btcHigh - btcLow) : 0.5;
+
+        // If BTC is dumping (> 2.5% down in 24h) or pinned near 24h lows with negative momentum, protect capital in cash!
+        if (btcChange < -2.5 || (btcChange < -1.2 && btcPos < 0.15)) {
+          const reason = `🛡️ BTC Macro Gate active: Bitcoin is in severe breakdown (${btcChange.toFixed(2)}%, pos=${(btcPos * 100).toFixed(0)}%). Rotation paused to hold 100% Cash.`;
+          this.log(reason);
+          return { rotated: false, report: this.latestCandidates, reason };
+        }
+      }
+    }
+
     const activeTradingSymbols = await getActiveBinanceTradingSymbols();
 
     // Filter tickers matching target Quote Asset

@@ -948,6 +948,7 @@ export class DashboardServer {
           const enableSignalInvalidationExit = parsed.enableSignalInvalidationExit !== false;
           const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "calibrated");
           const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
+          const enableBtcMacroGate = parsed.enableBtcMacroGate !== false && parsed.enableBtcMacroGate !== "false";
 
           const result = await BacktestService.runMultiPairRotationSimulation({
             quoteAsset,
@@ -964,6 +965,7 @@ export class DashboardServer {
             enableSignalInvalidationExit,
             signalInvalidationMode,
             enableBaseConfirmation,
+            enableBtcMacroGate,
             customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
             blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
           });

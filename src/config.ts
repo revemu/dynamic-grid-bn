@@ -379,6 +379,8 @@ export const defaultStrategyConfig = {
     "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT", "BUSDUSDT", "EURIUSDT", "EURUSDT",
     "USDCFDUSD", "TUSDFDUSD", "USDPFDUSD", "EURFDUSD"
   ] as string[],
+  /** When true, pauses altcoin rotation and holds 100% Cash when BTC is in macro breakdown (> 1.2% below 24h SMA or dumping > 2% in 4h). Default true. */
+  rotationEnableBtcMacroGate: true,
 };
 
 /**
@@ -534,6 +536,9 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       }
       if (Array.isArray(saved.rotationBlacklist)) {
         merged.rotationBlacklist = saved.rotationBlacklist.map((s: any) => String(s).toUpperCase().trim()).filter(Boolean);
+      }
+      if (saved.rotationEnableBtcMacroGate !== undefined) {
+        merged.rotationEnableBtcMacroGate = Boolean(saved.rotationEnableBtcMacroGate);
       }
       return merged;
     }
