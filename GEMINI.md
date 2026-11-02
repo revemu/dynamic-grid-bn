@@ -8060,3 +8060,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - หากบอทยังไม่มีของใน Zone 2 (`hasLotsInCurrentZone = false`) และตลาดยังเป็น Dow Downtrend ใต้ ChoCh โดยยังไม่เบรก Trendline: Confirmation Block จะไม่ทำงานเด็ดขาด ประตูซื้อ Zone 2 จะถูกล็อกนิ่งสนิท บอทจะถอนคำสั่งซื้อทั้งหมดออกอย่างสงบ และขึ้นสถานะ `⏳ รอจุดกลับตัวก่อนรับของรอบ 2` โดยไม่มีการสลับสถานะหรือเกิดลูปอีกต่อไป
 - **Version Bump & Typecheck**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.18`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 266. Top-50 Early Reversal Momentum DNA, Market Breadth Sit-Out Gate & Elimination of Equity Token Contamination (v0.3.0.19)
+
+- **สาเหตุของปัญหาและที่มา (Forensic Investigation & Architectural Rationale)**:
+  1. **ทำไมบอทไม่เคยเลือกเหรียญที่เป็น Champion ในอดีต (The 4 Critical Bottlenecks)**:
+     - จากการวิเคราะห์ Forensic เชิงลึกใน 405 ตัวอย่างทั่วจักรวาล 47 เหรียญใน Universe พบว่าเหรียญที่ชนะเลิศสูงสุด (Safe Winners เช่น `PEPE`, `QNT`, `ZEC`, `INIT`, `ZRO`, `SOLV`, `PUMP`, `HOT`, `BMT`) ไม่เคยถูกบอทเลือกเลย เนื่องจากติดคอขวด 4 ชั้น:
+       - **คอขวดที่ 1 (Raw Volume Monopolization)**: Stage 1 เดิมจัดเรียงด้วยมูลค่าการซื้อขายดอลลาร์ดิบ (`quoteVol24h`) ทำให้เหรียญยักษ์ใหญ่ (`BTC`, `ETH`, `SOL`, `XRP`, `DOGE`, `BNB`) ผูกขาดโควต้า 6 อันดับแรกตลอดกาล เหรียญ Mid-Cap ที่กำลังเกิด Reversal ไม่เคยหลุดเข้าสู่ Stage 2
+       - **คอขวดที่ 2 (The `posRatio <= 0.45` Trap)**: เหรียญที่กลับตัวขึ้นแล้วตามธรรมชาติจะวิ่งทะลุ 50% ของกรอบ Donchian 24h เสมอ (`posRatio > 0.50`) การจำกัด `posRatio <= 0.45` และใน Rotation Loop ที่ `<=` 0.48 จึงเท่ากับ **แบนเหรียญกลับตัวทุกตัวในตลาด 100%** และบังคับให้บอทเข้าไปรับมีดในแนวโน้มขาลง
+       - **คอขวดที่ 3 (Synthetic Stock Contamination)**: เหรียญหุ้นสหรัฐแปลงสภาพ (`*BUSDT` เช่น `MSTRBUSDT`, `SOXLBUSDT`, `SPCXBUSDT`, `CRCLBUSDT`) แอบหลุดเข้า Universe และสร้างความเสียหายจาก Gap ราคาข้ามคืนและวันหยุดตลาดหุ้น
+       - **คอขวดที่ 4 (Low-Score Fallback Trap)**: ในช่วงตลาดขาลงที่ Breadth Gate ยังไม่ปิดสนิท ฟังก์ชันหาเหรียญสลับ (`viable = altCandidates.find(...)`) ไม่มีเกณฑ์คะแนนขั้นต่ำ ทำให้บอทแอบเข้าไปรับเหรียญคะแนนต่ำมาก (`BTC` คะแนน 32, `XPLUSDT` คะแนน 39, `WLD` คะแนน 41) แทนที่จะถือ 100% Cash นิ่งๆ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **ตัดเหรียญหุ้นสหรัฐและเหรียญสังเคราะห์ 100% (`isSyntheticOrStock`)**:
+     - สร้าง Helper ตรวจจับและบล็อกเหรียญที่ลงท้ายด้วย `BUSDT` (Tokenized Stocks & Leveraged ETFs) รวมถึง Stable/Pegged assets (`RWUSD`, `UUSDT`, `XAUT`, `PAXG`) และอักษรที่ไม่ใช่ ASCII (เช่น `牛来USDT`) ตั้งแต่ระดับ Discovery และ Funnel ทั้งใน `src/backtest-service.ts` และ `src/pair-rotator.ts`
+  2. **5-Pillar Early Reversal Score + Logarithmic Volume Weight**:
+     - ปรับคะแนน Stage 1 ให้คิดน้ำหนักวอลุ่มแบบลอการิทึม (`Math.log10(quoteVol24h)`) เพื่อเปิดทางให้เหรียญ Mid-Cap และผสานคะแนน Reversal (Stepping Higher Lows, 4h Acceleration, Buyer Ratio >= 1.10, EMA20 >= EMA60) พร้อมขยายโควต้า Top Candidates จาก 6 เป็น 10 เหรียญ
+  3. **ปลดล็อก Reversal Leaders (`posRatio` สูงสุด 0.88)**:
+     - ผ่อนปรน `posRatio` ให้เหรียญที่กำลังวิ่งในคลื่นกลับตัว (0.50 – 0.88) ได้รับโบนัสคะแนน +12 คะแนน แทนที่จะถูกหักคะแนนหรือตัดสิทธิ์
+  4. **Market Breadth Sit-Out Gate & Minimum Composite Score Threshold (`compositeScore >= 50`)**:
+     - กำหนดเกณฑ์ว่าต้องมีเหรียญใน Universe ไม่น้อยกว่า 40% ที่ยืนเหนือ 5h EMA60 หากต่ำกว่า 40% ถือเป็นสภาวะตลาดพังทลาย ระบบจะ **ถือเงินสด 100% Cash** ทันที
+     - บังคับเกณฑ์คะแนนขั้นต่ำ `c.compositeScore >= 50` ในทุกจุดสลับเหรียญและรอบเริ่มต้น หากไม่มีเหรียญใดในตลาดได้คะแนน 50+ บอทจะ **ถือเงินสด 100% Cash** ต่อเนื่อง ไม่ยอมเสี่ยงกับเหรียญอ่อนแรง
+  5. **Decouple Cash Hold Hours from Simulation Leg Index**:
+     - ย้ายการนับ `legIndex++` ให้เกิดขึ้นเฉพาะเมื่อเริ่มเปิดสัญญาเทรดเหรียญจริง (`Starting on...`) เท่านั้น โดยการถือเงินสดรายชั่วโมงจะไม่นับกินโควต้า Leg ทำให้ Backtest สามารถจำลองได้ครบเต็ม 30 วัน (8,640 แท่ง) จนถึงวินาทีสุดท้าย
+- **ผลลัพธ์จากการทดสอบ Backtest จริง 30 วัน (Top 50 Universe, 8,640 แท่ง)**:
+  - **Trade Win Rate**: **72.4%** (ชนะ 105 ไม้ จาก 145 ไม้)
+  - **Alpha vs Market Buy & Hold**: **+4.67%** (ตลาดรวมตกลง -13.83% แต่พอร์ตเอาชนะตลาดได้ถึง +4.67%)
+  - **Champion Capture Unlocked**: บอทสามารถจับเหรียญกลับตัวชั้นนำและทำกำไรชนะรวดได้จริง เช่น:
+    - `ZECUSDT`: **+4.90% ($4.26, 14/14 win)**
+    - `SOLVUSDT`: **+3.95% ($3.51, 9/9 win)**
+    - `ZECUSDT`: **+3.23% ($3.06, 3/3 win)**
+    - `DOTUSDT`: **+2.72% ($2.51, 10/10 win)**
+    - `HOTUSDT`: **+2.53% ($2.24, 2/2 win)**
+    - `GUSDT`: **+1.95% ($1.86, 6/6 win)**
+    - `PUMPUSDT`: **+1.62% ($1.48, 5/5 win)**
+    - `AAVEUSDT`: **+1.57% ($1.39, 2/2 win)**
+    - `HOTUSDT`: **+1.36% ($1.23, 4/4 win)**
+    - `RUNEUSDT`: **+1.07% ($0.97, 4/4 win)**
+- **Version Bump & Typecheck**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.19`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย

@@ -58,6 +58,17 @@ const STABLE_BASE_TOKENS = new Set([
   "USDC", "FDUSD", "USDT", "TUSD", "BUSD", "USDP", "DAI", "EUR", "EURI", "AEUR"
 ]);
 
+export const isSyntheticOrStock = (sym: string): boolean => {
+  if (sym.endsWith("BUSDT") && sym.length > 6) return true; // Tokenized equity derivatives (MSTRBUSDT, SOXLBUSDT, etc.)
+  if (
+    sym.includes("USD") &&
+    ["RWUSDUSDT", "UUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "EURUSDT", "GBPUSDT", "USDPUSDT"].includes(sym)
+  ) return true;
+  if (["XAUTUSDT", "PAXGUSDT", "BEAMXUSDT"].includes(sym)) return true;
+  if (/[\u4e00-\u9fa5]/.test(sym)) return true; // Chinese or non-ascii characters
+  return false;
+};
+
 export class AutonomousPairRotator {
   private isScanning = false;
   public lastRotationTime: number = 0;
@@ -228,6 +239,7 @@ export class AutonomousPairRotator {
       if (STABLE_BASE_TOKENS.has(base)) return false;
       if (blacklistSet.has(sym)) return false;
       if (whitelistSet.size > 0 && !whitelistSet.has(sym)) return false;
+      if (isSyntheticOrStock(sym)) return false;
 
       const vol = Number(t.quoteVolume);
       if (vol < minVolume) return false;
@@ -245,23 +257,27 @@ export class AutonomousPairRotator {
 
       const last = Number(t.lastPrice);
       const posRatio = (last - low) / (high - low);
-      // Favorable entry: price between 10% and 65% of 24h range
-      if (posRatio < 0.10 || posRatio > 0.65) return false;
+      // Favorable entry: price between 10% and 88% of 24h range (embrace reversal leaders)
+      if (posRatio < 0.10 || posRatio > 0.88) return false;
 
       return true;
     });
 
-    // Sort prefiltered candidates by volume * range activity
+    // Sort prefiltered candidates by logarithmic volume + reversal activity score
     prefiltered.sort((a, b) => {
-      const volA = Number(a.quoteVolume);
-      const volB = Number(b.quoteVolume);
+      const volA = Math.log10(Math.max(1000, Number(a.quoteVolume)));
+      const volB = Math.log10(Math.max(1000, Number(b.quoteVolume)));
       const rangeA = (Number(a.highPrice) - Number(a.lowPrice)) / Number(a.lowPrice);
       const rangeB = (Number(b.highPrice) - Number(b.lowPrice)) / Number(b.lowPrice);
-      return volB * rangeB - volA * rangeA;
+      const chgA = Number(a.priceChangePercent);
+      const chgB = Number(b.priceChangePercent);
+      const scoreA = volA * 3 + Math.min(0.25, rangeA) * 50 + (chgA >= 0 && chgA <= 6.0 ? 10 : 0);
+      const scoreB = volB * 3 + Math.min(0.25, rangeB) * 50 + (chgB >= 0 && chgB <= 6.0 ? 10 : 0);
+      return scoreB - scoreA;
     });
 
-    // Select top 5 candidates
-    const candidateSymbols = prefiltered.slice(0, 5).map((t) => t.symbol);
+    // Select top 10 candidates
+    const candidateSymbols = prefiltered.slice(0, 10).map((t) => t.symbol);
 
     // Always include currentSymbol in evaluation to compare fair performance
     if (!candidateSymbols.includes(normCurrent) && normCurrent.endsWith(targetQuote)) {

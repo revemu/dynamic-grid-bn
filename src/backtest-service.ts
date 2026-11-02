@@ -10,6 +10,7 @@ import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, RollingSpreadCa
 import { calcATR } from "./strategy/ma-fan/ribbon.js";
 import { DowStructureEngine } from "./market-structure.js";
 import { getActiveBinanceTradingSymbols } from "./exchange/binance/client.js";
+import { isSyntheticOrStock } from "./pair-rotator.js";
 
 export const STABLE_TOKENS = new Set([
   "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
@@ -3456,6 +3457,7 @@ export class BacktestService {
         const base = sym.slice(0, -quote.length);
         if (STABLE_TOKENS.has(base)) return false;
         if (blacklistSet.has(sym)) return false;
+        if (isSyntheticOrStock(sym)) return false;
         if (Number(t.quoteVolume) < minVol) return false;
         return true;
       });
@@ -3531,7 +3533,48 @@ export class BacktestService {
   }> {
     const { targetTime, universeCandles, activeSymbol, quoteAsset, gridOpts } = opts;
 
-    // 🛡️ Calculate BTC 24h Return and check BTC Macro Gate:
+    const SYNTHETIC_BLACKLIST = new Set([
+      "RWUSDUSDT", "UUSDT", "XAUTUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT",
+      "牛来USDT", "CRCLBUSDT", "SNDKBUSDT", "SPCXBUSDT", "BEAMXUSDT"
+    ]);
+
+    const calcEmaLocal = (candles: Candle[], endIdx: number, period: number): number => {
+      const start = Math.max(0, endIdx - period * 3);
+      let ema = candles[start].close;
+      const k = 2 / (period + 1);
+      for (let i = start + 1; i <= endIdx; i++) {
+        ema = candles[i].close * k + ema * (1 - k);
+      }
+      return ema;
+    };
+
+    // 🛡️ 1. Point-in-Time Market Breadth (% of Top Universe pairs above 5h EMA60):
+    let aboveEma60Count = 0;
+    let totalBreadthPairs = 0;
+    for (const [sym, candles] of universeCandles.entries()) {
+      if (sym.startsWith("BTC") || SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym) || !candles || candles.length < 288) continue;
+      let low = 0;
+      let high = candles.length - 1;
+      let idx = -1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (candles[mid].time <= targetTime) {
+          idx = mid;
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+      if (idx >= 60 && targetTime - candles[idx].time <= 3600) {
+        totalBreadthPairs++;
+        const curClose = candles[idx].close;
+        const ema60 = calcEmaLocal(candles, idx, 60);
+        if (curClose > ema60) aboveEma60Count++;
+      }
+    }
+    const marketBreadthPct = totalBreadthPairs > 0 ? (aboveEma60Count / totalBreadthPairs) * 100 : 50;
+
+    // 🛡️ 2. Calculate BTC 24h Return and check BTC Macro Gate:
     let btcChange24hPct = 0;
     const btcCandles = universeCandles.get(`BTC${quoteAsset}`) || universeCandles.get("BTCUSDT");
     if (btcCandles && btcCandles.length >= 288) {
@@ -3554,20 +3597,27 @@ export class BacktestService {
           btcChange24hPct = ((btcClose - btcOpen24h) / btcOpen24h) * 100;
         }
 
-        if (gridOpts?.enableBtcMacroGate === true) {
+        if (gridOpts?.enableBtcMacroGate !== false) {
+          // A. Market-wide Breadth Dump Guard: If < 40% of coins are above 5h EMA, sit out in 100% Cash!
+          if (totalBreadthPairs >= 5 && marketBreadthPct < 40) {
+            return [];
+          }
+
+          // B. Bitcoin Macro Gate:
           const slice288 = btcCandles.slice(bIdx - 287, bIdx + 1);
           const sma288 = slice288.reduce((s: number, c: Candle) => s + c.close, 0) / 288;
+          const btcEma60 = calcEmaLocal(btcCandles, bIdx, 60);
           const btcOpen4h = btcCandles[Math.max(0, bIdx - 48)].open;
           const ret4hPct = ((btcClose - btcOpen4h) / btcOpen4h) * 100;
 
-          if (btcClose < sma288 * 0.988 || ret4hPct < -2.0) {
+          if (btcClose < sma288 * 0.988 || ret4hPct < -1.8 || btcClose < btcEma60 * 0.997) {
             return []; // Macro breakdown: zero candidates allowed -> stay in Cash!
           }
         }
       }
     }
 
-    const minVol = quoteAsset === "FDUSD" ? 500_000 : 2_000_000;
+    const minVol = quoteAsset === "FDUSD" ? 300_000 : 750_000;
     const stage1Candidates: Array<{
       symbol: string;
       idx: number;
@@ -3582,6 +3632,7 @@ export class BacktestService {
     // Stage 1: Point-in-Time 24h rolling window filter
     for (const [sym, candles] of universeCandles.entries()) {
       if (!candles || candles.length < 288) continue;
+      if (SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym)) continue;
 
       let low = 0;
       let high = candles.length - 1;
@@ -3628,21 +3679,71 @@ export class BacktestService {
       const return4hPct = open4h > 0 ? ((lastPrice - open4h) / open4h) * 100 : 0;
 
       if (quoteVol24h < minVol) continue;
-      if (range24hPct < 4.0 || range24hPct > 25.0) continue;
-      // Relax 24h pump cap to 18% to allow riding true market leaders rather than lagging coins
-      if (change24hPct < -5.5 || change24hPct > 18.0) continue;
-      // Relax posRatio to 0.70 to avoid penalizing strong coins holding above support
-      if (posRatio < 0.10 || posRatio > 0.70) continue;
+      if (range24hPct < 4.0 || range24hPct > 22.0) continue;
+      // Relax 24h pump cap to 15% to allow riding true market leaders rather than lagging coins
+      if (change24hPct < -5.5 || change24hPct > 15.0) continue;
+      // Allow posRatio between 0.10 and 0.90 to embrace confirmed reversal leaders!
+      if (posRatio < 0.10 || posRatio > 0.90) continue;
       if (return4hPct < -3.5) continue; // Reject coins in active waterfall dump over past 4 hours
+
+      const ema20 = calcEmaLocal(candles, idx, 20);
+      const ema60 = calcEmaLocal(candles, idx, 60);
+
+      // Volume & buyer accumulation over past 4h (48 bars):
+      let vol4h = 0, upVol4h = 0, dnVol4h = 0;
+      for (let k = idx - 48; k <= idx; k++) {
+        if (k >= 0) {
+          const v = candles[k].volume * candles[k].close;
+          vol4h += v;
+          if (candles[k].close >= candles[k].open) upVol4h += v;
+          else dnVol4h += v;
+        }
+      }
+      const volSurge = (quoteVol24h / 6) > 0 ? vol4h / (quoteVol24h / 6) : 1.0;
+      const buyRatio = dnVol4h > 0 ? upVol4h / dnVol4h : 1.0;
+
+      // Higher lows structure (stepping lows in 3h blocks):
+      const getLow = (a: number, b: number) => {
+        let l = Infinity;
+        for (let k = Math.max(0, a); k <= b; k++) if (candles[k].low < l) l = candles[k].low;
+        return l;
+      };
+      const l3 = getLow(idx - 108, idx - 72);
+      const l2 = getLow(idx - 72, idx - 36);
+      const l1 = getLow(idx - 36, idx);
+      const hlSteps = (l1 > l2 * 1.001 ? 1 : 0) + (l2 > l3 * 1.001 ? 1 : 0);
+
+      // Short-term 4h acceleration:
+      const prev4hOpen = slice24h[Math.max(0, slice24h.length - 96)]?.open ?? open4h;
+      const prev4hClose = slice24h[Math.max(0, slice24h.length - 48)]?.close ?? open4h;
+      const prev4hRet = prev4hOpen > 0 ? ((prev4hClose - prev4hOpen) / prev4hOpen) * 100 : 0;
+      const accel4h = return4hPct - prev4hRet;
+
+      // Reversal confirmation:
+      const isEmaReversal = lastPrice > ema20 && ema20 >= ema60 * 0.998;
+      const hasBuyers = (volSurge >= 1.0 && buyRatio >= 0.85) || buyRatio >= 1.10;
+      const isViableReversal = isEmaReversal && (hlSteps >= 1 || accel4h >= 0.5) && hasBuyers;
 
       // Relative Strength vs Bitcoin:
       const relativeStrengthPct = change24hPct - btcChange24hPct;
-      // Reward market leaders outperforming BTC; heavily discount weak laggards
-      const rsFactor = relativeStrengthPct >= 0
-        ? (1.0 + Math.min(1.0, relativeStrengthPct / 15))
-        : Math.max(0.3, 1.0 + relativeStrengthPct / 15);
 
-      const activityScore = quoteVol24h * (range24hPct / 100) * rsFactor;
+      // Base discount bonus: reward fresh turnarounds out of negative/flat base!
+      const freshBaseBonus = change24hPct <= 1.0 ? 25 : change24hPct <= 4.0 ? 12 : 0;
+
+      // Logarithmic volume weight to prevent mega-caps from monopolizing the slots:
+      const logVolScore = Math.min(15, Math.max(0, (Math.log10(quoteVol24h) - 5.5) * 5));
+
+      const activityScore =
+        (isViableReversal ? 35 : 0) +
+        freshBaseBonus +
+        hlSteps * 12 +
+        Math.min(6, Math.max(-2, accel4h)) * 4 +
+        Math.min(2.5, volSurge) * 8 +
+        Math.min(2.5, buyRatio) * 6 +
+        Math.min(14, range24hPct) * 1.2 +
+        logVolScore +
+        (relativeStrengthPct > 0 ? Math.min(10, relativeStrengthPct * 1.5) : -5);
+
       stage1Candidates.push({
         symbol: sym,
         idx,
@@ -3656,7 +3757,7 @@ export class BacktestService {
     }
 
     stage1Candidates.sort((a, b) => b.activityScore - a.activityScore);
-    const topCandidates = stage1Candidates.slice(0, 6);
+    const topCandidates = stage1Candidates.slice(0, 10);
 
     if (activeSymbol && !topCandidates.some((c) => c.symbol === activeSymbol)) {
       const activeCandles = universeCandles.get(activeSymbol);
@@ -3785,11 +3886,11 @@ export class BacktestService {
         }
 
         let positionScore = 0;
-        if (cand.posRatio >= 0.15 && cand.posRatio <= 0.40) {
+        if (cand.posRatio >= 0.15 && cand.posRatio <= 0.50) {
           positionScore = 15; // Sweet spot for pullback accumulation!
-        } else if (cand.posRatio > 0.40 && cand.posRatio <= 0.50) {
-          positionScore = 5;
-        } else if (cand.posRatio > 0.65) {
+        } else if (cand.posRatio > 0.50 && cand.posRatio <= 0.88) {
+          positionScore = 12; // Confirmed reversal uptrend reward!
+        } else if (cand.posRatio > 0.92) {
           positionScore = -10; // Overbought climax penalty
         }
 
@@ -3798,7 +3899,7 @@ export class BacktestService {
         const lowerWick = Math.min(lastBar.open, lastBar.close) - lastBar.low;
         const hasAbsorption = barRange > 0 ? (lowerWick / barRange) >= 0.15 : false;
         const isGreen = lastBar.close >= lastBar.open;
-        const isDipPullback = cand.posRatio >= 0.12 && cand.posRatio <= 0.42 && (hasAbsorption || isGreen || lastBar.close >= prevBar.close);
+        const isDipPullback = cand.posRatio >= 0.12 && cand.posRatio <= 0.88 && (hasAbsorption || isGreen || lastBar.close >= prevBar.close);
 
         let momentumScore = 0;
         if (cand.change24hPct > btcChange24hPct) {
@@ -3898,8 +3999,8 @@ export class BacktestService {
       (initialCandidates.length > 0 ? initialCandidates.slice(0, 5).map(c => `${c.symbol}(score=${c.compositeScore},pos=${c.posRatio})`).join(", ") : "none")
     );
 
-    const initialPullback = initialCandidates.find((c) => c.compositeScore >= 40 && c.posRatio <= 0.45);
-    let activeCandidate = initialPullback || initialCandidates[0];
+    const initialStrongCandidate = initialCandidates.find((c) => c.compositeScore >= 60 && c.posRatio <= 0.88);
+    let activeCandidate = initialStrongCandidate || (initialCandidates[0]?.compositeScore >= 50 ? initialCandidates[0] : undefined);
     let activeSymbol = activeCandidate ? activeCandidate.symbol : "";
     if (!activeCandidate && !opts.enableBtcMacroGate) {
       const fallbackSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
@@ -3938,8 +4039,7 @@ export class BacktestService {
     const isBanned = (sym: string) => (symbolCooldownUntil.get(sym) || 0) > currentTime;
 
     // 4. Walk-forward simulation loop across legs
-    while (currentTime < simEndTime - 3600 && legIndex < 150) {
-      legIndex++;
+    while (currentTime < simEndTime - 3600 && legs.length < 300) {
       const currentLegStartTime = currentTime;
 
       let symCandles = activeSymbol ? universeCandles.get(activeSymbol) : undefined;
@@ -3958,13 +4058,15 @@ export class BacktestService {
         });
 
         const viable = altCandidates.find((c) => {
+          if (c.compositeScore < 50) return false;
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
-          if (c.posRatio > 0.48) return false;
+          if (c.posRatio > 0.88) return false;
           const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
           return idx >= 0 && idx < cCandles.length - 10;
         }) || altCandidates.find((c) => {
+          if (c.compositeScore < 50) return false;
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
@@ -4006,6 +4108,7 @@ export class BacktestService {
       const legCandles = symCandles.slice(startBarIdx - warmupBars);
       const simStartIdx = warmupBars;
 
+      legIndex++;
       console.log(`[RotationBacktest] ▶️ [Leg #${legIndex}] Starting on ${activeSymbol} at ${new Date(currentLegStartTime * 1000).toISOString()} (cash=$${currentCash.toFixed(2)}, entryScore=${activeCandidate?.compositeScore || 65})`);
 
       let legStopReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" | "SIGNAL_DISQUALIFIED" = "POST_ROUND_EXIT";
@@ -4060,17 +4163,17 @@ export class BacktestService {
           const curScore = curItem ? curItem.compositeScore : 0;
           currentScoreAtExit = curScore;
 
-          // 🌟 WATCHLIST & PULLBACK SWEET SPOT LOGIC:
-          // A candidate on the watchlist is actionable if compositeScore >= 45 and posRatio <= 0.48, and not banned
+          // 🌟 WATCHLIST & REVERSAL SWEET SPOT LOGIC:
+          // A candidate on the watchlist is actionable if compositeScore >= 50 and posRatio <= 0.88, and not banned
           const pullbackCandidates = candidates.filter(
-            (c) => c.symbol !== activeSymbol && c.compositeScore >= 45 && c.posRatio <= 0.48 && !isBanned(c.symbol)
+            (c) => c.symbol !== activeSymbol && c.compositeScore >= 50 && c.posRatio <= 0.88 && !isBanned(c.symbol)
           );
 
           // 1. If current coin has become disqualified (fell out of funnel or score < 40):
           const isCurrentDisqualified = !curItem || curScore < 40;
           if (isCurrentDisqualified) {
             const bestPullback = pullbackCandidates[0];
-            if (bestPullback && bestPullback.compositeScore >= 45) {
+            if (bestPullback && bestPullback.compositeScore >= 50) {
               console.log(
                 `[RotationBacktest] 🚨 [Leg #${legIndex}] Flat rotation triggered by SIGNAL_DISQUALIFIED at ${new Date(
                   state.time * 1000
@@ -4258,13 +4361,15 @@ export class BacktestService {
           gridOpts: opts,
         });
         const viable = candidates.find((c) => {
+          if (c.compositeScore < 50) return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
-          if (c.posRatio > 0.48) return false;
+          if (c.posRatio > 0.88) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
           const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
           return idx >= 0 && idx < cCandles.length - 10;
         }) || candidates.find((c) => {
+          if (c.compositeScore < 50) return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
