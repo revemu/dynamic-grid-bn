@@ -240,6 +240,8 @@ export const defaultStrategyConfig = {
   zoneStabilizeCandles: 3,
   /** Require confirmed point of reversal (Higher Low, Valley, Breakout, Rebound) before placing buy orders in Zone 2+ (default true). */
   zoneRequireReversal: true,
+  /** Guard against opening new grid positions when the coin is in an AVOID/DOWNTREND market regime (default false). */
+  enableReadinessGuard: false,
   /** Zone exit strategy: "PORTFOLIO_AVG" (default), "ORIGINAL_TARGETS", "PER_ZONE", "HYBRID_ZONE_RECOVERY", or "AVG_PROFIT_ALL". */
   zoneExitMode: "PORTFOLIO_AVG" as "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE" | "HYBRID_ZONE_RECOVERY" | "AVG_PROFIT_ALL",
   /** Cut loss behavior mode for dynamic grid in backtest: "none" (default for DCA hold), "entry_floor" (strict entry floor SL), or "final_zone_floor" (SL only after all zones exhausted). */
@@ -454,6 +456,7 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.zoneMinDropPct !== undefined) merged.zoneMinDropPct = Math.max(0.5, Number(saved.zoneMinDropPct) || 2.5);
       if (saved.zoneStabilizeCandles !== undefined) merged.zoneStabilizeCandles = Math.max(1, Math.min(20, Number(saved.zoneStabilizeCandles) || 3));
       if (saved.zoneRequireReversal !== undefined) merged.zoneRequireReversal = Boolean(saved.zoneRequireReversal);
+      if (saved.enableReadinessGuard !== undefined) merged.enableReadinessGuard = Boolean(saved.enableReadinessGuard);
       if (saved.zoneExitMode) {
         merged.zoneExitMode = saved.zoneExitMode as any;
       }

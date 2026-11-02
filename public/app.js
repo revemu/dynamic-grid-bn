@@ -3419,6 +3419,29 @@
       elPosTargetHold.textContent = `${targetPct}% ($${targetUsd})`;
     }
 
+    // Grid Readiness Badge
+    const elGridReadinessBadge = document.getElementById("gridReadinessBadge");
+    if (elGridReadinessBadge) {
+      const rd = data.gridReadiness;
+      if (rd && typeof rd.score === "number") {
+        elGridReadinessBadge.style.display = "";
+        const isGuardActive = Boolean(data.enableReadinessGuard);
+        const guardSuffix = isGuardActive ? "" : " (OFF)";
+        elGridReadinessBadge.textContent = `GRID: ${rd.status} [${rd.score}]${guardSuffix}`;
+        elGridReadinessBadge.title = `คะแนนความพร้อมเปิดกริด: ${rd.score}/100 (${rd.status})\nเหตุผล: ${rd.reason || "-"}\nGuard: ${isGuardActive ? "เปิดใช้งาน (ระงับเปิดกริดเมื่อ AVOID)" : "ปิดอยู่ (เฝ้าสังเกตการณ์)"}`;
+        elGridReadinessBadge.style.opacity = isGuardActive ? "1.0" : "0.7";
+        elGridReadinessBadge.className =
+          "readiness-badge " +
+          (rd.status === "READY"
+            ? "badge-ready"
+            : rd.status === "AVOID"
+              ? "badge-avoid"
+              : "badge-standby");
+      } else {
+        elGridReadinessBadge.style.display = "none";
+      }
+    }
+
     // Dow Regime Badge
     if (elRegimeBadge) {
       if (data.strategyMode === "ma_fan" || data.strategyType === "ma_fan") {
@@ -5493,6 +5516,7 @@
       setVal("cfg_zoneStabilizeCandles", data.zoneStabilizeCandles ?? 3);
       setVal("cfg_zoneMinDropPct", data.zoneMinDropPct ?? 2.5);
       setCheck("cfg_zoneRequireReversal", data.zoneRequireReversal !== false);
+    setCheck("cfg_enableReadinessGuard", Boolean(data.enableReadinessGuard));
       setVal("cfg_gridCutLossMode", data.gridCutLossMode || "final_zone_floor");
       setVal("cfg_zoneExitMode", data.zoneExitMode || "PORTFOLIO_AVG");
       setVal("cfg_narrowChannelThresholdPct", data.narrowChannelThresholdPct ?? 1.2);
@@ -5787,6 +5811,7 @@
       zoneStabilizeCandles: document.getElementById("cfg_zoneStabilizeCandles") ? parseInt(document.getElementById("cfg_zoneStabilizeCandles").value, 10) : 3,
       zoneMinDropPct: document.getElementById("cfg_zoneMinDropPct") ? parseFloat(document.getElementById("cfg_zoneMinDropPct").value) : 2.5,
       zoneRequireReversal: document.getElementById("cfg_zoneRequireReversal") ? document.getElementById("cfg_zoneRequireReversal").checked : true,
+        enableReadinessGuard: document.getElementById("cfg_enableReadinessGuard") ? document.getElementById("cfg_enableReadinessGuard").checked : false,
       gridCutLossMode: document.getElementById("cfg_gridCutLossMode") ? document.getElementById("cfg_gridCutLossMode").value : "final_zone_floor",
       zoneExitMode: document.getElementById("cfg_zoneExitMode") ? document.getElementById("cfg_zoneExitMode").value : "PORTFOLIO_AVG",
       narrowChannelThresholdPct: document.getElementById("cfg_narrowChannelThresholdPct") ? parseFloat(document.getElementById("cfg_narrowChannelThresholdPct").value) : 1.2,

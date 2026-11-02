@@ -334,6 +334,23 @@ body {
 .badge-breakdown { background: rgba(244, 63, 94, 0.15); border: 1px solid rgba(244, 63, 94, 0.5); color: var(--color-red); }
 .badge-breakout  { background: rgba(251, 191, 36, 0.15); border: 1px solid rgba(251, 191, 36, 0.5); color: var(--color-amber); }
 
+.readiness-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
+.badge-ready   { background: rgba(16, 185, 129, 0.18); border: 1px solid rgba(16, 185, 129, 0.5); color: #34d399; }
+.badge-standby { background: rgba(251, 191, 36, 0.18); border: 1px solid rgba(251, 191, 36, 0.5); color: #fbbf24; }
+.badge-avoid   { background: rgba(244, 63, 94, 0.18); border: 1px solid rgba(244, 63, 94, 0.5); color: #f43f5e; }
+
 .timeframe-badge {
   font-size: 10px;
   font-weight: 700;

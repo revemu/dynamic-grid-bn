@@ -7829,3 +7829,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.11`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
 
 
+
+---
+
+### 262. Grid Readiness Indicator & Guard: ระบบประเมินความพร้อมและป้องกันการเปิดกริดช่วงตลาดขาลง (`enableReadinessGuard` & `evaluateGridReadiness`) (v0.3.0.12)
+
+- **สาเหตุของปัญหาและที่มา (User Problem & Architectural Rationale)**:
+  1. **ปัญหาการเข้าซื้อไม้แรกในเหรียญที่เป็นขาลงจัด (Catching Knives on Initial Grid Entry)**:
+     - จากภาพหน้าจอสดและ Telemetry บน Binance Spot คู่ `ERAFDUSD`: เหรียญเกิดสภาวะ Downtrend ต่อเนื่อง เกิดโครงสร้าง Lower High (LH) และ Lower Low (LL) และรอบผลักเป็น `หลุดฐาน (ทุบทำ New Low)`
+     - เนื่องจากบนเซิร์ฟเวอร์ `dowTrendFilter` ถูกปิดไว้ (`OFF`) และก่อนหน้านี้ยังไม่มีตัวประเมินความพร้อมก่อนเริ่มเปิดกริด (Grid Readiness) บอทจึงเข้าวางคำสั่งซื้อและรับของรวดเดียว 4 ไม้บนทางลาดขาลง ($0.0691 ➔ $0.0683 ➔ $0.0676 ➔ $0.0669) รวมเป็นเงิน $48.18 (48% Load)
+     - เมื่อราคาดิ่งต่อลงไปถึง $0.0648 ทำให้ Unrealized PnL ติดลบและเสี่ยงดอยลึก จนผู้ใช้ต้องกด PAUSE บอทด้วยมือ
+     - ผู้ใช้สอบถามแนวทาง: *"ในการเล่นกริด เราสามารถไม่เล่นตอนช่วงขาลงได้ไหม... เราสามารถนำสัญญาณนี้มาใช้ก่อนเปิด grid ได้หรือไม่... เพิ่มเข้ามาก่อน เป็น option"*
+  2. **สถาปัตยกรรม Grid Readiness (0–100 คะแนน) & 3 Regimes**:
+     - **🟢 READY (≥ 65 คะแนน)**: โครงสร้าง Dow เป็นขาขึ้นหรือไซด์เวย์สมบูรณ์, กรอบ Donchian อยู่ในช่วงเหมาะสม (2.0% - 6.5%), ตำแหน่งราคาอยู่ในโซนสะสมปลอดภัย (15% - 60%), ไม่มีการทิ้งดิ่ง
+     - **🟡 STANDBY (45–64 คะแนน)**: ตลาดเริ่มชะลอตัว หรือความกว้างกรอบเริ่มแคบ/กว้างผิดปกติ (เฝ้าระวัง)
+     - **🔴 AVOID (< 45 คะแนน)**: เหรียญเป็นขาลงชัดเจน (Dow Downtrend, หลุดฐานทำ New Low, กรอบกว้างเกิน 8.5% จากคลื่นทุบ, หรือมีแท่งเทียนทิ้งดิ่ง Waterfall)
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **เพิ่มพารามิเตอร์ `enableReadinessGuard` (ค่าเริ่มต้น: `false`)**:
+     - รองรับใน `src/config.ts`, `data/settings.db.json`, `src/db.ts`, และมี Toggle Switch ในหน้าต่าง Settings Modal บนเว็บแดชบอร์ด (`public/index.html` & `public/app.js`)
+  2. **ฟังก์ชันประเมินความพร้อม `evaluateGridReadiness` (`src/strategy/index.ts`)**:
+     - คำนวณแบบ Real-time ทุก Tick โดยรวม 4 มิติ: Dow Regime (40 คะแนน), Channel Width Feasibility (30 คะแนน), Range Position (20 คะแนน), Waterfall / Knife Momentum (10 คะแนน)
+     - คืนค่าออบเจกต์ `GridReadinessInfo`: `{ score, status, label, reason, dowRegime, channelWidthPct, posInRangePct }`
+  3. **ตรรกะ Readiness Guard ในกลยุทธ์ (`src/strategy/index.ts` & `src/strategy/buy-sync.ts`)**:
+     - เมื่อเปิดใช้งาน (`enableReadinessGuard === true`) และบอทถือเงินสด 100% (`lots.length === 0`):
+       - หาก `status === "AVOID"`: จะตั้ง `readinessBlocked = true`, `canBuy = false`, ยกเลิก Resting Buy Orders ทั้งหมด และขึ้นสถานะ `READINESS_AVOID_GUARD`: `🔴 พักเปิดกริด: ตลาดไม่พร้อม (AVOID xx/100) | ... • ถือเงินสด 100% ปลอดภัย ไม่เข้าช้อนมีด`
+     - หากมีของในพอร์ตอยู่แล้ว (`lots.length > 0`): จะไม่บล็อกคำสั่ง เพื่อให้กลไก Reversal Rebound (Zone 2+), Take Profit หรือ Cut Loss ทำงานต่อไปได้อย่างราบรื่น
+  4. **Frontend Dashboard UI (`public/index.html`, `public/style.css`, `public/app.js`)**:
+     - เพิ่มป้ายสถานะ `GRID: READY [75]` / `GRID: AVOID [15]` บนแถบ Header แดชบอร์ด พร้อม CSS สีเขียว/เหลือง/แดง สวยงาม
+     - เพิ่ม Tooltip อธิบายคะแนนและเหตุผลอย่างละเอียด
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.12`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย

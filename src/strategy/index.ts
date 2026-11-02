@@ -21,14 +21,14 @@ import type { AtrSource } from "../types.js";
 import { type DowStructureEngine, type DowStructure, type GridZone, type Candle, VolumeProfileEngine, type VolumeProfileResult } from "../market-structure.js";
 import { BotDatabase, getDatabase, type StrategyStateRecord, type TradeRecord, type OrderActivityRecord, type GasLogRecord, type LockedChannel } from "../db.js";
 
-import type { Lot, OpenOrder, StrategyEvent, GridPersistedState, ConfirmedChannelState, IStrategyHost, IStrategy, StrategyType } from "./types.js";
+import type { Lot, OpenOrder, StrategyEvent, GridPersistedState, ConfirmedChannelState, IStrategyHost, IStrategy, StrategyType, GridReadinessInfo } from "./types.js";
 import { LotTracker } from "./lot-tracker.js";
 import { RiskManager } from "./risk-manager.js";
 import { BuyOrderSynchronizer } from "./buy-sync.js";
 import { SellOrderSynchronizer } from "./sell-sync.js";
 import { OrderExecutor } from "./order-executor.js";
 
-export type { Lot, OpenOrder, StrategyEvent, GridPersistedState };
+export type { Lot, OpenOrder, StrategyEvent, GridPersistedState, GridReadinessInfo };
 
 export class DynamicGrid implements IStrategyHost, IStrategy {
   public readonly name = "Dynamic Grid";
@@ -106,6 +106,15 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   public lastStabilizeCandleTime = 0;
   public lastZoneUnlockFloor?: number;
   public prevCandidateFloor?: number;
+  public latestGridReadiness: GridReadinessInfo = {
+    score: 50,
+    status: "STANDBY",
+    label: "STANDBY",
+    reason: "Initializing market structure",
+    dowRegime: "WARMUP",
+    channelWidthPct: 0,
+    posInRangePct: 50,
+  };
   public sellOrdersActive = true;
   private sellZoneTransitionCandleTime?: number;
   public buyOrdersActive = true;
@@ -3903,6 +3912,15 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     const isWaterfallDropping = waterfallEvaluation.isDropping;
     const waterfallReason = waterfallEvaluation.reason;
 
+    // 🛡️ Grid Readiness & Market Regime Scoring (Score 0-100):
+    const gridReadiness = this.evaluateGridReadiness(dow, lowerBound, upperBound, centerPrice, refPrice);
+    this.latestGridReadiness = gridReadiness;
+    const readinessBlocked = Boolean(
+      this.cfg.enableReadinessGuard &&
+      this.lots.length === 0 &&
+      gridReadiness.status === "AVOID"
+    );
+
     // 🛡️ Downtrend Drop Guard is now fully unified into the single waitingForHigherLow state machine above
     const downtrendDropPaused = false;
     const downtrendDropReason = "";
@@ -4152,6 +4170,14 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         title: `⏳ รอจุดกลับตัวก่อนรับของรอบ ${this.unlockedCapitalZones} (Zone ${this.unlockedCapitalZones}/${totalZones})`,
         reason: `หลุดกรอบเดิม • พักซื้อชั่วคราว รอ Higher Low / Valley / Breakout ก่อนเริ่มช้อนซื้อ Zone ${this.unlockedCapitalZones}`,
         nextTrigger: `เฝ้ารอจุดกลับตัว > $${dumpLow.toFixed(this.pricePrecision)}${sellStatusPart ? ` | ${sellStatusPart}` : ""}`,
+        severity: "warning",
+      };
+    } else if (readinessBlocked) {
+      botActionState = {
+        code: "READINESS_AVOID_GUARD",
+        title: `🔴 พักเปิดกริด: ตลาดไม่พร้อม (AVOID ${gridReadiness.score}/100)`,
+        reason: `${gridReadiness.reason} • ถือเงินสด 100% ปลอดภัย ไม่เข้าช้อนมีด`,
+        nextTrigger: "รอแท่งเทียนสร้างฐานหรือคะแนนกลับสู่ STANDBY / READY",
         severity: "warning",
       };
     } else if (isGated) {
@@ -4468,6 +4494,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         downtrendDropPaused,
         waitingForHigherLow: this.waitingForHigherLow,
         isZoneReversalWaiting,
+        gridReadiness,
+        enableReadinessGuard: this.cfg.enableReadinessGuard,
         isFlatChannelShiftWaiting: this.isFlatChannelShiftWaiting,
         isTrendSupportExitActive: this.isTrendSupportExitActive,
         trendSupportBreakPrice: this.trendSupportBreakPrice,
@@ -4894,7 +4922,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       (this.unlockedCapitalZones ?? 1) > 1 &&
       !this.isZoneReversalConfirmed
     );
-    const canBuy = !offloadOnly && !trendFiltered && !trendlineFiltered && !isDowntrendDrop && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !isHlWaiting && !isBelowFloor && !isWaterfall && !isZoneReversalWaitingNow && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && isChannelApproved;
+    const canBuy = !offloadOnly && !readinessBlocked && !trendFiltered && !trendlineFiltered && !isDowntrendDrop && !this.isSqueezePaused && !isConverging && !isNearSqueeze && !laggardGuardActive && !isHlWaiting && !isBelowFloor && !isWaterfall && !isZoneReversalWaitingNow && this.buyOrdersActive && (dow?.isSwingConfirmed !== false) && isChannelApproved;
 
 
     if (this.cfg.orderExecutionMode === "IOC_BRACKET") {
@@ -5104,6 +5132,129 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     }
 
     return { isDropping: false, reason: "" };
+  }
+
+  /**
+   * 📊 Evaluate Grid Readiness (Score 0-100) & Regime:
+   * Analyzes Dow market structure, channel width, position in channel, and downward momentum
+   * to determine whether the current asset is suitable for grid trading or if it should be avoided.
+   */
+  public evaluateGridReadiness(
+    dow: any,
+    lowerBound: number,
+    upperBound: number,
+    centerPrice: number,
+    refPrice: number,
+  ): GridReadinessInfo {
+    const activeRegime = (dow?.regime ?? "WARMUP").toUpperCase();
+    const dowLabel = dow?.dowLabel ?? "";
+    const isLL = dowLabel === "LL";
+
+    // 1. Dow Regime (Max 40 pts)
+    let dowScore = 20;
+    if (activeRegime === "UPTREND") {
+      dowScore = 40;
+    } else if (activeRegime === "BREAKOUT") {
+      dowScore = 35;
+    } else if (activeRegime === "SIDEWAYS") {
+      dowScore = 30;
+    } else if (activeRegime === "WARMUP") {
+      dowScore = 20;
+    } else if (activeRegime === "DOWNTREND") {
+      dowScore = isLL ? 0 : 5;
+    }
+
+    // 2. Channel Width (Max 30 pts)
+    const span = Math.max(0, upperBound - lowerBound);
+    const spanPct = lowerBound > 0 ? (span / lowerBound) * 100 : 0;
+    let channelScore = 5;
+    if (spanPct >= 2.0 && spanPct <= 6.5) {
+      channelScore = 30;
+    } else if ((spanPct >= 1.5 && spanPct < 2.0) || (spanPct > 6.5 && spanPct <= 8.5)) {
+      channelScore = 20;
+    } else if (spanPct > 0) {
+      channelScore = 5;
+    } else {
+      channelScore = 0;
+    }
+
+    // 3. Position in Range (Max 20 pts)
+    const posPct = span > 0 ? ((refPrice - lowerBound) / span) * 100 : 50;
+    let posScore = 10;
+    if (posPct >= 15 && posPct <= 60) {
+      posScore = 20;
+    } else if (posPct > 60 && posPct <= 85) {
+      posScore = 15;
+    } else if (posPct > 85) {
+      posScore = 10;
+    } else if (posPct >= 0 && posPct < 15) {
+      posScore = 5;
+    } else {
+      // Below floor (< 0%)
+      posScore = 0;
+    }
+
+    // 4. Waterfall / Momentum (Max 10 pts)
+    const waterfall = this.evaluateWaterfallDrop(refPrice);
+    let momScore = 10;
+    if (waterfall.isDropping) {
+      momScore = 0;
+    } else if (dow?.cycleStatus === "BREAKDOWN_LOW" || this.waitingForHigherLow) {
+      momScore = 0;
+    }
+
+    const totalRaw = dowScore + channelScore + posScore + momScore;
+    const score = Math.max(0, Math.min(100, Math.round(totalRaw)));
+
+    let status: "READY" | "STANDBY" | "AVOID" = "STANDBY";
+    let label = "STANDBY";
+    if (score >= 65 && activeRegime !== "DOWNTREND") {
+      status = "READY";
+      label = "🟢 READY";
+    } else if (score < 45 || activeRegime === "DOWNTREND" || waterfall.isDropping || posPct < 0) {
+      status = "AVOID";
+      label = "🔴 AVOID";
+    } else {
+      status = "STANDBY";
+      label = "🟡 STANDBY";
+    }
+
+    const reasons = [];
+    if (activeRegime === "DOWNTREND") {
+      reasons.push(`Downtrend (${dowLabel || "LH/LL"})`);
+    } else if (activeRegime === "UPTREND") {
+      reasons.push("Uptrend (HH/HL)");
+    } else {
+      reasons.push(activeRegime);
+    }
+
+    if (waterfall.isDropping) {
+      reasons.push("Waterfall drop ongoing");
+    } else if (this.waitingForHigherLow) {
+      reasons.push("Waiting HL base");
+    }
+
+    if (spanPct > 8.5) {
+      reasons.push(`Channel wide (${spanPct.toFixed(1)}%)`);
+    } else if (spanPct < 1.5 && spanPct > 0) {
+      reasons.push(`Channel narrow (${spanPct.toFixed(1)}%)`);
+    }
+
+    if (posPct < 0) {
+      reasons.push("Below floor");
+    }
+
+    const reason = reasons.join(" • ") || "Normal market structure";
+
+    return {
+      score,
+      status,
+      label,
+      reason,
+      dowRegime: activeRegime,
+      channelWidthPct: spanPct,
+      posInRangePct: posPct,
+    };
   }
 
   public async cancelOrderInternal(order: OpenOrder, reason: string): Promise<void> {

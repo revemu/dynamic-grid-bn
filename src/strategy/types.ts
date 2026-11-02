@@ -19,6 +19,16 @@ export interface Lot {
   zoneIndex?: number; // capital allocation zone index (0..4)
 }
 
+export interface GridReadinessInfo {
+  score: number; // 0 - 100
+  status: "READY" | "STANDBY" | "AVOID";
+  label: string;
+  reason: string;
+  dowRegime: string;
+  channelWidthPct: number;
+  posInRangePct: number;
+}
+
 export interface OpenOrder {
   id: string;
   onChainOrderId?: string;
@@ -160,6 +170,7 @@ export interface IStrategyHost {
   lastStabilizeCandleTime?: number;
   lastZoneUnlockFloor?: number;
   prevCandidateFloor?: number;
+  latestGridReadiness?: GridReadinessInfo;
 
   // Methods
   clearPositionState(): void;

@@ -114,6 +114,8 @@ export class BuyOrderSynchronizer {
           ? "Active Downtrend Drop (LH+LL) — waiting for HL or Trendline Breakout"
           : (this.host.cfg.zoneRequireReversal !== false && (this.host.unlockedCapitalZones ?? 1) > 1 && !this.host.isZoneReversalConfirmed)
           ? `Zone ${this.host.unlockedCapitalZones}/${this.host.cfg.capitalZones ?? 2} waiting for reversal confirmation (HL/Valley/Breakout) before buying`
+          : (this.host.cfg.enableReadinessGuard && this.host.lots.length === 0 && this.host.latestGridReadiness?.status === "AVOID")
+          ? `Grid Readiness AVOID (${this.host.latestGridReadiness.score}/100) — waiting for market structure to stabilize`
           : "Buying paused by filters (Downtrend/Trendline/Lag Guard/Offload)";
         await cancelAllRestingOrders("BUY", pauseReason);
       }

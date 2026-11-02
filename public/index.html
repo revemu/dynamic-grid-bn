@@ -154,6 +154,7 @@
       <div class="bot-status-banner banner-info" id="botStatusBanner">
         <div class="banner-left-group">
           <div class="regime-badge badge-warmup" id="regimeBadge" style="display: none;">DOW: WARMUP</div>
+          <div class="readiness-badge badge-ready" id="gridReadinessBadge" style="display: none;" title="คะแนนความพร้อมเปิดกริด">GRID: READY</div>
           <div class="banner-status-pill" id="bannerStatusPill">
             <span class="banner-pulse-dot"></span>
             <span id="bannerStatusTitle">⏳ กำลังประมวลผล</span>
@@ -1298,6 +1299,17 @@
                 </div>
                 <label class="toggle-switch">
                   <input type="checkbox" id="cfg_enableWaterfallKnifeGuard" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="form-group switch-group">
+                <div class="switch-label-group">
+                  <span class="switch-title">🛡️ ป้องกันการเปิดกริดช่วงตลาดขาลง (Grid Readiness Guard: AVOID)</span>
+                  <span class="switch-desc">หากถือเงินสด 100% บอทจะไม่เริ่มเปิดกริด/ไม่วางไม้แรก หากคะแนนความพร้อมต่ำกว่าเกณฑ์หรือเหรียญอยู่ในสภาวะขาลงจัด (AVOID)</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cfg_enableReadinessGuard" />
                   <span class="slider"></span>
                 </label>
               </div>
