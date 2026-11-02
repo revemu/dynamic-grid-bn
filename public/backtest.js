@@ -2751,7 +2751,13 @@
         elAlpha.style.color = alphaColor;
       }
       if (elBenchSub) {
-        elBenchSub.textContent = `เทียบถือ ${sum.benchmarkSinglePairSymbol} (${sum.benchmarkSinglePairPnlPct >= 0 ? "+" : ""}${sum.benchmarkSinglePairPnlPct.toFixed(2)}%)`;
+        const btcStr = sum.benchmarkBtcBuyHoldPct !== undefined
+          ? `BTC B&H: ${sum.benchmarkBtcBuyHoldPct >= 0 ? "+" : ""}${sum.benchmarkBtcBuyHoldPct.toFixed(2)}%`
+          : `เทียบถือ ${sum.benchmarkSinglePairSymbol} (${sum.benchmarkSinglePairPnlPct >= 0 ? "+" : ""}${sum.benchmarkSinglePairPnlPct.toFixed(2)}%)`;
+        const ewStr = sum.benchmarkEqualWeightBuyHoldPct !== undefined
+          ? ` | ตลาดเฉลี่ย: ${sum.benchmarkEqualWeightBuyHoldPct >= 0 ? "+" : ""}${sum.benchmarkEqualWeightBuyHoldPct.toFixed(2)}%`
+          : "";
+        elBenchSub.textContent = `${btcStr}${ewStr}`;
       }
 
       // Render Legs Table
@@ -2847,7 +2853,9 @@
         const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 15;
         const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 2;
         const enableDipHunterEntryGuard = document.getElementById("rotBtDipHunterGuard")?.value !== "off";
-        const enableSignalInvalidationExit = document.getElementById("rotBtSignalExit")?.value !== "off";
+        const signalExitVal = document.getElementById("rotBtSignalExit")?.value || "calibrated";
+        const enableSignalInvalidationExit = signalExitVal !== "off";
+        const signalInvalidationMode = signalExitVal;
 
         if (rotationBtProgressWrap) rotationBtProgressWrap.style.display = "block";
         if (rotationBtKpiGrid) rotationBtKpiGrid.style.display = "none";
@@ -2892,6 +2900,7 @@
               capitalZones,
               enableDipHunterEntryGuard,
               enableSignalInvalidationExit,
+              signalInvalidationMode,
             }),
           });
 

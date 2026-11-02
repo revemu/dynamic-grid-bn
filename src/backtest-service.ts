@@ -173,6 +173,7 @@ export interface BacktestRecord {
   markers: BacktestMarker[];
   candles: Candle[];
   evaluations?: BacktestEvaluationItem[];
+  equityCurve?: Array<{ time: number; equity: number }>;
 }
 
 export interface BacktestHistoryItem {
@@ -217,6 +218,7 @@ export interface MultiPairRotationOptions {
   enableBaseConfirmation?: boolean;
   enableDipHunterEntryGuard?: boolean;
   enableSignalInvalidationExit?: boolean;
+  signalInvalidationMode?: "calibrated" | "strict_floor" | "off";
   gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
 }
 
@@ -287,7 +289,11 @@ export interface MultiPairRotationResult {
     bestPairPnlPct: number;
     benchmarkSinglePairSymbol: string;
     benchmarkSinglePairPnlPct: number;
+    benchmarkBtcBuyHoldPct?: number;
+    benchmarkEqualWeightBuyHoldPct?: number;
     alphaVsBenchmarkPct: number;
+    alphaVsBtcBuyHoldPct?: number;
+    alphaVsEqualWeightPct?: number;
   };
   legs: RotationLegRecord[];
   pairContributions: PairContributionItem[];
@@ -618,6 +624,7 @@ export class BacktestService {
 
     const trades: BacktestTrade[] = [];
     const markers: BacktestMarker[] = [];
+    const gridEquityCurve: Array<{ time: number; equity: number }> = [];
     let grossProfit = 0;
     let grossLoss = 0;
     let wins = 0;
@@ -1181,12 +1188,16 @@ export class BacktestService {
         }
       }
 
-      // Equity curve & drawdown
-      const currentInvVal = heldLots.reduce((sum, l) => sum + (l.qty * c.close), 0);
+      // Equity curve & drawdown (Mark-to-Market including exit fee)
+      const currentInvVal = heldLots.reduce((sum, l) => sum + (l.qty * c.close * (1 - costPerFill)), 0);
       const curEquity = cash + currentInvVal;
       if (curEquity > peakEquity) peakEquity = curEquity;
       const dd = peakEquity > 0 ? ((peakEquity - curEquity) / peakEquity) * 100 : 0;
       if (dd > maxDrawdownPct) maxDrawdownPct = dd;
+
+      if (isTradingActive && (i % 6 === 0 || i === candles.length - 1)) {
+        gridEquityCurve.push({ time: c.time, equity: Number(curEquity.toFixed(2)) });
+      }
     }
 
     // End of simulation - settle any open remaining lots to align Net PnL, Win Rate, and Loss Trades
@@ -1287,6 +1298,7 @@ export class BacktestService {
       trades,
       markers: markers.sort((a, b) => a.time - b.time),
       candles: processedCandles,
+      equityCurve: gridEquityCurve,
     };
 
     if (opts.saveToHistory !== false) {
@@ -4019,21 +4031,35 @@ export class BacktestService {
           return false;
         },
         onSignalInvalidationCheck: (state) => {
-          if (opts.enableSignalInvalidationExit === false) return false;
+          if (opts.enableSignalInvalidationExit === false || opts.signalInvalidationMode === "off") return false;
 
-          // 🛡️ ONLY trigger Emergency Liquidate if price structurally breaks below the channel floor!
-          // Normal 24h dips within the channel are standard grid accumulation opportunities, NOT emergencies!
-          const isFloorBreak = state.closePrice < state.floorPrice * 0.982;
-          const isCatastrophicDump = state.posRatio24h < 0.05 && state.unrealizedPnlPct < -5.0;
+          const mode = opts.signalInvalidationMode || "calibrated";
+          let isDanger = false;
 
-          if (!isFloorBreak && !isCatastrophicDump) {
+          if (mode === "strict_floor") {
+            const isFloorBreak = state.closePrice < state.floorPrice * 0.982;
+            const isCatastrophicDump = state.posRatio24h < 0.05 && state.unrealizedPnlPct < -5.0;
+            isDanger = isFloorBreak || isCatastrophicDump;
+          } else {
+            // "calibrated" (Default & Recommended):
+            // Only trigger emergency liquidation on genuine structural collapse / max loss breach:
+            // 1. Strict leg drawdown limit: unrealized loss <= -4.0% of leg capital
+            // 2. Severe floor collapse: price drops > 4.5% below floor AND position is in a loss (< -2.5%)
+            // 3. Catastrophic 24h collapse: posRatio24h < 0.05 and unrealized PnL < -5.0%
+            const isSevereFloorBreak = state.closePrice < state.floorPrice * 0.955 && state.unrealizedPnlPct < -2.5;
+            const isMaxLossBreach = state.unrealizedPnlPct <= -4.0;
+            const isCatastrophicDump = state.posRatio24h < 0.05 && state.unrealizedPnlPct < -5.0;
+            isDanger = isSevereFloorBreak || isMaxLossBreach || isCatastrophicDump;
+          }
+
+          if (!isDanger) {
             return false;
           }
 
           console.log(
-            `[RotationBacktest] 🚨 [Leg #${legIndex}] STRUCTURAL FLOOR BREAKDOWN: ${activeSymbol} broke below floor ($${state.closePrice.toFixed(
+            `[RotationBacktest] 🚨 [Leg #${legIndex}] ${mode === "strict_floor" ? "STRUCTURAL FLOOR BREAKDOWN" : "CALIBRATED STOP LOSS"}: ${activeSymbol} loss=${state.unrealizedPnlPct.toFixed(2)}%, price=$${state.closePrice.toFixed(
               4
-            )} < $${(state.floorPrice * 0.982).toFixed(4)}) ➔ Liquidating ${state.heldLotsCount} lots to protect capital`
+            )} ➔ Liquidating ${state.heldLotsCount} lots to protect capital`
           );
           legStopReason = "SIGNAL_DISQUALIFIED";
           nextSymbol = undefined; // Will evaluate clean on flat
@@ -4055,21 +4081,37 @@ export class BacktestService {
       }
 
       const legCandlesActive = legRecord.candles.slice(simStartIdx);
-      const sampleStep = Math.max(1, Math.floor(legCandlesActive.length / 50));
-      for (let ci = 0; ci < legCandlesActive.length; ci += sampleStep) {
-        const c = legCandlesActive[ci];
-        const matchingTrades = legRecord.trades.filter((t) => t.exitTime <= c.time);
-        const closedPnl = matchingTrades.reduce((sum, t) => sum + t.pnlQuote, 0);
-        const eq = startingCapital + closedPnl;
-        if (eq > peakEquity) peakEquity = eq;
-        const dd = peakEquity > 0 ? ((peakEquity - eq) / peakEquity) * 100 : 0;
-        if (dd > maxPortfolioDrawdownPct) maxPortfolioDrawdownPct = dd;
-        equityCurve.push({
-          time: c.time,
-          equity: Number(eq.toFixed(2)),
-          symbol: activeSymbol,
-          drawdownPct: Number(dd.toFixed(2)),
-        });
+
+      if (Array.isArray(legRecord.equityCurve) && legRecord.equityCurve.length > 0) {
+        for (const pt of legRecord.equityCurve) {
+          const eq = pt.equity;
+          if (eq > peakEquity) peakEquity = eq;
+          const dd = peakEquity > 0 ? ((peakEquity - eq) / peakEquity) * 100 : 0;
+          if (dd > maxPortfolioDrawdownPct) maxPortfolioDrawdownPct = dd;
+          equityCurve.push({
+            time: pt.time,
+            equity: Number(eq.toFixed(2)),
+            symbol: activeSymbol,
+            drawdownPct: Number(dd.toFixed(2)),
+          });
+        }
+      } else {
+        const sampleStep = Math.max(1, Math.floor(legCandlesActive.length / 50));
+        for (let ci = 0; ci < legCandlesActive.length; ci += sampleStep) {
+          const c = legCandlesActive[ci];
+          const matchingTrades = legRecord.trades.filter((t) => t.exitTime <= c.time);
+          const closedPnl = matchingTrades.reduce((sum, t) => sum + t.pnlQuote, 0);
+          const eq = startingCapital + closedPnl;
+          if (eq > peakEquity) peakEquity = eq;
+          const dd = peakEquity > 0 ? ((peakEquity - eq) / peakEquity) * 100 : 0;
+          if (dd > maxPortfolioDrawdownPct) maxPortfolioDrawdownPct = dd;
+          equityCurve.push({
+            time: c.time,
+            equity: Number(eq.toFixed(2)),
+            symbol: activeSymbol,
+            drawdownPct: Number(dd.toFixed(2)),
+          });
+        }
       }
 
       const legItem: RotationLegRecord = {
@@ -4136,8 +4178,21 @@ export class BacktestService {
           activeCandidate = viable;
           activeSymbol = viable.symbol;
         } else {
-          console.log(`[RotationBacktest] ⏹️ No more alternative viable candidates at ${new Date(currentTime * 1000).toISOString()}. Simulation loop completed.`);
-          break;
+          // If no candidate is viable right now, hold 100% Cash and advance by 1 hour instead of aborting the simulation!
+          if (currentTime < simEndTime - 3600) {
+            currentTime += 3600;
+            const cashDd = peakEquity > 0 ? ((peakEquity - currentCash) / peakEquity) * 100 : 0;
+            equityCurve.push({
+              time: currentTime,
+              equity: Number(currentCash.toFixed(2)),
+              symbol: "CASH",
+              drawdownPct: Number(cashDd.toFixed(2)),
+            });
+            continue;
+          } else {
+            console.log(`[RotationBacktest] ⏹️ Simulation reached timeline boundary at ${new Date(currentTime * 1000).toISOString()}. Simulation loop completed.`);
+            break;
+          }
         }
       }
     }
@@ -4173,8 +4228,30 @@ export class BacktestService {
 
     pairContributions.sort((a, b) => b.totalNetPnlQuote - a.totalNetPnlQuote);
 
-    // 6. Benchmark Single-Pair Comparison
+    // 6. Benchmark Comparison (True Buy & Hold vs Grid)
     const defaultBtc = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
+    let btcBuyHoldPct = 0;
+    const btcCandles = universeCandles.get(defaultBtc);
+    if (btcCandles && btcCandles.length > 0) {
+      const b0 = btcCandles.find((c) => c.time >= simStartTime);
+      const b1 = btcCandles[btcCandles.length - 1];
+      if (b0 && b1 && b0.open > 0) {
+        btcBuyHoldPct = Number((((b1.close - b0.open) / b0.open) * 100).toFixed(2));
+      }
+    }
+
+    let sumEw = 0;
+    let countEw = 0;
+    for (const [sym, cList] of universeCandles.entries()) {
+      const c0 = cList.find((c) => c.time >= simStartTime);
+      const c1 = cList[cList.length - 1];
+      if (c0 && c1 && c0.open > 0) {
+        sumEw += ((c1.close - c0.open) / c0.open) * 100;
+        countEw++;
+      }
+    }
+    const equalWeightBuyHoldPct = countEw > 0 ? Number((sumEw / countEw).toFixed(2)) : 0;
+
     const benchmarkSymbol = universeCandles.has(defaultBtc) ? defaultBtc : (legs.length > 0 ? legs[0].symbol : defaultBtc);
     let benchmarkPnlPct = 0;
     try {
@@ -4238,7 +4315,11 @@ export class BacktestService {
         bestPairPnlPct: pairContributions.length > 0 ? pairContributions[0].totalNetPnlPct : 0,
         benchmarkSinglePairSymbol: benchmarkSymbol,
         benchmarkSinglePairPnlPct: Number(benchmarkPnlPct.toFixed(2)),
-        alphaVsBenchmarkPct: Number((totalNetPnlPct - benchmarkPnlPct).toFixed(2)),
+        benchmarkBtcBuyHoldPct: btcBuyHoldPct,
+        benchmarkEqualWeightBuyHoldPct: equalWeightBuyHoldPct,
+        alphaVsBenchmarkPct: Number((totalNetPnlPct - btcBuyHoldPct).toFixed(2)),
+        alphaVsBtcBuyHoldPct: Number((totalNetPnlPct - btcBuyHoldPct).toFixed(2)),
+        alphaVsEqualWeightPct: Number((totalNetPnlPct - equalWeightBuyHoldPct).toFixed(2)),
       },
       legs,
       pairContributions,

@@ -422,8 +422,9 @@
             <div class="scanner-ctrl-group">
               <label>เมื่อเหรียญเสียทรง (Signal Exit)</label>
               <select id="rotBtSignalExit">
-                <option value="on" selected>🛡️ ตัดจบ & สลับเหรียญทันที (แนะนำ)</option>
-                <option value="off">⏳ รอจบรอบ Flat</option>
+                <option value="calibrated" selected>🛡️ ตัดขาดทุนเมื่อวิกฤต (Loss > 4%) (แนะนำ)</option>
+                <option value="off">⏳ ถือรอจบรอบ Flat (ไม่ Stop Loss)</option>
+                <option value="strict_floor">⚠️ ตัดจบเมื่อหลุด Floor 1.8% (Whipsaw สูง)</option>
               </select>
             </div>
             <div class="scanner-ctrl-group" style="align-self: flex-end;">

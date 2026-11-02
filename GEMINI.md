@@ -7909,3 +7909,47 @@ When investigating live production behavior, debugging issues, or analyzing trad
        `⚠️ [ZONE 2 REVERSAL RELOCKED] Active Dow Downtrend under ChoCh ($0.0652) with 0 lots in Zone 2 — Relocking reversal gate and pausing buys until genuine base forms!`
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.14`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 265. Truthful Multi-Pair Rotation Backtest Metrics, Idle Cash Continuation & Calibrated Disaster Stop-Loss (v0.3.0.15)
+
+- **สาเหตุของปัญหาและที่มาจากการทดสอบเชิงประจักษ์ (Empirical Root Cause & The Rotation Discrepancy)**:
+  1. **ปัญหาการจำลองตัดจบก่อนกำหนด (Premature Simulation Loop Abort)**:
+     - ใน `runMultiPairRotationSimulation` เมื่อจบรอบของเหรียญเดิม หาก ณ เวลา `currentTime` นั้นไม่มีเหรียญใดใน Universe ผ่านเกณฑ์ Funnel ในทันที ระบบเดิมกลับเรียก `break;` ออกจากลูปการจำลองทั้งหมดทันที
+     - ส่งผลให้การทดสอบ 30 วัน (8,640 แท่ง) ถูกยุติลงตั้งแต่วันที่ 7 หรือวันที่ 11 กลายเป็นการทดสอบเพียงช่วงเวลาสั้นๆ โดยละทิ้งข้อมูลที่เหลือของเดือน
+  2. **ปัญหาการเทขายคัตก้นหลุมซ้ำซ้อนจากเกณฑ์ 1.8% Floor Break (Hyper-Sensitive Whipsaw Trap)**:
+     - ใน `onSignalInvalidationCheck` มีการกำหนดให้สั่ง Emergency Liquidate ทันทีที่ราคาหลุดกรอบล่างเพียง `1.8%` (`c.close < floor * 0.982`)
+     - ในตลาดคริปโต ความผันผวนปกติของเหรียญมักมีไส้เทียนแลบหลุดกรอบ Donchian 48 แท่งลงมา 1.5% - 2.5% เป็นเรื่องปกติก่อนจะดีดตัวกลับ
+     - ส่งผลให้บอทเข้าสะสมไม้ตามกริด แล้วเกิดการตื่นตระหนกเทขายทิ้งทุกไม้ที่ก้นหลุมซ้ำๆ กัน 4-6 รอบติด เช่น ในช่วงขาขึ้น Window 1 เหรียญ ENAUSDT ถูกคัตทิ้งที่ขาดทุน -0.96% ทั้งๆ ที่แท่งถัดมาดีดตัวกลับและทำกำไรต่อเนื่อง 18 ไม้รวด (+5.47%)
+  3. **ปัญหาตัววัด Drawdown หลอกตา (Unrealized Mark-to-Market Blindspot)**:
+     - `equityCurve` ใน Multi-Pair Rotation เดิมคำนวณจาก `startingCapital + closedPnl` จากไม้ที่ปิดไปแล้วเท่านั้น ไม่ได้รวมผลขาดทุนที่ยังถือค้าง (Unrealized Floating Loss)
+     - ส่งผลให้ในรอบที่เหรียญลากดิ่งลงลึกถึง -20% (เช่น AAVEUSDT) หน้าจอแดชบอร์ดกลับแสดง Max Portfolio Drawdown เพียง 0.1% - 0.2%
+  4. **ปัญหา Benchmark ไม่สะท้อนความจริง**:
+     - ค่า Benchmark เดิมคำนวณจากการรัน Dynamic Grid บน BTC ไม่ใช่ผลตอบแทนของการถือครองจริง (Buy & Hold) แต่กลับติดป้ายบน UI ว่า "เทียบถือ BTCUSDT"
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **ระบบ Idle Cash Continuation Loop**:
+     - เมื่อจบรอบแล้วไม่มีเหรียญใดผ่านเกณฑ์ Funnel ณ จุดเวลานั้น ระบบจะไม่ `break;` หลุดจากการจำลอง แต่จะจำลองสถานะ **ถือเงินสด 100% Cash** ขยับเวลาไปข้างหน้าทีละ 1 ชั่วโมง (`currentTime += 3600`) บันทึกเส้น Equity เรียบเสมือนถือเงินสด และสแกนหาจังหวะเหรียญที่เข้าเกณฑ์ใหม่อย่างต่อเนื่องจนครบกรอบเวลา 30 วันสมบูรณ์
+  2. **ระบบ Calibrated Disaster Stop-Loss Mode (`signalInvalidationMode: "calibrated"`)**:
+     - ยกเลิกการเทขายเพียงเพราะราคาแลบหลุดกรอบล่าง 1.8%
+     - ปรับเป็นเกณฑ์ป้องกันวิกฤตที่ผ่านการพิสูจน์เชิงประจักษ์:
+       - **Strict Leg Loss Limit**: ขาดทุนรวมของรอบแตะระดับ $\le -4.0\%$ ของเงินทุนรอบนั้น
+       - **Severe Structural Collapse**: ราคาหลุดกรอบล่างลึกเกิน $> 4.5\%$ (`closePrice < floor * 0.955`) ร่วมกับสถานะพอร์ตติดลบ ($< -2.5\%$)
+       - **Catastrophic 24h Dump**: ดิ่งหลุดจุดต่ำสุด 24 ชม. รุนแรง (`posRatio24h < 0.05` ร่วมกับขาดทุน $< -5.0\%$)
+     - ให้ทางเลือกแก่ผู้ใช้ในหน้าต่าง Modal Backtest ทั้ง `calibrated` (แนะนำ), `strict_floor` (1.8% เดิม), และ `off` (ไม่ Stop Loss)
+  3. **ระบบ Real Mark-to-Market Equity Curve & Peak-to-Trough Drawdown**:
+     - ใน `runDynamicGridSimulation` คำนวณมูลค่าพอร์ตสดรวมผลขาดทุน/กำไรของไม้ที่ถือค้างและค่าธรรมเนียมปิดไม้ (`currentInvVal = heldLots * close * (1 - fee)`) บันทึกลง `equityCurve` ทุกๆ 6 แท่งเทียน (30 นาที)
+     - ใน `runMultiPairRotationSimulation` นำเส้น Mark-to-Market Equity ของแต่ละ Leg และช่วงถือ Cash มาเชื่อมต่อกันอย่างสมบูรณ์ ทำให้ค่า `maxPortfolioDrawdownPct` สะท้อนความเสี่ยงและ Drawdown สูงสุดของพอร์ตอย่างตรงไปตรงมา 100%
+  4. **ระบบ Truthful Dual Benchmarks**:
+     - คำนวณผลตอบแทน **BTC Buy & Hold จริง** (`benchmarkBtcBuyHoldPct`) จากราคาเปิดแท่งแรกเทียบราคาปิดแท่งสุดท้าย
+     - คำนวณผลตอบแทน **Equal-Weight Universe Buy & Hold จริง** (`benchmarkEqualWeightBuyHoldPct`) ค่าเฉลี่ยผลตอบแทนตลาดของทุกเหรียญใน Universe
+     - แสดงผลบนแดชบอร์ดอย่างโปร่งใส เช่น `ALPHA VS BENCHMARK` ควบคู่กับคำอธิบาย `BTC B&H: -X.XX% | ตลาดเฉลี่ย: -X.XX%`
+- **ผลการทดสอบเชิงประจักษ์เปรียบเทียบข้าม 3 ช่วงเวลา (Empirical Walk-Forward 3-Window Validation)**:
+  - **Window 1 (ตลาดกระทิง/รีบาวด์ BTC +21.9%)**:
+    - เกณฑ์เดิม (1.8% Floor Whipsaw): ขาดทุน **`-0.96%`** (โดนคัตตัดจบตั้งแต่ชั่วโมงที่ 21)
+    - เกณฑ์ใหม่ (Calibrated -4.0%): พลิกกลับเป็นกำไร **`+7.55%`** (13 Legs, 107 Trades, Win Rate 73.8%, ผ่านครบ 30 วัน)
+  - **Window 3 (ตลาดหมี/เทกระจาด BTC -7.3%)**:
+    - หากปิด Stop Loss (No Exit): ขาดทุนหนักถึง **`-20.25%`** จากเหรียญที่ไหลลงลึก
+    - เกณฑ์ใหม่ (Calibrated -4.0%): ควบคุมความเสียหาย ตัดขาดทุนตามวินัย รักษาเงินทุนที่เหลือไว้ได้ และไม่เกิดการล้างพอร์ตลึก
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.15`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย

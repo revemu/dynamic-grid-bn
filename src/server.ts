@@ -946,6 +946,7 @@ export class DashboardServer {
           const gridCutLossMode = parsed.gridCutLossMode || "none";
           const enableDipHunterEntryGuard = parsed.enableDipHunterEntryGuard !== false;
           const enableSignalInvalidationExit = parsed.enableSignalInvalidationExit !== false;
+          const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "calibrated");
           const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
 
           const result = await BacktestService.runMultiPairRotationSimulation({
@@ -961,6 +962,7 @@ export class DashboardServer {
             gridCutLossMode,
             enableDipHunterEntryGuard,
             enableSignalInvalidationExit,
+            signalInvalidationMode,
             enableBaseConfirmation,
             customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
             blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
