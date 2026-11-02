@@ -7859,3 +7859,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่ม Tooltip อธิบายคะแนนและเหตุผลอย่างละเอียด
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.12`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 263. Strict Zone Reversal & Relock Guard on New Low (`isZoneReversalConfirmed` Auto-Relock & ChoCh Breakout) (v0.3.0.13)
+
+- **สาเหตุของปัญหาและที่มา (User Problem & Architectural Rationale)**:
+  1. **การด่วนสรุปการกลับตัวจากแท่งเขียวสั้น 0.35% (Premature Reversal Confirmation in Zone 2+)**:
+     - ผู้ใช้พบพฤติกรรมในเหรียญ `ERAFDUSD` บน Binance Spot: บอทถือของ 4 ไม้จาก Zone 1 ($47.73 / ทุนเฉลี่ย $0.0680) เมื่อราคาทุบทำ New Low หลุดไปที่ $0.0634 แล้วเกิดแท่งเขียวดีดตัวระยะสั้น (Dead-cat Bounce) 2 แท่งขึ้นมาที่ $0.0650
+     - ระบบ Zone Reversal Gate ใน v0.3.0.11 มีเงื่อนไข `isCandleRebound` ที่ตรวจจับแท่งเขียวดีดตัวเพียง `0.35%` เหนือจุดต่ำสุด (คิดเป็นเพียง $0.0002) ทำให้บอทด่วนสรุปว่า "กลับตัวแล้ว" (`isZoneReversalConfirmed = true`) และรีบกางออเดอร์ซื้อ Zone 2 ทันทีที่ $0.0645 และ $0.0638
+     - ทั้งๆ ที่ในความเป็นจริง ตลาดยังเป็น `DOWNTREND (LH + LL กดตัว)` ใต้ยอด Lower High $0.0662 และแท่งเทียนถัดมากำลังม้วนตัวลงมาทำแท่งแดงต่อ จนผู้ใช้ต้องทักถาม: *"กลับตัวแล้วเหรอ"*
+  2. **ปัญหาไม่มีระบบ Relock เมื่อราคาทำ New Low**:
+     - เมื่อระบบเผลอปลดล็อค `isZoneReversalConfirmed = true` ไปแล้ว หากราคาไหลหลุดทำจุดต่ำสุดใหม่ (New Low) ระบบเดิมจะไม่ยอมรีเซ็ตสถานะกลับไปรอใหม่ ทำให้บอทยังคงวาง Buy Orders รอรับมีดต่อไป
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **ระบบ Auto-Relock on New Low**:
+     - หากราคาปัจจุบันหลุดต่ำกว่าจุดต่ำสุดเดิม (`refPrice < currentDumpLow * 0.9995`):
+       - หาก `isZoneReversalConfirmed === true`: จะยกเลิกสถานะกลับตัวทันที (`isZoneReversalConfirmed = false`) บันทึก `zoneReversalTime = now` ปลุก `needsBuyRebalance = true` และบันทึกลงฐานข้อมูล
+       - บอทจะถอน Resting Buy Orders ทั้งหมดออกทันที ไม่ยืนรับมีดเด็ดขาด
+  2. **ตัดเงื่อนไข Rebound แท่งเขียว 0.35% ออกโดยเด็ดขาด**:
+     - ลบ `isCandleRebound` และเงื่อนไขแตะ Buy Level 2 ออก เพื่อไม่ให้ความผันผวนย่อยในแท่งเทียนมาหลอกระบบ
+  3. **บังคับยืนยันด้วยโครงสร้าง Dow Theory เท่านั้น (Strict Structural Confirmation)**:
+     - **Higher Low (HL) หลังการทุบ**: ตรวจสอบทั้ง `lastHl.time >= sinceDumpTime` และ `DowEngine.checkForHigherLow` ยกฐานจริง
+     - **ChoCh Breakout**: ราคาเบรกทะลุผ่านยอด Lower High ก่อนหน้า (`dow.gridZone.choChLevel` หรือ `waveCycle.lastLh.price`)
+     - **Confirmed Unbroken Valley**: เกิดเหวยืนยันใต้ราคาหลังเวลาทุบ และปิดแท่งเทียนยืนยันครบ 3 แท่ง
+     - **Downtrend Line Breakout**: เบรกทะลุเส้นแนวต้านกดขาลงยืนยัน 2 แท่งขึ้นไป
+     - **Broken Floor Reclaim**: ราคาดีดกลับขึ้นไปยืนเหนือ Floor เดิมของโซนก่อนหน้า (`lastZoneUnlockFloor`)
+  4. **ซิงโครไนซ์ลง Backtest Engine (`src/backtest-service.ts`)**:
+     - ปรับทั้ง `runDynamicGridSimulation` และ `runDualHybridSimulation` ให้มี Relock Guard on New Low และใช้เงื่อนไข Structural Confirmation แบบเดียวกัน 100%
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.13`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย

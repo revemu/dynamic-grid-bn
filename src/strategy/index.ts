@@ -3163,7 +3163,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
           this.stableFloorCandleCount = 0;
           this.prevCandidateFloor = undefined;
           this.lastStabilizeCandleTime = 0;
-          this.lastZoneUnlockFloor = lowerBound;
+          this.lastZoneUnlockFloor = this.lastDynamicBounds?.lowerBound ?? lowerBound;
           this.needsBuyRebalance = true;
           this.needsSellRebalance = true;
         } else {
@@ -3410,7 +3410,25 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       isChannelReady,
     });
 
-    // ── Capital Zone 2+ Reversal Gate Evaluation ─────────────────────────
+    // ── Capital Zone 2+ Reversal Gate Relock Guard ─────────────────────────
+    // If price breaks down to a New Low below activeDumpLow, any previous reversal is INVALIDATED!
+    // Immediately relock reversal gate, cancel resting buy orders, and wait for a genuine base.
+    if (this.cfg.zoneRequireReversal !== false && (this.unlockedCapitalZones ?? 1) > 1) {
+      const currentDumpLow = this.zoneReversalDumpLowPrice ?? (this.breakdownLowPrice ?? lowerBound);
+      if (refPrice < currentDumpLow * 0.9995) {
+        if (this.isZoneReversalConfirmed) {
+          this.log(
+            `⚠️ [ZONE ${this.unlockedCapitalZones} REVERSAL INVALIDATED] Price (${refPrice.toFixed(this.pricePrecision)}) broke below dump low (${currentDumpLow.toFixed(this.pricePrecision)}) — Relocking reversal gate and pausing buys until a genuine base forms!`,
+          );
+          this.isZoneReversalConfirmed = false;
+          this.zoneReversalTime = Math.floor(Date.now() / 1000);
+          this.needsBuyRebalance = true;
+          this.saveState();
+        }
+        this.zoneReversalDumpLowPrice = refPrice;
+      }
+    }
+
     const isZoneReversalWaiting = Boolean(
       this.cfg.zoneRequireReversal !== false &&
       (this.unlockedCapitalZones ?? 1) > 1 &&
@@ -3418,71 +3436,68 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     );
 
     if (isZoneReversalWaiting) {
-      const dumpLow = this.zoneReversalDumpLowPrice ?? (this.breakdownLowPrice ?? lowerBound);
-      if (refPrice < dumpLow) {
-        this.zoneReversalDumpLowPrice = refPrice;
-      }
       const activeDumpLow = this.zoneReversalDumpLowPrice ?? refPrice;
+      const sinceDumpTime = this.zoneReversalTime ?? (Math.floor(Date.now() / 1000) - 3600);
 
-      // 1. Dow Theory Higher Low (HL)
+      // 1. Dow Theory Higher Low (HL): Must be formed after lowest dump trough
       const lastLl = dow?.waveCycle?.lastLl;
       const lastHl = dow?.waveCycle?.lastHl;
       const isHlAfterDump = Boolean(
         lastHl &&
-        lastHl.price > activeDumpLow * 1.0005 &&
+        lastHl.time >= sinceDumpTime &&
+        lastHl.price > activeDumpLow * 1.002 &&
         (!lastLl || lastHl.index > lastLl.index)
       );
 
       // 2. DowEngine.checkForHigherLow
-      const sinceDumpTime = this.zoneReversalTime ?? (Math.floor(Date.now() / 1000) - 3600);
       const hlCheck = this.dowEngine
         ? this.dowEngine.checkForHigherLow(sinceDumpTime, lowerBound, activeDumpLow, refPrice)
         : { confirmed: false };
 
-      // 3. Confirmed unbroken Valley at/above dump low
+      // 3. Confirmed unbroken Valley formed after dump low with swing confirmed
       const activeValley = dow?.activeValley;
       const isValleyReversal = Boolean(
         activeValley &&
+        activeValley.time >= sinceDumpTime &&
         dow?.isSwingConfirmed &&
-        activeValley.price >= activeDumpLow * 0.9995 &&
+        activeValley.price >= activeDumpLow * 1.001 &&
         refPrice >= activeValley.price
       );
 
-      // 4. Downtrend Line Breakout
+      // 4. ChoCh Breakout: price breaks above previous Lower High (LH)
+      const choChPrice = dow?.gridZone?.choChLevel ?? dow?.waveCycle?.lastLh?.price;
+      const isChoChBreakout = Boolean(
+        choChPrice &&
+        choChPrice > activeDumpLow &&
+        refPrice > choChPrice * 1.0005
+      );
+
+      // 5. Downtrend Line Breakout confirmed across 2+ bars
       const tlBreakout = Boolean(
         dow?.downtrendBreakoutConfirmed ||
         (dow?.downtrendLine?.isBroken && (dow.downtrendLine.brokenCandleCount ?? 0) >= 2)
       );
 
-      // 5. Bullish Closed Reversal Candle
-      const closedList = this.dowEngine?.getClosedCandles() ?? [];
-      const lastClosed = closedList.length > 0 ? closedList[closedList.length - 1] : undefined;
-      const reboundThresholdPct = 0.35;
-      const isCandleRebound = Boolean(
-        lastClosed &&
-        lastClosed.close >= lastClosed.open * 1.001 &&
-        lastClosed.close >= activeDumpLow * (1 + reboundThresholdPct / 100) &&
-        refPrice >= activeDumpLow * (1 + (reboundThresholdPct * 0.8) / 100)
+      // 6. Broken Zone Floor Reclaim: price climbs back and firmly stands above previous broken zone floor
+      const prevBrokenFloor = this.breakdownFloorPrice ?? this.lastZoneUnlockFloor;
+      const isFloorReclaim = Boolean(
+        prevBrokenFloor &&
+        prevBrokenFloor > activeDumpLow * 1.005 &&
+        refPrice >= prevBrokenFloor * 1.001
       );
 
-      // 6. Reclaim above Zone Center or Buy Level 2 Target
-      const isCenterReclaim = Boolean(
-        (centerPrice > 0 && refPrice >= centerPrice * 0.999) ||
-        (effectiveBuyLevel2Target > 0 && refPrice >= effectiveBuyLevel2Target * 0.999)
-      );
-
-      if (isHlAfterDump || hlCheck.confirmed || isValleyReversal || tlBreakout || isCandleRebound || isCenterReclaim) {
+      if (isHlAfterDump || hlCheck.confirmed || isValleyReversal || isChoChBreakout || tlBreakout || isFloorReclaim) {
         const reason = isHlAfterDump
-          ? `Dow Higher Low (HL @ $${lastHl!.price.toFixed(this.pricePrecision)})`
+          ? `Dow Higher Low (HL @ ${lastHl!.price.toFixed(this.pricePrecision)})`
           : hlCheck.confirmed
           ? `HL Confirmed (${hlCheck.reason})`
           : isValleyReversal
-          ? `Confirmed Valley ($${activeValley!.price.toFixed(this.pricePrecision)})`
+          ? `Confirmed Valley (${activeValley!.price.toFixed(this.pricePrecision)})`
+          : isChoChBreakout
+          ? `ChoCh Breakout above LH (${choChPrice!.toFixed(this.pricePrecision)})`
           : tlBreakout
           ? "Downtrend Line Breakout"
-          : isCandleRebound
-          ? `Bullish Rebound Candle (+$${(lastClosed!.close - activeDumpLow).toFixed(this.pricePrecision)})`
-          : "Price Reclaim above Zone Center";
+          : `Floor Reclaim (${prevBrokenFloor!.toFixed(this.pricePrecision)})`;
 
         this.isZoneReversalConfirmed = true;
         this.log(

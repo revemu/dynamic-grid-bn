@@ -1047,13 +1047,21 @@ export class BacktestService {
       }
 
       // 2. Evaluate Grid Buys (Tranche Size = 25% of current zone quota)
+      if (unlockedCapitalZones > 1) {
+        if (c.low < zoneDumpLowPrice * 0.9995) {
+          if (isZoneReversalConfirmed) {
+            isZoneReversalConfirmed = false;
+            zoneUnlockCandleIdx = i;
+          }
+          zoneDumpLowPrice = c.low;
+        }
+      }
+
       if (unlockedCapitalZones > 1 && !isZoneReversalConfirmed) {
-        if (c.low < zoneDumpLowPrice) zoneDumpLowPrice = c.low;
-        const isReboundCandle = c.close >= c.open * 1.002 && c.close >= zoneDumpLowPrice * 1.006;
         const isValleyReversal = Boolean(
           structure.activeValley &&
           (structure.activeValley.index ?? 0) >= zoneUnlockCandleIdx &&
-          structure.activeValley.price >= zoneDumpLowPrice * 0.9995 &&
+          structure.activeValley.price >= zoneDumpLowPrice * 1.001 &&
           c.close >= structure.activeValley.price
         );
         const isBreakout = Boolean(structure.downtrendBreakoutConfirmed);
@@ -1063,10 +1071,21 @@ export class BacktestService {
           lastHl &&
           (lastHl.index ?? 0) >= zoneUnlockCandleIdx &&
           (!lastLl || (lastHl.index ?? 0) > (lastLl.index ?? 0)) &&
-          lastHl.price > zoneDumpLowPrice * 1.0005
+          lastHl.price > zoneDumpLowPrice * 1.002
         );
-        const isCenterReclaim = center > 0 && c.close >= center * 0.999;
-        if (isReboundCandle || isValleyReversal || isBreakout || isHlAfterLl || isCenterReclaim) {
+        const choChPrice = structure.gridZone?.choChLevel ?? structure.waveCycle?.lastLh?.price;
+        const isChoChBreakout = Boolean(
+          choChPrice &&
+          choChPrice > zoneDumpLowPrice &&
+          c.close > choChPrice * 1.0005
+        );
+        const prevBrokenFloor = lastZoneUnlockFloor;
+        const isFloorReclaim = Boolean(
+          prevBrokenFloor &&
+          prevBrokenFloor > zoneDumpLowPrice * 1.005 &&
+          c.close >= prevBrokenFloor * 1.001
+        );
+        if (isValleyReversal || isBreakout || isHlAfterLl || isChoChBreakout || isFloorReclaim) {
           isZoneReversalConfirmed = true;
         }
       }
@@ -1780,13 +1799,21 @@ export class BacktestService {
         }
         heldLots = remainingLots;
 
+        if (unlockedCapitalZones > 1) {
+          if (c.low < zoneDumpLowPrice * 0.9995) {
+            if (isZoneReversalConfirmed) {
+              isZoneReversalConfirmed = false;
+              zoneUnlockCandleIdx = i;
+            }
+            zoneDumpLowPrice = c.low;
+          }
+        }
+
         if (unlockedCapitalZones > 1 && !isZoneReversalConfirmed) {
-          if (c.low < zoneDumpLowPrice) zoneDumpLowPrice = c.low;
-          const isReboundCandle = c.close >= c.open * 1.002 && c.close >= zoneDumpLowPrice * 1.006;
           const isValleyReversal = Boolean(
             structure.activeValley &&
             (structure.activeValley.index ?? 0) >= zoneUnlockCandleIdx &&
-            structure.activeValley.price >= zoneDumpLowPrice * 0.9995 &&
+            structure.activeValley.price >= zoneDumpLowPrice * 1.001 &&
             c.close >= structure.activeValley.price
           );
           const isBreakout = Boolean(structure.downtrendBreakoutConfirmed);
@@ -1796,10 +1823,21 @@ export class BacktestService {
             lastHl &&
             (lastHl.index ?? 0) >= zoneUnlockCandleIdx &&
             (!lastLl || (lastHl.index ?? 0) > (lastLl.index ?? 0)) &&
-            lastHl.price > zoneDumpLowPrice * 1.0005
+            lastHl.price > zoneDumpLowPrice * 1.002
           );
-          const isCenterReclaim = center > 0 && c.close >= center * 0.999;
-          if (isReboundCandle || isValleyReversal || isBreakout || isHlAfterLl || isCenterReclaim) {
+          const choChPrice = structure.gridZone?.choChLevel ?? structure.waveCycle?.lastLh?.price;
+          const isChoChBreakout = Boolean(
+            choChPrice &&
+            choChPrice > zoneDumpLowPrice &&
+            c.close > choChPrice * 1.0005
+          );
+          const prevBrokenFloor = lastZoneUnlockFloor;
+          const isFloorReclaim = Boolean(
+            prevBrokenFloor &&
+            prevBrokenFloor > zoneDumpLowPrice * 1.005 &&
+            c.close >= prevBrokenFloor * 1.001
+          );
+          if (isValleyReversal || isBreakout || isHlAfterLl || isChoChBreakout || isFloorReclaim) {
             isZoneReversalConfirmed = true;
           }
         }
