@@ -1967,10 +1967,14 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       } else {
         this.unlockedCapitalZones = 1;
       }
-      if (typeof (data as any).isZoneReversalConfirmed === "boolean") {
+      const hasLotsInCurrentZone = this.lots.some((l) => (l.zoneIndex ?? 0) >= ((this.unlockedCapitalZones ?? 1) - 1));
+      if (!hasLotsInCurrentZone && (this.unlockedCapitalZones ?? 1) > 1 && this.cfg.zoneRequireReversal !== false) {
+        // If holding zero lots in the current unlocked zone, NEVER trust stale confirmation from previous runs!
+        // Force live market structure evaluation to protect capital during ongoing downtrends.
+        this.isZoneReversalConfirmed = false;
+      } else if (typeof (data as any).isZoneReversalConfirmed === "boolean") {
         this.isZoneReversalConfirmed = (data as any).isZoneReversalConfirmed;
       } else {
-        const hasLotsInCurrentZone = this.lots.some((l) => (l.zoneIndex ?? 0) >= (this.unlockedCapitalZones - 1));
         this.isZoneReversalConfirmed = this.unlockedCapitalZones <= 1 || hasLotsInCurrentZone || this.cfg.zoneRequireReversal === false;
       }
       if (typeof (data as any).zoneReversalDumpLowPrice === "number") {
@@ -3411,21 +3415,33 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     });
 
     // ── Capital Zone 2+ Reversal Gate Relock Guard ─────────────────────────
-    // If price breaks down to a New Low below activeDumpLow, any previous reversal is INVALIDATED!
+    // If price breaks down to a New Low below activeDumpLow OR if holding 0 lots in current zone while in active Dow Downtrend under ChoCh:
     // Immediately relock reversal gate, cancel resting buy orders, and wait for a genuine base.
+    const hasLotsInCurrentZone = this.lots.some((l) => (l.zoneIndex ?? 0) >= ((this.unlockedCapitalZones ?? 1) - 1));
     if (this.cfg.zoneRequireReversal !== false && (this.unlockedCapitalZones ?? 1) > 1) {
       const currentDumpLow = this.zoneReversalDumpLowPrice ?? (this.breakdownLowPrice ?? lowerBound);
-      if (refPrice < currentDumpLow * 0.9995) {
+      const isNewLow = refPrice < currentDumpLow * 0.9995;
+      const activeRegime = dow?.regime ?? "WARMUP";
+      const isDowDowntrend = activeRegime === "DOWNTREND";
+      const choChPrice = dow?.gridZone?.choChLevel ?? dow?.waveCycle?.lastLh?.price;
+      const isUnderChoCh = Boolean(choChPrice && refPrice < choChPrice);
+
+      if (isNewLow || (!hasLotsInCurrentZone && isDowDowntrend && isUnderChoCh && this.isZoneReversalConfirmed)) {
         if (this.isZoneReversalConfirmed) {
+          const reasonStr = isNewLow
+            ? `Price (${refPrice.toFixed(this.pricePrecision)}) broke below dump low (${currentDumpLow.toFixed(this.pricePrecision)})`
+            : `Active Dow Downtrend under ChoCh (${(choChPrice ?? 0).toFixed(this.pricePrecision)}) with 0 lots in Zone ${this.unlockedCapitalZones}`;
           this.log(
-            `⚠️ [ZONE ${this.unlockedCapitalZones} REVERSAL INVALIDATED] Price (${refPrice.toFixed(this.pricePrecision)}) broke below dump low (${currentDumpLow.toFixed(this.pricePrecision)}) — Relocking reversal gate and pausing buys until a genuine base forms!`,
+            `⚠️ [ZONE ${this.unlockedCapitalZones} REVERSAL RELOCKED] ${reasonStr} — Relocking reversal gate and pausing buys until genuine base forms!`,
           );
           this.isZoneReversalConfirmed = false;
           this.zoneReversalTime = Math.floor(Date.now() / 1000);
           this.needsBuyRebalance = true;
           this.saveState();
         }
-        this.zoneReversalDumpLowPrice = refPrice;
+        if (isNewLow) {
+          this.zoneReversalDumpLowPrice = refPrice;
+        }
       }
     }
 

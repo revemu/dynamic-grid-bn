@@ -7888,3 +7888,24 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ปรับทั้ง `runDynamicGridSimulation` และ `runDualHybridSimulation` ให้มี Relock Guard on New Low และใช้เงื่อนไข Structural Confirmation แบบเดียวกัน 100%
 - **Version Bump**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.13`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 264. Elimination of Stale Reversal State & Active Dow Downtrend ChoCh Relock Guard (v0.3.0.14)
+
+- **สาเหตุของปัญหาและที่มา (User Problem & Architectural Rationale)**:
+  1. **ปัญหาค่าคอนเฟิร์มกลับตัวค้างในฐานข้อมูล (Stale Persisted Reversal Confirmation in DB)**:
+     - แม้ว่าจะแก้ตรรกะใน v0.3.0.13 แล้ว แต่เนื่องจากก่อนหน้านี้ฐานข้อมูล `grid-bot.db.json` ได้เคยบันทึกค่า `isZoneReversalConfirmed = true` เอาไว้จากรอบแท่งเขียว 0.35%
+     - เมื่อระบบรีสตาร์ท ฟังก์ชัน `loadState()` ได้โหลดค่า `isZoneReversalConfirmed = true` เก่ากลับขึ้นมาในหน่วยความจำ
+     - เมื่อบอทเห็นว่าสถานะกลับตัวเป็น `true` อยู่แล้ว จึงไม่เข้าเงื่อนไขตรวจสอบการกลับตัว และยังคงวางคำสั่งซื้อ Zone 2 ($0.0645, $0.0638) รอรับมีดต่อไป
+  2. **ปัญหาไม่มีตัวตรวจจับสภาวะ Downtrend ใต้ ChoCh ขณะที่ยังไม่มีไม้ของ Zone 2**:
+     - เมื่อราคาอยู่ในสภาวะ Dow Downtrend (LH + LL) และราคายังอยู่ต่ำกว่ายอด Lower High / ChoCh ($0.0652) แต่บอทยังไม่ได้ถือไม้ของ Zone 2 เลยแม้แต่ไม้เดียว การปล่อยให้บอทกาง Buy Orders ดักซื้อย่อมขัดกับหลักการรอจุดกลับตัวอย่างสิ้นเชิง
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **State Load Sanitization ใน `loadState()`**:
+     - หากบอทยังไม่มีไม้ของโซนปัจจุบัน (`hasLotsInCurrentZone === false` คือถือเฉพาะ 4 ไม้ของ Zone 1 แต่ยังไม่มีของ Zone 2) ระบบจะไม่เชื่อถือค่า `isZoneReversalConfirmed = true` เก่าจาก DB เด็ดขาด โดยจะบังคับรีเซ็ตเป็น `false` เสมอ เพื่อบังคับให้กลยุทธ์ตรวจจับโครงสร้างสดจริงจากตลาด
+  2. **Active Dow Downtrend ChoCh Relock Guard ใน `step()`**:
+     - เพิ่มเงื่อนไขตรวจสอบสดทุก Tick: หากบอทยังไม่มีของใน Zone 2 (`hasLotsInCurrentZone === false`) แล้วสภาวะตลาดยังเป็น **Dow Downtrend (LH + LL)** และราคาอยู่ต่ำกว่าแนว ChoCh Level ($0.0652) ระบบจะ **ทำการ Relock กลับเป็น `isZoneReversalConfirmed = false` ทันทีใน Tick แรก**
+     - บอทจะทำการถอนคำสั่งซื้อ Buy Orders ทั้งหมดออกทันที และขึ้นป้ายเตือน:
+       `⚠️ [ZONE 2 REVERSAL RELOCKED] Active Dow Downtrend under ChoCh ($0.0652) with 0 lots in Zone 2 — Relocking reversal gate and pausing buys until genuine base forms!`
+- **Version Bump**:
+  - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.14`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
