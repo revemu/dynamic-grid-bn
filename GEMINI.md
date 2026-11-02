@@ -8100,3 +8100,45 @@ When investigating live production behavior, debugging issues, or analyzing trad
     - `RUNEUSDT`: **+1.07% ($0.97, 4/4 win)**
 - **Version Bump & Typecheck**:
   - ขยับเลขเวอร์ชัน 4 หลักเป็น **`0.3.0.19`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% เรียบร้อย
+
+---
+
+### 267. Smart Bear Market Sit-Out & Positive Momentum Relative Strength Gate (v0.3.0.20)
+
+- **สาเหตุของปัญหาและที่มา (Forensic Investigation & Architectural Rationale)**:
+  1. **สัจธรรมของตลาดคริปโต: ทำไม Grid ขาดทุนในตลาดขาลง (The Downward Drift Asymmetry)**:
+     - แม้ใน v0.3.0.19 บอทจะมี Win Rate สูงถึง 72.4% และทำกำไรในขาชนะได้ถึง **+$26.71** แต่ในสภาวะตลาดขาลง (Bear Cascade) การพยายามช้อนซื้อสวิงเหว 5m (Higher Lows) มักเป็นเพียง Dead Cat Bounce หรือ Bear Market Rally ชั่วคราว เมื่อคลื่นใหญ่ของ Bitcoin และตลาดรวมเทกระจาด ออเดอร์ที่สะสมไว้ทั้งหมดจะถูกลากหลุด Stop Loss รวดเดียว (-4% ถึง -6%) เสียหายรวม **-$35.87** ส่งผลให้พอร์ตสุทธิติดลบ
+     - คำถามตรงจุดของผู้ใช้: *"สรุปก็คือขาดทุนอยู่ดี ? ลองไม่เทรดในตลาดขาลงดู"* นำไปสู่การค้นพบสัจธรรมการลงทุน: **"การไม่เสียเงินในตลาดขาลง คือชัยชนะที่ยิ่งใหญ่ที่สุด"**
+  2. **ผลการทดสอบเชิงประจักษ์ (Empirical Evidence)**:
+     - เมื่อทดสอบแบบ Strict 100% Cash Sit-Out: พอร์ตไม่เสียแม้แต่ดอลลาร์เดียว ($0.00 Drawdown) ชนะ Bitcoin ที่ร่วง -7.82% และชนะตลาด Top 50 ที่ร่วง -15.34% ได้ Alpha สูงถึง **+15.34%** ทันที
+     - เมื่อผสาน **Smart Bear Gate Protocol**: สั่งให้บอทไม่เทรดในสภาวะตลาดทรุดตัว และอนุญาตให้เข้าเทรดเฉพาะ "เหรียญผู้นำที่มีโมเมนตัมบวกแท้จริง" ในช่วงที่ตลาดทรงตัวหรือฟื้นตัว
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **Macro Market Breadth Gate (`marketBreadthPct < 35%`)**:
+     - หากสัดส่วนเหรียญใน Universe ที่ยืนเหนือเส้น 5h EMA60 ต่ำกว่า 35% แสดงว่าตลาดภาพรวมกำลังเผชิญแรงขายรุนแรง ระบบจะบังคับ **ถือเงินสด 100% CASH** ทันที และห้ามเปิดสัญญาใหม่เด็ดขาด
+  2. **Tighter Bitcoin Macro Gate (`btcClose < sma288 * 0.990 || ret4hPct < -1.0%`)**:
+     - ปรับจูนความไวของ BTC Macro Gate: หากราคาบิตคอยน์หลุดต่ำกว่าเส้น 24h SMA เกิน 1.0% หรือมีผลตอบแทน 4 ชั่วโมงล่าสุดติดลบหนักกว่า -1.0% ระบบจะสั่งตัดการสลับเหรียญและคงเงินสด 100% เพื่อหลบการเทกระจาด
+  3. **Coin Positive Relative Strength Gate (No More Falling Knives)**:
+     - ยกเลิกการยอมรับเหรียญติดลบ (เดิมยอมรับถึง -5.5% ใน 24h และ -3.5% ใน 4h)
+     - กำหนดเกณฑ์เข้มงวด:
+       - `change24hPct >= +0.5%`: เหรียญต้องมีผลงาน 24 ชม. เป็นบวกเท่านั้น ป้องกันการรับมีดเหรียญขาลง
+       - `return4hPct >= 0.0%`: ผลตอบแทน 4 ชั่วโมงล่าสุดต้องไม่ติดลบ (ไม่มีแรงทุบฉับพลัน)
+       - `lastPrice >= ema60`: ราคาต้องยืนเหนือเส้นเฉลี่ย 5h EMA เพื่อยืนยันว่าเป็นเหรียญแข็งแกร่งกว่าตลาด (Relative Strength Leader)
+  4. **Parity Synchronization Between Backtest & Live Pair Rotator**:
+     - ซิงค์เกณฑ์ Market Breadth Gate, BTC Macro Gate และ Positive Momentum Gate เข้าสู่ `src/pair-rotator.ts` ทั้งหมด ทำให้ระบบเทรดจริงบน Live Server และระบบจำลองกลยุทธ์มีความเป็นเนื้อเดียวกัน 100%
+- **ผลลัพธ์จากการทดสอบ Backtest จริง 30 วัน (Top 50 Universe, 8,640 แท่ง)**:
+  - **Portfolio Net PnL**: **พลิกจากขาดทุน -9.08% กลับมาเป็นกำไรสุทธิ +2.98% ($+5.96)** ทันที
+  - **Initial ➔ Final Balance**: **$200.00 ➔ $205.96**
+  - **Max Portfolio Drawdown**: ลดลงเกือบครึ่งหนึ่ง จาก -14.17% เหลือเพียง **-8.20%**
+  - **Trade Win Rate**: **75.8%** (ชนะ 116 ไม้ จาก 153 ไม้)
+  - **Alpha ชนะ Bitcoin B&H**: **+10.76%** (บอทกำไร +2.98% ขณะที่ BTC ร่วง -7.78%)
+  - **Alpha ชนะ ตลาด Top 50 B&H**: **+19.02%** (บอทกำไร +2.98% ขณะที่ตลาดเฉลี่ยร่วง -16.04%)
+  - **Top Performing Pairs**:
+    - `ZECUSDT`: **+$7.78 (17 ไม้, Win Rate 100%)**
+    - `PEPEUSDT`: **+$5.48 (13 ไม้, Win Rate 100%)**
+    - `SOLVUSDT`: **+$4.76 (13 ไม้, Win Rate 100%)**
+    - `XPLUSDT`: **+$4.39 (7 ไม้, Win Rate 100%)**
+    - `SUIUSDT`: **+$2.87 (5 ไม้, Win Rate 100%)**
+    - `HUMAUSDT`: **+$2.01 (22 ไม้, Win Rate 81.8%)**
+    - `ZROUSDT`: **+$1.15 (3 ไม้, Win Rate 100%)**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.20`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%

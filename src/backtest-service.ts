@@ -3598,19 +3598,18 @@ export class BacktestService {
         }
 
         if (gridOpts?.enableBtcMacroGate !== false) {
-          // A. Market-wide Breadth Dump Guard: If < 40% of coins are above 5h EMA, sit out in 100% Cash!
-          if (totalBreadthPairs >= 5 && marketBreadthPct < 40) {
+          // A. Market-wide Breadth Dump Guard: If < 35% of coins are above 5h EMA, sit out in 100% Cash!
+          if (totalBreadthPairs >= 5 && marketBreadthPct < 35) {
             return [];
           }
 
           // B. Bitcoin Macro Gate:
           const slice288 = btcCandles.slice(bIdx - 287, bIdx + 1);
           const sma288 = slice288.reduce((s: number, c: Candle) => s + c.close, 0) / 288;
-          const btcEma60 = calcEmaLocal(btcCandles, bIdx, 60);
           const btcOpen4h = btcCandles[Math.max(0, bIdx - 48)].open;
           const ret4hPct = ((btcClose - btcOpen4h) / btcOpen4h) * 100;
 
-          if (btcClose < sma288 * 0.988 || ret4hPct < -1.8 || btcClose < btcEma60 * 0.997) {
+          if (btcClose < sma288 * 0.990 || ret4hPct < -1.0) {
             return []; // Macro breakdown: zero candidates allowed -> stay in Cash!
           }
         }
@@ -3680,14 +3679,15 @@ export class BacktestService {
 
       if (quoteVol24h < minVol) continue;
       if (range24hPct < 4.0 || range24hPct > 22.0) continue;
-      // Relax 24h pump cap to 15% to allow riding true market leaders rather than lagging coins
-      if (change24hPct < -5.5 || change24hPct > 15.0) continue;
+      // Smart Bear Market Gate: Only select coins with positive 24h momentum (no downtrend coins)
+      if (change24hPct < 0.5 || change24hPct > 15.0) continue;
       // Allow posRatio between 0.10 and 0.90 to embrace confirmed reversal leaders!
       if (posRatio < 0.10 || posRatio > 0.90) continue;
-      if (return4hPct < -3.5) continue; // Reject coins in active waterfall dump over past 4 hours
+      if (return4hPct < 0.0) continue; // Reject coins in negative momentum over past 4 hours
 
       const ema20 = calcEmaLocal(candles, idx, 20);
       const ema60 = calcEmaLocal(candles, idx, 60);
+      if (lastPrice < ema60) continue; // Reject coins trading below 5h EMA
 
       // Volume & buyer accumulation over past 4h (48 bars):
       let vol4h = 0, upVol4h = 0, dnVol4h = 0;

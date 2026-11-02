@@ -209,6 +209,16 @@ export class AutonomousPairRotator {
       (cfg.rotationWhitelist || []).map((s) => s.toUpperCase().replace(/[\/\-_:]/g, ""))
     );
 
+    // 🛡️ Market Breadth Gate (Live): Check % of tickers with positive 24h momentum
+    const quoteTickers = tickers.filter((t) => t.symbol.endsWith(targetQuote) && !isSyntheticOrStock(t.symbol));
+    const positiveTickers = quoteTickers.filter((t) => Number(t.priceChangePercent) >= 0);
+    const liveBreadthPct = quoteTickers.length > 0 ? (positiveTickers.length / quoteTickers.length) * 100 : 50;
+    if (quoteTickers.length >= 10 && liveBreadthPct < 35) {
+      const reason = `🛡️ Market Breadth Gate active: Only ${liveBreadthPct.toFixed(1)}% of ${targetQuote} market is positive (< 35%). Bear regime sit-out to 100% Cash.`;
+      this.log(reason);
+      return { rotated: false, report: this.latestCandidates, reason };
+    }
+
     // 🛡️ BTC Macro Gate Check (Live):
     if (cfg.rotationEnableBtcMacroGate !== false) {
       const btcTicker = tickers.find((t) => t.symbol === "BTCUSDT" || t.symbol === `BTC${targetQuote}`);
@@ -219,8 +229,8 @@ export class AutonomousPairRotator {
         const btcLast = Number(btcTicker.lastPrice);
         const btcPos = btcHigh > btcLow ? (btcLast - btcLow) / (btcHigh - btcLow) : 0.5;
 
-        // If BTC is dumping (> 2.5% down in 24h) or pinned near 24h lows with negative momentum, protect capital in cash!
-        if (btcChange < -2.5 || (btcChange < -1.2 && btcPos < 0.15)) {
+        // If BTC is dumping (> 1.2% down in 24h) or pinned near 24h lows with negative momentum, protect capital in cash!
+        if (btcChange < -1.2 || (btcChange < -0.5 && btcPos < 0.20)) {
           const reason = `🛡️ BTC Macro Gate active: Bitcoin is in severe breakdown (${btcChange.toFixed(2)}%, pos=${(btcPos * 100).toFixed(0)}%). Rotation paused to hold 100% Cash.`;
           this.log(reason);
           return { rotated: false, report: this.latestCandidates, reason };
@@ -252,8 +262,8 @@ export class AutonomousPairRotator {
       const rangePct = ((high - low) / low) * 100;
       // Sweet spot range: 4% to 22%
       if (rangePct < 4.0 || rangePct > 22.0) return false;
-      // Filter out heavy dumps or vertical pumps
-      if (change < -5.5 || change > 15.0) return false;
+      // Smart Bear Market Gate: Filter out coins in 24h downtrend (< +0.5%) or vertical overbought pumps (> 15%)
+      if (change < 0.5 || change > 15.0) return false;
 
       const last = Number(t.lastPrice);
       const posRatio = (last - low) / (high - low);
@@ -314,6 +324,14 @@ export class AutonomousPairRotator {
 
         if (!candles5m || candles5m.length < 200) {
           continue;
+        }
+
+        // 🛡️ Smart Momentum Check: Reject coins with negative 4-hour return
+        if (candles5m.length >= 48) {
+          const lastC = candles5m[candles5m.length - 1].close;
+          const open4h = candles5m[Math.max(0, candles5m.length - 48)].open;
+          const ret4h = open4h > 0 ? ((lastC - open4h) / open4h) * 100 : 0;
+          if (ret4h < 0.0) continue;
         }
 
         const symCostModel = sym.endsWith("FDUSD")
