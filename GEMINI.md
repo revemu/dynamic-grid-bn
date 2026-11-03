@@ -8284,3 +8284,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - **Stationary Sleep & Heartbeat**: หากราคาและสถานะไม่มีการเปลี่ยนแปลง จะไม่ส่ง Event ใดๆ เลย และส่ง Heartbeat เพียง 1 ครั้งทุกๆ 5,000ms (5 วินาที)
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.26`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 274. Meaningful State HUD Logging & Dynamic Heartbeat (v0.3.0.27)
+
+- **สาเหตุของปัญหา (Forensic Context)**:
+  - ใน `src/strategy/index.ts` ข้อความสรุปสถานะ Terminal HUD (`Price: $... | Channel: [...] | Zone: ... | Wallet: ...`) ถูกตั้งให้พิมพ์ออกมาทุกๆ 5 วินาทีคงที่ (`hudLogIntervalMs = 5000`)
+  - แม้บอทจะอยู่ในโหมด `⏸️ [PAUSED - MONITORING ONLY]` หรือราคาและสถานะการเทรดไม่มีการเปลี่ยนแปลงใดๆ ข้อความยาวหลายบรรทัดนี้จะถูกพ่นซ้ำออกมาทุกๆ 5 วินาที ทำให้หน้าต่างคอนโซลรกและเต็มไปด้วยข้อความซ้ำซ้อน
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **ตรวจจับความเปลี่ยนแปลงที่สำคัญ (Meaningful State Change)**:
+     - คำนวณ `currentHudStateSig` จากตัวแปรสถานะหลัก: `zoneName`, `positionSummary`, `openOrdersSummary`, `this.isPaused`, ขอบเขตกรอบราคา `lowerBound`/`upperBound`, `candidateSummary`, `trendFiltered`, `waitingForHigherLow`, `isWaterfallDropping`
+     - ตรวจสอบการเคลื่อนไหวของราคา (`priceChangePct >= 0.5%`)
+  2. **Dynamic Heartbeat & Cooldown**:
+     - หากมีเหตุการณ์สำคัญเปลี่ยนแปลง: บอทจะพิมพ์ข้อความสรุป HUD อัปเดตทันที (หน่วง Cooldown ไม่เกิน 1 ครั้งต่อ 15 วินาที ป้องกันข้อความกระพริบรัว)
+     - หากไม่มีอะไรเปลี่ยนแปลง (สถานะเดิม):
+       - **โหมดทำงานปกติ (Running)**: พิมพ์ Heartbeat ยืดเป็นทุกๆ **60 วินาที** (ลดจากเดิมทุก 5 วินาที)
+       - **โหมดหยุดชั่วคราว (Paused)**: พิมพ์ Heartbeat ทุกๆ **120 วินาที (2 นาที)** เพื่อให้หน้าต่าง Terminal คลีน สบายตา และมีเฉพาะข้อมูลที่จำเป็น
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.27`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%

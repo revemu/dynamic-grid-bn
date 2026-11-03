@@ -157,7 +157,11 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   public soldSellIndices = new Set<number>();
   private lastTelemetryData?: any;
   private lastHudLogTime = 0;
-  private readonly hudLogIntervalMs = 5_000;
+  private lastHudStateSig = "";
+  private lastHudPrice = 0;
+  private readonly hudStateCooldownMs = 15_000;
+  private readonly hudHeartbeatRunningMs = 60_000;
+  private readonly hudHeartbeatPausedMs = 120_000;
   private tickCount = 0;
   public isPaused = true;
   public isSqueezePaused = false;
@@ -4799,7 +4803,23 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
       ? ` | TL Supp: $${uptrendLine.currentLinePrice.toFixed(6)} (${uptrendLine.isBroken ? `Broken 🔴 (${uptrendLine.brokenCandleCount} bars)` : uptrendLine.brokenCandleCount > 0 ? `Break 1/2 bars ⏳` : "Active 🟢"})`
       : "";
 
-    if (now - this.lastHudLogTime >= this.hudLogIntervalMs) {
+    const currentHudStateSig = `${zoneName}|${positionSummary}|${openOrdersSummary}|${this.isPaused}|${lowerBound.toFixed(4)}|${upperBound.toFixed(4)}|${candidateSummary}|${trendFiltered}|${this.waitingForHigherLow}|${isWaterfallDropping}|${downtrendDropPaused}`;
+    const priceChangePct = this.lastHudPrice > 0 ? (Math.abs(effectiveMid - this.lastHudPrice) / this.lastHudPrice) * 100 : 100;
+    const isStateChanged = this.lastHudStateSig !== "" && this.lastHudStateSig !== currentHudStateSig;
+    const isPriceSignificant = priceChangePct >= 0.5;
+    const hasMeaningfulChange = isStateChanged || isPriceSignificant;
+
+    const timeSinceLastHud = now - this.lastHudLogTime;
+    const heartbeatIntervalMs = this.isPaused ? this.hudHeartbeatPausedMs : this.hudHeartbeatRunningMs;
+
+    const shouldLogHud =
+      this.lastHudLogTime === 0 ||
+      (hasMeaningfulChange && timeSinceLastHud >= this.hudStateCooldownMs) ||
+      timeSinceLastHud >= heartbeatIntervalMs;
+
+    if (shouldLogHud) {
+      this.lastHudPrice = effectiveMid;
+      this.lastHudStateSig = currentHudStateSig;
       this.lastHudLogTime = now;
       this.log(
         `Price: $${effectiveMid.toFixed(6)} | Channel: [$${lowerBound.toFixed(6)} .. $${upperBound.toFixed(6)}] ` +
