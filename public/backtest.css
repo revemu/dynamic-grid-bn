@@ -1,6 +1,7 @@
 /* MA Fan Backtest Studio - Dark Theme Styling */
 
 :root {
+  color-scheme: dark;
   --bg-main: #0b0f19;
   --bg-card: #131b2e;
   --bg-card-hover: #1b2640;
@@ -16,6 +17,34 @@
   --info: #38bdf8;
   --purple: #a855f7;
   --amber: #f59e0b;
+}
+
+/* High Contrast Dropdown Select & Option List (Fix contrast on Windows/Chrome) */
+select,
+input,
+textarea {
+  color-scheme: dark;
+}
+
+select option,
+.bt-input-group select option,
+.scanner-ctrl-group select option {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  padding: 9px 12px !important;
+}
+
+select option:checked,
+select option:hover,
+select option:focus,
+.bt-input-group select option:checked,
+.scanner-ctrl-group select option:checked {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
 }
 
 * {

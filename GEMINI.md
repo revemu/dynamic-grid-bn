@@ -8642,6 +8642,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.37`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 285. High Contrast Dropdown Select & Option List Dark Theme Contrast Fix (v0.3.0.38)
+- **สาเหตุของการแก้ไข (Motivation & Bug Forensics)**:
+  - ผู้ใช้แจ้งข้อผิดพลาดพร้อมภาพหน้าจอ: *"มองไม่เห็นตอนเลือกเลย"* เมื่อคลิกเปิด Dropdown เลือกโหมดกลยุทธ์ (เช่น `btTradeMode`)
+  - **สาเหตุที่แท้จริง**: ใน `public/backtest.css` กล่องแม่ `<select>` ถูกกำหนดให้มีตัวอักษรสีขาว (`color: #fff`) แต่ไม่ได้ระบุ `color-scheme: dark;` และไม่ได้กำหนดสไตล์ของรายการตัวเลือก `<option>`
+  - ส่งผลให้เบราว์เซอร์ Chrome / Edge บนระบบปฏิบัติการ Windows เรนเดอร์เมนูดรอปดาวน์เป็นพื้นหลังสีขาว/เทาสว่าง แต่ตัวอักษรเป็นสีขาว ส่งผลให้อ่านข้อความไม่ออกเลย
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation)**:
+  1. **Color Scheme Dark Declaration (`public/backtest.css`)**:
+     - ประกาศ `color-scheme: dark;` ใน `:root`, `select`, `input`, `textarea` เพื่อบังคับให้ Windows/Browser แสดงผล Native Dropdown Popup ใน Dark Theme 100%
+  2. **High-Contrast Option Styling (`public/backtest.css`)**:
+     - กำหนดสไตล์รายการตัวเลือก `select option`:
+       - พื้นหลัง: สีน้ำเงินเข้มทึบแสง `#0f172a !important`
+       - สีตัวหนังสือ: สีขาวสว่าง `#f8fafc !important`
+       - ขณะ Hover / Active / Checked: พื้นหลังไฮไลต์สีน้ำเงินสด `#2563eb !important` และตัวอักษรสีขาวหนา
+  3. **Cache Busting (`public/backtest.html`)**:
+     - ขยับลิงก์ไฟล์สไตล์ชีทเป็น `backtest.css?v=1.3` เพื่อให้เบราว์เซอร์ดาวน์โหลดสไตล์ใหม่ทันที
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.38`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 
