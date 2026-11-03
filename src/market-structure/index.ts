@@ -36,6 +36,7 @@ export * from "./regime-gate.js";
 export { getEffectiveHigh, getEffectiveLow, CandleManager } from "./candle-manager.js";
 export { SwingDetector } from "./swing-detector.js";
 export { DowEngine } from "./dow-engine.js";
+export { RegimeClassifier } from "./regime-classifier.js";
 export { TrendlineEngine } from "./trendline-engine.js";
 export { ChannelEngine } from "./channel-engine.js";
 
@@ -283,8 +284,9 @@ export class DowStructureEngine {
       maxWidthPct,
     } = boundsResult;
 
-    // 4. Dow Theory Market Regime
-    const regime = DowEngine.determineMarketRegime(this.swingHighs, this.swingLows, isSwingConfirmed);
+    // 4. Triple-Check Market Regime
+    const regimeMetrics = candles.length >= 28 ? DowEngine.getRegimeMetrics(candles) : undefined;
+    const regime = DowEngine.determineMarketRegime(this.swingHighs, this.swingLows, isSwingConfirmed, candles);
 
     // 5. Trendlines
     const lastHh = waveCycle.lastHh;
@@ -362,6 +364,7 @@ export class DowStructureEngine {
       proposedFloor: bottomBound,
       proposedCeiling: upperBound,
       regime,
+      regimeMetrics,
       waveCycle,
       lastCanonicalLow,
       lastCanonicalHigh,
@@ -400,6 +403,7 @@ export class DowStructureEngine {
       centerPrice,
       isSwingConfirmed,
       regime,
+      regimeMetrics,
       gridZone,
       lastSwingHigh: lastHigh,
       lastSwingLow: lastLow,

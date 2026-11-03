@@ -8700,6 +8700,44 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.39`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 287. Triple-Check Market Regime Classifier (ADX + CHOP + ER) & HTF Downtrend Protection (v0.3.0.40)
+- **สาเหตุของการพัฒนาและแก้ไข (Motivation & Background)**:
+  - ผู้ใช้ชี้จุดอ่อนสำคัญของระบบ: *"dynamic grid เวลาเจอขาลงก็ไปไม่เป็น"*, *"ประเด็นคือตอนนี้เราจับสัญญาณ ขาขึ้น ขาลง หรือ sideway ไม่แม่นซักอย่าง เทรดอะไรก็ไม่ได้ดี"*, *"ใช่ มาทำตรงนี้ให้แม่นก่อน"*
+  - จากการตรวจสอบ `determineMarketRegime` เดิมใน `src/market-structure/dow-engine.ts:408`:
+    - เดิมเปรียบเทียบเพียงแค่ `lastHigh > prevHigh` และ `lastLow > prevLow` บน 3-bar micro swings ย่อยๆ โดยไม่มีตัวชี้วัดความแข็งแกร่งของแนวโน้ม (Trend Strength) ใดๆ เลย
+    - ทำให้เมื่อเกิด Technical Bounce ย่อยๆ เพียง 3 แท่งในขาลงรุนแรง บอทจะเข้าใจผิดว่าเข้าสู่ `UPTREND` หรือ `RANGE` ทันที และกระโดดเข้าช้อนซื้อ (Catch Falling Knives) จนติดดอยหรือโดนลากลงไป Stop Loss
+    - ระบบขาดตัวชี้วัดความผันผวน/ความราบเรียบของตลาด เช่น ADX (Average Directional Index), Choppiness Index (CHOP), และ Kaufman Efficiency Ratio (ER) รวมถึงไม่มีการยืนยันแนวโน้มกรอบเวลาใหญ่ (HTF Alignment)
+- **สถาปัตยกรรมและฟีเจอร์ใหม่ (Architecture & Implementation)**:
+  1. **Triple-Check Market Regime Classifier Engine (`src/market-structure/regime-classifier.ts`)**:
+     - สร้าง Engine ตรวจจับและแยกแยะสภาวะตลาด 3 มิติอย่างแม่นยำ:
+       - **Choppiness Index (CHOP 14)**: วัดความยุ่งเหยิง/สะสมพลังของราคา:
+         $$CHOP = 100 \times \frac{\log_{10}\left(\frac{\sum_{i=1}^{14} TR_i}{\text{MaxHigh}_{14} - \text{MinLow}_{14}}\right)}{\log_{10}(14)}$$
+         - $CHOP \ge 53$: บ่งบอกสภาวะ Sideway ชัดเจน ราคาแกว่งในกรอบ ไม่ออกเทรนด์ เหมาะสมที่สุดสำหรับ Dynamic Grid
+         - $CHOP \le 48$: บ่งบอกสภาวะ Trend กำลังวิ่งรุนแรง
+       - **Wilder's ADX & DMI (+DI, -DI with Period 14)**:
+         - วัดความแรงของเทรนด์ ($ADX \ge 23$ = เทรนด์แข็งแกร่ง, $ADX < 21$ = ตลาดไร้ทิศทาง/Sideway)
+         - แยกทิศทางเทรนด์ด้วย $+DI$ และ $-DI$: $+DI > -DI$ คือขาขึ้น, $-DI > +DI$ คือขาลง
+       - **Kaufman Efficiency Ratio (ER 14)**:
+         - วัดอัตราส่วนการเดินทางสุทธิต่อระยะทางรวม ($ER < 0.28$ คือ Sideway ขรุขระ, $ER \ge 0.40$ คือเทรนด์วิ่งตรง)
+       - **Higher-Timeframe Alignment (HTF Trend Gate)**:
+         - ใช้แท่งเทียน 1H / EMA75 / EMA200 มายืนยันแนวโน้มใหญ่ ป้องกันการหลงเชื่อสัญญาณหลอกในไทม์เฟรมเล็ก
+     - **Regime Classification Output**:
+       - `RANGE` (Sideway): $CHOP \ge 53$ หรือ $ADX < 21$ ➔ **Dynamic Grid Safe Zone**
+       - `DOWNTREND` (ขาลง): $ADX \ge 23$ และ $-DI > +DI$ และราคาต่ำกว่า EMA75/200 ➔ **Block Grid / Sit-out ใน Cash 100% ทันที**
+       - `UPTREND` (ขาขึ้น): $ADX \ge 23$ และ $+DI > -DI$ และราคายืนเหนือ EMA25/75 ➔ **Trend Rider Mode**
+  2. **Regime Gate & Dow Engine Integration (`src/market-structure/dow-engine.ts` & `src/market-structure/regime-gate.ts`)**:
+     - บูรณาการ `RegimeClassifier.classify` เข้ากับ `determineMarketRegime` ใน `dow-engine.ts` โดยตรง
+     - ใน `regime-gate.ts`: เพิ่ม Pillar 0 ตรวจสอบก่อนสร้างกรอบ: หาก `regimeMetrics.regime === "DOWNTREND"` และ `isTrendStrong` ให้สั่ง **BLOCK กริดทันที** แสดงสถานะ `❌ DOWNTREND_ACTIVE: Dynamic Grid blocked during verified downtrend` เพื่อตัดปัญหา Grid ซื้อตอนขาลงอย่างเด็ดขาด
+  3. **Telemetry & Dashboard UI Visualization (`src/strategy/index.ts` & `public/app.js`)**:
+     - สตรีม `regimeMetrics` (regime, adx, chop, er, plusDi, minusDi, isTrendStrong) ผ่าน Telemetry State
+     - อัปเดตแถบป้าย Regime ในส่วนหัวของ Dashboard: แสดงค่า ADX สด เช่น `DOW: RANGE (ADX 18)` หรือ `DOW: DOWNTREND (ADX 28)` พร้อม Tooltip ละเอียด
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.40`** ใน `package.json`, `src/version.ts`, `public/index.html`, และ `public/backtest.html`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 

@@ -8,7 +8,7 @@
  * 4. Channel Death on Breakdown -> Floor cannot slide down with dump.
  */
 
-import type { Candle, MarketRegime, SwingPoint, WaveCycleData, DowSwingPoint } from "./types.js";
+import type { Candle, MarketRegime, SwingPoint, WaveCycleData, DowSwingPoint, RegimeMetrics } from "./types.js";
 
 export type ChannelGateStatus =
   | "VALID_CHANNEL"
@@ -33,6 +33,7 @@ export interface ChannelGateParams {
   proposedFloor: number;
   proposedCeiling: number;
   regime: MarketRegime;
+  regimeMetrics?: RegimeMetrics;
   waveCycle?: WaveCycleData;
   lastCanonicalLow?: DowSwingPoint;
   lastCanonicalHigh?: DowSwingPoint;
@@ -92,6 +93,22 @@ export class RegimeChannelGate {
         isChoChBullish,
         choChLevel,
       };
+    }
+
+    // ── Pillar 0: Triple-Check Market Regime (ADX / CHOP / Directional) ────
+    if (!allowBaseBypass && params.regimeMetrics) {
+      const rm = params.regimeMetrics;
+      if (rm.regime === "DOWNTREND" && rm.isTrendStrong) {
+        return {
+          canEstablishChannel: false,
+          gateStatus: "DOWNTREND_NO_CHANNEL",
+          gateReason: `Strong downtrend confirmed (ADX ${rm.adx} ≥ 23, -DI > +DI, CHOP ${rm.chop}) — Grid disabled to prevent catching falling knives`,
+          safeFloorProximityPct: minFloorProximityPct,
+          actualFloorProximityPct: actualProximityPct,
+          isChoChBullish: false,
+          choChLevel,
+        };
+      }
     }
 
     // ── Pillar 1: Dow ChoCh & Downtrend Gate (Horizontal Last LH Breakout) ─────

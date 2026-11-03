@@ -8,9 +8,11 @@ import type {
   TrendLinePoint,
   MarketRegime,
   CandidatePoint,
+  RegimeMetrics,
 } from "./types.js";
 import { getEffectiveLow } from "./candle-manager.js";
 import { SwingDetector } from "./swing-detector.js";
+import { RegimeClassifier } from "./regime-classifier.js";
 
 export class DowEngine {
   /**
@@ -403,14 +405,22 @@ export class DowEngine {
   }
 
   /**
-   * Determine market regime according to Dow Theory (UPTREND, DOWNTREND, RANGE, WARMUP)
+   * Determine market regime using Triple-Confirmation Engine (ADX + CHOP + ER + Structure)
+   * with fallback to classic Dow swings if candles are not provided.
    */
   public static determineMarketRegime(
     swingHighs: SwingPoint[],
     swingLows: SwingPoint[],
     isSwingConfirmed: boolean,
+    candles?: Candle[],
+    candlesHtf?: Candle[],
   ): MarketRegime {
     if (!isSwingConfirmed) return "WARMUP";
+
+    if (candles && candles.length >= 28) {
+      const metrics = RegimeClassifier.classify(candles, candlesHtf);
+      return metrics.regime;
+    }
 
     const lastHigh = swingHighs[swingHighs.length - 1];
     const lastLow = swingLows[swingLows.length - 1];
@@ -433,6 +443,13 @@ export class DowEngine {
     }
 
     return "RANGE";
+  }
+
+  /**
+   * Get full regime metrics (ADX, CHOP, ER, Confidence)
+   */
+  public static getRegimeMetrics(candles: Candle[], candlesHtf?: Candle[]): RegimeMetrics {
+    return RegimeClassifier.classify(candles, candlesHtf);
   }
 
   /**

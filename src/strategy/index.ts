@@ -4668,6 +4668,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         liveCalculatedUpperBound: dow?.isSwingConfirmed && (dow.upperBound ?? 0) > 0 ? (dow.gridZone?.upperBound ?? dow.upperBound) : undefined,
         liveCalculatedBottomBound: dow?.isSwingConfirmed && (dow.bottomBound ?? 0) > 0 ? (dow.gridZone?.bottomBound ?? dow.bottomBound) : undefined,
         regime: activeRegime,
+        regimeMetrics: dow?.regimeMetrics,
         isSwingConfirmed: dow?.isSwingConfirmed ?? false,
         maxInventoryQuote: this.cfg.maxInventoryQuote,
         maxInventoryUsdso: this.cfg.maxInventoryQuote,

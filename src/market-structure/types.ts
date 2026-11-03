@@ -17,6 +17,19 @@ export interface Candle {
 
 export type MarketRegime = "RANGE" | "UPTREND" | "DOWNTREND" | "WARMUP";
 
+export interface RegimeMetrics {
+  adx: number;
+  plusDI: number;
+  minusDI: number;
+  chop: number;
+  er: number; // Kaufman Efficiency Ratio
+  confidencePct: number;
+  isTrendStrong: boolean;
+  isSidewayChop: boolean;
+  regime: MarketRegime;
+  reasons: string[];
+}
+
 export interface SwingPoint {
   index: number;
   time: number;
@@ -125,6 +138,7 @@ export interface DowStructure {
   centerPrice: number;
   isSwingConfirmed: boolean;
   regime: MarketRegime;
+  regimeMetrics?: RegimeMetrics;
   gridZone: GridZone;
   lastSwingHigh?: SwingPoint;
   lastSwingLow?: SwingPoint;

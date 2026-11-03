@@ -3472,7 +3472,8 @@
       } else if (data.regime) {
         elRegimeBadge.style.display = "";
         const isDowFilterActive = Boolean(data.dowTrendFilter);
-        elRegimeBadge.textContent = isDowFilterActive ? `DOW: ${data.regime}` : `DOW: ${data.regime} (OFF)`;
+        const rmInfo = data.regimeMetrics ? ` (ADX ${data.regimeMetrics.adx})` : '';
+        elRegimeBadge.textContent = isDowFilterActive ? `DOW: ${data.regime}${rmInfo}` : `DOW: ${data.regime} (OFF)`;
         elRegimeBadge.title = isDowFilterActive ? `Dow Trend Filter เปิดใช้งาน (${data.regime})` : "Dow Trend Filter ปิดอยู่ (ไม่ได้นำมาจำกัดการเข้าซื้อ)";
         elRegimeBadge.style.opacity = isDowFilterActive ? "1.0" : "0.55";
         elRegimeBadge.className =
