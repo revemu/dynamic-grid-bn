@@ -8369,3 +8369,49 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - ใน `src/backtest-service.ts`: ตรวจจับราคาปิดแท่งที่แล้วของ BTC บน Timeframe 1D และ 4H หากหลุดเส้น EMA จะสั่งบล็อกการเปิดไม้ใหม่ทันที (`evaluations[i].isMacroBlocked = true`)
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.29`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 277. Auto-Rotation Studio Dual-Mode Portfolio Architecture (v0.3.0.30)
+
+- **สาเหตุของปัญหาและข้อเสนอแนะจากผู้ใช้ (Context & User Feedback)**:
+  1. **ความสับสนเรื่องระบบ Rotation**:
+     - ผู้ใช้สอบถามว่าระบบที่ทำกำไรสุทธิชนะเลิศ (+34.22% ถึง +48.01%) คือระบบอะไร ทำไมจึงทำกำไรได้ดีกว่า และมีการสลับเหรียญอย่างไร
+     - ในอดีตระบบ `Auto-Rotation` ของบอทมีเพียงโหมดเดียวคือ **Single-Coin Sequential (Dynamic Grid)** ที่เอาเงินทุน 100% ก้อนเดียวไปสลับถือเหรียญทีละ 1 ตัวตาม Donchian Channel
+     - ในขณะที่การทดลอง MA-Fan ล่าสุดเป็นระบบ **Multi-Slot Dynamic Portfolio (MA-Fan Sniper)** ที่แบ่งเงินทุนออกเป็น 3 ช่องขนานกัน (Slot ละ 33.3%) สแกนเหรียญทั้ง Universe ทุกๆ 15 นาที เข้าซื้อด้วยเงื่อนไข 5 เกณฑ์ชนะเลิศ (Bottom Fan + 8/16 Cross + Buyer Volume >= 1.3x + RS vs BTC >= -1.0% + Composite Quality Ranking) แบ่งขาย 50% และยก SL ล็อคทุนที่เส้น EMA 200 พร้อมระบบนั่งทับมือถือเงินสดช่วง BTC ขาลง
+  2. **ผู้ใช้เลือก "แนวทางที่ 3" (Unified Dual-Mode Selector)**:
+     - รวมทั้งสองระบบไว้ในแท็บ 🔄 **`Auto-Rotation Portfolio`** เดียวกัน
+     - มีปุ่มเลือกโหมดหลัก (**Portfolio Mode**) อยู่บนสุด เพื่อให้ผู้ใช้สามารถสลับรันเปรียบเทียบระหว่าง:
+       - 🟢 **`Multi-Coin Portfolio (กระจาย 3 ช่อง - MA-Fan Sniper) ⭐`** (ระบบที่ชนะเลิศ)
+       - 🔵 **`Single-Coin Sequential (สลับทีละ 1 เหรียญ - Dynamic Grid)`** (ระบบดั้งเดิม)
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **โครงสร้างหน้าต่างคอนฟิกและฟรอนต์เอนด์ (`public/backtest.html` & `public/backtest.js`)**:
+     - เพิ่มตัวเลือก `rotBtPortfolioMode` ที่แถบควบคุมด้านหน้าสุดของแท็บ Auto-Rotation
+     - เพิ่มฟังก์ชัน `updateRotationOptionVisibility`:
+       - เมื่อเลือก `mafan_portfolio`: ซ่อนตัวเลือกของกริด แล้วแสดงเฉพาะตัวเลือกพอร์ตโฟลิโอ MA-Fan:
+         - **จำนวนช่องถือเหรียญ (Max Slots)**: 1, 2, 3 (แนะนำ ⭐), 4, 5 ช่อง
+         - **เป้าทำกำไรครึ่งไม้ (TP1 Mode)**: EMA 200 + Lock Breakeven (แนะนำ ⭐), EMA 75, หรือ ไม่แบ่งขาย
+         - **Disaster SL Cap**: 12% (แนะนำ ⭐), 8%, 15%, หรือ ปิด
+         - **เกณฑ์เลือกเหรียญ (Ranking)**: Composite Quality (แนะนำ ⭐) หรือ RSI 15m
+       - เมื่อเลือก `grid_sequential`: ซ่อนตัวเลือกของ MA-Fan แล้วแสดงเฉพาะตัวเลือก Cooldown, Score Margin, Capital Zones, Entry Guard, และ Signal Exit
+     - เพิ่มตัวเลือก **ตลาด BTC ขาลง (Downtrend Defense)**: Dual 1D+4H (แนะนำ), 1D Only, 4H Only, ปิด
+     - ยกระดับตาราง Timeline Journey Log:
+       - แสดงป้ายกำกับการปิดไม้ชัดเจน: `🚀 Full Bullish Fan`, `🟡 Breakeven Stop`, `🛑 Disaster SL`, `🚨 สัญญาณหลุดเกณฑ์`, `📊 สิ้นสุดการจำลอง`
+       - เมื่อกดปุ่ม **"📈 ดูกราฟ"** ในตารางรอบเทรดใดๆ ระบบจะสลับไปยังแท็บกราฟ Single-Pair (`#pane-single`) และโหลดแท่งเทียนพร้อม Markers จุดซื้อจุดขายของรอบนั้นทันทีอัตโนมัติ
+  2. **ระบบจัดการฝั่งเซิร์ฟเวอร์ (`src/server.ts`)**:
+     - ปรับปรุง Endpoint `/api/backtest/rotation/run`:
+       - ตรวจสอบ `parsed.portfolioMode`
+       - หากเป็น `mafan_portfolio`: เรียกใช้งาน `BacktestService.runMaFanPortfolioRotationWrapper(parsed)`
+       - หากเป็น `grid_sequential`: เรียกใช้งาน `BacktestService.runMultiPairRotationSimulation(parsed)`
+  3. **Universal Engine Wrapper (`src/backtest-service.ts`)**:
+     - ขยาย `MultiPairRotationOptions` ให้รองรับพารามิเตอร์ของระบบ MA-Fan Portfolio
+     - อัปเกรด `runMaFanPortfolioSimulation` ให้รองรับ `downtrendSitOutMode`:
+       - รวบรวมแท่งเทียน BTC คำนวณ 4H EMA 75 และ 1D EMA 25
+       - ตรวจสอบแนวโน้มขาลง BTC ณ เวลาปิดแท่งเทียน (`idx - 1`) อย่างเคร่งครัด หากตลาดแม่ขาลงจะบล็อกการเปิด Position ใหม่ทันที
+     - สร้างฟังก์ชัน `runMaFanPortfolioRotationWrapper`:
+       - โหลด Universe Candles ผ่าน `fetchTopUniverseCandles` และ BTC Candles
+       - ดำเนินการจำลองผ่าน `runMaFanPortfolioSimulation`
+       - แปลงข้อมูลการเทรดเป็น `RotationLegRecord[]` (พร้อมแท่งเทียนและ Markers สำหรับการดูกราฟย้อนหลัง) และ `PairContributionItem[]`
+       - สร้าง `summary` และ `equityCurve` ในรูปแบบมาตรฐาน `MultiPairRotationResult` ทำให้แสดงผลบน KPI Cards และตารางต่างๆ ได้ทันทีอย่างสมบูรณ์แบบ
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.30`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%

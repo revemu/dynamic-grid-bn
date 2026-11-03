@@ -982,41 +982,75 @@ export class DashboardServer {
       req.on("end", async () => {
         try {
           const parsed = body ? JSON.parse(body) : {};
-          const quoteAsset = parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
-          const maxUniversePairs = Number(parsed.maxUniversePairs) || 50;
-          const limit = Number(parsed.limit) || 4000;
-          const initialCapital = Number(parsed.initialCapital) || 200;
-          const rotationIntervalMinutes = Number(parsed.rotationIntervalMinutes) || 180;
-          const rotationIdleCashMinutes = Number(parsed.rotationIdleCashMinutes) || 120;
-          const rotationScoreMarginPct = Number(parsed.rotationScoreMarginPct) || 15;
-          const capitalZones = Number(parsed.capitalZones) || 2;
-          const channelMode = parsed.channelMode || "DONCHIAN_ATR";
-          const gridCutLossMode = parsed.gridCutLossMode || "none";
-          const enableDipHunterEntryGuard = parsed.enableDipHunterEntryGuard !== false;
-          const enableSignalInvalidationExit = parsed.enableSignalInvalidationExit !== false;
-          const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "calibrated");
-          const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
-          const enableBtcMacroGate = parsed.enableBtcMacroGate !== false && parsed.enableBtcMacroGate !== "false";
+          const portfolioMode = parsed.portfolioMode || "mafan_portfolio";
+          let result;
 
-          const result = await BacktestService.runMultiPairRotationSimulation({
-            quoteAsset,
-            maxUniversePairs,
-            limit,
-            initialCapital,
-            rotationIntervalMinutes,
-            rotationIdleCashMinutes,
-            rotationScoreMarginPct,
-            capitalZones,
-            channelMode,
-            gridCutLossMode,
-            enableDipHunterEntryGuard,
-            enableSignalInvalidationExit,
-            signalInvalidationMode,
-            enableBaseConfirmation,
-            enableBtcMacroGate,
-            customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
-            blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
-          });
+          if (portfolioMode === "mafan_portfolio") {
+            const quoteAsset = parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+            const maxUniversePairs = Number(parsed.maxUniversePairs) || 50;
+            const limit = Number(parsed.limit) || 4000;
+            const initialCapital = Number(parsed.initialCapital) || 200;
+            const maxSlots = Number(parsed.maxSlots) || 3;
+            const tp1TargetMode = parsed.tp1TargetMode || "EMA200";
+            const lockBreakevenAtEma200 = parsed.lockBreakevenAtEma200 !== false;
+            const partialTpAtEma200 = parsed.partialTpAtEma200 !== false;
+            const maxDisasterSlPct = parsed.maxDisasterSlPct !== undefined ? Number(parsed.maxDisasterSlPct) : 12;
+            const downtrendSitOutMode = parsed.downtrendSitOutMode || "dual";
+            const rankBy = parsed.rankBy || "COMPOSITE_QUALITY";
+
+            result = await BacktestService.runMaFanPortfolioRotationWrapper({
+              quoteAsset,
+              maxUniversePairs,
+              limit,
+              initialCapital,
+              portfolioMode: "mafan_portfolio",
+              maxSlots,
+              tp1TargetMode,
+              lockBreakevenAtEma200,
+              partialTpAtEma200,
+              maxDisasterSlPct,
+              downtrendSitOutMode,
+              rankBy,
+              customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
+              blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
+            });
+          } else {
+            const quoteAsset = parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+            const maxUniversePairs = Number(parsed.maxUniversePairs) || 50;
+            const limit = Number(parsed.limit) || 4000;
+            const initialCapital = Number(parsed.initialCapital) || 200;
+            const rotationIntervalMinutes = Number(parsed.rotationIntervalMinutes) || 180;
+            const rotationIdleCashMinutes = Number(parsed.rotationIdleCashMinutes) || 120;
+            const rotationScoreMarginPct = Number(parsed.rotationScoreMarginPct) || 15;
+            const capitalZones = Number(parsed.capitalZones) || 2;
+            const channelMode = parsed.channelMode || "DONCHIAN_ATR";
+            const gridCutLossMode = parsed.gridCutLossMode || "none";
+            const enableDipHunterEntryGuard = parsed.enableDipHunterEntryGuard !== false;
+            const enableSignalInvalidationExit = parsed.enableSignalInvalidationExit !== false;
+            const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "calibrated");
+            const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
+            const enableBtcMacroGate = parsed.enableBtcMacroGate !== false && parsed.enableBtcMacroGate !== "false";
+
+            result = await BacktestService.runMultiPairRotationSimulation({
+              quoteAsset,
+              maxUniversePairs,
+              limit,
+              initialCapital,
+              rotationIntervalMinutes,
+              rotationIdleCashMinutes,
+              rotationScoreMarginPct,
+              capitalZones,
+              channelMode,
+              gridCutLossMode,
+              enableDipHunterEntryGuard,
+              enableSignalInvalidationExit,
+              signalInvalidationMode,
+              enableBaseConfirmation,
+              enableBtcMacroGate,
+              customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
+              blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
+            });
+          }
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ success: true, result }));

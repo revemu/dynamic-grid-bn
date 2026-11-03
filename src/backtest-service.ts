@@ -36,7 +36,7 @@ export interface BacktestTrade {
   slPnlPct?: number;
   exitTime: number;
   exitPrice: number;
-  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL" | "TECH_FAST_CUT" | "OPEN" | "TP1+OPEN" | "GRID_TP" | "GRID_CUT";
+  exitType: "TP1+TP2" | "TP1+SL_BE" | "RATCHET_SL" | "SL" | "TECH_FAST_CUT" | "OPEN" | "TP1+OPEN" | "GRID_TP" | "GRID_CUT" | string;
   pnlQuote: number;
   pnlPct: number;
   holdingBars: number;
@@ -206,6 +206,14 @@ export interface MultiPairRotationOptions {
   timeframe?: string;
   limit?: number;
   initialCapital?: number;
+  portfolioMode?: "mafan_portfolio" | "grid_sequential";
+  maxSlots?: number;
+  tp1TargetMode?: "EMA25" | "EMA75" | "EMA200" | "none";
+  lockBreakevenAtEma200?: boolean;
+  partialTpAtEma200?: boolean;
+  maxDisasterSlPct?: number;
+  downtrendSitOutMode?: "off" | "btc1d" | "btc4h" | "dual";
+  rankBy?: "RSI15" | "COMPOSITE_QUALITY";
   rotationIntervalMinutes?: number;
   rotationIdleCashMinutes?: number;
   rotationScoreMarginPct?: number;
@@ -4661,6 +4669,7 @@ export class BacktestService {
     partialTpAtEma200?: boolean;
     maxDisasterSlPct?: number;
     maxHoldHours?: number;
+    downtrendSitOutMode?: "off" | "btc1d" | "btc4h" | "dual";
   }): {
     initialCapital: number;
     finalEquity: number;
@@ -4758,8 +4767,30 @@ export class BacktestService {
     const btcEnd = btc15.filter((c) => c.time <= endT).at(-1)?.close ?? btcStart;
     const btcBuyHoldPct = btcStart > 0 ? ((btcEnd - btcStart) / btcStart) * 100 : 0;
 
+    const btc4h = (opts.btcCandles && opts.btcCandles.length > 0) ? BacktestService.aggregateCandles(opts.btcCandles, 240) : [];
+    const btc4hCloses = btc4h.map((c) => c.close);
+    const btc4hEma75 = calcEMA(btc4hCloses, 75);
+
+    const btc1d = (opts.btcCandles && opts.btcCandles.length > 0) ? BacktestService.aggregateCandles(opts.btcCandles, 1440) : [];
+    const btc1dCloses = btc1d.map((c) => c.close);
+    const btc1dEma25 = calcEMA(btc1dCloses, 25);
+
+    function getClosedHtfIdx(arr: Candle[], durationSec: number, targetSec: number) {
+      let lo = 0, hi = arr.length - 1, ans = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (arr[mid].time + durationSec <= targetSec) {
+          ans = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return ans;
+    }
+
     // Precompute Breadth & BTC Macro at each 15m step (strictly known at idx - 1)
-    const macroMap = new Map<number, { b25: number; btcNotDumping: boolean; btcRet24h: number }>();
+    const macroMap = new Map<number, { b25: number; btcNotDumping: boolean; btcRet24h: number; isBtcDowntrend: boolean }>();
     for (let t = startT; t <= endT; t += 900) {
       let a25 = 0, tot = 0;
       for (const c of precalc) {
@@ -4782,10 +4813,28 @@ export class BacktestService {
       const btcRet4h = prev >= 16 ? ((btcClose - btc15[prev - 16].open) / btc15[prev - 16].open) * 100 : 0;
       const btcRet24h = prev >= 96 ? ((btcClose - btc15[prev - 96].open) / btc15[prev - 96].open) * 100 : 0;
 
+      let isBtcDowntrend = false;
+      const sitMode = opts.downtrendSitOutMode ?? "dual";
+      if (sitMode !== "off" && opts.btcCandles && opts.btcCandles.length > 0) {
+        const idx4h = getClosedHtfIdx(btc4h, 14400, t);
+        const idx1d = getClosedHtfIdx(btc1d, 86400, t);
+        const pass4h = idx4h >= 75 ? btc4h[idx4h].close >= btc4hEma75[idx4h] : true;
+        const pass1d = idx1d >= 25 ? btc1d[idx1d].close >= btc1dEma25[idx1d] : true;
+
+        if (sitMode === "dual") {
+          isBtcDowntrend = !pass4h || !pass1d;
+        } else if (sitMode === "btc1d") {
+          isBtcDowntrend = !pass1d;
+        } else if (sitMode === "btc4h") {
+          isBtcDowntrend = !pass4h;
+        }
+      }
+
       macroMap.set(t, {
         b25: tot > 0 ? (a25 / tot) * 100 : 50,
         btcNotDumping: btcClose >= sma96 * 0.99 && btcRet4h >= -1.2,
         btcRet24h,
+        isBtcDowntrend,
       });
     }
 
@@ -4946,8 +4995,9 @@ export class BacktestService {
       activePositions = surviving;
 
       // 2. Scan for Candidate Fills (strictly prior-bar idx - 1)
-      const macro = macroMap.get(t) ?? { b25: 50, btcNotDumping: true, btcRet24h: 0 };
+      const macro = macroMap.get(t) ?? { b25: 50, btcNotDumping: true, btcRet24h: 0, isBtcDowntrend: false };
       const isMacroOk =
+        !macro.isBtcDowntrend &&
         (opts.minBreadth25Pct === undefined || macro.b25 >= opts.minBreadth25Pct) &&
         (!opts.requireBtcNotDumping || macro.btcNotDumping);
 
@@ -5148,5 +5198,255 @@ export class BacktestService {
       alphaVsBtcPct: Number((netPnlPct - btcBuyHoldPct).toFixed(2)),
       trades: completedTrades,
     };
+  }
+
+  /**
+   * Universal Wrapper: Runs Multi-Slot MA-Fan Portfolio simulation and formats the results into
+   * a standardized MultiPairRotationResult for seamless display in the Rotation Backtest Studio.
+   */
+  public static async runMaFanPortfolioRotationWrapper(
+    opts: MultiPairRotationOptions
+  ): Promise<MultiPairRotationResult> {
+    const quote = opts.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+    const simLimit = Math.max(500, opts.limit || 4000);
+    const initialCapital = Math.max(10, opts.initialCapital || 200);
+    const maxSlots = Math.max(1, opts.maxSlots || 3);
+
+    this.rotationBtProgress = {
+      phase: "fetching_universe",
+      completed: 5,
+      total: 100,
+      currentSymbol: "",
+      message: `กำลังโหลดข้อมูลตลาดสำหรับ Universe ${quote} (Top ${opts.maxUniversePairs || 50})...`,
+    };
+
+    const universeCandlesMap = await this.fetchTopUniverseCandles({
+      quoteAsset: quote,
+      maxPairs: opts.maxUniversePairs || 50,
+      limit: simLimit,
+      customWhitelist: opts.customWhitelist,
+      blacklist: opts.blacklist,
+      onProgress: (p) => {
+        this.rotationBtProgress = { phase: "fetching_universe", ...p };
+      },
+    });
+
+    if (universeCandlesMap.size === 0) {
+      throw new Error(`Failed to load universe candles for ${quote}`);
+    }
+
+    const btcSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
+    let btcCandles = universeCandlesMap.get(btcSym);
+    if (!btcCandles || btcCandles.length < 500) {
+      btcCandles = await this.fetchBinanceCandles("BTCUSDT", "5m", simLimit + 600);
+    }
+
+    const universe: { symbol: string; candles: Candle[] }[] = [];
+    for (const [symbol, candles] of universeCandlesMap.entries()) {
+      if (candles && candles.length >= 500) {
+        universe.push({ symbol, candles });
+      }
+    }
+
+    this.rotationBtProgress = {
+      phase: "simulating",
+      completed: 60,
+      total: 100,
+      currentSymbol: "PORTFOLIO",
+      message: `กำลังจำลองพอร์ต MA-Fan Sniper (${universe.length} เหรียญ, ${maxSlots} ช่อง)...`,
+    };
+
+    const tp1Mode = opts.tp1TargetMode === "none" ? undefined : (opts.tp1TargetMode || "EMA200");
+    const simResult = this.runMaFanPortfolioSimulation({
+      universe,
+      btcCandles,
+      maxSlots,
+      initialCapital,
+      requireCoin1hRsi40: true,
+      minBuyVolRatio12: 1.3,
+      minRelStrengthVsBtc24h: -1.0,
+      rankBy: opts.rankBy || "COMPOSITE_QUALITY",
+      tp1TargetMode: tp1Mode === "EMA75" ? "EMA75" : "EMA200",
+      lockBreakevenAtEma200: opts.lockBreakevenAtEma200 !== false,
+      partialTpAtEma200: opts.partialTpAtEma200 !== false,
+      maxDisasterSlPct: opts.maxDisasterSlPct ?? 12,
+      downtrendSitOutMode: opts.downtrendSitOutMode ?? "dual",
+    });
+
+    this.rotationBtProgress = {
+      phase: "formatting",
+      completed: 90,
+      total: 100,
+      currentSymbol: "",
+      message: "กำลังประมวลผลสถิติและไทม์ไลน์พอร์ต...",
+    };
+
+    // Convert trades to legs
+    const legs: RotationLegRecord[] = [];
+    const allTrades: Array<BacktestTrade & { symbol: string; legIndex: number }> = [];
+
+    const slotCapital = initialCapital / maxSlots;
+
+    for (let i = 0; i < simResult.trades.length; i++) {
+      const t = simResult.trades[i];
+      const legIndex = i + 1;
+      const coinCandles = universeCandlesMap.get(t.symbol) || [];
+      const legCandles = coinCandles.filter((c) => c.time >= t.entryTime - 3600 * 4 && c.time <= t.exitTime + 3600 * 2);
+
+      const netPnlQuote = Number(((t.pnlPct / 100) * slotCapital).toFixed(2));
+      const bTrade: BacktestTrade = {
+        id: legIndex,
+        entryTime: t.entryTime,
+        entryPrice: t.entryPrice,
+        stopLossPrice: t.entryPrice * 0.88,
+        fanSpreadAtEntry: 0.5,
+        exitTime: t.exitTime,
+        exitPrice: t.exitPrice,
+        exitType: t.exitReason,
+        pnlQuote: netPnlQuote,
+        pnlPct: Number(t.pnlPct.toFixed(2)),
+        holdingBars: Math.round(t.holdHours * 12),
+        costQuote: Number((slotCapital * 0.0017).toFixed(2)),
+      };
+
+      allTrades.push({ ...bTrade, symbol: t.symbol, legIndex });
+
+      const markers: BacktestMarker[] = [
+        {
+          time: t.entryTime,
+          position: "belowBar",
+          color: "#10b981",
+          shape: "arrowUp",
+          text: `🟢 BUY @ $${t.entryPrice.toFixed(4)}`,
+        },
+        {
+          time: t.exitTime,
+          position: "aboveBar",
+          color: t.isWin ? "#38bdf8" : "#f43f5e",
+          shape: "arrowDown",
+          text: `${t.isWin ? "🎯" : "🛑"} ${t.exitReason} @ $${t.exitPrice.toFixed(4)} (${t.pnlPct >= 0 ? "+" : ""}${t.pnlPct.toFixed(2)}%)`,
+        },
+      ];
+
+      legs.push({
+        legIndex,
+        symbol: t.symbol,
+        startTime: t.entryTime,
+        endTime: t.exitTime,
+        durationHours: Number(t.holdHours.toFixed(1)),
+        triggerReason: i === 0 ? "INITIAL_SELECTION" : "POST_ROUND_EXIT",
+        entryScore: 85,
+        startingCapital: Number(slotCapital.toFixed(2)),
+        endingCapital: Number((slotCapital + netPnlQuote).toFixed(2)),
+        netPnlQuote,
+        netPnlPct: Number(t.pnlPct.toFixed(2)),
+        tradesCount: 1,
+        winCount: t.isWin ? 1 : 0,
+        lossCount: t.isWin ? 0 : 1,
+        winRate: t.isWin ? 100 : 0,
+        maxDrawdownPct: Number(Math.abs(Math.min(0, t.maePct)).toFixed(2)),
+        topCandidatesSnapshot: [],
+        trades: [bTrade],
+        candles: legCandles,
+        markers,
+      });
+    }
+
+    // Per-pair contribution
+    const pairMap = new Map<string, { legsCount: number; hours: number; tradesCount: number; wins: number; pnlQuote: number; pnlPctSum: number }>();
+    for (const t of simResult.trades) {
+      let p = pairMap.get(t.symbol);
+      if (!p) {
+        p = { legsCount: 0, hours: 0, tradesCount: 0, wins: 0, pnlQuote: 0, pnlPctSum: 0 };
+        pairMap.set(t.symbol, p);
+      }
+      p.legsCount++;
+      p.hours += t.holdHours;
+      p.tradesCount++;
+      if (t.isWin) p.wins++;
+      p.pnlPctSum += t.pnlPct;
+      p.pnlQuote += (t.pnlPct / 100) * slotCapital;
+    }
+
+    const pairContributions: PairContributionItem[] = Array.from(pairMap.entries()).map(([symbol, d]) => ({
+      symbol,
+      legsCount: d.legsCount,
+      totalHoursHeld: Number(d.hours.toFixed(1)),
+      tradesCount: d.tradesCount,
+      winRate: Number(((d.wins / d.tradesCount) * 100).toFixed(1)),
+      totalNetPnlQuote: Number(d.pnlQuote.toFixed(2)),
+      totalNetPnlPct: Number(d.pnlPctSum.toFixed(2)),
+    })).sort((a, b) => b.totalNetPnlQuote - a.totalNetPnlQuote);
+
+    // Build equity curve
+    let runningEquity = initialCapital;
+    let peakEq = initialCapital;
+    const sortedTrades = [...simResult.trades].sort((a, b) => a.exitTime - b.exitTime);
+    const equityCurve: Array<{ time: number; equity: number; symbol: string; drawdownPct: number }> = [
+      {
+        time: sortedTrades[0]?.entryTime ? sortedTrades[0].entryTime - 900 : Math.floor(Date.now() / 1000) - simLimit * 300,
+        equity: initialCapital,
+        symbol: "PORTFOLIO",
+        drawdownPct: 0,
+      },
+    ];
+
+    for (const st of sortedTrades) {
+      runningEquity += (st.pnlPct / 100) * slotCapital;
+      if (runningEquity > peakEq) peakEq = runningEquity;
+      const dd = ((peakEq - runningEquity) / peakEq) * 100;
+      equityCurve.push({
+        time: st.exitTime,
+        equity: Number(runningEquity.toFixed(2)),
+        symbol: st.symbol,
+        drawdownPct: Number(dd.toFixed(2)),
+      });
+    }
+
+    const result: MultiPairRotationResult = {
+      id: `mafan_rot_${Date.now()}`,
+      createdAt: Date.now(),
+      options: { ...opts, portfolioMode: "mafan_portfolio" },
+      summary: {
+        quoteAsset: quote,
+        universeScannedCount: universe.length,
+        initialCapital: simResult.initialCapital,
+        finalEquity: simResult.finalEquity,
+        netPnlQuote: simResult.netPnlQuote,
+        netPnlPct: simResult.netPnlPct,
+        totalRotations: simResult.trades.length,
+        totalLegs: simResult.trades.length,
+        profitableLegs: simResult.winningTrades,
+        legWinRate: simResult.winRate,
+        totalTrades: simResult.totalTrades,
+        winningTrades: simResult.winningTrades,
+        losingTrades: simResult.losingTrades,
+        tradeWinRate: simResult.winRate,
+        maxPortfolioDrawdownPct: simResult.maxDrawdownPct,
+        profitFactor: simResult.profitFactor,
+        totalFeesPaid: Number((simResult.totalTrades * 2 * slotCapital * 0.00075).toFixed(2)),
+        bestPairSymbol: pairContributions[0]?.symbol ?? "-",
+        bestPairPnlPct: pairContributions[0]?.totalNetPnlPct ?? 0,
+        benchmarkSinglePairSymbol: "BTC",
+        benchmarkSinglePairPnlPct: simResult.btcBuyHoldPct,
+        benchmarkBtcBuyHoldPct: simResult.btcBuyHoldPct,
+        alphaVsBenchmarkPct: simResult.alphaVsBtcPct,
+      },
+      legs,
+      pairContributions,
+      equityCurve,
+      allTrades,
+    };
+
+    this.latestRotationResult = result;
+    this.rotationBtProgress = {
+      phase: "idle",
+      completed: 100,
+      total: 100,
+      currentSymbol: "",
+      message: `MA-Fan Portfolio Simulation complete: +${simResult.netPnlPct.toFixed(2)}% net profit`,
+    };
+
+    return result;
   }
 }

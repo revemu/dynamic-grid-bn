@@ -2772,15 +2772,37 @@
           const lPnlColor = leg.netPnlPct >= 0 ? "#10b981" : "#ef4444";
           const startD = new Date(leg.startTime * 1000).toLocaleDateString("th-TH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
           const endD = new Date(leg.endTime * 1000).toLocaleDateString("th-TH", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-          const trigLabel = leg.triggerReason === "INITIAL_SELECTION"
-            ? "⭐ เริ่มต้น"
-            : leg.triggerReason === "SIGNAL_DISQUALIFIED"
-            ? "🚨 สัญญาณหลุดเกณฑ์"
-            : leg.triggerReason === "IDLE_CASH_TIMEOUT"
-            ? "⏳ Idle Timeout"
-            : "🎯 จบรอบ Flat";
-          const trigBg = leg.triggerReason === "SIGNAL_DISQUALIFIED" ? "rgba(244, 63, 94, 0.2)" : "rgba(56, 189, 248, 0.15)";
-          const trigColor = leg.triggerReason === "SIGNAL_DISQUALIFIED" ? "#fb7185" : "#38bdf8";
+          
+          let trigLabel = "🎯 จบรอบ Flat";
+          let trigBg = "rgba(56, 189, 248, 0.15)";
+          let trigColor = "#38bdf8";
+
+          const exitT = leg.trades && leg.trades[0]?.exitType ? leg.trades[0].exitType : leg.triggerReason;
+          if (leg.triggerReason === "INITIAL_SELECTION" && (!leg.trades || leg.trades.length === 0)) {
+            trigLabel = "⭐ เริ่มต้น";
+          } else if (exitT === "FULL_BULLISH_FAN") {
+            trigLabel = "🚀 Full Bullish Fan";
+            trigBg = "rgba(16, 185, 129, 0.2)";
+            trigColor = "#10b981";
+          } else if (exitT === "SL_BREAKEVEN") {
+            trigLabel = "🟡 Breakeven Stop";
+            trigBg = "rgba(245, 158, 11, 0.2)";
+            trigColor = "#fbbf24";
+          } else if (exitT && exitT.startsWith("SL_DISASTER")) {
+            trigLabel = `🛑 Disaster SL (${exitT.replace("SL_DISASTER_", "")})`;
+            trigBg = "rgba(244, 63, 94, 0.2)";
+            trigColor = "#fb7185";
+          } else if (leg.triggerReason === "SIGNAL_DISQUALIFIED") {
+            trigLabel = "🚨 สัญญาณหลุดเกณฑ์";
+            trigBg = "rgba(244, 63, 94, 0.2)";
+            trigColor = "#fb7185";
+          } else if (leg.triggerReason === "IDLE_CASH_TIMEOUT") {
+            trigLabel = "⏳ Idle Timeout";
+          } else if (exitT === "END_OF_PERIOD_MTM") {
+            trigLabel = "📊 สิ้นสุดการจำลอง";
+          } else {
+            trigLabel = exitT || "🎯 จบรอบ";
+          }
 
           return `
             <tr>
@@ -2809,6 +2831,10 @@
             const leg = res.legs[idx];
             if (leg && leg.candles && leg.candles.length > 0) {
               if (rotationBtModalBackdrop) rotationBtModalBackdrop.style.display = "none";
+              // Switch to single-pair studio tab to view the chart
+              if (typeof window.switchStudioTab === "function") {
+                window.switchStudioTab("single");
+              }
               // Render leg candles, markers and trades on main chart
               if (typeof setChartCandles === "function") {
                 setChartCandles(leg.candles);
@@ -2849,20 +2875,79 @@
       }
     }
 
+    // ─── Dynamic Rotation Options Visibility ─────────────────────────
+    function updateRotationOptionVisibility() {
+      const mode = document.getElementById("rotBtPortfolioMode")?.value || "mafan_portfolio";
+      document.querySelectorAll("#pane-rotation [data-rot-mode]").forEach((el) => {
+        const target = el.dataset.rotMode;
+        if (mode === "mafan_portfolio") {
+          el.style.display = target === "mafan" ? "" : "none";
+        } else {
+          el.style.display = target === "grid" ? "" : "none";
+        }
+      });
+    }
+
+    const rotPortfolioModeEl = document.getElementById("rotBtPortfolioMode");
+    if (rotPortfolioModeEl) {
+      rotPortfolioModeEl.addEventListener("change", updateRotationOptionVisibility);
+      updateRotationOptionVisibility();
+    }
+
     if (btnStartRotationBt) {
       btnStartRotationBt.addEventListener("click", async () => {
+        const portfolioMode = document.getElementById("rotBtPortfolioMode")?.value || "mafan_portfolio";
         const quoteAsset = document.getElementById("rotBtQuoteAsset")?.value || "FDUSD";
         const maxUniversePairs = Number(document.getElementById("rotBtUniverseSize")?.value) || 50;
         const limit = Number(document.getElementById("rotBtLimit")?.value) || 4000;
         const initialCapital = Number(document.getElementById("rotBtInitialCapital")?.value) || 200;
-        const rotationIntervalMinutes = Number(document.getElementById("rotBtCooldownMins")?.value) || 180;
-        const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 15;
-        const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 2;
-        const enableDipHunterEntryGuard = document.getElementById("rotBtDipHunterGuard")?.value !== "off";
-        const signalExitVal = document.getElementById("rotBtSignalExit")?.value || "calibrated";
-        const enableSignalInvalidationExit = signalExitVal !== "off";
-        const signalInvalidationMode = signalExitVal;
-        const enableBtcMacroGate = document.getElementById("rotBtMacroGate")?.value !== "off";
+
+        let payload = {
+          portfolioMode,
+          quoteAsset,
+          maxUniversePairs,
+          limit,
+          initialCapital,
+        };
+
+        if (portfolioMode === "mafan_portfolio") {
+          const maxSlots = Number(document.getElementById("rotBtMaxSlots")?.value) || 3;
+          const tp1Target = document.getElementById("rotBtTp1Target")?.value || "EMA200";
+          const disasterSlVal = document.getElementById("rotBtDisasterSl")?.value || "12";
+          const downtrendSitOutMode = document.getElementById("rotBtMacroGate")?.value || "dual";
+          const rankBy = document.getElementById("rotBtRankBy")?.value || "COMPOSITE_QUALITY";
+
+          payload = {
+            ...payload,
+            maxSlots,
+            tp1TargetMode: tp1Target === "none" ? "none" : tp1Target,
+            partialTpAtEma200: tp1Target !== "none",
+            lockBreakevenAtEma200: tp1Target !== "none",
+            maxDisasterSlPct: disasterSlVal === "none" ? undefined : Number(disasterSlVal),
+            downtrendSitOutMode,
+            rankBy,
+          };
+        } else {
+          const rotationIntervalMinutes = Number(document.getElementById("rotBtCooldownMins")?.value) || 180;
+          const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 15;
+          const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 2;
+          const enableDipHunterEntryGuard = document.getElementById("rotBtDipHunterGuard")?.value !== "off";
+          const signalExitVal = document.getElementById("rotBtSignalExit")?.value || "calibrated";
+          const enableSignalInvalidationExit = signalExitVal !== "off";
+          const signalInvalidationMode = signalExitVal;
+          const enableBtcMacroGate = document.getElementById("rotBtMacroGate")?.value !== "off";
+
+          payload = {
+            ...payload,
+            rotationIntervalMinutes,
+            rotationScoreMarginPct,
+            capitalZones,
+            enableDipHunterEntryGuard,
+            enableSignalInvalidationExit,
+            signalInvalidationMode,
+            enableBtcMacroGate,
+          };
+        }
 
         if (rotationBtProgressWrap) rotationBtProgressWrap.style.display = "block";
         if (rotationBtKpiGrid) rotationBtKpiGrid.style.display = "none";
@@ -2897,19 +2982,7 @@
           const res = await fetch("/api/backtest/rotation/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              quoteAsset,
-              maxUniversePairs,
-              limit,
-              initialCapital,
-              rotationIntervalMinutes,
-              rotationScoreMarginPct,
-              capitalZones,
-              enableDipHunterEntryGuard,
-              enableSignalInvalidationExit,
-              signalInvalidationMode,
-              enableBtcMacroGate,
-            }),
+            body: JSON.stringify(payload),
           });
 
           const data = await res.json();
@@ -2975,8 +3048,12 @@
           }
         } else if (tabId === "scanner" && scTradeMode) {
           updateOptionVisibility(scTradeMode.value, "#pane-scanner");
+        } else if (tabId === "rotation") {
+          updateRotationOptionVisibility();
         }
       }
+
+      window.switchStudioTab = switchTab;
 
       tabBtns.forEach((btn) => {
         btn.addEventListener("click", () => switchTab(btn.dataset.tab));
