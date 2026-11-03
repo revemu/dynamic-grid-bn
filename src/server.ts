@@ -986,7 +986,7 @@ export class DashboardServer {
           let result;
 
           if (portfolioMode === "mafan_portfolio") {
-            const quoteAsset = parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+            const quoteAsset = parsed.quoteAsset === "USD" ? "USD" : (parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT");
             const maxUniversePairs = Number(parsed.maxUniversePairs) || 50;
             const limit = Number(parsed.limit) || 4000;
             const initialCapital = Number(parsed.initialCapital) || 200;
@@ -1017,7 +1017,7 @@ export class DashboardServer {
               blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
             });
           } else {
-            const quoteAsset = parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+            const quoteAsset = parsed.quoteAsset === "USD" ? "USD" : (parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT");
             const maxUniversePairs = Number(parsed.maxUniversePairs) || 50;
             const limit = Number(parsed.limit) || 4000;
             const initialCapital = Number(parsed.initialCapital) || 200;

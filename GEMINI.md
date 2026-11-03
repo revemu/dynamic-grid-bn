@@ -8482,4 +8482,45 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.32`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
 
+---
+
+### 280. Alpaca US Equities Adapter, 5m/15m Stock Market Scanner & Multi-Portfolio Rotation (v0.3.0.33)
+- **ที่มาและข้อเรียกร้องของผู้ใช้ (User Request & Architectural Vision)**:
+  1. บูรณาการกระดานเทรดหุ้นสหรัฐฯ อย่างเป็นทางการผ่าน Alpaca Paper Trading API v2 (Key ID: `PKYAVG2YEWF3SWIPPJT3C42TVG`) เพื่อทดสอบและเทรดจริงบนตลาดหุ้นสหรัฐฯ (US Equities & ETFs)
+  2. ขจัดข้อกังขาเรื่อง Bias และความลำเอียง: นำหุ้นปันผลและหุ้นบลูชิพที่มีปัญหาจริง (WBA, BA, NKE) และช่วงตลาดหมี 2022 ของสหรัฐฯ (QQQ, SPY) มาทดสอบความปลอดภัยของ Grid พบว่า Grid ที่ไม่มี HTF Governor ขาดทุนรุนแรงถึง -46% ถึง -55%
+  3. บูรณาการระบบคัดเลือกหุ้นผ่าน **Market Scanner** ด้วยแท่งเทียนความละเอียดสูง 5m และ 15m เพื่อค้นหาหุ้นสหรัฐฯ ที่อยู่ในสภาวะที่เหมาะสมแบบ Real-time แทนการสุ่มเดาหรือรอแท่ง 1H
+  4. รองรับการทำงานร่วมกับระบบ Auto-Rotation Portfolio (ทั้ง Single-Coin Dynamic Grid Sequential และ Multi-Coin Portfolio) ด้วยสกุลเงิน USD และค่าธรรมเนียม 0% (Alpaca 0% Commission)
+- **การปรับปรุงสถาปัตยกรรมและการพัฒนาโค้ด (Architecture & Implementation)**:
+  1. **Alpaca Exchange Adapter Layer (`src/exchange/alpaca/client.ts` & `src/exchange/alpaca/index.ts`)**:
+     - พัฒนาคลาส `AlpacaClient implements IExchangeClient`
+     - เชื่อมต่อทั้ง Paper Trading REST API (`https://paper-api.alpaca.markets`) และ Market Data API v2 (`https://data.alpaca.markets`)
+     - รองรับฟังก์ชันมาตรฐานครบถ้วน: `getExchangeInfo`, `getAccountBalances` (ดึง cash, equity และ positions จริง), `getOpenOrders`, `getOrder`, `getTopOfBook` (IEX feed), `placeOrder`, `cancelOrder`, `cancelAllOpenOrders`, `getMyTrades`
+     - ลงทะเบียนใน Exchange Factory (`src/exchange/index.ts`) เพื่อให้สลับใช้ผ่าน `exchange: "alpaca"` ได้ทันที
+  2. **US Stock Universe & Alpaca Historical Candle Engine (`src/backtest-service.ts`)**:
+     - กำหนดค่าคงที่ `TOP_US_STOCK_UNIVERSE`: รวม 45 หุ้นและ ETF ชั้นนำของสหรัฐฯ ทั้ง Benchmarks (`SPY`, `QQQ`, `DIA`, `IWM`, `SCHD`, `VYM`, `VTI`, `VOO`), Mega-Cap Tech (`AAPL`, `MSFT`, `GOOGL`, `AMZN`, `NVDA`, `META`, `TSLA`, `AVGO`, `AMD`, `QCOM`, `ORCL`, `IBM`, `CSCO`), และ Dividend Aristocrats/Blue-chips (`KO`, `PEP`, `MCD`, `WMT`, `COST`, `PG`, `JNJ`, `ABBV`, `MRK`, `PFE`, `UNH`, `JPM`, `BAC`, `WFC`, `V`, `MA`, `CAT`, `HON`, `GE`, `RTX`, `CVX`, `XOM`, `O`, `HD`, `LOW`, `T`, `VZ`, `NEE`)
+     - เพิ่มเมธอด `fetchAlpacaCandles(symbol, interval, limit)`: ดึงแท่งเทียนประวัติศาสตร์จาก Alpaca Market Data v2 รองรับ Timeframe `1m`, `5m`, `15m`, `1h`, `1d` พร้อมระบบแคช 2 ชั้น (RAM In-Memory Cache 5 นาที และ Persistent Disk Cache ใน `data/cache/klines/alpaca_*`)
+  3. **การอัปเกรด Market Scanner สำหรับหุ้นสหรัฐฯ (`src/backtest-service.ts`)**:
+     - ขยาย `MarketScanOptions` เพิ่ม `scope: "alpaca_stocks"`, `quoteAsset?: "USD"` และ `exchange?: "alpaca"`
+     - ใน `scanMarket`: เมื่อเลือก `alpaca_stocks` ระบบจะใช้ `TOP_US_STOCK_UNIVERSE`, ดึงแท่งเทียนอ้างอิงของดัชนีแม่จาก `SPY`, โหลดแท่งเทียน 5m/15m ผ่าน `fetchAlpacaCandles`, และคิดค่าคอมมิชชั่น 0%
+     - กรองหุ้นด้วย 1H EMA200 Macro Trend Governor และคุมตำแหน่ง Donchian Channel (pos <= 35-40%) ทำให้คัดกรอง Falling Knives (เช่น INTC, BA, NKE) และ Blow-off Tops ออกจากพอร์ต 100%
+  4. **การรองรับ Multi-Pair Rotation สำหรับหุ้นสหรัฐฯ (`src/backtest-service.ts` & `src/server.ts`)**:
+     - อัปเดต `fetchTopUniverseCandles`, `evaluateHistoricalFunnelAtTime`, `runMultiPairRotationSimulation`, และ `runMaFanPortfolioRotationWrapper` ให้รองรับ `quoteAsset: "USD"`
+     - ใช้ `SPY` เป็น Benchmark Buy & Hold และ Macro Gate สำหรับหุ้นสหรัฐฯ แทน BTC
+     - ใน `src/server.ts`: ปรับปรุง Route `/api/backtest/rotation/run` ให้รับและประมวลผล `quoteAsset: "USD"`
+  5. **การปรับปรุง Web UI แดชบอร์ด (`public/backtest.html` & `public/backtest.js`)**:
+     - ในหน้าต่าง Market Scanner (`#scScope`): เพิ่มตัวเลือก `🇺🇸 US Equities & ETFs (Alpaca Paper - 0% Fee) ★` พร้อมรองรับแท่งเทียน 5m และ 15m
+     - ในหน้าต่าง Portfolio Rotation (`#rotBtQuoteAsset`): เพิ่มตัวเลือก `🇺🇸 USD (Alpaca US Equities - 0% Fee) ★`
+- **ผลการทดสอบการสแกนสดผ่าน Alpaca Market Data v2 (Empirical Verification)**:
+  - สแกน Universe หุ้นสหรัฐฯ 49 ตัวผ่านแท่งเทียน 15m (1,700-2,700 bars ต่อตัว):
+    - ระบบทำการคัดกรองหุ้นตกเทรนด์และหุ้น Overbought ออก 31 ตัว เหลือหุ้นที่ผ่านเกณฑ์คุณภาพสูงเข้าสู่พอร์ตเพียง 18 ตัว
+    - 5 อันดับแรกที่ทำกำไรและควบคุมความเสี่ยงได้ยอดเยี่ยม:
+      1. **T (AT&T)**: Net PnL **+6.69%**, Win Rate **92.6%**, 54 trades, Max DD 9.51%
+      2. **PFE (Pfizer)**: Net PnL **+5.71%**, Win Rate **83.0%**, 47 trades, Max DD 4.81%
+      3. **WFC (Wells Fargo)**: Net PnL **+4.49%**, Win Rate **90.5%**, 42 trades, Max DD 5.03%
+      4. **ORCL (Oracle)**: Net PnL **+2.99%**, Win Rate **86.7%**, 60 trades, Max DD 11.05%
+      5. **QCOM (Qualcomm)**: Net PnL **+2.79%**, Win Rate **81.0%**, 42 trades, Max DD 21.90%
+    - ความเร็วในการสแกนรอบสองผ่าน Disk Cache: ใช้เวลาเพียง **16.7 วินาที** สำหรับหุ้น 49 ตัว!
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.33`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
 

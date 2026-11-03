@@ -2972,7 +2972,8 @@
         if (rotationBtResultsSection) rotationBtResultsSection.style.display = "none";
         btnStartRotationBt.disabled = true;
 
-        if (rotationBtStatusText) rotationBtStatusText.textContent = `กำลังเชื่อมต่อตลาด Binance เพื่อดึง Universe Top ${maxUniversePairs} ${quoteAsset}...`;
+        const marketName = quoteAsset === "USD" ? "Alpaca US Equities" : "Binance";
+        if (rotationBtStatusText) rotationBtStatusText.textContent = `กำลังเชื่อมต่อตลาด ${marketName} เพื่อดึง Universe Top ${maxUniversePairs} ${quoteAsset}...`;
         if (rotationBtCountText) rotationBtCountText.textContent = "0%";
         if (rotationBtProgressFill) rotationBtProgressFill.style.width = "5%";
 

@@ -30,6 +30,19 @@ export const TOXIC_MEME_PENNY_TOKENS = new Set([
   "PUMPUSDT",
 ]);
 
+export const TOP_US_STOCK_UNIVERSE = [
+  // Mega-Cap Benchmarks & Core ETFs
+  "SPY", "QQQ", "DIA", "IWM", "SCHD", "VYM", "VTI", "VOO",
+  // Mega-Cap Tech & Semis
+  "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "AVGO", "AMD", "QCOM", "ORCL", "IBM", "CSCO",
+  // Dividend Aristocrats & Defensive Consumer
+  "KO", "PEP", "MCD", "WMT", "COST", "PG", "JNJ", "ABBV", "MRK", "PFE", "UNH",
+  // Financial & Payment Giants
+  "JPM", "BAC", "WFC", "V", "MA",
+  // Industrial, Energy & Real Estate
+  "CAT", "HON", "GE", "RTX", "CVX", "XOM", "O", "HD", "LOW", "T", "VZ", "NEE",
+];
+
 export function isToxicMemeOrPenny(symbol: string, lastPrice?: number): boolean {
   if (TOXIC_MEME_PENNY_TOKENS.has(symbol)) return true;
   if (lastPrice !== undefined && lastPrice > 0 && lastPrice < 0.005) return true;
@@ -90,7 +103,9 @@ export interface MarketScanResultItem {
 }
 
 export interface MarketScanOptions {
-  scope?: "top20" | "top30" | "top50" | "top100" | "fdusd" | "usdt" | "all";
+  scope?: "top20" | "top30" | "top50" | "top100" | "fdusd" | "usdt" | "all" | "alpaca_stocks";
+  quoteAsset?: "FDUSD" | "USDT" | "USD";
+  exchange?: "binance" | "dreamdex" | "alpaca";
   timeframe?: string;
   limit?: number;
   spreadThreshold?: number | "auto";
@@ -221,7 +236,7 @@ export interface MarketScanPersistence {
 }
 
 export interface MultiPairRotationOptions {
-  quoteAsset: "FDUSD" | "USDT";
+  quoteAsset: "FDUSD" | "USDT" | "USD";
   maxUniversePairs?: number;
   customWhitelist?: string[];
   blacklist?: string[];
@@ -304,7 +319,7 @@ export interface MultiPairRotationResult {
   createdAt: number;
   options: MultiPairRotationOptions;
   summary: {
-    quoteAsset: "FDUSD" | "USDT";
+    quoteAsset: "FDUSD" | "USDT" | "USD";
     universeScannedCount: number;
     initialCapital: number;
     finalEquity: number;
@@ -362,6 +377,118 @@ export class BacktestService {
 
   public static getLatestRotationResult(): MultiPairRotationResult | null {
     return this.latestRotationResult;
+  }
+
+  /**
+   * Fetch historical candles from Alpaca Market Data API v2 (US Equities & ETFs)
+   * Supports 1m, 5m, 15m, 1h, 1d timeframes with RAM & Disk Caching
+   */
+  public static async fetchAlpacaCandles(
+    symbol: string,
+    interval: string = "15m",
+    limit: number = 2000
+  ): Promise<Candle[]> {
+    const cleanSym = symbol.toUpperCase().replace(/[\/\-_:]/g, "").replace(/USD$/, "");
+    const cacheKey = `ALPACA_${cleanSym}_${interval}`;
+    const cached = this.candleCache.get(cacheKey);
+    const nowMs = Date.now();
+
+    // 1. In-memory candle cache: if we already fetched >= limit candles within 5 minutes, reuse instantly
+    if (cached && cached.candles.length >= limit && (nowMs - cached.timestamp < 300_000)) {
+      console.log(`[CandleFeed] ⚡ RAM Cache HIT for Alpaca ${cleanSym} (${interval}) -> using ${cached.candles.length} cached candles`);
+      return cached.candles.slice(-limit);
+    }
+
+    // 2. Persistent Disk Cache: check data/cache/klines/ for previously saved historical bars
+    const diskPath = path.join(BacktestService.KLINE_CACHE_DIR, `alpaca_${cleanSym}_${interval}.json`);
+    if (!cached && fs.existsSync(diskPath)) {
+      try {
+        const raw = fs.readFileSync(diskPath, "utf8");
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.candles) && parsed.candles.length >= limit) {
+          const lastCandleTime = parsed.candles[parsed.candles.length - 1]?.time || 0;
+          const ageSec = Math.floor(nowMs / 1000) - lastCandleTime;
+          if (ageSec < 7200 || !cached) {
+            console.log(`[CandleFeed] 💾 Disk Cache HIT for Alpaca ${cleanSym} (${interval}) -> using ${parsed.candles.length} candles`);
+            this.candleCache.set(cacheKey, { timestamp: parsed.timestamp || nowMs, candles: parsed.candles });
+            return parsed.candles.slice(-limit);
+          }
+        }
+      } catch {}
+    }
+
+    // Map timeframe
+    let tf = "15Min";
+    let intervalMinutes = 15;
+    if (interval === "1m") { tf = "1Min"; intervalMinutes = 1; }
+    else if (interval === "5m") { tf = "5Min"; intervalMinutes = 5; }
+    else if (interval === "15m") { tf = "15Min"; intervalMinutes = 15; }
+    else if (interval === "1h") { tf = "1Hour"; intervalMinutes = 60; }
+    else if (interval === "1d") { tf = "1Day"; intervalMinutes = 1440; }
+
+    const daysBack = Math.max(30, Math.ceil((limit * intervalMinutes) / 250) * 1.5);
+    const startDate = new Date(nowMs - daysBack * 86400 * 1000);
+    const startIso = startDate.toISOString().split(".")[0] + "Z";
+
+    const apiKey = process.env.ALPACA_API_KEY || "PKYAVG2YEWF3SWIPPJT3C42TVG";
+    const apiSecret = process.env.ALPACA_API_SECRET || "2boZiaaqiLDfDEM9XSULbXq2iW69B9WcAEPu234MeuN2";
+    const dataUrl = process.env.ALPACA_DATA_URL || "https://data.alpaca.markets";
+
+    console.log(`[CandleFeed] 📥 Alpaca ${cleanSym} (${interval}): Fetching up to ${limit} bars from ${startIso}...`);
+
+    let candles: Candle[] = [];
+    let pageToken: string | undefined = undefined;
+    let attempts = 0;
+
+    do {
+      let url = `${dataUrl}/v2/stocks/${cleanSym}/bars?timeframe=${tf}&start=${startIso}&adjustment=all&feed=iex&limit=10000`;
+      if (pageToken) url += `&page_token=${encodeURIComponent(pageToken)}`;
+
+      const res = await fetch(url, {
+        headers: {
+          "APCA-API-KEY-ID": apiKey,
+          "APCA-API-SECRET-KEY": apiSecret,
+        },
+      });
+
+      if (!res.ok) {
+        console.warn(`[CandleFeed] ⚠️ Alpaca bar request failed for ${cleanSym} (HTTP ${res.status})`);
+        break;
+      }
+
+      const d: any = await res.json();
+      const rawBars: any[] = d.bars || [];
+      for (const b of rawBars) {
+        const time = Math.floor(new Date(b.t).getTime() / 1000);
+        const open = Number(b.o);
+        const high = Number(b.h);
+        const low = Number(b.l);
+        const close = Number(b.c);
+        const volume = Number(b.v) || 0;
+        if ([time, open, high, low, close].every(Number.isFinite) && close > 0) {
+          candles.push({ time, open, high, low, close, volume, isClosed: true });
+        }
+      }
+
+      pageToken = d.next_page_token;
+      attempts++;
+    } while (pageToken && candles.length < limit && attempts < 3);
+
+    const map = new Map<number, Candle>();
+    for (const c of candles) map.set(c.time, c);
+    const sorted = Array.from(map.values()).sort((a, b) => a.time - b.time);
+
+    if (sorted.length > 0) {
+      this.candleCache.set(cacheKey, { timestamp: nowMs, candles: sorted });
+      try {
+        if (!fs.existsSync(BacktestService.KLINE_CACHE_DIR)) {
+          fs.mkdirSync(BacktestService.KLINE_CACHE_DIR, { recursive: true });
+        }
+        fs.writeFileSync(diskPath, JSON.stringify({ timestamp: nowMs, candles: sorted }), "utf8");
+      } catch {}
+    }
+
+    return sorted.slice(-limit);
   }
 
   /**
@@ -3352,55 +3479,68 @@ export class BacktestService {
     const scope = opts.scope || "top20";
     const timeframe = opts.timeframe || "5m";
     const limit = Math.min(60000, Math.max(100, opts.limit || 1000));
+    const isAlpaca = scope === "alpaca_stocks" || opts.exchange === "alpaca" || opts.quoteAsset === "USD";
 
-    // 1. Fetch 24h ticker to get liquid symbols
-    const tickerRes = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
-      headers: { "User-Agent": "dynamic-grid-bn/scanner" },
-    });
-    if (!tickerRes.ok) {
-      throw new Error(`Failed to fetch 24h market ticker from Binance (HTTP ${tickerRes.status})`);
-    }
+    let candidates: Array<{ symbol: string; quoteVolume: string; count: number }> = [];
 
-    const tickers = (await tickerRes.json()) as Array<{
-      symbol: string;
-      quoteVolume: string;
-      count: number;
-    }>;
-
-    const activeTradingSymbols = await getActiveBinanceTradingSymbols();
-
-    let targetTickers = tickers.filter((t) => {
-      const sym = t.symbol.toUpperCase();
-      if (activeTradingSymbols.size > 0 && !activeTradingSymbols.has(sym)) return false;
-      return Number(t.quoteVolume) > 10_000 && Number(t.count) > 100;
-    });
-
-    if (scope === "fdusd") {
-      targetTickers = targetTickers.filter((t) => t.symbol.endsWith("FDUSD") && !STABLE_TOKENS.has(t.symbol.slice(0, -5)));
+    if (isAlpaca) {
+      candidates = TOP_US_STOCK_UNIVERSE.map((sym) => ({
+        symbol: sym,
+        quoteVolume: "10000000",
+        count: 10000,
+      }));
     } else {
-      // Default or USDT scopes
-      targetTickers = targetTickers.filter((t) => t.symbol.endsWith("USDT") && !STABLE_TOKENS.has(t.symbol.slice(0, -4)));
+      // 1. Fetch 24h ticker to get liquid symbols
+      const tickerRes = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
+        headers: { "User-Agent": "dynamic-grid-bn/scanner" },
+      });
+      if (!tickerRes.ok) {
+        throw new Error(`Failed to fetch 24h market ticker from Binance (HTTP ${tickerRes.status})`);
+      }
+
+      const tickers = (await tickerRes.json()) as Array<{
+        symbol: string;
+        quoteVolume: string;
+        count: number;
+      }>;
+
+      const activeTradingSymbols = await getActiveBinanceTradingSymbols();
+
+      let targetTickers = tickers.filter((t) => {
+        const sym = t.symbol.toUpperCase();
+        if (activeTradingSymbols.size > 0 && !activeTradingSymbols.has(sym)) return false;
+        return Number(t.quoteVolume) > 10_000 && Number(t.count) > 100;
+      });
+
+      if (scope === "fdusd") {
+        targetTickers = targetTickers.filter((t) => t.symbol.endsWith("FDUSD") && !STABLE_TOKENS.has(t.symbol.slice(0, -5)));
+      } else {
+        // Default or USDT scopes
+        targetTickers = targetTickers.filter((t) => t.symbol.endsWith("USDT") && !STABLE_TOKENS.has(t.symbol.slice(0, -4)));
+      }
+
+      // Sort descending by 24h quote volume
+      targetTickers.sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume));
+
+      let maxPairs = 20;
+      if (scope === "top30") maxPairs = 30;
+      else if (scope === "top50") maxPairs = 50;
+      else if (scope === "top100" || scope === "all" || scope === "usdt") maxPairs = 100;
+      else if (scope === "fdusd") maxPairs = Math.min(50, targetTickers.length);
+
+      candidates = targetTickers.slice(0, maxPairs);
     }
 
-    // Sort descending by 24h quote volume
-    targetTickers.sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume));
-
-    let maxPairs = 20;
-    if (scope === "top30") maxPairs = 30;
-    else if (scope === "top50") maxPairs = 50;
-    else if (scope === "top100" || scope === "all" || scope === "usdt") maxPairs = 100;
-    else if (scope === "fdusd") maxPairs = Math.min(50, targetTickers.length);
-
-    const candidates = targetTickers.slice(0, maxPairs);
-
-    // Fetch BTC candles once upfront for Downtrend Defense if enabled
+    // Fetch BTC/SPY candles once upfront for Downtrend Defense if enabled
     let btcCandles: Candle[] | undefined = undefined;
     if (opts.downtrendSitOutMode && opts.downtrendSitOutMode !== "off") {
       try {
         const fetchLimit = limit + 1200;
-        btcCandles = await this.fetchBinanceCandles("BTCUSDT", "5m", fetchLimit);
+        btcCandles = isAlpaca
+          ? await this.fetchAlpacaCandles("SPY", timeframe, fetchLimit)
+          : await this.fetchBinanceCandles("BTCUSDT", "5m", fetchLimit);
       } catch (err: any) {
-        console.warn(`[MarketScanner] ⚠️ Could not fetch BTC candles for Macro Defense: ${err?.message}`);
+        console.warn(`[MarketScanner] ⚠️ Could not fetch benchmark candles for Macro Defense: ${err?.message}`);
       }
     }
 
@@ -3423,8 +3563,8 @@ export class BacktestService {
             const htfLimit = Math.max(300, Math.ceil((fetchLimit * tfMinutes) / htfMinutes) + 50);
 
             const [candles, candlesHtf] = await Promise.all([
-              this.fetchBinanceCandles(sym, timeframe, fetchLimit),
-              this.fetchBinanceCandles(sym, supTf, htfLimit).catch(() => []),
+              isAlpaca ? this.fetchAlpacaCandles(sym, timeframe, fetchLimit) : this.fetchBinanceCandles(sym, timeframe, fetchLimit),
+              isAlpaca ? this.fetchAlpacaCandles(sym, supTf, htfLimit).catch(() => []) : this.fetchBinanceCandles(sym, supTf, htfLimit).catch(() => []),
             ]);
             if (!candles || candles.length < 50) return;
             const actualWarmup = isAutoSpread ? Math.max(0, candles.length - limit) : 0;
@@ -3475,7 +3615,9 @@ export class BacktestService {
             }
 
             const symCostModel = opts.costModel ?? (
-              sym.endsWith("FDUSD")
+              isAlpaca
+                ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
+                : sym.endsWith("FDUSD")
                 ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
                 : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 }
             );
@@ -3602,10 +3744,10 @@ export class BacktestService {
   }
 
   /**
-   * Fetch historical 5m candles for Top N liquid pairs in FDUSD or USDT universe
+   * Fetch historical 5m candles for Top N liquid pairs in FDUSD, USDT, or Alpaca USD universe
    */
   public static async fetchTopUniverseCandles(opts: {
-    quoteAsset: "FDUSD" | "USDT";
+    quoteAsset: "FDUSD" | "USDT" | "USD";
     maxPairs?: number;
     limit?: number;
     customWhitelist?: string[];
@@ -3613,13 +3755,25 @@ export class BacktestService {
     onProgress?: (p: { completed: number; total: number; currentSymbol: string; message: string }) => void;
   }): Promise<Map<string, Candle[]>> {
     const quote = opts.quoteAsset;
+    const isAlpaca = quote === "USD";
     const maxPairs = Math.max(5, Math.min(100, opts.maxPairs ?? 50));
     const candlesLimit = Math.max(500, (opts.limit ?? 4000) + 600);
     const blacklistSet = new Set((opts.blacklist ?? []).map((s) => s.toUpperCase().trim()));
 
     let targetSymbols: string[] = [];
 
-    if (Array.isArray(opts.customWhitelist) && opts.customWhitelist.length > 0) {
+    if (isAlpaca) {
+      if (Array.isArray(opts.customWhitelist) && opts.customWhitelist.length > 0) {
+        targetSymbols = opts.customWhitelist
+          .map((s) => s.toUpperCase().trim().replace(/USD$/, ""))
+          .filter((s) => !blacklistSet.has(s))
+          .slice(0, maxPairs);
+      } else {
+        targetSymbols = TOP_US_STOCK_UNIVERSE
+          .filter((s) => !blacklistSet.has(s))
+          .slice(0, maxPairs);
+      }
+    } else if (Array.isArray(opts.customWhitelist) && opts.customWhitelist.length > 0) {
       targetSymbols = opts.customWhitelist
         .map((s) => s.toUpperCase().trim())
         .filter((s) => s.endsWith(quote) && !blacklistSet.has(s))
@@ -3676,7 +3830,9 @@ export class BacktestService {
             };
             opts.onProgress?.(this.rotationBtProgress);
 
-            const candles = await this.fetchBinanceCandles(sym, "5m", candlesLimit);
+            const candles = isAlpaca
+              ? await this.fetchAlpacaCandles(sym, "5m", candlesLimit)
+              : await this.fetchBinanceCandles(sym, "5m", candlesLimit);
             if (candles && candles.length >= 300) {
               universeMap.set(sym, candles);
             }
@@ -3702,7 +3858,7 @@ export class BacktestService {
     targetTime: number;
     universeCandles: Map<string, Candle[]>;
     activeSymbol?: string;
-    quoteAsset: "FDUSD" | "USDT";
+    quoteAsset: "FDUSD" | "USDT" | "USD";
     gridOpts?: any;
   }): Array<{
     symbol: string;
@@ -3719,6 +3875,7 @@ export class BacktestService {
     isDipPullback: boolean;
   }> {
     const { targetTime, universeCandles, activeSymbol, quoteAsset, gridOpts } = opts;
+    const isAlpaca = quoteAsset === "USD";
 
     const SYNTHETIC_BLACKLIST = new Set([
       "RWUSDUSDT", "UUSDT", "XAUTUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT",
@@ -3739,7 +3896,11 @@ export class BacktestService {
     let aboveEma60Count = 0;
     let totalBreadthPairs = 0;
     for (const [sym, candles] of universeCandles.entries()) {
-      if (sym.startsWith("BTC") || SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym) || !candles || candles.length < 288) continue;
+      if (isAlpaca) {
+        if (sym === "SPY" || !candles || candles.length < 288) continue;
+      } else {
+        if (sym.startsWith("BTC") || SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym) || !candles || candles.length < 288) continue;
+      }
       let low = 0;
       let high = candles.length - 1;
       let idx = -1;
@@ -3761,9 +3922,11 @@ export class BacktestService {
     }
     const marketBreadthPct = totalBreadthPairs > 0 ? (aboveEma60Count / totalBreadthPairs) * 100 : 50;
 
-    // 🛡️ 2. Calculate BTC 24h Return and check BTC Macro Gate:
+    // 🛡️ 2. Calculate BTC/SPY 24h Return and check Macro Gate:
     let btcChange24hPct = 0;
-    const btcCandles = universeCandles.get(`BTC${quoteAsset}`) || universeCandles.get("BTCUSDT");
+    const btcCandles = isAlpaca
+      ? (universeCandles.get("SPY") || universeCandles.get("SPYUSD"))
+      : (universeCandles.get(`BTC${quoteAsset}`) || universeCandles.get("BTCUSDT"));
     if (btcCandles && btcCandles.length >= 288) {
       let low = 0;
       let high = btcCandles.length - 1;
@@ -3790,7 +3953,7 @@ export class BacktestService {
             return [];
           }
 
-          // B. Bitcoin Macro Gate:
+          // B. Bitcoin / S&P 500 Macro Gate:
           const slice288 = btcCandles.slice(bIdx - 287, bIdx + 1);
           const sma288 = slice288.reduce((s: number, c: Candle) => s + c.close, 0) / 288;
           const btcOpen4h = btcCandles[Math.max(0, bIdx - 48)].open;
@@ -3803,7 +3966,7 @@ export class BacktestService {
       }
     }
 
-    const minVol = quoteAsset === "FDUSD" ? 300_000 : 750_000;
+    const minVol = isAlpaca ? 0 : (quoteAsset === "FDUSD" ? 300_000 : 750_000);
     const stage1Candidates: Array<{
       symbol: string;
       idx: number;
@@ -3818,7 +3981,7 @@ export class BacktestService {
     // Stage 1: Point-in-Time 24h rolling window filter
     for (const [sym, candles] of universeCandles.entries()) {
       if (!candles || candles.length < 288) continue;
-      if (SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym)) continue;
+      if (!isAlpaca && (SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym))) continue;
 
       let low = 0;
       let high = candles.length - 1;
@@ -3865,16 +4028,19 @@ export class BacktestService {
       const return4hPct = open4h > 0 ? ((lastPrice - open4h) / open4h) * 100 : 0;
 
       if (quoteVol24h < minVol) continue;
-      if (range24hPct < 4.0 || range24hPct > 22.0) continue;
-      // Smart Bear Market Gate: Only select coins with positive 24h momentum (no downtrend coins)
-      if (change24hPct < 0.5 || change24hPct > 15.0) continue;
+      const minRange = isAlpaca ? 0.8 : 4.0;
+      const maxRange = isAlpaca ? 30.0 : 22.0;
+      if (range24hPct < minRange || range24hPct > maxRange) continue;
+      // Smart Bear Market Gate: Only select assets with healthy momentum (no downtrend assets)
+      const minChange = isAlpaca ? -2.0 : 0.5;
+      if (change24hPct < minChange || change24hPct > 15.0) continue;
       
       // Position in Channel / 24h Range: Default bottom 35% sweet spot for Grid accumulation!
       const maxAllowedPos = gridOpts?.gridMaxChannelPos !== undefined ? Number(gridOpts.gridMaxChannelPos) : 0.35;
       if (posRatio < 0.05 || posRatio > maxAllowedPos) continue;
-      if (return4hPct < 0.0) continue; // Reject coins in negative momentum over past 4 hours
+      if (return4hPct < (isAlpaca ? -1.0 : 0.0)) continue; // Reject assets in steep negative momentum
 
-      // HTF Trend Governor: Filter out coins in macro downtrend
+      // HTF Trend Governor: Filter out assets in macro downtrend
       const htfGov = gridOpts?.gridHtfGovernor ?? "1h_ema200";
       if (htfGov === "1h_ema200" && idx >= 2400) {
         const c1h = BacktestService.aggregateCandles(candles.slice(0, idx + 1), 60);
@@ -3898,7 +4064,7 @@ export class BacktestService {
 
       const ema20 = calcEmaLocal(candles, idx, 20);
       const ema60 = calcEmaLocal(candles, idx, 60);
-      if (lastPrice < ema60) continue; // Reject coins trading below 5h EMA
+      if (!isAlpaca && lastPrice < ema60) continue; // Reject coins trading below 5h EMA
 
       // Volume & buyer accumulation over past 4h (48 bars):
       let vol4h = 0, upVol4h = 0, dnVol4h = 0;
@@ -4021,9 +4187,11 @@ export class BacktestService {
       isDipPullback: boolean;
     }> = [];
 
-    const symCostModel = quoteAsset === "FDUSD"
+    const symCostModel = isAlpaca
       ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
-      : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+      : (quoteAsset === "FDUSD"
+          ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
+          : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 });
 
     for (const cand of topCandidates) {
       try {
@@ -4164,7 +4332,7 @@ export class BacktestService {
    * Walks the timeline bar-by-bar across candidate pairs in FDUSD or USDT universe.
    */
   public static async runMultiPairRotationSimulation(opts: MultiPairRotationOptions): Promise<MultiPairRotationResult> {
-    const quote = opts.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+    const quote = opts.quoteAsset === "USD" ? "USD" : (opts.quoteAsset === "FDUSD" ? "FDUSD" : "USDT");
     const timeframe = opts.timeframe || "5m";
     const simLimit = Math.max(500, opts.limit || 4000);
     const initialCapital = Math.max(10, opts.initialCapital || 200);
@@ -4655,7 +4823,8 @@ export class BacktestService {
     pairContributions.sort((a, b) => b.totalNetPnlQuote - a.totalNetPnlQuote);
 
     // 6. Benchmark Comparison (True Buy & Hold vs Grid)
-    const defaultBtc = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
+    const isAlpaca = quote === "USD";
+    const defaultBtc = isAlpaca ? "SPY" : (quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT");
     let btcBuyHoldPct = 0;
     const btcCandles = universeCandles.get(defaultBtc);
     if (btcCandles && btcCandles.length > 0) {
@@ -5321,7 +5490,7 @@ export class BacktestService {
   public static async runMaFanPortfolioRotationWrapper(
     opts: MultiPairRotationOptions
   ): Promise<MultiPairRotationResult> {
-    const quote = opts.quoteAsset === "FDUSD" ? "FDUSD" : "USDT";
+    const quote = opts.quoteAsset === "USD" ? "USD" : (opts.quoteAsset === "FDUSD" ? "FDUSD" : "USDT");
     const simLimit = Math.max(500, opts.limit || 4000);
     const initialCapital = Math.max(10, opts.initialCapital || 200);
     const maxSlots = Math.max(1, opts.maxSlots || 3);
@@ -5349,10 +5518,13 @@ export class BacktestService {
       throw new Error(`Failed to load universe candles for ${quote}`);
     }
 
-    const btcSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
+    const isAlpaca = quote === "USD";
+    const btcSym = isAlpaca ? "SPY" : (quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT");
     let btcCandles = universeCandlesMap.get(btcSym);
     if (!btcCandles || btcCandles.length < 500) {
-      btcCandles = await this.fetchBinanceCandles("BTCUSDT", "5m", simLimit + 600);
+      btcCandles = isAlpaca
+        ? await this.fetchAlpacaCandles("SPY", "5m", simLimit + 600)
+        : await this.fetchBinanceCandles("BTCUSDT", "5m", simLimit + 600);
     }
 
     const excludeMemes = opts.excludeToxicMemes !== false;
