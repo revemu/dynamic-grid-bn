@@ -5761,7 +5761,7 @@ export class BacktestService {
         totalFeesPaid: Number((simResult.totalTrades * 2 * slotCapital * 0.00075).toFixed(2)),
         bestPairSymbol: pairContributions[0]?.symbol ?? "-",
         bestPairPnlPct: pairContributions[0]?.totalNetPnlPct ?? 0,
-        benchmarkSinglePairSymbol: "BTC",
+        benchmarkSinglePairSymbol: quote === "USD" ? "SPY" : "BTC",
         benchmarkSinglePairPnlPct: simResult.btcBuyHoldPct,
         benchmarkBtcBuyHoldPct: simResult.btcBuyHoldPct,
         alphaVsBenchmarkPct: simResult.alphaVsBtcPct,

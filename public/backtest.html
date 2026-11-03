@@ -146,7 +146,7 @@
         </div>
 
         <div class="bt-input-group" data-mode="sniper">
-          <label>Downtrend Defense</label>
+          <label id="btDowntrendSitOutLabel">Downtrend Defense</label>
           <select id="btDowntrendSitOut" title="ถือเงินสด 100% เมื่อตลาดภาพใหญ่เป็นขาลง (ป้องกันพอร์ตติดลบช่วงตลาดทุบ)">
             <option value="dual" selected>🛡️ Dual Defense (BTC 1D + 4H)</option>
             <option value="btc1d">📅 BTC 1D Trend (EMA 25)</option>
@@ -539,8 +539,8 @@
           </div>
 
           <div class="scanner-ctrl-group" data-mode="grid">
-            <label>Macro Defense</label>
-            <select id="scGridMacroGate" title="ระบบพักเงินสดเมื่อ BTC หลุดเทรนด์ขาลงใหญ่">
+            <label id="scGridMacroGateLabel">Macro Defense (BTC)</label>
+            <select id="scGridMacroGate" title="ระบบพักเงินสดเมื่อตลาดภาพใหญ่หลุดเทรนด์ขาลง">
               <option value="dual" selected>🛡️ Dual BTC (1D+4H แนะนำ)</option>
               <option value="btc1d">1D BTC Defense</option>
               <option value="btc4h">4H BTC Defense</option>
@@ -686,8 +686,8 @@
             <input type="number" id="rotBtInitialCapital" value="200" min="10" step="10" style="width: 80px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
           </div>
           <div class="scanner-ctrl-group">
-            <label>ตลาด BTC ขาลง (Downtrend Defense)</label>
-            <select id="rotBtMacroGate" title="ระบบป้องกันตลาดขาลง: พักการเข้าซื้อและถือเงินสดเมื่อ BTC ต่ำกว่า EMA">
+            <label id="rotBtMacroGateLabel">ตลาด BTC ขาลง (Downtrend Defense)</label>
+            <select id="rotBtMacroGate" title="ระบบป้องกันตลาดขาลง: พักการเข้าซื้อและถือเงินสดเมื่อตลาดใหญ่ต่ำกว่า EMA">
               <option value="dual" selected>🛡️ ถือเงินสดเมื่อ BTC ขาลง (Dual 1D+4H แนะนำ)</option>
               <option value="btc1d">📅 กรองตาม 1D (EMA25) เท่านั้น</option>
               <option value="btc4h">⏱️ กรองตาม 4H (EMA75) เท่านั้น</option>

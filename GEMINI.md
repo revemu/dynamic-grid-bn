@@ -8568,5 +8568,35 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.34`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 282. Dynamic Adaptive Macro Gate Selector for US Equities (SPY vs BTC) Across Dashboard Tabs (v0.3.0.35)
+- **สาเหตุของการแก้ไข (Motivation & User Feedback)**:
+  - ผู้ใช้แจ้งข้อสังเกต: *"การกรองยังมีให้เลือกคุม trend โดย BTC แม้จะเลือกเป็นหุ้นจาก alpaca"*
+  - การตรวจสอบ: ในฝั่ง Backend ตรรกะของระบบ Macro Gate / Downtrend Defense สำหรับหุ้นสหรัฐฯ (`isAlpaca / quote === "USD"`) ได้เปลี่ยนมาดึงและคำนวณอ้างอิงจากดัชนีแม่ **S&P 500 (`SPY`)** แทน BTC เรียบร้อยแล้ว แต่ในฝั่งหน้าเว็บแดชบอร์ด (Frontend) ข้อความบนป้ายกำกับ (Label) และตัวเลือกใน Dropdown ของทั้ง 3 แท็บยังคงถูกกำหนดตายตัว (Hardcoded) ว่าเป็น **"BTC"** ส่งผลให้ผู้ใช้มองเห็นเป็น `ตลาด BTC ขาลง` และ `🛡️ ถือเงินสดเมื่อ BTC ขาลง` แม้จะสลับเป็นหุ้น Alpaca
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation & Dynamic UI Adaptation)**:
+  1. **Dynamic Adaptive Macro Gate Selector ในหน้าแดชบอร์ด (`public/backtest.html` & `public/backtest.js`)**:
+     - สร้างฟังก์ชันปรับเปลี่ยนข้อความอัตโนมัติ 3 ฟังก์ชัน:
+       - `updateRotationMacroGateUI(quoteAsset)`: สำหรับแท็บ Auto-Rotation Portfolio
+       - `updateScannerMacroGateUI(scope)`: สำหรับแท็บ Market Scanner
+       - `updateSinglePairDowntrendUI(sym)`: สำหรับแท็บ Single-Pair Backtest
+     - **เมื่อเลือกหุ้นสหรัฐฯ (USD, Alpaca Equities, หรือพิมพ์ชื่อหุ้นใน `TOP_US_STOCK_UNIVERSE`)**:
+       - ป้ายกำกับจะเปลี่ยนเป็น: **`ตลาด S&P 500 ขาลง (Downtrend Defense)`** หรือ **`Macro Defense (SPY)`**
+       - ตัวเลือกใน Dropdown จะเปลี่ยนเป็น:
+         - `🛡️ ถือเงินสดเมื่อ SPY ขาลง (Dual 1D+4H แนะนำ)`
+         - `📅 กรองตาม SPY 1D (EMA25) เท่านั้น`
+         - `⏱️ กรองตาม SPY 4H (EMA75) เท่านั้น`
+         - `⚡ ปิดตัวกรอง (เทรดตามปกติ)`
+     - **เมื่อเลือกคริปโต (USDT, FDUSD, Somnia/DEX)**:
+       - แสดงผลเป็น **BTC** ตามเดิมอย่างถูกต้อง 100%
+  2. **Benchmark Sub-label Dynamic Naming (`public/backtest.js`)**:
+     - ปรับแถบแสดงผล KPI Benchmark ของพอร์ตจำลอง: หากเป็นพอร์ตหุ้นสหรัฐฯ (`quoteAsset === "USD"`) จะแสดงป้ายเปรียบเทียบเป็น **`SPY (S&P 500) B&H`** แทน `BTC B&H`
+  3. **Alpaca US Equities Auto-Complete & Symbols API (`src/server.ts` & `public/backtest.js`)**:
+     - เพิ่ม Route `/api/symbols?exchange=alpaca` ใน `src/server.ts` ส่งรายการหุ้นยอดนิยมและ Universe ทั้งหมด
+     - เสริมรายชื่อหุ้นสหรัฐฯ และ ETF ชั้นนำเข้าสู่ `inpSymbolDatalist` ในหน้าแดชบอร์ด ทำให้ผู้ใช้พิมพ์ค้นหาหุ้น (เช่น AAPL, MSFT, RTX, SPY) ได้สะดวกรวดเร็ว
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.35`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 

@@ -53,6 +53,109 @@
   const inpCapitalZones = document.getElementById("btCapitalZones");
   const inpGridCutLossMode = document.getElementById("btGridCutLossMode");
 
+  const TOP_US_STOCK_UNIVERSE = new Set([
+    "SPY", "QQQ", "DIA", "IWM", "SCHD", "VYM", "VTI", "VOO",
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+    "AVGO", "AMD", "QCOM", "ORCL", "IBM", "CSCO",
+    "KO", "PEP", "MCD", "WMT", "COST", "PG", "JNJ", "ABBV", "MRK", "PFE", "UNH",
+    "JPM", "BAC", "WFC", "V", "MA",
+    "CAT", "HON", "GE", "RTX",
+    "CVX", "XOM", "O", "HD", "LOW", "T", "VZ", "NEE"
+  ]);
+
+  function isStockSymbol(sym) {
+    if (!sym) return false;
+    const clean = sym.toUpperCase().replace(/[\/\-_:]/g, "").replace(/USD$/, "");
+    return TOP_US_STOCK_UNIVERSE.has(clean) || TOP_US_STOCK_UNIVERSE.has(sym.toUpperCase());
+  }
+
+  // Update Single-Pair Backtest Downtrend Sit-Out (BTC vs SPY)
+  function updateSinglePairDowntrendUI(sym) {
+    const isStock = isStockSymbol(sym);
+    const label = document.getElementById("btDowntrendSitOutLabel");
+    const select = document.getElementById("btDowntrendSitOut");
+    if (label) {
+      label.textContent = isStock ? "Downtrend Defense (SPY)" : "Downtrend Defense (BTC)";
+    }
+    if (select) {
+      const curVal = select.value || "dual";
+      select.title = isStock
+        ? "ถือเงินสด 100% เมื่อ S&P 500 (SPY) ภาพใหญ่เป็นขาลง (ป้องกันพอร์ตติดลบช่วงตลาดทุบ)"
+        : "ถือเงินสด 100% เมื่อตลาดภาพใหญ่ (BTC) เป็นขาลง (ป้องกันพอร์ตติดลบช่วงตลาดทุบ)";
+      select.innerHTML = isStock
+        ? `
+          <option value="dual"${curVal === "dual" ? " selected" : ""}>🛡️ Dual Defense (SPY 1D + 4H)</option>
+          <option value="btc1d"${curVal === "btc1d" ? " selected" : ""}>📅 SPY 1D Trend (EMA 25)</option>
+          <option value="btc4h"${curVal === "btc4h" ? " selected" : ""}>⏱️ SPY 4H Trend (EMA 75)</option>
+          <option value="off"${curVal === "off" ? " selected" : ""}>❌ Off (เทรดทุกสภาวะ)</option>
+        `
+        : `
+          <option value="dual"${curVal === "dual" ? " selected" : ""}>🛡️ Dual Defense (BTC 1D + 4H)</option>
+          <option value="btc1d"${curVal === "btc1d" ? " selected" : ""}>📅 BTC 1D Trend (EMA 25)</option>
+          <option value="btc4h"${curVal === "btc4h" ? " selected" : ""}>⏱️ BTC 4H Trend (EMA 75)</option>
+          <option value="off"${curVal === "off" ? " selected" : ""}>❌ Off (เทรดทุกสภาวะ)</option>
+        `;
+    }
+  }
+
+  // Update Scanner Macro Gate (BTC vs SPY)
+  function updateScannerMacroGateUI(scope) {
+    const isStock = scope === "alpaca_stocks";
+    const label = document.getElementById("scGridMacroGateLabel");
+    const select = document.getElementById("scGridMacroGate");
+    if (label) {
+      label.textContent = isStock ? "Macro Defense (SPY)" : "Macro Defense (BTC)";
+    }
+    if (select) {
+      const curVal = select.value || "dual";
+      select.title = isStock
+        ? "ระบบพักเงินสดเมื่อ S&P 500 (SPY) หลุดเทรนด์ขาลงใหญ่"
+        : "ระบบพักเงินสดเมื่อ BTC หลุดเทรนด์ขาลงใหญ่";
+      select.innerHTML = isStock
+        ? `
+          <option value="dual"${curVal === "dual" ? " selected" : ""}>🛡️ Dual SPY (1D+4H แนะนำ)</option>
+          <option value="btc1d"${curVal === "btc1d" ? " selected" : ""}>1D SPY Defense</option>
+          <option value="btc4h"${curVal === "btc4h" ? " selected" : ""}>4H SPY Defense</option>
+          <option value="off"${curVal === "off" ? " selected" : ""}>Off (ไม่พักเงินสด)</option>
+        `
+        : `
+          <option value="dual"${curVal === "dual" ? " selected" : ""}>🛡️ Dual BTC (1D+4H แนะนำ)</option>
+          <option value="btc1d"${curVal === "btc1d" ? " selected" : ""}>1D BTC Defense</option>
+          <option value="btc4h"${curVal === "btc4h" ? " selected" : ""}>4H BTC Defense</option>
+          <option value="off"${curVal === "off" ? " selected" : ""}>Off (ไม่พักเงินสด)</option>
+        `;
+    }
+  }
+
+  // Update Rotation Macro Gate (BTC vs SPY)
+  function updateRotationMacroGateUI(quoteAsset) {
+    const isStock = quoteAsset === "USD";
+    const label = document.getElementById("rotBtMacroGateLabel");
+    const select = document.getElementById("rotBtMacroGate");
+    if (label) {
+      label.textContent = isStock ? "ตลาด S&P 500 ขาลง (Downtrend Defense)" : "ตลาด BTC ขาลง (Downtrend Defense)";
+    }
+    if (select) {
+      const curVal = select.value || "dual";
+      select.title = isStock
+        ? "ระบบป้องกันตลาดขาลง: พักการเข้าซื้อและถือเงินสดเมื่อ S&P 500 (SPY) ต่ำกว่า EMA"
+        : "ระบบป้องกันตลาดขาลง: พักการเข้าซื้อและถือเงินสดเมื่อ BTC ต่ำกว่า EMA";
+      select.innerHTML = isStock
+        ? `
+          <option value="dual"${curVal === "dual" ? " selected" : ""}>🛡️ ถือเงินสดเมื่อ SPY ขาลง (Dual 1D+4H แนะนำ)</option>
+          <option value="btc1d"${curVal === "btc1d" ? " selected" : ""}>📅 กรองตาม SPY 1D (EMA25) เท่านั้น</option>
+          <option value="btc4h"${curVal === "btc4h" ? " selected" : ""}>⏱️ กรองตาม SPY 4H (EMA75) เท่านั้น</option>
+          <option value="off"${curVal === "off" ? " selected" : ""}>⚡ ปิดตัวกรอง (เทรดตามปกติ)</option>
+        `
+        : `
+          <option value="dual"${curVal === "dual" ? " selected" : ""}>🛡️ ถือเงินสดเมื่อ BTC ขาลง (Dual 1D+4H แนะนำ)</option>
+          <option value="btc1d"${curVal === "btc1d" ? " selected" : ""}>📅 กรองตาม 1D (EMA25) เท่านั้น</option>
+          <option value="btc4h"${curVal === "btc4h" ? " selected" : ""}>⏱️ กรองตาม 4H (EMA75) เท่านั้น</option>
+          <option value="off"${curVal === "off" ? " selected" : ""}>⚡ ปิดตัวกรอง (เทรดตามปกติ)</option>
+        `;
+    }
+  }
+
   function getSelectedSymbol() {
     if (!inpSymbol) return "BNBFDUSD";
     return (inpSymbol.value || "BNBFDUSD").trim().toUpperCase().replace(/[\/\-_:]/g, "");
@@ -62,6 +165,7 @@
     if (!sym || !inpSymbol) return;
     const clean = sym.toUpperCase().replace(/[\/\-_:]/g, "");
     inpSymbol.value = clean;
+    updateSinglePairDowntrendUI(clean);
   }
 
   // Fetch dynamic symbols list from backend and populate datalist
@@ -95,6 +199,9 @@
         if (!popular.includes(s)) {
           html += `<option value="${s}">💎 ${s} (USDC)</option>`;
         }
+      });
+      TOP_US_STOCK_UNIVERSE.forEach((s) => {
+        html += `<option value="${s}">🇺🇸 ${s} (US Equities - Alpaca 0% Fee)</option>`;
       });
 
       inpSymbolDatalist.innerHTML = html;
@@ -2147,6 +2254,12 @@
   function initEvents() {
     btnRunBacktest.addEventListener("click", runBacktest);
 
+    if (inpSymbol) {
+      inpSymbol.addEventListener("input", () => updateSinglePairDowntrendUI(inpSymbol.value));
+      inpSymbol.addEventListener("change", () => updateSinglePairDowntrendUI(inpSymbol.value));
+      updateSinglePairDowntrendUI(inpSymbol.value);
+    }
+
     // Auto-tune optimal preset on engine dropdown change
     if (inpTradeMode) {
       inpTradeMode.addEventListener("change", (e) => {
@@ -2267,6 +2380,11 @@
 
   function initScannerEvents() {
     loadLatestScannerResults();
+
+    if (scScope) {
+      scScope.addEventListener("change", () => updateScannerMacroGateUI(scScope.value));
+      updateScannerMacroGateUI(scScope.value);
+    }
 
     if (btnOpenScanner && scannerModalBackdrop) {
       btnOpenScanner.addEventListener("click", () => {
@@ -2771,8 +2889,10 @@
         elAlpha.style.color = alphaColor;
       }
       if (elBenchSub) {
+        const isStockQuote = sum.quoteAsset === "USD" || sum.benchmarkSinglePairSymbol === "SPY";
+        const benchLabel = isStockQuote ? "SPY (S&P 500)" : "BTC";
         const btcStr = sum.benchmarkBtcBuyHoldPct !== undefined
-          ? `BTC B&H: ${sum.benchmarkBtcBuyHoldPct >= 0 ? "+" : ""}${sum.benchmarkBtcBuyHoldPct.toFixed(2)}%`
+          ? `${benchLabel} B&H: ${sum.benchmarkBtcBuyHoldPct >= 0 ? "+" : ""}${sum.benchmarkBtcBuyHoldPct.toFixed(2)}%`
           : `เทียบถือ ${sum.benchmarkSinglePairSymbol} (${sum.benchmarkSinglePairPnlPct >= 0 ? "+" : ""}${sum.benchmarkSinglePairPnlPct.toFixed(2)}%)`;
         const ewStr = sum.benchmarkEqualWeightBuyHoldPct !== undefined
           ? ` | ตลาดเฉลี่ย: ${sum.benchmarkEqualWeightBuyHoldPct >= 0 ? "+" : ""}${sum.benchmarkEqualWeightBuyHoldPct.toFixed(2)}%`
@@ -2906,6 +3026,12 @@
     if (rotPortfolioModeEl) {
       rotPortfolioModeEl.addEventListener("change", updateRotationOptionVisibility);
       updateRotationOptionVisibility();
+    }
+
+    const rotQuoteAssetEl = document.getElementById("rotBtQuoteAsset");
+    if (rotQuoteAssetEl) {
+      rotQuoteAssetEl.addEventListener("change", () => updateRotationMacroGateUI(rotQuoteAssetEl.value));
+      updateRotationMacroGateUI(rotQuoteAssetEl.value);
     }
 
     if (btnStartRotationBt) {

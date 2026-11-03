@@ -774,6 +774,17 @@ export class DashboardServer {
         res.end(JSON.stringify({ success: true, exchange: "dreamdex", symbols: dreamdexSymbols, popular: dreamdexSymbols }));
         return;
       }
+      if (exchangeQuery === "alpaca") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({
+          success: true,
+          exchange: "alpaca",
+          symbols: TOP_US_STOCK_UNIVERSE,
+          popular: ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"],
+          stocks: TOP_US_STOCK_UNIVERSE,
+        }));
+        return;
+      }
 
       // Check Binance in-memory cache (1 hour)
       const now = Date.now();
