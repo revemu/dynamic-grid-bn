@@ -2722,8 +2722,19 @@
         if (sym) {
           setSymbolValue(sym);
           const isAlpacaScope = scScope?.value === "alpaca_stocks";
+          const isStock = isAlpacaScope || isStockSymbol(sym);
+
           if (scTimeframe && inpTimeframe) inpTimeframe.value = scTimeframe.value;
           if (scLimit && inpLimit) inpLimit.value = scLimit.value;
+          if (scFeeTier && inpFeeTier) inpFeeTier.value = scFeeTier.value;
+          if (scBudget && inpBudget) inpBudget.value = scBudget.value;
+          if (scTradeMode && inpTradeMode) {
+            inpTradeMode.value = scTradeMode.value;
+            updateOptionVisibility(scTradeMode.value, ".bt-controls");
+          }
+          if (scTradeDirection && inpTradeDirection) inpTradeDirection.value = scTradeDirection.value;
+
+          // Sniper options
           if (scSpread && inpSpread) inpSpread.value = scSpread.value;
           if (scUpsideFloor && inpUpsideFloor) inpUpsideFloor.value = scUpsideFloor.value;
           if (scFastCut && inpFastCut) inpFastCut.value = scFastCut.value;
@@ -2731,12 +2742,27 @@
           if (scCircuitBreaker && inpCircuitBreaker) inpCircuitBreaker.value = scCircuitBreaker.value;
           if (scSlMode && inpSlMode) inpSlMode.value = scSlMode.value;
           if (scMacroGate && inpMacroGate) inpMacroGate.value = scMacroGate.value;
-          if (scTradeMode && inpTradeMode) inpTradeMode.value = scTradeMode.value;
-          if (scTradeDirection && inpTradeDirection) inpTradeDirection.value = scTradeDirection.value;
+
+          // Dynamic Grid options
           if (scBaseConfirmation && inpBaseConfirmation) inpBaseConfirmation.value = scBaseConfirmation.value;
           if (scLockChannel && inpLockChannel) inpLockChannel.value = scLockChannel.value;
+          if (scCapitalZones && inpCapitalZones) inpCapitalZones.value = scCapitalZones.value;
+          if (scGridCutLossMode && inpGridCutLossMode) inpGridCutLossMode.value = scGridCutLossMode.value;
+          const inpDowntrendSitOut = document.getElementById("btDowntrendSitOut");
+          if (scGridMacroGate && inpDowntrendSitOut) inpDowntrendSitOut.value = scGridMacroGate.value;
+
+          // Hide modal backdrop if opened as modal
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
-          runBacktest(isAlpacaScope ? { exchange: "alpaca", quoteAsset: "USD" } : {});
+
+          // Switch tab to Single-Pair Studio Tab to view the chart!
+          if (typeof window.switchStudioTab === "function") {
+            window.switchStudioTab("single");
+          } else {
+            const tabBtn = document.getElementById("tabBtnSingle");
+            if (tabBtn) tabBtn.click();
+          }
+
+          runBacktest(isStock ? { exchange: "alpaca", quoteAsset: "USD" } : {});
         }
       });
     });

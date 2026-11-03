@@ -8623,6 +8623,26 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.36`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 284. Market Scanner View Chart Action Navigation Fix & Dynamic Grid Param Synchronization (v0.3.0.37)
+- **สาเหตุของการแก้ไข (Motivation & Bug Forensics)**:
+  - ผู้ใช้แจ้งข้อผิดพลาดพร้อมภาพหน้าจอ: *"กดดูกราฟแล้วไม่ได้"* เมื่อกดปุ่ม "📊 ดูกราฟ" บนแถวหุ้น (เช่น MA, IBM, HON) ในหน้า Market Scanner
+  - **สาเหตุที่แท้จริง**:
+    1. เดิมที Market Scanner เคยเป็นกล่องหน้าต่าง Modal ป๊อปอัป โค้ดเดิมจึงสั่งเพียงแค่ซ่อนป๊อปอัป `scannerModalBackdrop.style.display = "none"`
+    2. ในเวอร์ชันปัจจุบัน Market Scanner ถูกอัปเกรดเป็นแท็บหลักเต็มหน้าจอ (`#pane-scanner`) เมื่อผู้ใช้คลิกปุ่ม "📊 ดูกราฟ" ระบบคำนวณผลจำลองสำเร็จจริง แต่ **ไม่ได้มีคำสั่งสลับแท็บไปยังหน้ากราฟ (`window.switchStudioTab("single")`)** ส่งผลให้หน้าจอของผู้ใช้ยังคงค้างอยู่ที่หน้าแท็บ Market Scanner และกราฟไม่ปรากฏ
+    3. พารามิเตอร์เฉพาะของโหมด Dynamic Grid (เช่น `Capital Zones`, `Cut Loss Mode`, `Macro Defense`, `Fee Tier`) จากแถบ Scanner ไม่ได้ถูกคัดลอกส่งต่อไปยังหน้า Single-Pair
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation)**:
+  1. **Studio Tab Switching on View Chart Click (`public/backtest.js`)**:
+     - ใน Event Listener ของปุ่ม `.btn-action-view` เพิ่มคำสั่งเรียก `window.switchStudioTab("single")` (พร้อม Fallback ไปที่ `tabBtnSingle.click()`) เพื่อสลับหน้าจอมายังแท็บกราฟแท่งเทียนทันที
+  2. **Comprehensive Parameters Synchronization from Scanner to Single-Pair (`public/backtest.js`)**:
+     - คัดลอกค่าคอนฟิกทั้งหมด: `inpTradeMode` (Dynamic Grid), `inpCapitalZones`, `inpGridCutLossMode`, `inpDowntrendSitOut` (Macro Defense), `inpFeeTier`, `inpBudget`, `inpBaseConfirmation`, `inpLockChannel`
+     - เรียก `updateOptionVisibility(scTradeMode.value, ".bt-controls")` เพื่อปรับการแสดงผลตัวเลือกบนแถบควบคุมหน้ากราฟให้ตรงกัน
+     - ตรวจสอบ `isStock = isAlpacaScope || isStockSymbol(sym)` เพื่อส่ง `{ exchange: "alpaca", quoteAsset: "USD" }` ไปยัง `runBacktest` อย่างแม่นยำ
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.37`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 
