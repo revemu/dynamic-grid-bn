@@ -102,7 +102,31 @@ export interface MarketScanResultItem {
   spreadThreshold: number;
 }
 
+export type MaFanStage = "READY_BUY" | "DIP_RETEST" | "WATCHING_BOTTOM" | "BULLISH_TREND" | "NEUTRAL";
+
+export interface MaFanLiveSetupItem {
+  rank: number;
+  symbol: string;
+  stage: MaFanStage;
+  stageLabel: string;
+  stageBadgeColor: string;
+  readyScore: number;
+  lastPrice: number;
+  fanSpreadPct: number;
+  minSpreadRecentPct: number;
+  rsi: number;
+  reversalTriggers: string[];
+  upsideTp1Pct: number;
+  upsideTp2Pct: number;
+  upsideTp3Pct: number;
+  quoteVolume: number;
+  timeframe: string;
+}
+
 export interface MarketScanOptions {
+  scanType?: "mafan_setups" | "backtest_leaderboard";
+  stageFilter?: string;
+  minSpreadThreshold?: number;
   scope?: "top20" | "top30" | "top50" | "top100" | "fdusd" | "usdt" | "all" | "alpaca_stocks";
   quoteAsset?: "FDUSD" | "USDT" | "USD";
   exchange?: "binance" | "dreamdex" | "alpaca";
@@ -233,6 +257,7 @@ export interface MarketScanPersistence {
   timestamp: number;
   options: MarketScanOptions;
   results: MarketScanResultItem[];
+  setupResults?: MaFanLiveSetupItem[];
 }
 
 export interface MultiPairRotationOptions {
@@ -3734,6 +3759,276 @@ export class BacktestService {
     });
 
     return results;
+  }
+
+  /**
+   * Scan current market candles to detect real-time MA-Fan setups ("ตัวพร้อมเล่น")
+   * Focuses on Bottom Fan Exhaustion and Reversal Inflection points.
+   */
+  public static async scanMaFanSetups(opts: MarketScanOptions): Promise<MaFanLiveSetupItem[]> {
+    const scope = opts.scope || "top20";
+    const timeframe = opts.timeframe || "5m";
+    const isAlpaca = scope === "alpaca_stocks" || opts.exchange === "alpaca" || opts.quoteAsset === "USD";
+
+    let candidates: Array<{ symbol: string; quoteVolume: string; count: number }> = [];
+
+    if (isAlpaca) {
+      candidates = TOP_US_STOCK_UNIVERSE.map((sym) => ({
+        symbol: sym,
+        quoteVolume: "10000000",
+        count: 10000,
+      }));
+    } else {
+      const tickerRes = await fetch("https://api.binance.com/api/v3/ticker/24hr", {
+        headers: { "User-Agent": "dynamic-grid-bn/scanner" },
+      });
+      if (!tickerRes.ok) {
+        throw new Error(`Failed to fetch 24h market ticker from Binance (HTTP ${tickerRes.status})`);
+      }
+
+      const tickers = (await tickerRes.json()) as Array<{
+        symbol: string;
+        quoteVolume: string;
+        count: number;
+      }>;
+
+      const activeTradingSymbols = await getActiveBinanceTradingSymbols();
+
+      let targetTickers = tickers.filter((t) => {
+        const sym = t.symbol.toUpperCase();
+        if (activeTradingSymbols.size > 0 && !activeTradingSymbols.has(sym)) return false;
+        return Number(t.quoteVolume) > 10_000 && Number(t.count) > 100;
+      });
+
+      if (scope === "fdusd") {
+        targetTickers = targetTickers.filter((t) => t.symbol.endsWith("FDUSD") && !STABLE_TOKENS.has(t.symbol.slice(0, -5)));
+      } else {
+        targetTickers = targetTickers.filter((t) => t.symbol.endsWith("USDT") && !STABLE_TOKENS.has(t.symbol.slice(0, -4)));
+      }
+
+      targetTickers.sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume));
+
+      let maxPairs = 20;
+      if (scope === "top30") maxPairs = 30;
+      else if (scope === "top50") maxPairs = 50;
+      else if (scope === "top100" || scope === "all" || scope === "usdt") maxPairs = 100;
+      else if (scope === "fdusd") maxPairs = Math.min(50, targetTickers.length);
+
+      candidates = targetTickers.slice(0, maxPairs);
+    }
+
+    // Macro gate check (SPY vs BTC)
+    let isMacroBear = false;
+    if (opts.downtrendSitOutMode && opts.downtrendSitOutMode !== "off") {
+      try {
+        const macroCandles = isAlpaca
+          ? await this.fetchAlpacaCandles("SPY", "1h", 250)
+          : await this.fetchBinanceCandles("BTCUSDT", "1h", 250);
+        if (macroCandles && macroCandles.length >= 200) {
+          const mCloses = macroCandles.map((c) => c.close);
+          const ema200 = calcEMA(mCloses, 200);
+          const lastC = mCloses[mCloses.length - 1];
+          const lastEma = ema200[ema200.length - 1];
+          if (lastC < lastEma) {
+            isMacroBear = true;
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[MaFanScanner] Macro benchmark check warning: ${err?.message}`);
+      }
+    }
+
+    const setupItems: MaFanLiveSetupItem[] = [];
+    const chunkSize = 4;
+    const fetchLimit = 250; // 250 bars is sufficient to accurately compute EMA 200, RSI 14, MACD
+
+    for (let i = 0; i < candidates.length; i += chunkSize) {
+      const chunk = candidates.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (cand) => {
+          try {
+            const sym = cand.symbol;
+            const candles = isAlpaca
+              ? await this.fetchAlpacaCandles(sym, timeframe, fetchLimit)
+              : await this.fetchBinanceCandles(sym, timeframe, fetchLimit);
+
+            if (!candles || candles.length < 50) return;
+
+            const closes = candles.map((c) => c.close);
+            const ema4 = calcEMA(closes, 4);
+            const ema8 = calcEMA(closes, 8);
+            const ema16 = calcEMA(closes, 16);
+            const ema25 = calcEMA(closes, 25);
+            const ema75 = calcEMA(closes, 75);
+            const ema200 = calcEMA(closes, 200);
+            const rsiList = calcRSI(candles, 14);
+            const macdObj = calcMACD(candles, 12, 26, 9);
+
+            const n = closes.length - 1;
+            const lastPrice = closes[n];
+            const e4 = ema4[n];
+            const e8 = ema8[n];
+            const e16 = ema16[n];
+            const e25 = ema25[n];
+            const e75 = ema75[n];
+            const e200 = ema200[n];
+
+            const prev4 = ema4[n - 1] ?? e4;
+            const prev8 = ema8[n - 1] ?? e8;
+            const prev16 = ema16[n - 1] ?? e16;
+
+            const fanSpreadPct = ((e4 - e25) / e25) * 100;
+            const curRsi = rsiList[n] ?? 50;
+            const prevRsi = rsiList[n - 1] ?? 50;
+            const prevRsi2 = rsiList[n - 2] ?? 50;
+
+            // Track recent 15 bars for bottom fan condition
+            let hadBottomFanRecently = false;
+            let minSpreadRecentPct = 0;
+            for (let idx = Math.max(0, n - 15); idx <= n; idx++) {
+              const sp = ((ema4[idx] - ema25[idx]) / ema25[idx]) * 100;
+              if (sp < minSpreadRecentPct) minSpreadRecentPct = sp;
+              if (ema4[idx] < ema8[idx] && ema8[idx] < ema16[idx] && ema16[idx] < ema25[idx]) {
+                hadBottomFanRecently = true;
+              }
+            }
+
+            // Reversal triggers
+            const is8Cross16Up = prev8 <= prev16 && e8 > e16;
+            const is4Cross8Up = prev4 <= prev8 && e4 > e8;
+            const isPriceAbove8 = lastPrice > e8;
+            const isPriceAbove16 = lastPrice > e16;
+            const isPriceAbove25 = lastPrice > e25;
+            const isRsiHook = curRsi > prevRsi && (prevRsi < 42 || prevRsi2 < 38);
+            const curHist = macdObj.hist[n] ?? 0;
+            const prevHist = macdObj.hist[n - 1] ?? 0;
+            const isMacdHistUp = curHist > prevHist;
+
+            const triggers: string[] = [];
+            if (is8Cross16Up) triggers.push("EMA 8x16 Cross ⭐");
+            else if (is4Cross8Up) triggers.push("EMA 4x8 Hook");
+            if (isPriceAbove16) triggers.push("Price > EMA16");
+            else if (isPriceAbove8) triggers.push("Price > EMA8");
+            if (isRsiHook) triggers.push(`RSI Hook ${curRsi.toFixed(0)}`);
+            if (isMacdHistUp) triggers.push("MACD +Hist");
+            if (minSpreadRecentPct <= -0.20) triggers.push(`Spread ${minSpreadRecentPct.toFixed(2)}%`);
+
+            let stage: MaFanStage = "NEUTRAL";
+            let stageLabel = "⚪ ปกติ (Neutral)";
+            let stageBadgeColor = "#64748b";
+            let readyScore = 30;
+
+            const isBottomExhaustion =
+              hadBottomFanRecently || minSpreadRecentPct <= -0.15 || (e4 < e8 && e8 < e16 && e16 < e25);
+
+            if (
+              isBottomExhaustion &&
+              (is8Cross16Up ||
+                (is4Cross8Up && isPriceAbove16) ||
+                (e8 > e16 && isPriceAbove16 && minSpreadRecentPct <= -0.12))
+            ) {
+              stage = "READY_BUY";
+              stageLabel = "🔥 พร้อมเข้าเล่น (Bottom Fan Reversal)";
+              stageBadgeColor = "#10b981";
+              readyScore = 80;
+            } else if (hadBottomFanRecently && e8 > e16 && lastPrice >= e16 * 0.997 && lastPrice <= e8 * 1.003) {
+              stage = "DIP_RETEST";
+              stageLabel = "⏳ รอย่อตัว (Dip Re-test)";
+              stageBadgeColor = "#f59e0b";
+              readyScore = 72;
+            } else if (e4 < e8 && e8 < e16 && e16 < e25 && fanSpreadPct <= -0.18) {
+              stage = "WATCHING_BOTTOM";
+              stageLabel = "👀 เฝ้าระวังพัดกางล่าง (Bottom Exhaustion)";
+              stageBadgeColor = "#06b6d4";
+              readyScore = 55;
+            } else if (e4 > e8 && e8 > e16 && e16 > e25 && e25 > e75) {
+              stage = "BULLISH_TREND";
+              stageLabel = "🚀 พัดกางบน (Bullish Fan Trend)";
+              stageBadgeColor = "#8b5cf6";
+              readyScore = 65;
+            }
+
+            // Score adjustments
+            if (is8Cross16Up) readyScore += 10;
+            if (isPriceAbove16) readyScore += 5;
+            if (isRsiHook) readyScore += 5;
+            if (isMacdHistUp) readyScore += 5;
+            if (!isMacroBear) readyScore += 5;
+            readyScore = Math.min(100, Math.max(0, readyScore));
+
+            // Upside targets (TP1: EMA25, TP2: EMA75, TP3: EMA200)
+            const upsideTp1Pct = ((e25 - lastPrice) / lastPrice) * 100;
+            const upsideTp2Pct = ((e75 - lastPrice) / lastPrice) * 100;
+            const upsideTp3Pct = ((e200 - lastPrice) / lastPrice) * 100;
+
+            setupItems.push({
+              rank: 0,
+              symbol: sym,
+              stage,
+              stageLabel,
+              stageBadgeColor,
+              readyScore,
+              lastPrice,
+              fanSpreadPct,
+              minSpreadRecentPct,
+              rsi: curRsi,
+              reversalTriggers: triggers,
+              upsideTp1Pct,
+              upsideTp2Pct,
+              upsideTp3Pct,
+              quoteVolume: Math.round(Number(cand.quoteVolume)),
+              timeframe,
+            });
+
+            opts.onProgress?.({
+              index: setupItems.length,
+              total: candidates.length,
+              symbol: sym,
+              candlesCount: candles.length,
+              pnlPct: readyScore,
+              winRate: readyScore,
+              tradesCount: triggers.length,
+            });
+          } catch (err: any) {
+            console.warn(`[MaFanScanner] ⚠️ Error scanning ${cand.symbol}:`, err?.message || err);
+          }
+        })
+      );
+      if (i + chunkSize < candidates.length) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+
+    // Sort priority: READY_BUY > DIP_RETEST > WATCHING_BOTTOM > BULLISH_TREND > NEUTRAL, then readyScore desc
+    const stagePriority: Record<MaFanStage, number> = {
+      READY_BUY: 5,
+      DIP_RETEST: 4,
+      WATCHING_BOTTOM: 3,
+      BULLISH_TREND: 2,
+      NEUTRAL: 1,
+    };
+
+    setupItems.sort((a, b) => {
+      const pA = stagePriority[a.stage] || 0;
+      const pB = stagePriority[b.stage] || 0;
+      if (pB !== pA) return pB - pA;
+      if (b.readyScore !== a.readyScore) return b.readyScore - a.readyScore;
+      return b.quoteVolume - a.quoteVolume;
+    });
+
+    setupItems.forEach((item, idx) => {
+      item.rank = idx + 1;
+    });
+
+    // Save latest setup scan to database
+    this.saveLatestScan({
+      timestamp: Date.now(),
+      options: opts,
+      results: [],
+      setupResults: setupItems,
+    });
+
+    return setupItems;
   }
 
   public static saveLatestScan(data: MarketScanPersistence): void {

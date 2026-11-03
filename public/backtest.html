@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="backtest.css?v=1.3" />
+  <link rel="stylesheet" href="backtest.css?v=0.3.0.39" />
   <!-- TradingView Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -380,15 +380,36 @@
       <div class="studio-tab-content">
         <div class="studio-tab-header">
           <div class="modal-title-group">
-            <h3 class="bt-modal-title">⚡ MA-FOLD-FAN Market Scanner (จัดอันดับเหรียญทำกำไรสูงสุด)</h3>
-            <span class="modal-subtitle">สแกนเหรียญที่มีสภาพคล่องสูงสุดบน Binance และทดสอบกลยุทธ์ตามเงื่อนไขที่กำหนดเพื่อค้นหาเหรียญที่มีแต้มต่อสูงสุด</span>
+            <h3 class="bt-modal-title" id="scStudioTitle">⚡ MA-Fan Setup Scanner (สแกนหาตัวพร้อมเล่น - กางล่าง + กลับตัว)</h3>
+            <span class="modal-subtitle" id="scStudioSubtitle">สแกนโครงสร้างคลื่นแบบ Real-time หาจุดกลับตัวที่พัดกางล่างสุด (Bottom Fan Exhaustion) พร้อมเข้าทำรอบทันที</span>
           </div>
         </div>
 
         <!-- Scanner Configuration Bar -->
         <div class="scanner-controls-bar">
-          <!-- 1. Scanner Engine Selector at the very front -->
-          <div class="scanner-ctrl-group" style="border-left: 2px solid #6366f1; padding-left: 6px;">
+          <!-- 0. Scanner Mode Selector (Setup Scanner vs Leaderboard) -->
+          <div class="scanner-ctrl-group" style="border-left: 2px solid #38bdf8; padding-left: 6px;">
+            <label style="color: #38bdf8; font-weight: 700;">📡 รูปแบบสแกน (Scan Mode)</label>
+            <select id="scScanType" style="font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4);">
+              <option value="mafan_setups" selected>⚡ สแกนหาตัวพร้อมเล่น (MA-Fan Setup: กางล่าง + กลับตัว) ⭐</option>
+              <option value="backtest_leaderboard">📊 Historical Leaderboard (ดูผลงานย้อนหลัง)</option>
+            </select>
+          </div>
+
+          <!-- 0.1 Stage Filter (Setup Mode) -->
+          <div class="scanner-ctrl-group sc-setup-only" id="groupScStageFilter">
+            <label style="color: #10b981; font-weight: 700;">จังหวะพร้อมเล่น (Stage)</label>
+            <select id="scStageFilter">
+              <option value="all" selected>🌟 ทุกจังหวะ (All Stages)</option>
+              <option value="READY_BUY">🔥 พร้อมเข้าเล่น (Bottom Fan Reversal) เท่านั้น</option>
+              <option value="DIP_RETEST">⏳ รอย่อตัว (Dip Re-test) เท่านั้น</option>
+              <option value="WATCHING_BOTTOM">👀 เฝ้าระวังพัดกางล่าง (Bottom Exhaustion) เท่านั้น</option>
+              <option value="BULLISH_TREND">🚀 พัดกางบน (Bullish Fan Trend) เท่านั้น</option>
+            </select>
+          </div>
+
+          <!-- 1. Scanner Engine Selector at the very front (Leaderboard Mode) -->
+          <div class="scanner-ctrl-group sc-backtest-only" style="border-left: 2px solid #6366f1; padding-left: 6px; display: none;">
             <label style="color: #a5b4fc; font-weight: 700;">⚙️ Engine</label>
             <select id="scTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์" style="font-weight: 700; color: #fff;">
               <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
@@ -400,7 +421,7 @@
           </div>
 
           <div class="scanner-ctrl-group">
-            <label>ขอบเขตเหรียญ (Scope)</label>
+            <label>ขอบเขตเหรียญ/หุ้น (Scope)</label>
             <select id="scScope">
               <option value="top20" selected>🔥 Top 20 USDT (สภาพคล่องสูงสุด ~5-10s)</option>
               <option value="top50">🚀 Top 50 USDT (เหรียญยอดนิยม ~15-25s)</option>
@@ -420,7 +441,7 @@
             </select>
           </div>
 
-          <div class="scanner-ctrl-group">
+          <div class="scanner-ctrl-group sc-backtest-only" style="display: none;">
             <label>ระยะเวลาย้อนหลัง</label>
             <select id="scLimit">
               <option value="1000" selected>1,000 แท่ง (~3.5 วัน)</option>
@@ -434,7 +455,7 @@
             </select>
           </div>
 
-          <div class="scanner-ctrl-group">
+          <div class="scanner-ctrl-group sc-backtest-only" style="display: none;">
             <label>Fee Tier</label>
             <select id="scFeeTier" title="คำนวณกำไรสุทธิหลังหักค่าธรรมเนียมและ Slippage">
               <option value="bnb" selected>⚡ BNB (0.075%)</option>
@@ -443,7 +464,7 @@
             </select>
           </div>
 
-          <div class="scanner-ctrl-group">
+          <div class="scanner-ctrl-group sc-backtest-only" style="display: none;">
             <label>เงินทุน ($)</label>
             <input type="number" id="scBudget" value="200" min="10" step="10" style="width: 75px; padding: 4px 6px; background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #f8fafc; font-size: 11px; font-weight: 600;" />
           </div>
@@ -584,44 +605,50 @@
             </select>
           </div>
 
-          <button id="btnScannerResetBestPreset" class="btn-sync-config btn-scanner-sync" title="รีเซ็ตการตั้งค่าสแกนเนอร์เป็นค่าแนะนำที่ดีที่สุด (Optimal Preset)">
+          <button id="btnScannerResetBestPreset" class="btn-sync-config btn-scanner-sync sc-backtest-only" style="display: none;" title="รีเซ็ตการตั้งค่าสแกนเนอร์เป็นค่าแนะนำที่ดีที่สุด (Optimal Preset)">
             <span class="btn-run-icon">⚡</span> ค่าแนะนำ
           </button>
-          <button id="btnScannerSyncLiveConfig" class="btn-sync-config btn-scanner-sync" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่การตั้งค่า Market Scanner ทุกประการ">
+          <button id="btnScannerSyncLiveConfig" class="btn-sync-config btn-scanner-sync sc-backtest-only" style="display: none;" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่การตั้งค่า Market Scanner ทุกประการ">
             <span class="btn-run-icon">🔄</span> ใช้ Config บอท
           </button>
           <button id="btnStartScan" class="btn-run btn-start-scan">
-            <span>🚀 เริ่มสแกนตลาด</span>
+            <span id="btnStartScanText">⚡ สแกนหาตัวพร้อมเล่น</span>
           </button>
         </div>
 
         <!-- Scan Progress Bar -->
         <div id="scannerProgressWrap" class="scanner-progress-wrap" style="display: none;">
           <div class="scanner-progress-info">
-            <span id="scannerStatusText">กำลังดึงข้อมูลตลาด Binance และคำนวณผลตอบแทน...</span>
+            <span id="scannerStatusText">กำลังดึงข้อมูลแท่งเทียนและตรวจจับสัญญาณ MA-Fan...</span>
             <span id="scannerCountText">กรุณารอสักครู่ (ใช้เวลา 2-5 วินาที)</span>
           </div>
           <div class="scanner-progress-bar"><div class="scanner-progress-fill" id="scannerProgressFill" style="width: 100%;"></div></div>
         </div>
 
-        <!-- Leaderboard Table -->
+        <!-- Live Setups & Leaderboard Table -->
         <div class="scanner-table-wrap">
           <table class="bt-table scanner-table" id="scannerTable">
-            <thead>
-              <tr>
-                <th style="width: 50px;">อันดับ</th>
-                <th>คู่เหรียญ</th>
+            <thead id="scannerTableHead">
+              <tr id="scannerTableHeadRow">
+                <th style="width: 45px;">#</th>
+                <th>คู่เหรียญ / หุ้น</th>
+                <th>สถานะจังหวะ (Stage)</th>
+                <th>ความพร้อม (Ready Score)</th>
+                <th>ราคาล่าสุด</th>
+                <th>พัดกางล่าง (Spread)</th>
+                <th>สัญญาณกลับตัว (Triggers)</th>
+                <th>Upside ถึงเป้า (TP Rooms)</th>
                 <th>24h Volume</th>
-                <th>กำไรสุทธิ (%)</th>
-                <th>Win Rate</th>
-                <th>จำนวนไม้</th>
-                <th>Profit Factor</th>
-                <th>Max DD</th>
-                <th>Best Trade</th>
                 <th>การกระทำ</th>
               </tr>
             </thead>
             <tbody id="scannerTableBody">
+              <tr>
+                <td colspan="10" class="td-empty">กดปุ่ม '⚡ สแกนหาตัวพร้อมเล่น' ด้านบนเพื่อค้นหาเหรียญหรือหุ้นที่พัดกางล่างสุดและกำลังกลับตัวในแท่งเทียนปัจจุบัน</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
               <tr>
                 <td colspan="10" class="td-empty">กดปุ่ม '🚀 เริ่มสแกนตลาด' ด้านบนเพื่อค้นหาเหรียญที่ทำกำไรสูงสุดในสภาวะตลาดปัจจุบัน</td>
               </tr>
@@ -915,6 +942,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.3.0.29"></script>
+  <script src="backtest.js?v=0.3.0.39"></script>
 </body>
 </html>

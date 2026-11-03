@@ -1136,6 +1136,27 @@ export class DashboardServer {
           }
 
           this.currentScanProgress = { index: 0, total: 0, symbol: "Starting...", candlesCount: 0 };
+          const scanType = (parsed.scanType || "mafan_setups") as "mafan_setups" | "backtest_leaderboard";
+
+          if (scanType === "mafan_setups") {
+            console.log(`[MarketScanner] ⚡ Starting MA-Fan Live Setup Scan (Scope: ${scope}, TF: ${timeframe})...`);
+            const setupResults = await BacktestService.scanMaFanSetups({
+              scope,
+              timeframe,
+              downtrendSitOutMode: parsed.downtrendSitOutMode || (parsed.scGridMacroGate !== "off" ? "dual" : "off"),
+              stageFilter: parsed.stageFilter,
+              minSpreadThreshold: Number(parsed.minSpreadThreshold) || undefined,
+              onProgress: (p) => {
+                this.currentScanProgress = p;
+                this.broadcast("scan_progress", p);
+              },
+            });
+
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true, scanType: "mafan_setups", count: setupResults.length, setupResults }));
+            return;
+          }
+
           const hlModeStr = enableBaseConfirmationFilter ? "ON (รอสร้างฐาน HL - บอทจริง)" : "OFF (Pure Grid - ดักเก็บทุกรอบ)";
           console.log(`[MarketScanner] 🚀 Starting Market Scan (Scope: ${scope}, TF: ${timeframe}, Limit: ${limit} bars, Engine: ${parsed.tradeMode || "dip_hunter"}, HL Filter: ${hlModeStr})...`);
 

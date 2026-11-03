@@ -2422,12 +2422,18 @@
   const scannerModalBackdrop = document.getElementById("scannerModalBackdrop");
   const btnCloseScannerModal = document.getElementById("btnCloseScannerModal");
   const btnStartScan = document.getElementById("btnStartScan");
+  const btnStartScanText = document.getElementById("btnStartScanText");
   const btnScannerSyncLiveConfig = document.getElementById("btnScannerSyncLiveConfig");
   const scannerProgressWrap = document.getElementById("scannerProgressWrap");
   const scannerStatusText = document.getElementById("scannerStatusText");
   const scannerCountText = document.getElementById("scannerCountText");
+  const scannerTableHead = document.getElementById("scannerTableHead");
   const scannerTableBody = document.getElementById("scannerTableBody");
+  const scStudioTitle = document.getElementById("scStudioTitle");
+  const scStudioSubtitle = document.getElementById("scStudioSubtitle");
 
+  const scScanType = document.getElementById("scScanType");
+  const scStageFilter = document.getElementById("scStageFilter");
   const scScope = document.getElementById("scScope");
   const scTimeframe = document.getElementById("scTimeframe");
   const scLimit = document.getElementById("scLimit");
@@ -2450,6 +2456,70 @@
   const scFeeTier = document.getElementById("scFeeTier");
   const scBudget = document.getElementById("scBudget");
   const scannerProgressFill = document.getElementById("scannerProgressFill");
+
+  let latestSetupItems = [];
+
+  function updateScannerModeUI(scanType) {
+    const isSetup = scanType === "mafan_setups";
+    if (scStudioTitle) {
+      scStudioTitle.textContent = isSetup
+        ? "⚡ MA-Fan Setup Scanner (สแกนหาตัวพร้อมเล่น - กางล่าง + กลับตัว)"
+        : "📊 MA-FOLD-FAN Market Scanner (จัดอันดับเหรียญทำกำไรสูงสุด)";
+    }
+    if (scStudioSubtitle) {
+      scStudioSubtitle.textContent = isSetup
+        ? "สแกนโครงสร้างคลื่นแบบ Real-time หาจุดกลับตัวที่พัดกางล่างสุด (Bottom Fan Exhaustion) พร้อมเข้าทำรอบทันที"
+        : "สแกนเหรียญที่มีสภาพคล่องสูงสุดและทดสอบกลยุทธ์ตามเงื่อนไขที่กำหนดเพื่อค้นหาเหรียญที่มีแต้มต่อสูงสุด";
+    }
+    if (btnStartScanText) {
+      btnStartScanText.textContent = isSetup ? "⚡ สแกนหาตัวพร้อมเล่น" : "🚀 เริ่มสแกนตลาด";
+    }
+
+    document.querySelectorAll(".sc-setup-only").forEach((el) => {
+      el.style.display = isSetup ? "" : "none";
+    });
+    document.querySelectorAll(".sc-backtest-only").forEach((el) => {
+      el.style.display = isSetup ? "none" : "";
+    });
+
+    renderScannerTableHeader(scanType);
+  }
+
+  function renderScannerTableHeader(scanType) {
+    if (!scannerTableHead) return;
+    const isSetup = scanType === "mafan_setups";
+    if (isSetup) {
+      scannerTableHead.innerHTML = `
+        <tr id="scannerTableHeadRow">
+          <th style="width: 45px;">#</th>
+          <th>คู่เหรียญ / หุ้น</th>
+          <th>สถานะจังหวะ (Stage)</th>
+          <th>ความพร้อม (Ready Score)</th>
+          <th>ราคาล่าสุด</th>
+          <th>พัดกางล่าง (Spread)</th>
+          <th>สัญญาณกลับตัว (Triggers)</th>
+          <th>Upside ถึงเป้า (TP Rooms)</th>
+          <th>24h Volume</th>
+          <th>การกระทำ</th>
+        </tr>
+      `;
+    } else {
+      scannerTableHead.innerHTML = `
+        <tr id="scannerTableHeadRow">
+          <th style="width: 50px;">อันดับ</th>
+          <th>คู่เหรียญ</th>
+          <th>24h Volume</th>
+          <th>กำไรสุทธิ (%)</th>
+          <th>Win Rate</th>
+          <th>จำนวนไม้</th>
+          <th>Profit Factor</th>
+          <th>Max DD</th>
+          <th>Best Trade</th>
+          <th>การกระทำ</th>
+        </tr>
+      `;
+    }
+  }
 
   // Dynamic visibility for trading engine options
   function updateOptionVisibility(engine, containerSelector) {
@@ -2476,6 +2546,19 @@
 
   function initScannerEvents() {
     loadLatestScannerResults();
+
+    if (scScanType) {
+      scScanType.addEventListener("change", (e) => {
+        updateScannerModeUI(e.target.value);
+      });
+      updateScannerModeUI(scScanType.value || "mafan_setups");
+    }
+
+    if (scStageFilter) {
+      scStageFilter.addEventListener("change", () => {
+        renderScannerSetups(latestSetupItems);
+      });
+    }
 
     if (scScope) {
       scScope.addEventListener("change", () => updateScannerMacroGateUI(scScope.value));
@@ -2533,8 +2616,78 @@
 
     if (btnStartScan) {
       btnStartScan.addEventListener("click", async () => {
+        const scanType = scScanType?.value || "mafan_setups";
         const scope = scScope?.value || "top20";
         const timeframe = scTimeframe?.value || "5m";
+
+        btnStartScan.disabled = true;
+        let pollInterval = null;
+        if (scannerProgressWrap) {
+          scannerProgressWrap.style.display = "block";
+          if (scannerProgressFill) scannerProgressFill.style.width = "0%";
+        }
+
+        const isAlpaca = scope === "alpaca_stocks";
+        const scopeLabel = scope === "top100" ? "Top 100 USDT" : scope === "top50" ? "Top 50 USDT" : scope === "top20" ? "Top 20 USDT" : (isAlpaca ? "US Equities & ETFs" : scope.toUpperCase());
+
+        if (scanType === "mafan_setups") {
+          if (scannerStatusText) scannerStatusText.textContent = `กำลังสแกนหาตัวพร้อมเล่น MA-Fan (${scopeLabel}) บน ${timeframe}...`;
+          if (scannerCountText) scannerCountText.textContent = "กำลังวิเคราะห์แท่งเทียนหา Bottom Fan Exhaustion และสัญญาณกลับตัว...";
+
+          pollInterval = setInterval(async () => {
+            try {
+              const pResp = await fetch("/api/backtest/scan/progress");
+              if (!pResp.ok) return;
+              const pData = await pResp.json();
+              if (pData && pData.progress) {
+                const { index, total, symbol } = pData.progress;
+                if (total > 0) {
+                  const pct = Math.min(100, Math.round((index / total) * 100));
+                  if (scannerProgressFill) scannerProgressFill.style.width = `${pct}%`;
+                  if (scannerStatusText) scannerStatusText.textContent = `สแกนเหรียญที่ ${index}/${total}: ${symbol} (${pct}%)`;
+                  if (scannerCountText) scannerCountText.textContent = "ตรวจสอบการกางของพัดและสัญญาณจ่อกลับตัว...";
+                }
+              }
+            } catch (e) {}
+          }, 300);
+
+          try {
+            const res = await fetch("/api/backtest/scan", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                scanType: "mafan_setups",
+                scope,
+                timeframe,
+                stageFilter: scStageFilter?.value || "all",
+                scGridMacroGate: scGridMacroGate?.value || "dual",
+              }),
+            });
+
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              throw new Error(err.error || `HTTP ${res.status}`);
+            }
+
+            const data = await res.json();
+            renderScannerSetups(data.setupResults || []);
+            if (scannerStatusText) {
+              scannerStatusText.textContent = `สแกนหาตัวพร้อมเล่นเสร็จสิ้น (${data.setupResults?.length || 0} รายการ)`;
+            }
+            if (scannerProgressFill) scannerProgressFill.style.width = "100%";
+          } catch (err) {
+            alert(`เกิดข้อผิดพลาดในการสแกนหาตัวพร้อมเล่น: ${err.message}`);
+          } finally {
+            if (pollInterval) clearInterval(pollInterval);
+            btnStartScan.disabled = false;
+            setTimeout(() => {
+              if (scannerProgressWrap) scannerProgressWrap.style.display = "none";
+            }, 1200);
+          }
+          return;
+        }
+
+        // Leaderboard Historical Backtest Mode
         const limit = Number(scLimit?.value) || 1000;
         const spread = scSpread?.value || "auto";
         const budget = Number(scBudget?.value) || Number(inpBudget?.value) || 200;
@@ -2555,13 +2708,6 @@
         const maxChannelPos = scGridMaxPos ? Number(scGridMaxPos.value) : 0.35;
         const gridMacroGate = scGridMacroGate ? scGridMacroGate.value : "dual";
 
-        btnStartScan.disabled = true;
-        let pollInterval = null;
-        if (scannerProgressWrap) {
-          scannerProgressWrap.style.display = "block";
-          if (scannerProgressFill) scannerProgressFill.style.width = "0%";
-        }
-        const scopeLabel = scope === "top100" ? "Top 100 USDT" : scope === "top50" ? "Top 50 USDT" : scope === "top20" ? "Top 20 USDT" : scope.toUpperCase();
         const dayEstimate = limit >= 34000 ? "~120 วัน" : (limit >= 25000 ? "~90 วัน" : (limit >= 17000 ? "~60 วัน" : (limit >= 8000 ? "~30 วัน" : (limit >= 4000 ? "~15 วัน" : (limit >= 2000 ? "~7 วัน" : (limit >= 1000 ? "~3.5 วัน" : "~1.7 วัน"))))));
         const hlLabel = enableBaseConfirmationFilter ? "HL Base: ON (บอทจริง)" : "HL Base: OFF (Pure Grid)";
         const chLabel = lockChannelInPosition ? "Channel: Locked" : "Channel: Dynamic";
@@ -2590,6 +2736,7 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              scanType: "backtest_leaderboard",
               scope,
               timeframe,
               limit,
@@ -2648,16 +2795,33 @@
       const res = await fetch("/api/backtest/scan/latest");
       if (res.ok) {
         const data = await res.json();
-        if (data.scan && Array.isArray(data.scan.results) && data.scan.results.length > 0) {
-          renderScannerLeaderboard(data.scan.results);
-          if (scannerStatusText) {
-            const dateStr = new Date(data.scan.timestamp).toLocaleString();
-            scannerStatusText.textContent = `ผลสแกนล่าสุดที่บันทึกไว้ (${dateStr})`;
+        if (data.scan) {
+          if (Array.isArray(data.scan.setupResults) && data.scan.setupResults.length > 0) {
+            if (scScanType) scScanType.value = "mafan_setups";
+            updateScannerModeUI("mafan_setups");
+            renderScannerSetups(data.scan.setupResults);
+            if (scannerStatusText) {
+              const dateStr = new Date(data.scan.timestamp).toLocaleString();
+              scannerStatusText.textContent = `ผลสแกนตัวพร้อมเล่นล่าสุดที่บันทึกไว้ (${dateStr})`;
+            }
+          } else if (Array.isArray(data.scan.results) && data.scan.results.length > 0) {
+            if (scScanType) scScanType.value = "backtest_leaderboard";
+            updateScannerModeUI("backtest_leaderboard");
+            renderScannerLeaderboard(data.scan.results);
+            if (scannerStatusText) {
+              const dateStr = new Date(data.scan.timestamp).toLocaleString();
+              scannerStatusText.textContent = `ผลสแกน Leaderboard ล่าสุดที่บันทึกไว้ (${dateStr})`;
+            }
           }
+
           if (data.scan.options) {
             const o = data.scan.options;
-            if (scScope && o.scope) scScope.value = o.scope;
+            if (scScope && o.scope) {
+              scScope.value = o.scope;
+              updateScannerMacroGateUI(o.scope);
+            }
             if (scTimeframe && o.timeframe) scTimeframe.value = o.timeframe;
+            if (scStageFilter && o.stageFilter) scStageFilter.value = o.stageFilter;
             if (scLimit && o.limit) scLimit.value = String(o.limit);
             if (scSpread && o.spreadThreshold !== undefined) scSpread.value = String(o.spreadThreshold);
             if (scUpsideFloor && o.enableUpsideFloor !== undefined) scUpsideFloor.value = o.enableUpsideFloor ? "on" : "off";
@@ -2672,6 +2836,141 @@
         }
       }
     } catch {}
+  }
+
+  function renderScannerSetups(items) {
+    if (!scannerTableBody) return;
+    latestSetupItems = items || [];
+    const filter = scStageFilter?.value || "all";
+    const filtered = filter === "all" ? latestSetupItems : latestSetupItems.filter((i) => i.stage === filter);
+
+    if (!filtered || filtered.length === 0) {
+      scannerTableBody.innerHTML = `<tr><td colspan="10" class="td-empty">ไม่พบเหรียญหรือหุ้นที่ตรงกับตัวกรองจังหวะ '${filter}' ในขณะนี้</td></tr>`;
+      return;
+    }
+
+    let html = "";
+    filtered.forEach((item, idx) => {
+      const rank = idx + 1;
+      const rankBadge = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `<span style="opacity: 0.7;">${rank}</span>`;
+
+      const volStr = item.quoteVolume >= 1_000_000
+        ? `$${(item.quoteVolume / 1_000_000).toFixed(1)}M`
+        : `$${(item.quoteVolume / 1_000).toFixed(0)}k`;
+
+      const priceStr = item.lastPrice < 0.1
+        ? `$${item.lastPrice.toFixed(4)}`
+        : item.lastPrice < 10
+        ? `$${item.lastPrice.toFixed(3)}`
+        : `$${item.lastPrice.toFixed(2)}`;
+
+      const triggersHtml = item.reversalTriggers && item.reversalTriggers.length > 0
+        ? item.reversalTriggers.map((t) => `<span style="display: inline-block; margin: 1px 2px; padding: 1px 5px; font-size: 10px; border-radius: 3px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-weight: 600;">${t}</span>`).join("")
+        : `<span style="color: var(--text-muted); font-size: 11px;">-</span>`;
+
+      const tp1Str = item.upsideTp1Pct > 0 ? `+${item.upsideTp1Pct.toFixed(1)}%` : `${item.upsideTp1Pct.toFixed(1)}%`;
+      const tp2Str = item.upsideTp2Pct > 0 ? `+${item.upsideTp2Pct.toFixed(1)}%` : `${item.upsideTp2Pct.toFixed(1)}%`;
+
+      const scoreColor = item.readyScore >= 80 ? "#10b981" : item.readyScore >= 65 ? "#f59e0b" : "#64748b";
+
+      html += `
+        <tr>
+          <td style="text-align: center; font-weight: 700;">${rankBadge}</td>
+          <td><b>${item.symbol}</b></td>
+          <td>
+            <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; background: ${item.stageBadgeColor}22; color: ${item.stageBadgeColor}; border: 1px solid ${item.stageBadgeColor}55;">
+              ${item.stageLabel}
+            </span>
+          </td>
+          <td>
+            <span style="font-weight: 800; font-family: var(--font-mono); color: ${scoreColor}; font-size: 13px;">
+              ${item.readyScore} <span style="font-size: 10.5px; opacity: 0.8;">/100 ⭐</span>
+            </span>
+          </td>
+          <td style="font-family: var(--font-mono); font-weight: 600;">${priceStr}</td>
+          <td style="font-family: var(--font-mono); color: ${item.fanSpreadPct <= -0.15 ? '#ef4444' : '#94a3b8'};">
+            ${item.fanSpreadPct.toFixed(2)}%
+          </td>
+          <td>${triggersHtml}</td>
+          <td style="font-family: var(--font-mono); font-size: 11px;">
+            <span title="เป้าหมาย TP1: EMA 25" style="color: #38bdf8;">TP1: ${tp1Str}</span> | 
+            <span title="เป้าหมาย TP2: EMA 75" style="color: #a78bfa;">TP2: ${tp2Str}</span>
+          </td>
+          <td><span style="font-family: var(--font-mono); color: var(--text-muted);">${volStr}</span></td>
+          <td>
+            <button class="btn-action-view" data-sym="${item.symbol}" title="เปิดดูกราฟแท่งเทียนและโครงสร้างพัดเหรียญนี้ทันที">📊 ดูกราฟ</button>
+            <button class="btn-action-trade" data-sym="${item.symbol}" title="สลับบอทจริงไปเทรดเหรียญนี้">⚡ สลับบอท</button>
+          </td>
+        </tr>
+      `;
+    });
+
+    scannerTableBody.innerHTML = html;
+
+    // Attach row button events
+    scannerTableBody.querySelectorAll(".btn-action-view").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const sym = btn.getAttribute("data-sym");
+        if (sym) {
+          setSymbolValue(sym);
+          const isAlpacaScope = scScope?.value === "alpaca_stocks";
+          const isStock = isAlpacaScope || isStockSymbol(sym);
+
+          if (inpTradeMode) {
+            inpTradeMode.value = "dip_hunter";
+            updateOptionVisibility("dip_hunter", ".bt-controls");
+          }
+          if (scTimeframe && inpTimeframe) inpTimeframe.value = scTimeframe.value;
+
+          // Switch tab to Single-Pair Studio Tab to view the chart!
+          if (typeof window.switchStudioTab === "function") {
+            window.switchStudioTab("single");
+          } else {
+            const tabBtn = document.getElementById("tabBtnSingle");
+            if (tabBtn) tabBtn.click();
+          }
+
+          runBacktest(isStock ? { exchange: "alpaca", quoteAsset: "USD" } : {});
+        }
+      });
+    });
+
+    scannerTableBody.querySelectorAll(".btn-action-trade").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const sym = btn.getAttribute("data-sym");
+        if (!sym) return;
+        const timeframe = scTimeframe ? scTimeframe.value : "5m";
+        if (confirm(`คุณต้องการสลับบอทจริงไปรันเหรียญ/หุ้น ${sym} (${timeframe}) ทันทีหรือไม่?`)) {
+          btn.disabled = true;
+          btn.textContent = "⏳ กำลังสลับ...";
+          try {
+            const payload = {
+              symbol: sym,
+              maFanExecutionTimeframe: timeframe,
+              maFanTradeMode: "dip_hunter",
+              maFanTradeDirection: "long",
+              enableBaseConfirmationFilter: true,
+              lockChannelInPosition: true,
+            };
+            const sRes = await fetch("/api/settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            if (sRes.ok) {
+              alert(`✅ สลับบอทไปเทรด ${sym} สำเร็จเรียบร้อย!`);
+            } else {
+              alert("❌ ไม่สามารถบันทึกการสลับบอทได้");
+            }
+          } catch (e) {
+            alert(`ข้อผิดพลาด: ${e.message}`);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = "⚡ สลับบอท";
+          }
+        }
+      });
+    });
   }
 
   function renderScannerLeaderboard(items) {

@@ -8662,6 +8662,44 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.38`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 286. Real-time MA-Fan Setup Scanner (ค้นหาตัวพร้อมเล่น: พัดกางล่าง + กลับตัว) & Browser Cache Invalidation (v0.3.0.39)
+- **สาเหตุของการพัฒนาและแก้ไข (Motivation & Background)**:
+  - ผู้ใช้แจ้งความต้องการ: *"ยังไม่มี ma-fan ใน market scanner เลย อยากให้ใช้ ma-scan มาแยกเป็นตัวพร้อมเล่นมากกว่าที่จะดูผลงานย้อนหลัง พัดกางออกสุดด้านล่าง และมีแนวโน้มว่ากำลังจะกลับตัว"* พร้อมแนบภาพประกอบ 3 ภาพ:
+    1. ภาพที่ 1: เกณฑ์เลือกเหรียญใน Auto-Rotation Portfolio ยังค้างเป็น "RS vs BTC" และป้ายยังเป็นคำว่าเหรียญเมื่อเลือก Alpaca USD
+    2. ภาพที่ 2: Market Scanner ยังคงเป็น Leaderboard ผลงานย้อนหลัง (1,000 แท่ง) และเป็น Dynamic Grid
+    3. ภาพที่ 3: ในหน้า Single-Pair Backtest มีกลยุทธ์ `🎯 Dip/Peak Hunter (MA-Fan)` อยู่แล้ว แต่ยังขาดระบบสแกนหาทรงคลื่นพร้อมเล่นในภาพรวมตลาด
+  - **สาเหตุของปัญหาในภาพที่ 1 & 2**: ใน `public/backtest.html` ลิงก์ `<script src="backtest.js?v=0.3.0.29">` ยังค้างอยู่ที่เวอร์ชันเก่า ทำให้บราวเซอร์แคชไฟล์ JS เก่า ส่งผลให้ฟังก์ชัน `updateRotationMacroGateUI` และ `updateScannerMacroGateUI` ที่เพิ่งอัปเดตไม่ถูกโหลด
+- **สถาปัตยกรรมและฟีเจอร์ใหม่ (Architecture & Implementation)**:
+  1. **MA-Fan Setup Detection Engine (`scanMaFanSetups` in `src/backtest-service.ts`)**:
+     - สแกนแท่งเทียนปัจจุบัน ~250 แท่ง (เพียงพอต่อการคำนวณ EMA200, RSI14, MACD อย่างแม่นยำและรวดเร็วกว่าการรัน Backtest ย้อนหลัง 1,000 แท่งถึง 8-10 เท่า)
+     - **Bottom Fan Exhaustion Detection (พัดกางออกสุดด้านล่าง)**:
+       - ตรวจสอบโครงสร้างพัดคลี่ออกด้านล่างในช่วง 15 แท่งล่าสุด (`EMA4 < EMA8 < EMA16 < EMA25`) และระยะความกว้างของพัด `minSpreadRecentPct <= -0.15%`
+     - **Reversal Signals Detection (มีแนวโน้มว่ากำลังจะกลับตัว)**:
+       - สัญญาณ Golden Sniper Trigger: `EMA8 Cross EMA16 Up` หรือ `EMA4 Cross EMA8 Up`
+       - สัญญาณ Price Action Reclaim: ราคาปิดล่าสุดดีดกลับขึ้นมายืนเหนือ `EMA8` หรือ `EMA16`
+       - สัญญาณ Momentum Turning: `RSI` พลิกตัวขึ้นจากโซนต่ำ (`RSI Hook`) และ `MACD Histogram` ยกตัวขึ้น (`+Hist`)
+     - **Setup Stages & Scoring (0-100 ⭐)**:
+       - `🔥 พร้อมเข้าเล่น (Bottom Fan Reversal)`: กางล่างสุดแล้วเกิดแท่งกลับตัว / EMA ตัดขึ้น (Ready Score 80-100)
+       - `⏳ รอย่อตัว (Dip Re-test)`: ตัดขึ้นแล้วกำลังย่อทดสอบแนวรับ EMA16/25 (Ready Score 70-84)
+       - `👀 เฝ้าระวังพัดกางล่าง (Bottom Exhaustion)`: พัดกางล่างสุดเต็มที่ กำลังชะลอการลง (Ready Score 50-69)
+       - `🚀 พัดกางบน (Bullish Fan Trend)`: พัดกางบนเทรนด์ขาขึ้นแข็งแกร่ง (Ready Score 60-80)
+     - **Upside Target Rooms**:
+       - คำนวณระยะ Upside ถึงเป้าหมายทำกำไรทันที: `TP1 (EMA25)`, `TP2 (EMA75)`, `TP3 (EMA200)`
+  2. **API Endpoint & Mode Switching (`/api/backtest/scan` in `src/server.ts`)**:
+     - รองรับ `scanType: "mafan_setups"` (ค่าเริ่มต้น) คืนค่า `setupResults`
+     - รองรับ `scanType: "backtest_leaderboard"` คืนค่า `results` ย้อนหลัง
+  3. **Dedicated UI Layout in Market Scanner (`public/backtest.html` & `public/backtest.js`)**:
+     - เพิ่ม Dropdown เลือกรูปแบบสแกน: `⚡ สแกนหาตัวพร้อมเล่น (MA-Fan Setup) ⭐` vs `📊 Leaderboard ผลงานย้อนหลัง`
+     - ตารางเรนเดอร์แบบไดนามิก: แสดงอันดับตาม Ready Score, ป้ายสถานะจังหวะสีสวยงาม, สัญญาณกลับตัว, ระยะ Upside ถึง TP1/2, ปุ่ม `📊 ดูกราฟ` (สลับแท็บไปหน้า Single พร้อมเซ็ตเหรียญและรันกราฟ MA-Fan ทันที) และปุ่ม `⚡ สลับบอท`
+     - กรองจังหวะได้ตามต้องการผ่าน `scStageFilter` (`พร้อมเข้าเล่น`, `รอย่อตัว`, `เฝ้าระวัง`, `พัดกางบน`)
+  4. **Browser Cache Invalidation Fix**:
+     - ขยับเวอร์ชันแคชใน `public/backtest.html` เป็น `backtest.css?v=0.3.0.39` และ `backtest.js?v=0.3.0.39`
+     - แก้ไขให้ `updateRotationMacroGateUI` และ `updateScannerMacroGateUI` ซิงค์ Label หุ้น/เหรียญ (SPY vs BTC, หุ้นเพนนี vs เหรียญมีม, จำนวนช่องถือหุ้น/เหรียญ) ทันทีบนหน้าเว็บ
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.39`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
+
 
 
 
