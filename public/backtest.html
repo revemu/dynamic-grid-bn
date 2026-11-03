@@ -10,13 +10,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="backtest.css?v=1.1" />
+  <link rel="stylesheet" href="backtest.css?v=1.2" />
   <!-- TradingView Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <div class="bt-app">
-    <!-- Top Navigation Toolbar -->
+    <!-- Top Navigation Header -->
     <header class="bt-header">
       <div class="bt-brand">
         <a href="/" class="bt-back-link" title="กลับสู่หน้าเทรดสด">
@@ -28,8 +28,47 @@
         </div>
       </div>
 
+      <!-- Modern Top Tab Navigation -->
+      <nav class="bt-tab-nav" id="btTabNav">
+        <div class="bt-tab-nav-inner">
+          <button class="bt-tab-btn active" data-tab="single" id="tabBtnSingle" title="ทดสอบกลยุทธ์แบบเจาะลึกรายเหรียญ พร้อมดูกราฟจุดซื้อ-ขาย">
+            <span class="tab-icon">🧪</span>
+            <span class="tab-title">Single-Pair Backtest</span>
+            <span class="tab-pill">1 Coin</span>
+          </button>
+          <button class="bt-tab-btn" data-tab="scanner" id="tabBtnScanner" title="สแกนจัดอันดับเหรียญทำกำไรสูงสุดทั่วทั้งตลาด">
+            <span class="tab-icon">⚡</span>
+            <span class="tab-title">Market Scanner</span>
+            <span class="tab-pill">Leaderboard</span>
+          </button>
+          <button class="bt-tab-btn" data-tab="rotation" id="tabBtnRotation" title="จำลองพอร์ตกระจายความเสี่ยงและหมุนเหรียญข้ามเวลาต่อเนื่อง (Multi-Pair Walk-Forward)">
+            <span class="tab-icon">🔄</span>
+            <span class="tab-title">Auto-Rotation Portfolio</span>
+            <span class="tab-pill">Top 50 Pairs</span>
+          </button>
+        </div>
+      </nav>
+    </header>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 1: SINGLE-PAIR BACKTEST STUDIO                                  -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="bt-tab-pane active" id="pane-single">
       <!-- Controls Form -->
       <div class="bt-controls">
+        <!-- 1. Engine Selector at the very front -->
+        <div class="bt-input-group bt-engine-group" style="min-width: 200px; border-color: #6366f1;">
+          <label style="color: #a5b4fc; font-weight: 700;">⚙️ โหมดกลยุทธ์ (Engine)</label>
+          <select id="btTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์" style="font-weight: 700; color: #fff; background: rgba(99, 102, 241, 0.2); border-color: rgba(99, 102, 241, 0.5);">
+            <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
+            <option value="dual">⚡ Dual MA-Fan (Hunter + Trend)</option>
+            <option value="dip_hunter">🎯 Dip/Peak Hunter (MA-Fan)</option>
+            <option value="trend_rider">🏄 Trend Rider (เกาะเทรนด์)</option>
+            <option value="dynamic_grid">🕸️ Dynamic Grid (Dow 4-Levels)</option>
+          </select>
+        </div>
+
+        <!-- 2. Universal Inputs -->
         <div class="bt-input-group symbol-filter-group" style="min-width: 185px;">
           <label>คู่เหรียญ (พิมพ์ค้นหาได้)</label>
           <div class="bt-symbol-input-wrap">
@@ -62,6 +101,21 @@
           </select>
         </div>
 
+        <div class="bt-input-group">
+          <label>ค่าฟี (Fee)</label>
+          <select id="btFeeTier" title="คำนวณกำไรสุทธิหลังหักค่าธรรมเนียมจริงและ Slippage">
+            <option value="bnb" selected>⚡ BNB Fee (0.075% + 0.01% Slip)</option>
+            <option value="standard">🏛️ Standard (0.10% + 0.01% Slip)</option>
+            <option value="zero">🎁 Zero Fee (0.00% FDUSD)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group">
+          <label>เงินทุน ($)</label>
+          <input type="number" id="btBudget" value="200" min="10" step="10" />
+        </div>
+
+        <!-- 3. MA-Fan / Sniper specific options (Hidden when Dynamic Grid is active) -->
         <div class="bt-input-group" data-mode="sniper">
           <label>Min Fan Spread</label>
           <select id="btSpread">
@@ -82,21 +136,22 @@
           </select>
         </div>
 
-        <div class="bt-input-group">
-          <label>ค่าฟี (Fee)</label>
-          <select id="btFeeTier" title="คำนวณกำไรสุทธิหลังหักค่าธรรมเนียมจริงและ Slippage">
-            <option value="bnb" selected>⚡ BNB Fee (0.075% + 0.01% Slip)</option>
-            <option value="standard">🏛️ Standard (0.10% + 0.01% Slip)</option>
-            <option value="zero">🎁 Zero Fee (0.00% FDUSD)</option>
-          </select>
-        </div>
-
         <div class="bt-input-group" data-mode="sniper">
           <label>Macro Gate (1H)</label>
           <select id="btMacroGate" title="ตัวกรองแนวโน้มใหญ่ ป้องกันตลาดขาลงลึก (จากผลทดสอบ 120 วัน)">
             <option value="noDeepBear" selected>🛡️ No Deep Bear (แนะนำ - คัดไม้แพ้ 55%)</option>
             <option value="off">🌐 Off (ปิด - เทรดทุกสภาวะ)</option>
             <option value="bullOnly">🐂 Bull Only (กระทิงเท่านั้น)</option>
+          </select>
+        </div>
+
+        <div class="bt-input-group" data-mode="sniper">
+          <label>Downtrend Defense</label>
+          <select id="btDowntrendSitOut" title="ถือเงินสด 100% เมื่อตลาดภาพใหญ่เป็นขาลง (ป้องกันพอร์ตติดลบช่วงตลาดทุบ)">
+            <option value="dual" selected>🛡️ Dual Defense (BTC 1D + 4H)</option>
+            <option value="btc1d">📅 BTC 1D Trend (EMA 25)</option>
+            <option value="btc4h">⏱️ BTC 4H Trend (EMA 75)</option>
+            <option value="off">❌ Off (เทรดทุกสภาวะ)</option>
           </select>
         </div>
 
@@ -133,6 +188,16 @@
           </select>
         </div>
 
+        <div class="bt-input-group" data-mode="sniper">
+          <label>ทิศทางเทรด (Direction)</label>
+          <select id="btTradeDirection" title="เลือกทิศทางการเทรด Spot หรือ Perp Futures">
+            <option value="long" selected>🟢 Long Only (Spot/Perp)</option>
+            <option value="short">🔴 Short Only (Perp Futures)</option>
+            <option value="both">🔄 Two-Way Long + Short (Perp)</option>
+          </select>
+        </div>
+
+        <!-- 4. Dynamic Grid specific options (Hidden when Sniper/MA-Fan is active) -->
         <div class="bt-input-group" data-mode="grid">
           <label>ตัวกรองฐาน (HL Filter)</label>
           <select id="btBaseConfirmation" title="ตัวกรองรอสร้างฐาน HL: ปิด = Pure Grid ช้อนซื้อทันทีแบบ Backtest | เปิด = บอทจริง พักการซื้อเมื่อหลุด Low เดิม">
@@ -169,31 +234,7 @@
           </select>
         </div>
 
-        <div class="bt-input-group">
-          <label>โหมดกลยุทธ์ (Engine)</label>
-          <select id="btTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
-            <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
-            <option value="dual">⚡ Dual MA-Fan (Hunter + Trend)</option>
-            <option value="dip_hunter">🎯 Dip/Peak Hunter (MA-Fan)</option>
-            <option value="trend_rider">🏄 Trend Rider (เกาะเทรนด์)</option>
-            <option value="dynamic_grid">🕸️ Dynamic Grid (Dow 4-Levels)</option>
-          </select>
-        </div>
-
-        <div class="bt-input-group" data-mode="sniper">
-          <label>ทิศทางเทรด (Direction)</label>
-          <select id="btTradeDirection" title="เลือกทิศทางการเทรด Spot หรือ Perp Futures">
-            <option value="long" selected>🟢 Long Only (Spot/Perp)</option>
-            <option value="short">🔴 Short Only (Perp Futures)</option>
-            <option value="both">🔄 Two-Way Long + Short (Perp)</option>
-          </select>
-        </div>
-
-        <div class="bt-input-group">
-          <label>เงินทุน ($)</label>
-          <input type="number" id="btBudget" value="200" min="10" step="10" />
-        </div>
-
+        <!-- 5. Action Buttons -->
         <button id="btnRunBacktest" class="btn-run">
           <span class="btn-run-icon">🚀</span> รัน Backtest
         </button>
@@ -210,137 +251,540 @@
           <span class="btn-run-icon">📤</span> ส่งไปใช้กับบอทจริง
         </button>
 
-        <button id="btnOpenRotationBt" class="btn-scanner" style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); border-color: #8b5cf6;" title="จำลองพอร์ตสลับเหรียญอัตโนมัติข้ามเวลาต่อเนื่อง (Multi-Pair Walk-Forward)">
-          <span class="btn-run-icon">🔄</span> Auto-Rotate Backtest
-        </button>
-
-        <button id="btnOpenScanner" class="btn-scanner" title="สแกนคู่เหรียญทั้งหมดเพื่อจัดอันดับกำไร">
-          <span class="btn-run-icon">⚡</span> Market Scanner
-        </button>
-
         <button id="btnOpenHistory" class="btn-history" title="ดูประวัติการทดสอบที่บันทึกไว้">
           📂 ประวัติที่บันทึกไว้ (<span id="historyCount">0</span>)
         </button>
       </div>
-    </header>
 
-    <!-- KPI Summary Cards -->
-    <section class="bt-kpi-bar" id="kpiBar">
-      <div class="kpi-card" id="kpiNetPnlCard">
-        <div class="kpi-label">กำไรสุทธิ (NET PNL)</div>
-        <div class="kpi-val" id="kpiNetPnl">+0.00%</div>
-        <div class="kpi-sub" id="kpiNetPnlQuote">$0.00</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">WIN RATE</div>
-        <div class="kpi-val" id="kpiWinRate">0.0%</div>
-        <div class="kpi-sub" id="kpiWinLoss">0 ชนะ / 0 แพ้</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">จำนวนไม้ทั้งหมด</div>
-        <div class="kpi-val" id="kpiTotalTrades">0 ไม้</div>
-        <div class="kpi-sub" id="kpiAvgBars">เฉลี่ย 0 แท่ง/ไม้</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">PROFIT FACTOR</div>
-        <div class="kpi-val" id="kpiProfitFactor">0.00</div>
-        <div class="kpi-sub" id="kpiFactorSub">Gross P/L Ratio</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">MAX DRAWDOWN</div>
-        <div class="kpi-val text-loss" id="kpiMaxDrawdown">0.00%</div>
-        <div class="kpi-sub">ความเสี่ยงย่อลึกสุด</div>
-      </div>
-      <div class="kpi-card">
-        <div class="kpi-label">BEST / WORST TRADE</div>
-        <div class="kpi-val" id="kpiBestTrade">+0.00%</div>
-        <div class="kpi-sub" id="kpiWorstTrade">-0.00%</div>
-      </div>
-    </section>
-
-    <!-- Chart Container -->
-    <main class="bt-chart-section">
-      <div class="bt-chart-overlay-bar" id="chartOverlayBar">
-        <div class="overlay-left">
-          <span class="overlay-status" id="overlayStatus">พร้อมรันการทดสอบ</span>
-          <span class="overlay-info" id="overlayInfo">เลือกพารามิเตอร์แล้วกด '🚀 รัน Backtest'</span>
+      <!-- KPI Summary Cards -->
+      <section class="bt-kpi-bar" id="kpiBar">
+        <div class="kpi-card" id="kpiNetPnlCard">
+          <div class="kpi-label">กำไรสุทธิ (NET PNL)</div>
+          <div class="kpi-val" id="kpiNetPnl">+0.00%</div>
+          <div class="kpi-sub" id="kpiNetPnlQuote">$0.00</div>
         </div>
-        <div class="overlay-right">
-          <span class="legend-badge leg-buy">🟢 BUY (Sniper)</span>
-          <span class="legend-badge leg-tp1">🔵 TP1 (EMA 25)</span>
-          <span class="legend-badge leg-tp2">🟣 TP2 (EMA 75/200)</span>
-          <span class="legend-badge leg-ratchet">🟠 RATCHET SL (ยกฐาน)</span>
-          <span class="legend-badge leg-sl">🔴 SL (ก้นเหวเดิม)</span>
+        <div class="kpi-card">
+          <div class="kpi-label">WIN RATE</div>
+          <div class="kpi-val" id="kpiWinRate">0.0%</div>
+          <div class="kpi-sub" id="kpiWinLoss">0 ชนะ / 0 แพ้</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">จำนวนไม้ทั้งหมด</div>
+          <div class="kpi-val" id="kpiTotalTrades">0 ไม้</div>
+          <div class="kpi-sub" id="kpiAvgBars">เฉลี่ย 0 แท่ง/ไม้</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">PROFIT FACTOR</div>
+          <div class="kpi-val" id="kpiProfitFactor">0.00</div>
+          <div class="kpi-sub" id="kpiFactorSub">Gross P/L Ratio</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">MAX DRAWDOWN</div>
+          <div class="kpi-val text-loss" id="kpiMaxDrawdown">0.00%</div>
+          <div class="kpi-sub">ความเสี่ยงย่อลึกสุด</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">BEST / WORST TRADE</div>
+          <div class="kpi-val" id="kpiBestTrade">+0.00%</div>
+          <div class="kpi-sub" id="kpiWorstTrade">-0.00%</div>
+        </div>
+      </section>
+
+      <!-- Chart Container -->
+      <main class="bt-chart-section">
+        <div class="bt-chart-overlay-bar" id="chartOverlayBar">
+          <div class="overlay-left">
+            <span class="overlay-status" id="overlayStatus">พร้อมรันการทดสอบ</span>
+            <span class="overlay-info" id="overlayInfo">เลือกพารามิเตอร์แล้วกด '🚀 รัน Backtest'</span>
+          </div>
+          <div class="overlay-right">
+            <span class="legend-badge leg-buy">🟢 BUY (Sniper)</span>
+            <span class="legend-badge leg-tp1">🔵 TP1 (EMA 25)</span>
+            <span class="legend-badge leg-tp2">🟣 TP2 (EMA 75/200)</span>
+            <span class="legend-badge leg-ratchet">🟠 RATCHET SL (ยกฐาน)</span>
+            <span class="legend-badge leg-sl">🔴 SL (ก้นเหวเดิม)</span>
+          </div>
+        </div>
+
+        <!-- In-Chart Legend (OHLC & EMAs) -->
+        <div class="bt-chart-legend" id="chartLegend">
+          <div class="leg-row-title">
+            <span id="legSymTf" class="leg-sym">BNBFDUSD 5M</span>
+            <span id="legOhlc" class="leg-ohlc">O: -- H: -- L: -- C: --</span>
+          </div>
+          <div class="leg-row-emas">
+            <span class="ema-item" style="color: #10b981;">EMA 4: <b id="legValEma4">--</b></span>
+            <span class="ema-item" style="color: #eab308;">EMA 8: <b id="legValEma8">--</b></span>
+            <span class="ema-item" style="color: #f97316;">EMA 16: <b id="legValEma16">--</b></span>
+            <span class="ema-item" style="color: #06b6d4;">EMA 25: <b id="legValEma25">--</b></span>
+            <span class="ema-item" style="color: #a855f7;">EMA 75: <b id="legValEma75">--</b></span>
+            <span class="ema-item" style="color: #ec4899;">EMA 200: <b id="legValEma200">--</b></span>
+            <span id="btLegFanSpreadChip" class="ema-item" style="margin-left: 6px; padding: 1px 6px; border-radius: 3px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-weight: 700;">
+              🪭 Spread: <b id="btLegFanSpreadVal">--%</b>
+            </span>
+          </div>
+        </div>
+
+        <div id="btChartContainer" class="bt-chart-box">
+          <div class="chart-order-badges-layer" id="btChartOrderBadgesLayer"></div>
+          <div class="chart-order-tooltip" id="btChartOrderTooltip"></div>
+          <div class="chart-pinned-candle-marker" id="btChartPinnedCandleMarker"></div>
+          <div class="candle-inspector-card" id="btCandleInspectorCard"></div>
+        </div>
+      </main>
+
+      <!-- Interactive Trade Table Panel -->
+      <section class="bt-trades-section">
+        <div class="trades-header">
+          <div class="trades-title-wrap">
+            <h2 class="trades-title">📋 รายการไม้เทรด (Trade Rounds)</h2>
+            <span class="trades-hint">💡 คลิกที่แถวไม้เทรดเพื่อเลื่อนกราฟ (Scroll) และซูมไปยังจุดซื้อ-ขายนั้นทันที</span>
+          </div>
+          <div class="trades-filter">
+            <button class="filter-btn active" data-filter="ALL">ทั้งหมด (<span id="cntAll">0</span>)</button>
+            <button class="filter-btn" data-filter="WIN">ไม้ชนะ (<span id="cntWin">0</span>)</button>
+            <button class="filter-btn" data-filter="LOSS">ไม้แพ้ (<span id="cntLoss">0</span>)</button>
+          </div>
+        </div>
+
+        <div class="trades-table-wrap">
+          <table class="bt-table" id="tradesTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>จุดเข้าซื้อ (Entry)</th>
+                <th>Spread ตอนเข้า</th>
+                <th>จุดออก (Exit)</th>
+                <th>ประเภทการออก</th>
+                <th>ระยะถือครอง</th>
+                <th>กำไร/ขาดทุน (%)</th>
+                <th>กำไร/ขาดทุน ($)</th>
+                <th>ค่าฟี (Cost)</th>
+                <th>การกระทำ</th>
+              </tr>
+            </thead>
+            <tbody id="tradesTableBody">
+              <tr>
+                <td colspan="10" class="td-empty">ยังไม่มีข้อมูลการทดสอบ กดปุ่ม '🚀 รัน Backtest' ด้านบนเพื่อเริ่มจำลอง</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 2: MARKET SCANNER STUDIO                                        -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="bt-tab-pane" id="pane-scanner" style="display: none;">
+      <div class="studio-tab-content">
+        <div class="studio-tab-header">
+          <div class="modal-title-group">
+            <h3 class="bt-modal-title">⚡ MA-FOLD-FAN Market Scanner (จัดอันดับเหรียญทำกำไรสูงสุด)</h3>
+            <span class="modal-subtitle">สแกนเหรียญที่มีสภาพคล่องสูงสุดบน Binance และทดสอบกลยุทธ์ตามเงื่อนไขที่กำหนดเพื่อค้นหาเหรียญที่มีแต้มต่อสูงสุด</span>
+          </div>
+        </div>
+
+        <!-- Scanner Configuration Bar -->
+        <div class="scanner-controls-bar">
+          <!-- 1. Scanner Engine Selector at the very front -->
+          <div class="scanner-ctrl-group" style="border-left: 2px solid #6366f1; padding-left: 6px;">
+            <label style="color: #a5b4fc; font-weight: 700;">⚙️ Engine</label>
+            <select id="scTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์" style="font-weight: 700; color: #fff;">
+              <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
+              <option value="dual">⚡ Dual MA-Fan</option>
+              <option value="dip_hunter">🎯 Dip/Peak Hunter</option>
+              <option value="trend_rider">🏄 Trend Rider</option>
+              <option value="dynamic_grid">🕸️ Dynamic Grid</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group">
+            <label>ขอบเขตเหรียญ (Scope)</label>
+            <select id="scScope">
+              <option value="top20" selected>🔥 Top 20 USDT (สภาพคล่องสูงสุด ~5-10s)</option>
+              <option value="top50">🚀 Top 50 USDT (เหรียญยอดนิยม ~15-25s)</option>
+              <option value="top100">🌐 Top 100 USDT (ครอบคลุมทั้งตลาด ~30-50s)</option>
+              <option value="fdusd">🟡 FDUSD Pairs (0% Maker Fee)</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group">
+            <label>Timeframe</label>
+            <select id="scTimeframe">
+              <option value="1m">1m (Scalp)</option>
+              <option value="5m" selected>5m (Execution)</option>
+              <option value="15m">15m (Supervisor)</option>
+              <option value="1h">1h (Macro)</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group">
+            <label>ระยะเวลาย้อนหลัง</label>
+            <select id="scLimit">
+              <option value="1000" selected>1,000 แท่ง (~3.5 วัน)</option>
+              <option value="2016">📅 7 วัน (~2,000 แท่ง)</option>
+              <option value="4320">📅 15 วัน (~4,320 แท่ง)</option>
+              <option value="8640">📅 30 วัน (~8,640 แท่ง)</option>
+              <option value="17280">📅 60 วัน (~17,280 แท่ง)</option>
+              <option value="25920">📅 90 วัน (~25,920 แท่ง)</option>
+              <option value="34560">📅 120 วัน (~34,560 แท่ง)</option>
+              <option value="500">500 แท่ง (~1.7 วัน)</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group">
+            <label>Fee Tier</label>
+            <select id="scFeeTier" title="คำนวณกำไรสุทธิหลังหักค่าธรรมเนียมและ Slippage">
+              <option value="bnb" selected>⚡ BNB (0.075%)</option>
+              <option value="standard">🏛️ Standard (0.10%)</option>
+              <option value="zero">🎁 Zero Fee (0%)</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group">
+            <label>เงินทุน ($)</label>
+            <input type="number" id="scBudget" value="200" min="10" step="10" style="width: 75px; padding: 4px 6px; background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #f8fafc; font-size: 11px; font-weight: 600;" />
+          </div>
+
+          <!-- Sniper Filters (Dynamic display) -->
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>Min Spread</label>
+            <select id="scSpread">
+              <option value="0.50" selected>⚡ ≥ 0.50% (แนะนำ)</option>
+              <option value="auto">Auto Calibrate</option>
+              <option value="0.25">≥ 0.25%</option>
+              <option value="0.35">≥ 0.35%</option>
+              <option value="0.45">≥ 0.45%</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>Upside Floor</label>
+            <select id="scUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.50% และ Spread ≥ 0.35%">
+              <option value="on" selected>🎯 On (≥ 0.50%)</option>
+              <option value="off">❌ Off</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>Fast Cut</label>
+            <select id="scFastCut" title="ตัดขาดทุนไวเมื่อหลุด EMA4 + MACD ถดถอยที่ -0.8% หรือแท่งแช่นิ่ง 6 แท่ง">
+              <option value="on" selected>✂️ On (-0.8% & 6b)</option>
+              <option value="off">❌ Off</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>Circuit Breaker</label>
+            <select id="scCircuitBreaker" title="หยุดพักบอทเมื่อชน SL 2 ไม้ติด">
+              <option value="on" selected>⏸️ 2 Losses พัก 45m</option>
+              <option value="off">❌ Off</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>SL Mode</label>
+            <select id="scSlMode" title="รูปแบบการตั้ง Stop Loss">
+              <option value="ratchet" selected>🛡️ Ratchet SL</option>
+              <option value="fixed">⚓ Fixed SL</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>Macro Gate</label>
+            <select id="scMacroGate" title="ตัวกรองแนวโน้มใหญ่ (1H) จากผลทดสอบ 120 วัน">
+              <option value="noDeepBear" selected>🛡️ No Deep Bear (แนะนำ)</option>
+              <option value="off">🌐 Off (ทุกสภาวะ)</option>
+              <option value="bullOnly">🐂 Bull Only</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>Max SL Cap</label>
+            <select id="scMaxSl" title="เพดานตัดขาดทุนสูงสุดต่อไม้เพื่อคุม Asymmetric R:R">
+              <option value="1.8" selected>🎯 1.80% Cap</option>
+              <option value="2.5">2.50%</option>
+              <option value="3.0">3.00%</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="sniper">
+            <label>Direction</label>
+            <select id="scTradeDirection" title="เลือกทิศทางการเทรด Spot หรือ Perp">
+              <option value="long" selected>🟢 Long</option>
+              <option value="short">🔴 Short</option>
+              <option value="both">🔄 Two-Way</option>
+            </select>
+          </div>
+
+          <!-- Grid Filters (Dynamic display) -->
+          <div class="scanner-ctrl-group" data-mode="grid">
+            <label>HL Filter</label>
+            <select id="scBaseConfirmation" title="ตัวกรองรอสร้างฐาน HL: ปิด = Pure Grid | เปิด = รอสร้างฐาน HL">
+              <option value="off" selected>⚡ Off (Pure Grid)</option>
+              <option value="on">🛡️ On (รอฐาน HL)</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="grid">
+            <label>Channel</label>
+            <select id="scLockChannel" title="พฤติกรรมกรอบราคา: dynamic = ขยับกรอบ | locked = ล็อคกรอบ">
+              <option value="dynamic" selected>🔄 Dynamic</option>
+              <option value="locked">🔒 Locked</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="grid">
+            <label>Capital Zones</label>
+            <select id="scCapitalZones" title="แบ่งเงินทุนออกเป็นกี่โซนเพื่อถัวเฉลี่ย">
+              <option value="1">1 โซน (100%)</option>
+              <option value="2" selected>2 โซน (50% ต่อโซน)</option>
+              <option value="3">3 โซน (33.3%)</option>
+              <option value="4">4 โซน (25%)</option>
+              <option value="5">5 โซน (20%)</option>
+            </select>
+          </div>
+
+          <div class="scanner-ctrl-group" data-mode="grid">
+            <label>Cut Loss</label>
+            <select id="scGridCutLossMode" title="รูปแบบการ Stop-Loss ของกริด">
+              <option value="none" selected>💎 None (ไม่คัท ถัวรอเด้ง)</option>
+              <option value="final_zone_floor">🛡️ Final Zone</option>
+              <option value="entry_floor">🚪 Entry Floor</option>
+            </select>
+          </div>
+
+          <button id="btnScannerResetBestPreset" class="btn-sync-config btn-scanner-sync" title="รีเซ็ตการตั้งค่าสแกนเนอร์เป็นค่าแนะนำที่ดีที่สุด (Optimal Preset)">
+            <span class="btn-run-icon">⚡</span> ค่าแนะนำ
+          </button>
+          <button id="btnScannerSyncLiveConfig" class="btn-sync-config btn-scanner-sync" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่การตั้งค่า Market Scanner ทุกประการ">
+            <span class="btn-run-icon">🔄</span> ใช้ Config บอท
+          </button>
+          <button id="btnStartScan" class="btn-run btn-start-scan">
+            <span>🚀 เริ่มสแกนตลาด</span>
+          </button>
+        </div>
+
+        <!-- Scan Progress Bar -->
+        <div id="scannerProgressWrap" class="scanner-progress-wrap" style="display: none;">
+          <div class="scanner-progress-info">
+            <span id="scannerStatusText">กำลังดึงข้อมูลตลาด Binance และคำนวณผลตอบแทน...</span>
+            <span id="scannerCountText">กรุณารอสักครู่ (ใช้เวลา 2-5 วินาที)</span>
+          </div>
+          <div class="scanner-progress-bar"><div class="scanner-progress-fill" id="scannerProgressFill" style="width: 100%;"></div></div>
+        </div>
+
+        <!-- Leaderboard Table -->
+        <div class="scanner-table-wrap">
+          <table class="bt-table scanner-table" id="scannerTable">
+            <thead>
+              <tr>
+                <th style="width: 50px;">อันดับ</th>
+                <th>คู่เหรียญ</th>
+                <th>24h Volume</th>
+                <th>กำไรสุทธิ (%)</th>
+                <th>Win Rate</th>
+                <th>จำนวนไม้</th>
+                <th>Profit Factor</th>
+                <th>Max DD</th>
+                <th>Best Trade</th>
+                <th>การกระทำ</th>
+              </tr>
+            </thead>
+            <tbody id="scannerTableBody">
+              <tr>
+                <td colspan="10" class="td-empty">กดปุ่ม '🚀 เริ่มสแกนตลาด' ด้านบนเพื่อค้นหาเหรียญที่ทำกำไรสูงสุดในสภาวะตลาดปัจจุบัน</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
+    </div>
 
-      <!-- In-Chart Legend (OHLC & EMAs) -->
-      <div class="bt-chart-legend" id="chartLegend">
-        <div class="leg-row-title">
-          <span id="legSymTf" class="leg-sym">BNBFDUSD 5M</span>
-          <span id="legOhlc" class="leg-ohlc">O: -- H: -- L: -- C: --</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 3: AUTO-ROTATION PORTFOLIO BACKTEST STUDIO                      -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="bt-tab-pane" id="pane-rotation" style="display: none;">
+      <div class="studio-tab-content">
+        <div class="studio-tab-header">
+          <div class="modal-title-group">
+            <h3 class="bt-modal-title">🔄 Autonomous Multi-Pair Rotation Backtest (Top 50 Universe)</h3>
+            <span class="modal-subtitle">จำลองการเดินเวลาข้ามเวลาต่อเนื่อง (Walk-Forward) สลับคู่เหรียญตาม 2-Stage Market Funnel พร้อมระบบ Downtrend Defense ถือเงินสดเมื่อตลาดร่วง</span>
+          </div>
         </div>
-        <div class="leg-row-emas">
-          <span class="ema-item" style="color: #10b981;">EMA 4: <b id="legValEma4">--</b></span>
-          <span class="ema-item" style="color: #eab308;">EMA 8: <b id="legValEma8">--</b></span>
-          <span class="ema-item" style="color: #f97316;">EMA 16: <b id="legValEma16">--</b></span>
-          <span class="ema-item" style="color: #06b6d4;">EMA 25: <b id="legValEma25">--</b></span>
-          <span class="ema-item" style="color: #a855f7;">EMA 75: <b id="legValEma75">--</b></span>
-          <span class="ema-item" style="color: #ec4899;">EMA 200: <b id="legValEma200">--</b></span>
-          <span id="btLegFanSpreadChip" class="ema-item" style="margin-left: 6px; padding: 1px 6px; border-radius: 3px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-weight: 700;">
-            🪭 Spread: <b id="btLegFanSpreadVal">--%</b>
-          </span>
+
+        <!-- Controls Bar -->
+        <div class="scanner-controls-bar" style="flex-wrap: wrap; gap: 10px;">
+          <div class="scanner-ctrl-group">
+            <label>สกุลเงินหลัก (Quote Asset)</label>
+            <select id="rotBtQuoteAsset" style="font-weight: bold; color: #f59e0b;">
+              <option value="FDUSD" selected>🟡 FDUSD (0% Maker Fee - แนะนำ)</option>
+              <option value="USDT">🟢 USDT (Standard CEX Fee)</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>ขอบเขต Universe</label>
+            <select id="rotBtUniverseSize">
+              <option value="50" selected>🚀 Top 50 Pairs (ครอบคลุมทั้งกระดาน)</option>
+              <option value="30">🔥 Top 30 Pairs</option>
+              <option value="20">⚡ Top 20 Pairs</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>ระยะเวลาย้อนหลัง (Limit)</label>
+            <select id="rotBtLimit">
+              <option value="2000">2,000 แท่ง 5m (~7 วัน)</option>
+              <option value="4000" selected>4,000 แท่ง 5m (~14 วัน - แนะนำ)</option>
+              <option value="8640">8,640 แท่ง 5m (~30 วัน)</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>เงินทุนเริ่มต้น ($)</label>
+            <input type="number" id="rotBtInitialCapital" value="200" min="10" step="10" style="width: 80px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>Cooldown สลับคู่ (นาที)</label>
+            <input type="number" id="rotBtCooldownMins" value="180" min="30" step="30" style="width: 75px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>Score Margin (%)</label>
+            <input type="number" id="rotBtScoreMargin" value="15" min="5" step="5" style="width: 70px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>Capital Zones</label>
+            <select id="rotBtZones">
+              <option value="1">1 โซน (100% Cashflow)</option>
+              <option value="2" selected>2 โซน (50% ต่อโซน)</option>
+              <option value="3">3 โซน (33% ต่อโซน)</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>ตัวกรองเข้าซื้อ (Entry Guard)</label>
+            <select id="rotBtDipHunterGuard">
+              <option value="on" selected>🦅 Dip Hunter + HL (แนะนำ)</option>
+              <option value="off">⚡ Pure Grid</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>เมื่อเหรียญเสียทรง (Signal Exit)</label>
+            <select id="rotBtSignalExit">
+              <option value="calibrated" selected>🛡️ ตัดขาดทุนเมื่อขาดทุนเกิน 4% (Calibrated Stop)</option>
+              <option value="off">⏳ ถือรอจบรอบ Flat (ไม่ Stop Loss)</option>
+              <option value="strict_floor">⚠️ ตัดจบเมื่อหลุด Floor 1.8%</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group">
+            <label>ตัวกรองตลาด BTC (Downtrend Defense)</label>
+            <select id="rotBtMacroGate">
+              <option value="on" selected>🛡️ ถือเงินสดเมื่อ BTC ขาลง (Dual 1D+4H แนะนำ)</option>
+              <option value="off">⚡ ปิดตัวกรอง (เทรดตามทรงเหรียญเดี่ยว)</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group" style="align-self: flex-end;">
+            <button id="btnStartRotationBt" class="btn-run" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 6px 14px;">
+              <span class="btn-run-icon">🚀</span> เริ่มรันจำลองพอร์ต
+            </button>
+          </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div id="rotationBtProgressWrap" class="scanner-progress-wrap" style="display: none; margin: 15px 0;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+            <span id="rotationBtStatusText" style="font-size: 13px; color: #38bdf8;">กำลังเตรียมข้อมูลตลาด...</span>
+            <span id="rotationBtCountText" style="font-size: 13px; color: #94a3b8;">0%</span>
+          </div>
+          <div class="scanner-progress-bar"><div class="scanner-progress-fill" id="rotationBtProgressFill" style="width: 0%;"></div></div>
+        </div>
+
+        <!-- KPI Summary Cards -->
+        <div id="rotationBtKpiGrid" style="display: none; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 15px 0;">
+          <div class="kpi-card" style="padding: 10px;">
+            <div class="kpi-label">กำไรสุทธิพอร์ต (PORTFOLIO PNL)</div>
+            <div class="kpi-val" id="rotKpiNetPnl" style="font-size: 18px;">+0.00%</div>
+            <div class="kpi-sub" id="rotKpiNetQuote" style="font-size: 11px;">$0.00</div>
+          </div>
+          <div class="kpi-card" style="padding: 10px;">
+            <div class="kpi-label">เงินทุนเริ่มต้น ➔ ท้ายสุด</div>
+            <div class="kpi-val" id="rotKpiCapital" style="font-size: 18px; color: #38bdf8;">$200 ➔ $0</div>
+            <div class="kpi-sub" id="rotKpiCompounding" style="font-size: 11px;">Continuous Compounding</div>
+          </div>
+          <div class="kpi-card" style="padding: 10px;">
+            <div class="kpi-label">จำนวนการสลับ (ROTATIONS)</div>
+            <div class="kpi-val" id="rotKpiRotations" style="font-size: 18px; color: #c084fc;">0 ครั้ง</div>
+            <div class="kpi-sub" id="rotKpiLegWinRate" style="font-size: 11px;">Leg Win Rate: 0%</div>
+          </div>
+          <div class="kpi-card" style="padding: 10px;">
+            <div class="kpi-label">จำนวนไม้ทั้งหมด (TRADES)</div>
+            <div class="kpi-val" id="rotKpiTrades" style="font-size: 18px; color: #10b981;">0 ไม้</div>
+            <div class="kpi-sub" id="rotKpiTradeWinRate" style="font-size: 11px;">Win Rate: 0%</div>
+          </div>
+          <div class="kpi-card" style="padding: 10px;">
+            <div class="kpi-label">MAX PORTFOLIO DRAWDOWN</div>
+            <div class="kpi-val text-loss" id="rotKpiDrawdown" style="font-size: 18px;">0.00%</div>
+            <div class="kpi-sub" id="rotKpiProfitFactor" style="font-size: 11px;">Profit Factor: 0.00</div>
+          </div>
+          <div class="kpi-card" style="padding: 10px;">
+            <div class="kpi-label">ALPHA VS BENCHMARK</div>
+            <div class="kpi-val" id="rotKpiAlpha" style="font-size: 18px; color: #fbbf24;">+0.00%</div>
+            <div class="kpi-sub" id="rotKpiBenchmarkSub" style="font-size: 11px;">เทียบถือเหรียญเดียว</div>
+          </div>
+        </div>
+
+        <!-- Section 1: Rotation Journey Timeline -->
+        <div id="rotationBtResultsSection" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin: 15px 0 8px 0;">
+            <h4 style="margin: 0; font-size: 14px; color: #e2e8f0;">📋 ไทม์ไลน์การสลับคู่เหรียญ (Rotation Journey Log)</h4>
+            <span style="font-size: 11px; color: #94a3b8;">💡 กดปุ่ม '📈 ดูกราฟ' เพื่อเลื่อนและซูมดูกราฟของช่วงเวลานั้น</span>
+          </div>
+          <div class="scanner-table-wrap" style="max-height: 280px; overflow-y: auto;">
+            <table class="bt-table" id="rotationLegsTable">
+              <thead>
+                <tr>
+                  <th>รอบ</th>
+                  <th>ช่วงเวลา (Period)</th>
+                  <th>คู่เหรียญ (Pair)</th>
+                  <th>เหตุผล (Trigger)</th>
+                  <th>คะแนน (Score)</th>
+                  <th>ทุนเริ่มต้น ➔ จบรอบ</th>
+                  <th>กำไรในรอบ (%)</th>
+                  <th>กำไร ($)</th>
+                  <th>ไม้ชนะ/ทั้งหมด</th>
+                  <th>การกระทำ</th>
+                </tr>
+              </thead>
+              <tbody id="rotationLegsTableBody"></tbody>
+            </table>
+          </div>
+
+          <!-- Section 2: Per-Pair Contribution Breakdown -->
+          <div style="margin: 15px 0 8px 0;">
+            <h4 style="margin: 0; font-size: 14px; color: #e2e8f0;">🏆 อันดับเหรียญสร้างกำไรสูงสุด (Per-Pair Profit Contribution)</h4>
+          </div>
+          <div class="scanner-table-wrap" style="max-height: 200px; overflow-y: auto;">
+            <table class="bt-table" id="rotationPairContribTable">
+              <thead>
+                <tr>
+                  <th>อันดับ</th>
+                  <th>คู่เหรียญ</th>
+                  <th>จำนวนรอบที่ถือ</th>
+                  <th>ระยะเวลาถือครองรวม</th>
+                  <th>จำนวนไม้เทรด</th>
+                  <th>Win Rate (%)</th>
+                  <th>กำไรรวม ($)</th>
+                  <th>ผลตอบแทนสะสม (%)</th>
+                </tr>
+              </thead>
+              <tbody id="rotationPairContribBody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
+    </div>
 
-      <div id="btChartContainer" class="bt-chart-box">
-        <div class="chart-order-badges-layer" id="btChartOrderBadgesLayer"></div>
-        <div class="chart-order-tooltip" id="btChartOrderTooltip"></div>
-        <div class="chart-pinned-candle-marker" id="btChartPinnedCandleMarker"></div>
-        <div class="candle-inspector-card" id="btCandleInspectorCard"></div>
-      </div>
-    </main>
-
-    <!-- Interactive Trade Table Panel -->
-    <section class="bt-trades-section">
-      <div class="trades-header">
-        <div class="trades-title-wrap">
-          <h2 class="trades-title">📋 รายการไม้เทรด (Trade Rounds)</h2>
-          <span class="trades-hint">💡 คลิกที่แถวไม้เทรดเพื่อเลื่อนกราฟ (Scroll) และซูมไปยังจุดซื้อ-ขายนั้นทันที</span>
-        </div>
-        <div class="trades-filter">
-          <button class="filter-btn active" data-filter="ALL">ทั้งหมด (<span id="cntAll">0</span>)</button>
-          <button class="filter-btn" data-filter="WIN">ไม้ชนะ (<span id="cntWin">0</span>)</button>
-          <button class="filter-btn" data-filter="LOSS">ไม้แพ้ (<span id="cntLoss">0</span>)</button>
-        </div>
-      </div>
-
-      <div class="trades-table-wrap">
-        <table class="bt-table" id="tradesTable">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>จุดเข้าซื้อ (Entry)</th>
-              <th>Spread ตอนเข้า</th>
-              <th>จุดออก (Exit)</th>
-              <th>ประเภทการออก</th>
-              <th>ระยะถือครอง</th>
-              <th>กำไร/ขาดทุน (%)</th>
-              <th>กำไร/ขาดทุน ($)</th>
-              <th>ค่าฟี (Cost)</th>
-              <th>การกระทำ</th>
-            </tr>
-          </thead>
-          <tbody id="tradesTableBody">
-            <tr>
-              <td colspan="10" class="td-empty">ยังไม่มีข้อมูลการทดสอบ กดปุ่ม '🚀 รัน Backtest' ด้านบนเพื่อเริ่มจำลอง</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Modal: Saved Backtest History -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- MODAL: SAVED BACKTEST HISTORY                                       -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
     <div class="bt-modal-backdrop" id="historyModalBackdrop" style="display: none;">
       <div class="bt-modal">
         <div class="bt-modal-header">
@@ -356,394 +800,6 @@
       </div>
     </div>
 
-    <!-- Modal: Autonomous Multi-Pair Rotation Backtest Studio -->
-    <div class="bt-modal-backdrop" id="rotationBtModalBackdrop" style="display: none;">
-      <div class="bt-modal bt-modal-lg" style="max-width: 1200px; width: 95vw;">
-        <div class="bt-modal-header">
-          <div class="modal-title-group">
-            <h3 class="bt-modal-title">🔄 Autonomous Multi-Pair Rotation Backtest (Top 50 Universe)</h3>
-            <span class="modal-subtitle">จำลองการเดินเวลาข้ามเวลาต่อเนื่อง (Walk-Forward) สลับคู่เหรียญตาม 2-Stage Market Funnel พร้อมทบต้นเงินทุนอัตโนมัติ</span>
-          </div>
-          <button class="bt-modal-close" id="btnCloseRotationBtModal">✕</button>
-        </div>
-        <div class="bt-modal-body">
-          <!-- Controls Bar -->
-          <div class="scanner-controls-bar" style="flex-wrap: wrap; gap: 10px;">
-            <div class="scanner-ctrl-group">
-              <label>สกุลเงินหลัก (Quote Asset)</label>
-              <select id="rotBtQuoteAsset" style="font-weight: bold; color: #f59e0b;">
-                <option value="FDUSD" selected>🟡 FDUSD (0% Maker Fee - แนะนำ)</option>
-                <option value="USDT">🟢 USDT (Standard CEX Fee)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>ขอบเขต Universe</label>
-              <select id="rotBtUniverseSize">
-                <option value="50" selected>🚀 Top 50 Pairs (ครอบคลุมทั้งกระดาน)</option>
-                <option value="30">🔥 Top 30 Pairs</option>
-                <option value="20">⚡ Top 20 Pairs</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>ระยะเวลาย้อนหลัง (Limit)</label>
-              <select id="rotBtLimit">
-                <option value="2000">2,000 แท่ง 5m (~7 วัน)</option>
-                <option value="4000" selected>4,000 แท่ง 5m (~14 วัน - แนะนำ)</option>
-                <option value="8640">8,640 แท่ง 5m (~30 วัน)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>เงินทุนเริ่มต้น ($)</label>
-              <input type="number" id="rotBtInitialCapital" value="200" min="10" step="10" style="width: 80px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>Cooldown สลับคู่ (นาที)</label>
-              <input type="number" id="rotBtCooldownMins" value="180" min="30" step="30" style="width: 75px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>Score Margin (%)</label>
-              <input type="number" id="rotBtScoreMargin" value="15" min="5" step="5" style="width: 70px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>Capital Zones</label>
-              <select id="rotBtZones">
-                <option value="1">1 โซน (100% Cashflow)</option>
-                <option value="2" selected>2 โซน (50% ต่อโซน)</option>
-                <option value="3">3 โซน (33% ต่อโซน)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>ตัวกรองเข้าซื้อ (Entry Guard)</label>
-              <select id="rotBtDipHunterGuard">
-                <option value="on" selected>🦅 Dip Hunter + HL (แนะนำ)</option>
-                <option value="off">⚡ Pure Grid</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>เมื่อเหรียญเสียทรง (Signal Exit)</label>
-              <select id="rotBtSignalExit">
-                <option value="calibrated" selected>🛡️ ตัดขาดทุนเมื่อขาดทุนเกิน 4% (Calibrated Stop)</option>
-                <option value="off">⏳ ถือรอจบรอบ Flat (ไม่ Stop Loss)</option>
-                <option value="strict_floor">⚠️ ตัดจบเมื่อหลุด Floor 1.8%</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>ตัวกรองตลาด BTC (Macro Gate)</label>
-              <select id="rotBtMacroGate">
-                <option value="on" selected>🛡️ ถือเงินสดเมื่อ BTC ขาลง (แนะนำ)</option>
-                <option value="off">⚡ ปิดตัวกรอง (เทรดตามทรงเหรียญเดี่ยว)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" style="align-self: flex-end;">
-              <button id="btnStartRotationBt" class="btn-run" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 6px 14px;">
-                <span class="btn-run-icon">🚀</span> เริ่มรันจำลองพอร์ต
-              </button>
-            </div>
-          </div>
-
-          <!-- Progress Bar -->
-          <div id="rotationBtProgressWrap" class="scanner-progress-wrap" style="display: none; margin: 15px 0;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-              <span id="rotationBtStatusText" style="font-size: 13px; color: #38bdf8;">กำลังเตรียมข้อมูลตลาด...</span>
-              <span id="rotationBtCountText" style="font-size: 13px; color: #94a3b8;">0%</span>
-            </div>
-            <div class="scanner-progress-bar"><div class="scanner-progress-fill" id="rotationBtProgressFill" style="width: 0%;"></div></div>
-          </div>
-
-          <!-- KPI Summary Cards -->
-          <div id="rotationBtKpiGrid" style="display: none; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 15px 0;">
-            <div class="kpi-card" style="padding: 10px;">
-              <div class="kpi-label">กำไรสุทธิพอร์ต (PORTFOLIO PNL)</div>
-              <div class="kpi-val" id="rotKpiNetPnl" style="font-size: 18px;">+0.00%</div>
-              <div class="kpi-sub" id="rotKpiNetQuote" style="font-size: 11px;">$0.00</div>
-            </div>
-            <div class="kpi-card" style="padding: 10px;">
-              <div class="kpi-label">เงินทุนเริ่มต้น ➔ ท้ายสุด</div>
-              <div class="kpi-val" id="rotKpiCapital" style="font-size: 18px; color: #38bdf8;">$200 ➔ $0</div>
-              <div class="kpi-sub" id="rotKpiCompounding" style="font-size: 11px;">Continuous Compounding</div>
-            </div>
-            <div class="kpi-card" style="padding: 10px;">
-              <div class="kpi-label">จำนวนการสลับ (ROTATIONS)</div>
-              <div class="kpi-val" id="rotKpiRotations" style="font-size: 18px; color: #c084fc;">0 ครั้ง</div>
-              <div class="kpi-sub" id="rotKpiLegWinRate" style="font-size: 11px;">Leg Win Rate: 0%</div>
-            </div>
-            <div class="kpi-card" style="padding: 10px;">
-              <div class="kpi-label">จำนวนไม้ทั้งหมด (TRADES)</div>
-              <div class="kpi-val" id="rotKpiTrades" style="font-size: 18px; color: #10b981;">0 ไม้</div>
-              <div class="kpi-sub" id="rotKpiTradeWinRate" style="font-size: 11px;">Win Rate: 0%</div>
-            </div>
-            <div class="kpi-card" style="padding: 10px;">
-              <div class="kpi-label">MAX PORTFOLIO DRAWDOWN</div>
-              <div class="kpi-val text-loss" id="rotKpiDrawdown" style="font-size: 18px;">0.00%</div>
-              <div class="kpi-sub" id="rotKpiProfitFactor" style="font-size: 11px;">Profit Factor: 0.00</div>
-            </div>
-            <div class="kpi-card" style="padding: 10px;">
-              <div class="kpi-label">ALPHA VS BENCHMARK</div>
-              <div class="kpi-val" id="rotKpiAlpha" style="font-size: 18px; color: #fbbf24;">+0.00%</div>
-              <div class="kpi-sub" id="rotKpiBenchmarkSub" style="font-size: 11px;">เทียบถือเหรียญเดียว</div>
-            </div>
-          </div>
-
-          <!-- Section 1: Rotation Journey Timeline -->
-          <div id="rotationBtResultsSection" style="display: none;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin: 15px 0 8px 0;">
-              <h4 style="margin: 0; font-size: 14px; color: #e2e8f0;">📋 ไทม์ไลน์การสลับคู่เหรียญ (Rotation Journey Log)</h4>
-              <span style="font-size: 11px; color: #94a3b8;">💡 กดปุ่ม '📈 ดูกราฟ' เพื่อเลื่อนและซูมดูกราฟของช่วงเวลานั้น</span>
-            </div>
-            <div class="scanner-table-wrap" style="max-height: 280px; overflow-y: auto;">
-              <table class="bt-table" id="rotationLegsTable">
-                <thead>
-                  <tr>
-                    <th>รอบ</th>
-                    <th>ช่วงเวลา (Period)</th>
-                    <th>คู่เหรียญ (Pair)</th>
-                    <th>เหตุผล (Trigger)</th>
-                    <th>คะแนน (Score)</th>
-                    <th>ทุนเริ่มต้น ➔ จบรอบ</th>
-                    <th>กำไรในรอบ (%)</th>
-                    <th>กำไร ($)</th>
-                    <th>ไม้ชนะ/ทั้งหมด</th>
-                    <th>การกระทำ</th>
-                  </tr>
-                </thead>
-                <tbody id="rotationLegsTableBody"></tbody>
-              </table>
-            </div>
-
-            <!-- Section 2: Per-Pair Contribution Breakdown -->
-            <div style="margin: 15px 0 8px 0;">
-              <h4 style="margin: 0; font-size: 14px; color: #e2e8f0;">🏆 อันดับเหรียญสร้างกำไรสูงสุด (Per-Pair Profit Contribution)</h4>
-            </div>
-            <div class="scanner-table-wrap" style="max-height: 200px; overflow-y: auto;">
-              <table class="bt-table" id="rotationPairContribTable">
-                <thead>
-                  <tr>
-                    <th>อันดับ</th>
-                    <th>คู่เหรียญ</th>
-                    <th>จำนวนรอบที่ถือ</th>
-                    <th>ระยะเวลาถือครองรวม</th>
-                    <th>จำนวนไม้เทรด</th>
-                    <th>Win Rate (%)</th>
-                    <th>กำไรรวม ($)</th>
-                    <th>ผลตอบแทนสะสม (%)</th>
-                  </tr>
-                </thead>
-                <tbody id="rotationPairContribBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modal: Market Scanner Leaderboard -->
-    <div class="bt-modal-backdrop" id="scannerModalBackdrop" style="display: none;">
-      <div class="bt-modal bt-modal-lg">
-        <div class="bt-modal-header">
-          <div class="modal-title-group">
-            <h3 class="bt-modal-title">⚡ MA-FOLD-FAN Market Scanner (จัดอันดับเหรียญทำกำไรสูงสุด)</h3>
-            <span class="modal-subtitle">สแกนเหรียญที่มีสภาพคล่องสูงสุดบน Binance และทดสอบกลยุทธ์ MA-FOLD-FAN อัตโนมัติ</span>
-          </div>
-          <button class="bt-modal-close" id="btnCloseScannerModal">✕</button>
-        </div>
-        <div class="bt-modal-body">
-          <!-- Scanner Configuration Bar -->
-          <div class="scanner-controls-bar">
-            <div class="scanner-ctrl-group">
-              <label>ขอบเขตเหรียญ (Scope)</label>
-              <select id="scScope">
-                <option value="top20" selected>🔥 Top 20 USDT (สภาพคล่องสูงสุด ~5-10s)</option>
-                <option value="top50">🚀 Top 50 USDT (เหรียญยอดนิยม ~15-25s)</option>
-                <option value="top100">🌐 Top 100 USDT (ครอบคลุมทั้งตลาด ~30-50s)</option>
-                <option value="fdusd">🟡 FDUSD Pairs (0% Maker Fee)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>Timeframe</label>
-              <select id="scTimeframe">
-                <option value="1m">1m (Scalp)</option>
-                <option value="5m" selected>5m (Execution)</option>
-                <option value="15m">15m (Supervisor)</option>
-                <option value="1h">1h (Macro)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>ระยะเวลาย้อนหลัง</label>
-              <select id="scLimit">
-                <option value="1000" selected>1,000 แท่ง (~3.5 วัน)</option>
-                <option value="2016">📅 7 วัน (~2,000 แท่ง)</option>
-                <option value="4320">📅 15 วัน (~4,320 แท่ง)</option>
-                <option value="8640">📅 30 วัน (~8,640 แท่ง)</option>
-                <option value="17280">📅 60 วัน (~17,280 แท่ง)</option>
-                <option value="25920">📅 90 วัน (~25,920 แท่ง)</option>
-                <option value="34560">📅 120 วัน (~34,560 แท่ง)</option>
-                <option value="500">500 แท่ง (~1.7 วัน)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>Min Spread</label>
-              <select id="scSpread">
-                <option value="0.50" selected>⚡ ≥ 0.50% (แนะนำ)</option>
-                <option value="auto">Auto Calibrate</option>
-                <option value="0.25">≥ 0.25%</option>
-                <option value="0.35">≥ 0.35%</option>
-                <option value="0.45">≥ 0.45%</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>Upside Floor</label>
-              <select id="scUpsideFloor" title="กรองระยะวิ่งถึง EMA25 ≥ 0.50% และ Spread ≥ 0.35%">
-                <option value="on" selected>🎯 On (≥ 0.50%)</option>
-                <option value="off">❌ Off</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>Fast Cut</label>
-              <select id="scFastCut" title="ตัดขาดทุนไวเมื่อหลุด EMA4 + MACD ถดถอยที่ -0.8% หรือแท่งแช่นิ่ง 6 แท่ง">
-                <option value="on" selected>✂️ On (-0.8% & 6b)</option>
-                <option value="off">❌ Off</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>Max SL Cap</label>
-              <select id="scMaxSl" title="เพดานตัดขาดทุนสูงสุดต่อไม้เพื่อคุม Asymmetric R:R">
-                <option value="1.8" selected>🎯 1.80% Cap</option>
-                <option value="2.5">2.50%</option>
-                <option value="3.0">3.00%</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>Circuit Breaker</label>
-              <select id="scCircuitBreaker" title="หยุดพักบอทเมื่อชน SL 2 ไม้ติด">
-                <option value="on" selected>⏸️ 2 Losses พัก 45m</option>
-                <option value="off">❌ Off</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>SL Mode</label>
-              <select id="scSlMode" title="รูปแบบการตั้ง Stop Loss">
-                <option value="ratchet" selected>🛡️ Ratchet SL</option>
-                <option value="fixed">⚓ Fixed SL</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>Macro Gate</label>
-              <select id="scMacroGate" title="ตัวกรองแนวโน้มใหญ่ (1H) จากผลทดสอบ 120 วัน">
-                <option value="noDeepBear" selected>🛡️ No Deep Bear (แนะนำ)</option>
-                <option value="off">🌐 Off (ทุกสภาวะ)</option>
-                <option value="bullOnly">🐂 Bull Only</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>Fee Tier</label>
-              <select id="scFeeTier" title="คำนวณกำไรสุทธิหลังหักค่าธรรมเนียมและ Slippage">
-                <option value="bnb" selected>⚡ BNB (0.075%)</option>
-                <option value="standard">🏛️ Standard (0.10%)</option>
-                <option value="zero">🎁 Zero Fee (0%)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="grid">
-              <label>HL Filter</label>
-              <select id="scBaseConfirmation" title="ตัวกรองรอสร้างฐาน HL: ปิด = Pure Grid | เปิด = รอสร้างฐาน HL">
-                <option value="off" selected>⚡ Off (Pure Grid)</option>
-                <option value="on">🛡️ On (รอฐาน HL)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="grid">
-              <label>Channel</label>
-              <select id="scLockChannel" title="พฤติกรรมกรอบราคา: dynamic = ขยับกรอบ | locked = ล็อคกรอบ">
-                <option value="dynamic" selected>🔄 Dynamic</option>
-                <option value="locked">🔒 Locked</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="grid">
-              <label>Capital Zones</label>
-              <select id="scCapitalZones" title="แบ่งเงินทุนออกเป็นกี่โซนเพื่อถัวเฉลี่ย">
-                <option value="1">1 โซน (100%)</option>
-                <option value="2" selected>2 โซน (50% ต่อโซน)</option>
-                <option value="3">3 โซน (33.3%)</option>
-                <option value="4">4 โซน (25%)</option>
-                <option value="5">5 โซน (20%)</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="grid">
-              <label>Cut Loss</label>
-              <select id="scGridCutLossMode" title="รูปแบบการ Stop-Loss ของกริด">
-                <option value="none" selected>💎 None (ไม่คัท ถัวรอเด้ง)</option>
-                <option value="final_zone_floor">🛡️ Final Zone</option>
-                <option value="entry_floor">🚪 Entry Floor</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>Engine</label>
-              <select id="scTradeMode" title="เลือกรูปแบบเครื่องยนต์กลยุทธ์">
-                <option value="dual_hybrid" selected>⚡🕸️ Dual Hybrid (Grid + Sniper)</option>
-                <option value="dual">⚡ Dual MA-Fan</option>
-                <option value="dip_hunter">🎯 Dip/Peak Hunter</option>
-                <option value="trend_rider">🏄 Trend Rider</option>
-                <option value="dynamic_grid">🕸️ Dynamic Grid</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group" data-mode="sniper">
-              <label>Direction</label>
-              <select id="scTradeDirection" title="เลือกทิศทางการเทรด Spot หรือ Perp">
-                <option value="long" selected>🟢 Long</option>
-                <option value="short">🔴 Short</option>
-                <option value="both">🔄 Two-Way</option>
-              </select>
-            </div>
-            <div class="scanner-ctrl-group">
-              <label>เงินทุน ($)</label>
-              <input type="number" id="scBudget" value="200" min="10" step="10" style="width: 75px; padding: 4px 6px; background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 4px; color: #f8fafc; font-size: 11px; font-weight: 600;" />
-            </div>
-            <button id="btnScannerResetBestPreset" class="btn-sync-config btn-scanner-sync" title="รีเซ็ตการตั้งค่าสแกนเนอร์เป็นค่าแนะนำที่ดีที่สุด (Optimal Preset)">
-              <span class="btn-run-icon">⚡</span> ค่าแนะนำ
-            </button>
-            <button id="btnScannerSyncLiveConfig" class="btn-sync-config btn-scanner-sync" title="ดึงค่าคอนฟิกปัจจุบันของบอทจริงมาใส่การตั้งค่า Market Scanner ทุกประการ">
-              <span class="btn-run-icon">🔄</span> ใช้ Config บอท
-            </button>
-            <button id="btnStartScan" class="btn-run btn-start-scan">
-              <span>🚀 เริ่มสแกนตลาด</span>
-            </button>
-          </div>
-
-          <!-- Scan Progress Bar -->
-          <div id="scannerProgressWrap" class="scanner-progress-wrap" style="display: none;">
-            <div class="scanner-progress-info">
-              <span id="scannerStatusText">กำลังดึงข้อมูลตลาด Binance และคำนวณผลตอบแทน...</span>
-              <span id="scannerCountText">กรุณารอสักครู่ (ใช้เวลา 2-5 วินาที)</span>
-            </div>
-            <div class="scanner-progress-bar"><div class="scanner-progress-fill" id="scannerProgressFill" style="width: 100%;"></div></div>
-          </div>
-
-          <!-- Leaderboard Table -->
-          <div class="scanner-table-wrap">
-            <table class="bt-table scanner-table" id="scannerTable">
-              <thead>
-                <tr>
-                  <th style="width: 50px;">อันดับ</th>
-                  <th>คู่เหรียญ</th>
-                  <th>24h Volume</th>
-                  <th>กำไรสุทธิ (%)</th>
-                  <th>Win Rate</th>
-                  <th>จำนวนไม้</th>
-                  <th>Profit Factor</th>
-                  <th>Max DD</th>
-                  <th>Best Trade</th>
-                  <th>การกระทำ</th>
-                </tr>
-              </thead>
-              <tbody id="scannerTableBody">
-                <tr>
-                  <td colspan="10" class="td-empty">กดปุ่ม '🚀 เริ่มสแกนตลาด' ด้านบนเพื่อค้นหาเหรียญที่ทำกำไรสูงสุดในสภาวะตลาดปัจจุบัน</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- Loading Indicator Overlay -->
     <div class="bt-loading-overlay" id="loadingOverlay" style="display: none;">
       <div class="loading-spinner"></div>
@@ -751,6 +807,6 @@
     </div>
   </div>
 
-  <script src="backtest.js?v=0.2.206"></script>
+  <script src="backtest.js?v=0.3.0.29"></script>
 </body>
 </html>

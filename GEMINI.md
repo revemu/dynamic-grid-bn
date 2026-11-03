@@ -8331,3 +8331,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เพิ่มฟังก์ชัน `BacktestService.runMaFanPortfolioSimulation(...)` สำหรับการจำลองพอร์ตมัลติคอยน์ (Multi-Coin Portfolio Simulation) พร้อมตรวจสอบ Fill Limit Order ย้อนหลังอย่างแม่นยำ ปราศจาก Look-ahead Bias 100%
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.28`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 276. Backtest Studio Tri-Tab Architecture, Dynamic Config Filtering & Downtrend Sit-Out Gate (v0.3.0.29)
+
+- **สาเหตุของปัญหาและข้อเสนอแนะจากผู้ใช้ (Context & User Feedback)**:
+  1. **หน้าต่าง Backtest รกและคอนฟิกตีกัน (Configuration Clutter)**:
+     - ใน `public/backtest.html` พารามิเตอร์ของระบบ **Dynamic Grid** (เช่น Capital Zones, Base Confirmation, Lock Channel, Cut Loss) แสดงผลปะปนกับพารามิเตอร์ของ **MA-Fan Sniper** (เช่น Min Spread, SL Mode, Fast Cut, Upside Floor)
+     - ตัวเลือกโหมดกลยุทธ์ (`btTradeMode`) ซ่อนอยู่ด้านล่างสุด ทำให้ผู้ใช้งานสับสนว่าคอนฟิกด้านบนส่งผลต่อระบบที่กำลังรันอยู่หรือไม่
+  2. **ความแออัดของ Market Scanner และ Auto Rotation Backtest**:
+     - ทั้งสองฟังก์ชันถูกซ่อนอยู่ในปุ่ม Modal ซ้อนทับกัน ทำให้พื้นที่แสดงผลแคบและดูข้อมูลตารางได้ยาก
+  3. **การถือเงินสด 100% ในช่วงตลาดขาลง (Downtrend Sit-Out Defense)**:
+     - จากการวิเคราะห์ช่วง 33 วันที่ผ่านมาที่ BTC ปรับตัวลง -7.71% และ Altcoins ร่วงหนัก การเทรดต่อเนื่องทำให้โดนดึงกำไรคืน -16% ถึง -28%
+     - เมื่อกรองด้วย `BTC 1D Close < EMA 25` หรือ `BTC 4H Close < EMA 75` บอทจะสั่ง **"นั่งทับมือถือเงินสด 100%"** ไปถึง 60–75% ของเวลา ช่วยลดการขาดทุนช่วงทุบลงเหลือเพียง -7.95% และดันกำไรสุทธิรอบ 4 เดือนเต็มโตขึ้นจาก +22.56% สู่ **+34.22%** (PF 1.63, MaxDD ลดเหลือ -16.76%)
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **โครงสร้าง 3 แท็บหลักบนหน้าจอ Backtest Studio (Tri-Tab Navigation Layout)**:
+     - เพิ่มแถบเมนูนำทางหลักด้านบน (`.bt-tab-nav`):
+       - 🧪 **Single-Pair Backtest (`#pane-single`)**: ทดสอบเจาะลึกเหรียญเดี่ยว พร้อมกราฟ TradingView OHLC, EMAs, Markers และ Trade Rounds Table
+       - ⚡ **Market Scanner (`#pane-scanner`)**: ย้ายออกจาก Modal กลายมาเป็นแท็บเต็มหน้าจอ สแกนจัดอันดับเหรียญทำกำไรสูงสุดในกระดาน
+       - 🔄 **Auto-Rotation Portfolio (`#pane-rotation`)**: ย้ายออกจาก Modal กลายมาเป็นแท็บเต็มหน้าจอ จำลองการหมุนเวียนพอร์ตเหรียญทบต้นอัตโนมัติ (Top 50 Universe Walk-Forward)
+     - มีระบบบันทึกแท็บล่าสุดลงใน `localStorage.setItem("btStudioActiveTab", tab)` เพื่อคงแท็บเดิมไว้เมื่อรีเฟรชหน้าจอ
+  2. **ระบบเลือกแสดงเฉพาะคอนฟิกที่เกี่ยวข้อง (Dynamic Config Filtering)**:
+     - ย้ายตัวเลือก **`btTradeMode` (Engine Selector)** ขึ้นมาไว้ด้านบนสุดเป็นอันดับแรก
+     - แก้ไขฟังก์ชัน `updateOptionVisibility`:
+       - เมื่อเลือก `dynamic_grid`: ซ่อนคอนฟิกของ Sniper ทั้งหมด เหลือเฉพาะตัวเลือกของ Grid
+       - เมื่อเลือก `dip_hunter` / `dual` / `trend_rider`: ซ่อนคอนฟิกของ Grid ทั้งหมด เหลือเฉพาะตัวเลือกของ MA-Fan / Sniper
+       - เมื่อเลือก `dual_hybrid`: แสดงผลทั้งสองระบบ
+     - เชื่อมต่อการกรองแบบเดียวกันนี้เข้ากับ `scTradeMode` ในแท็บ Market Scanner
+  3. **เพิ่มระบบ Downtrend Sit-Out Defense เข้าสู่ Backtest**:
+     - เพิ่มตัวเลือก `btDowntrendSitOut`:
+       - `dual`: 🛡️ Dual Defense (BTC 1D EMA 25 + 4H EMA 75 - แนะนำ)
+       - `btc1d`: 📅 BTC 1D Trend (EMA 25)
+       - `btc4h`: ⏱️ BTC 4H Trend (EMA 75)
+       - `off`: ❌ Off (เทรดทุกสภาวะ)
+     - ใน `src/server.ts`: ดึงแท่งเทียน `BTCUSDT` 5m และส่งเข้า `BacktestService.runMaFanSimulation`
+     - ใน `src/backtest-service.ts`: ตรวจจับราคาปิดแท่งที่แล้วของ BTC บน Timeframe 1D และ 4H หากหลุดเส้น EMA จะสั่งบล็อกการเปิดไม้ใหม่ทันที (`evaluations[i].isMacroBlocked = true`)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.29`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%

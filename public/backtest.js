@@ -1691,6 +1691,8 @@
     const useRatchetSl = inpSlMode ? inpSlMode.value === "ratchet" : true;
     const feeTier = inpFeeTier ? inpFeeTier.value : "bnb";
     const macroGateMode = inpMacroGate ? inpMacroGate.value : "off";
+    const inpDowntrendSitOut = document.getElementById("btDowntrendSitOut");
+    const downtrendSitOut = inpDowntrendSitOut ? inpDowntrendSitOut.value : "dual";
     const enableCircuitBreaker = inpCircuitBreaker ? inpCircuitBreaker.value === "on" : true;
     const enableUpsideFloor = inpUpsideFloor ? inpUpsideFloor.value === "on" : true;
     const enableFastCut = inpFastCut ? inpFastCut.value === "on" : true;
@@ -1706,7 +1708,7 @@
     loadingOverlay.style.display = "flex";
     const hlLabel = enableBaseConfirmationFilter ? "HL Base: ON (บอทจริง)" : "HL Base: OFF (Pure Grid)";
     const chLabel = lockChannelInPosition ? "Channel: Locked (ล็อคกรอบ)" : `Channel: Dynamic (${capitalZones} Zones)`;
-    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection} / ${hlLabel} / ${chLabel})...`;
+    loadingText.textContent = `กำลังดึง ${limit.toLocaleString()} แท่ง (${dayEstimate}) ของ ${symbol} และรันจำลอง MA Fan Sniper (${tradeMode} / ${tradeDirection} / ${hlLabel} / ${chLabel} / SitOut: ${downtrendSitOut})...`;
 
     try {
       const resp = await fetch("/api/backtest/run", {
@@ -1721,6 +1723,7 @@
           useRatchetSl,
           feeTier,
           macroGateMode,
+          downtrendSitOut,
           enableCircuitBreaker,
           enableUpsideFloor,
           enableFastCut,
@@ -2234,7 +2237,10 @@
 
   // Dynamic visibility for trading engine options
   function updateOptionVisibility(engine, containerSelector) {
-    const root = containerSelector ? document.querySelector(containerSelector) : document;
+    let root = containerSelector ? document.querySelector(containerSelector) : document;
+    if (!root && (containerSelector === ".bt-controls-bar" || containerSelector === ".bt-controls")) {
+      root = document.querySelector(".bt-controls") || document.querySelector(".bt-controls-bar");
+    }
     if (!root) return;
 
     const isGridOnly = engine === "dynamic_grid";
@@ -2934,6 +2940,56 @@
         }
       });
     }
+
+    // ─── Studio Top Tab Navigation ───────────────────────────────────
+    function initTabNav() {
+      const tabBtns = document.querySelectorAll(".bt-tab-btn");
+      const tabPanes = document.querySelectorAll(".bt-tab-pane");
+
+      function switchTab(tabId) {
+        tabBtns.forEach((btn) => {
+          btn.classList.toggle("active", btn.dataset.tab === tabId);
+        });
+        tabPanes.forEach((pane) => {
+          const isMatch = pane.id === `pane-${tabId}`;
+          pane.style.display = isMatch ? "" : "none";
+          pane.classList.toggle("active", isMatch);
+        });
+        try {
+          localStorage.setItem("btStudioActiveTab", tabId);
+        } catch (_) {}
+
+        // Ensure proper options visibility in active tab
+        if (tabId === "single" && inpTradeMode) {
+          updateOptionVisibility(inpTradeMode.value, ".bt-controls");
+          if (chart) {
+            requestAnimationFrame(() => {
+              const container = document.getElementById("btChartContainer");
+              if (container && chart) {
+                chart.applyOptions({
+                  width: container.clientWidth,
+                  height: container.clientHeight,
+                });
+              }
+            });
+          }
+        } else if (tabId === "scanner" && scTradeMode) {
+          updateOptionVisibility(scTradeMode.value, "#pane-scanner");
+        }
+      }
+
+      tabBtns.forEach((btn) => {
+        btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+      });
+
+      let savedTab = "single";
+      try {
+        savedTab = localStorage.getItem("btStudioActiveTab") || "single";
+      } catch (_) {}
+      switchTab(savedTab);
+    }
+
+    initTabNav();
 
     // Do NOT automatically run backtest on page load; wait for user to click "Run Backtest"
   });

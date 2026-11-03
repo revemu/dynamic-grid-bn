@@ -1369,6 +1369,7 @@ export class BacktestService {
       maxUpperRibbonSpreadPct?: number;
       minRelStrengthVsBtc24h?: number;
       btcCandles?: Candle[];
+      downtrendSitOutMode?: "off" | "btc1d" | "btc4h" | "dual";
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -2355,6 +2356,7 @@ export class BacktestService {
       maxUpperRibbonSpreadPct?: number;
       minRelStrengthVsBtc24h?: number;
       btcCandles?: Candle[];
+      downtrendSitOutMode?: "off" | "btc1d" | "btc4h" | "dual";
     }
   ): BacktestRecord {
     if (opts.tradeMode === "dynamic_grid") {
@@ -2569,6 +2571,28 @@ export class BacktestService {
       for (let bi = 0; bi < opts.btcCandles.length; bi++) {
         btcTimeMap.set(opts.btcCandles[bi]!.time, bi);
       }
+    }
+
+    const btc4h = (opts.btcCandles && opts.btcCandles.length > 0) ? BacktestService.aggregateCandles(opts.btcCandles, 240) : [];
+    const btc4hCloses = btc4h.map((c) => c.close);
+    const btc4hEma75 = calcEMA(btc4hCloses, 75);
+
+    const btc1d = (opts.btcCandles && opts.btcCandles.length > 0) ? BacktestService.aggregateCandles(opts.btcCandles, 1440) : [];
+    const btc1dCloses = btc1d.map((c) => c.close);
+    const btc1dEma25 = calcEMA(btc1dCloses, 25);
+
+    function getClosedHtfIdx(arr: Candle[], durationSec: number, targetSec: number) {
+      let lo = 0, hi = arr.length - 1, ans = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (arr[mid].time + durationSec <= targetSec) {
+          ans = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return ans;
     }
 
     for (let i = startIdx; i < candles.length; i++) {
@@ -2983,9 +3007,32 @@ export class BacktestService {
       }
 
       // ─── POSITION ENTRY (MODULAR TWO-WAY ENGINE) ──────────────────────
+      let isBtcDowntrend = false;
+      if (opts.downtrendSitOutMode && opts.downtrendSitOutMode !== "off" && opts.btcCandles && opts.btcCandles.length > 0) {
+        const idx4h = getClosedHtfIdx(btc4h, 14400, c.time);
+        const idx1d = getClosedHtfIdx(btc1d, 86400, c.time);
+        const pass4h = idx4h >= 75 ? btc4h[idx4h].close >= btc4hEma75[idx4h] : true;
+        const pass1d = idx1d >= 25 ? btc1d[idx1d].close >= btc1dEma25[idx1d] : true;
+
+        if (opts.downtrendSitOutMode === "dual") {
+          isBtcDowntrend = !pass4h || !pass1d;
+        } else if (opts.downtrendSitOutMode === "btc1d") {
+          isBtcDowntrend = !pass1d;
+        } else if (opts.downtrendSitOutMode === "btc4h") {
+          isBtcDowntrend = !pass4h;
+        }
+      }
+
       if (heldQty === 0 && cash >= 10) {
         if (opts.onlyEntryIdx !== undefined && i !== opts.onlyEntryIdx) {
           continue;
+        }
+
+        if (isBtcDowntrend) {
+          if (opts.onlyEntryIdx === undefined && evaluations[i]) {
+            evaluations[i]!.isMacroBlocked = true;
+          }
+          continue; // Sit out 100% in cash!
         }
 
         const entryDecision = MaFanCoreRules.evaluateModularEntry({

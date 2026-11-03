@@ -890,12 +890,18 @@ export class DashboardServer {
 
           const hlMode = parsed.enableBaseConfirmationFilter !== undefined ? Boolean(parsed.enableBaseConfirmationFilter) : false;
           const hlModeStr = hlMode ? "ON (รอสร้างฐาน HL - บอทจริง)" : "OFF (Pure Grid - ดักเก็บทุกรอบ)";
-          console.log(`[Backtest] 🚀 Running Backtest: ${symbol} (${timeframe}, ${limit} bars, Engine: ${parsed.tradeMode || "dip_hunter"}, HL Filter: ${hlModeStr})...`);
+          const downtrendSitOut = (parsed.downtrendSitOut || "dual") as "off" | "btc1d" | "btc4h" | "dual";
+          console.log(`[Backtest] 🚀 Running Backtest: ${symbol} (${timeframe}, ${limit} bars, Engine: ${parsed.tradeMode || "dip_hunter"}, HL Filter: ${hlModeStr}, SitOut: ${downtrendSitOut})...`);
 
-          const [candles, candlesHtf] = await Promise.all([
+          const fetches: Promise<any>[] = [
             BacktestService.fetchBinanceCandles(symbol, timeframe, fetchLimit),
             BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, htfLimit).catch(() => []),
-          ]);
+          ];
+          if (downtrendSitOut !== "off") {
+            fetches.push(BacktestService.fetchBinanceCandles("BTCUSDT", "5m", fetchLimit).catch(() => []));
+          }
+
+          const [candles, candlesHtf, btcCandles] = await Promise.all(fetches);
           const actualWarmup = isAutoSpread ? Math.max(0, candles.length - limit) : 0;
 
           const result = BacktestService.runMaFanSimulation(candles, {
@@ -911,7 +917,9 @@ export class DashboardServer {
             tp1Ratio: parsed.tp1Ratio !== undefined ? Number(parsed.tp1Ratio) : (Number(liveCfg.maFanTp1Ratio) || 0.5),
             breakevenFeeBufferPct: parsed.breakevenFeeBufferPct !== undefined ? Number(parsed.breakevenFeeBufferPct) : (Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05),
             supervisorTimeframe,
-            candlesHtf: candlesHtf.length > 0 ? candlesHtf : undefined,
+            candlesHtf: candlesHtf && candlesHtf.length > 0 ? candlesHtf : undefined,
+            btcCandles: btcCandles && btcCandles.length > 0 ? btcCandles : undefined,
+            downtrendSitOutMode: downtrendSitOut,
             cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
             waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
             costModel,
