@@ -8239,3 +8239,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.24`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
 
+
+---
+
+### 272. Pattern-Based Status Log Throttling & Dislocation Recovery (`createStatusLogger`) (v0.3.0.25)
+
+- **สาเหตุของปัญหา (Forensic Context)**:
+  - ในฟังก์ชัน `createStatusLogger` (`src/utils.ts`) มีการตรวจสอบความซ้ำซ้อนของข้อความด้วย String comparison แบบตรงตัว (`msg !== lastMessage`)
+  - อย่างไรก็ดี ข้อความแจ้งเตือนสถานะความปลอดภัยต่างๆ (เช่น `Spread 1.52% > Max Allowed 0.60% (Bid: $0.065500, Ask: $0.066500) — sitting out order execution`, `WAITING FOR LOWER CHANNEL TO STABILIZE`, `TAKE PROFIT STANDBY`) มีการแทรกตัวเลขทศนิยม Real-time ของ Bid, Ask และเปอร์เซ็นต์ลงในข้อความ
+  - เมื่อราคาหรือ Orderbook ขยับเพียงเล็กน้อยในแต่ละ Tick (ทุกๆ ~200ms) สตริงของข้อความจึงเปลี่ยนไปทุกครั้ง ทำให้ตัวกรองข้อความซ้ำหลุด และพ่น Log ออกมา 3–5 ครั้งต่อวินาทีอย่างต่อเนื่อง รบกวนหน้าจอคอนโซลและ Activity Feed อย่างหนัก
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **Pattern-Based Regex Normalization ใน `createStatusLogger` (`src/utils.ts`)**:
+     - ปรับปรุงให้แปลงตัวเลขทศนิยม ราคา เปอร์เซ็นต์ และตัวนับ (`/[-+]?\$?\d+(?:\.\d+)?%?/g`) ให้กลายเป็นโทเคน `#` ก่อนนำไปเปรียบเทียบในรูปแบบ `patternKey`
+     - จัดเก็บ `lastLogTimes = new Map<string, number>()` แยกตามแต่ละ Pattern เพื่อให้การแจ้งเตือนประเภทเดียวกันถูก Throttle ตามระยะเวลาที่กำหนด (ค่าเริ่มต้น 60,000 ms = 60 วินาที) โดยสมบูรณ์ แม้ตัวเลขทศนิยมราคาหรือสเปรดจะผันผวนตลอดเวลา
+     - รองรับการรับ `customIntervalMs` เพิ่มเติมสำหรับกรณีที่ต้องการปรับระยะเวลาเฉพาะของข้อความนั้นๆ พร้อมระบบ Pruning อัตโนมัติป้องกัน Memory Leak
+  2. **Orderbook Dislocation Recovery Notification ใน `src/strategy/index.ts`**:
+     - เพิ่มสถานะ `wasSpreadDislocated` เพื่อติดตามช่วงเวลาที่ตลาดติดสภาวะ Orderbook Dislocation
+     - เมื่อสเปรดกลับมาแคบลงอยู่ในเกณฑ์ปกติ (`!isSpreadDislocated && this.wasSpreadDislocated`) บอทจะส่งข้อความแจ้งเตือนฟื้นตัวสีเขียว `🟢 Spread recovered to X.XX% (<= Max X.XX%) — resuming order execution` ทันที 1 ครั้ง เพื่อให้ผู้ใช้ทราบว่าบอทกลับมาส่งคำสั่งซื้อขายตามปกติแล้ว
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.25`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%

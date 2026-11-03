@@ -216,7 +216,8 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   private readonly periodicSyncIntervalMs = 30_000; // Background sanity check every 30s instead of 200ms!
 
   /** Throttled status logger */
-  public readonly status: (msg: string) => void;
+  private wasSpreadDislocated = false;
+  public readonly status: (msg: string, customIntervalMs?: number) => void;
 
   constructor(
     public binance: IExchangeClient,
@@ -4822,9 +4823,15 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     // ── Trading Gate: When strategy is paused or spread is dislocated, all order placements, cancellations, and exits are strictly suspended ──
     if (this.isPaused || isSpreadDislocated) {
       if (isSpreadDislocated && !this.isPaused) {
+        this.wasSpreadDislocated = true;
         this.status(`${spreadDislocationReason} — sitting out order execution`);
       }
       return;
+    }
+
+    if (this.wasSpreadDislocated && !this.isPaused) {
+      this.wasSpreadDislocated = false;
+      this.log(`🟢 Spread recovered to ${currentSpreadPct.toFixed(2)}% (<= Max ${maxSpreadPct.toFixed(2)}%) — resuming order execution`);
     }
 
     // ── 2a. Resistance IOC Exit: If price tests or touches the active resistance (Trendline or Real S/R Ceil), sell immediately ──

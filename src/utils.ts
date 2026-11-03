@@ -20,21 +20,39 @@ export function spreadBps(bestBid: number, bestAsk: number): number {
 }
 
 /**
- * Throttled status logger that suppresses identical repeat messages unless intervalMs has passed.
+ * Throttled status logger that suppresses repeat messages matching the same pattern
+ * unless intervalMs has passed. Replaces dynamic numbers and prices with placeholder tokens
+ * so that fluctuating floats/percentages do not bypass throttling.
  */
 export function createStatusLogger(
   log: (msg: string) => void,
   intervalMs = 60_000,
-): (msg: string) => void {
-  let lastLogTime = 0;
-  let lastMessage = "";
+): (msg: string, customIntervalMs?: number) => void {
+  const lastLogTimes = new Map<string, number>();
 
-  return (msg: string) => {
+  return (msg: string, customIntervalMs?: number) => {
     const now = Date.now();
-    if (msg !== lastMessage || now - lastLogTime >= intervalMs) {
+    // Normalize numeric values (prices, percentages, counters, floats) into placeholder tokens
+    // so that dynamic values do not bypass throttling.
+    const patternKey = msg
+      .replace(/[-+]?\$?\d+(?:\.\d+)?%?/g, "#")
+      .trim();
+
+    const effectiveInterval = customIntervalMs ?? intervalMs;
+    const lastTime = lastLogTimes.get(patternKey) ?? 0;
+
+    if (now - lastTime >= effectiveInterval) {
       log(msg);
-      lastLogTime = now;
-      lastMessage = msg;
+      lastLogTimes.set(patternKey, now);
+
+      // Periodic pruning to prevent unbounded map growth
+      if (lastLogTimes.size > 100) {
+        for (const [k, t] of lastLogTimes) {
+          if (now - t >= effectiveInterval * 3) {
+            lastLogTimes.delete(k);
+          }
+        }
+      }
     }
   };
 }
