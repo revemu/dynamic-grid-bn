@@ -8196,3 +8196,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.22`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
 
+---
+
+### 270. Portfolio Avg Profit Sell Order Sync Fix & Interactive Side Order Panel (v0.3.0.23)
+
+- **สาเหตุของปัญหาที่บอทไม่ตั้งขายรอไว้ (Root Cause Forensic)**:
+  1. **Premature Filtering in `src/strategy/sell-sync.ts`**:
+     - เมื่อทุนเฉลี่ยของพอร์ตสูงกว่ากรอบราคาดิบ (`sellLevels`) ในโหมด `PORTFOLIO_AVG_PROFIT` (หรือเปิด `requireProfitAboveAvgEntry`) โค้ดเดิมนำราคาขายดิบไปเปรียบเทียบกับ `minAllowedSellPrice` ล่วงหน้า (`lvl > minAllowedSellPrice`) ทำให้ระดับขายดิบทั้งหมด (0.0637, 0.0644, 0.0650, 0.0656) ถูกตัดทิ้งหมดกลายเป็น `eligibleSellIndices = []`
+  2. **Fee Buffer Discrepancy & Strict `>` Guard**:
+     - แม้จะมี Fallback ดึงเป้าขายสูงสุดกลับมา แต่ขั้นตอนคำนวณ `lvlPrice` ไม่ได้บวก `feeBufferPct` (0.16% สำหรับ CEX) และไม่ได้ clamp ด้วย `minAllowedSellPrice`
+     - จากนั้นไปติดเงื่อนไขตรวจสอบ `lvlPrice > minAllowedSellPrice` ซึ่ง $0.0656 > $0.065703 เป็นเท็จ จึงถูกยกเลิกไม่ยอมวางคำสั่งขายบน Binance
+  3. **Discrepancy with `effectiveSellTargets`**:
+     - บนหน้าจอแดชบอร์ด `effectiveSellTargets` ได้รับการยกฐานเหนือทุนเฉลี่ยแล้ว ($0.0656, $0.0657, $0.0658, $0.0659) แต่ตัวบอทส่งคำสั่งขายกลับไม่ได้ตั้งตามราคาที่ยกฐาน จึงเกิดสถานะ "ออเดอร์รอ (0)"
+- **แนวทางแก้ไขและผลลัพธ์ (Solution & Implementation)**:
+  1. **Sync Sell Orders Lifting in `src/strategy/sell-sync.ts`**:
+     - ปรับให้ในโหมด `PORTFOLIO_AVG_PROFIT` และ `requireProfitAboveAvgEntry` เมื่อ `avgEntry > 0` เป้าขายทุกระดับที่เปิดใช้งาน (Enabled Targets) จะได้รับการยกฐานราคามาที่ `minAllowedSellPrice` และไล่ระดับตามขั้นบันไดกำไรสุทธิรวมค่าธรรมเนียม (`feeBufferPct`) ครบถ้วน
+     - ปรับเงื่อนไขตรวจสอบการส่งคำสั่งขายเป็น `>= minAllowedSellPrice * 0.9999` และป้องกันระดับราคาเป้าหมายซ้ำซ้อนด้วย Tick-spacing
+     - ซิงค์ตรรกะ `effectiveSellTargets` ใน `src/strategy/index.ts` ให้คำนวณบวก `feeBufferPct` ตรงกัน 100%
+  2. **Interactive Side Order Panel beside Chart (`public/index.html`, `public/style.css`, `public/app.js`)**:
+     - ปลดบล็อก `.col-sidebar` ให้แสดงผลคู่ขนานกับกราฟหลักในสัดส่วน `1fr 380px`
+     - สลับให้แผง `📖 ออเดอร์รอ (Open Orders)` แสดงผลเป็นแท็บแรกที่ความสูงระดับเดียวกับแท่งเทียน แสดงรายละเอียด Limit Order ที่ตั้งรอในตลาด (ฝั่ง, ระดับ, ราคา, จำนวน, มูลค่า, เวลาหมดอายุ) ครบถ้วน
+     - เพิ่มปุ่ม Toggle `📖 ออเดอร์รอ (<count>)` บนแถบเครื่องมือของกราฟ เพื่อให้ผู้ใช้สามารถกดเปิด/ปิดแถบข้างกราฟได้อย่างอิสระ พร้อมบันทึกสถานะลงใน `localStorage`
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.23`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+

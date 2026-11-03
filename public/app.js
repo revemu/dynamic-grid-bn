@@ -1108,6 +1108,29 @@
         });
       }
 
+      const btnToggleOrderSidebar = document.getElementById("btnToggleOrderSidebar");
+      const dashboardGrid = document.querySelector(".dashboard-grid");
+      if (btnToggleOrderSidebar && dashboardGrid) {
+        if (localStorage.getItem("orderSidebarCollapsed") === "1") {
+          dashboardGrid.classList.add("sidebar-collapsed");
+          btnToggleOrderSidebar.classList.remove("active");
+        }
+        btnToggleOrderSidebar.addEventListener("click", () => {
+          const isCollapsed = dashboardGrid.classList.toggle("sidebar-collapsed");
+          btnToggleOrderSidebar.classList.toggle("active", !isCollapsed);
+          localStorage.setItem("orderSidebarCollapsed", isCollapsed ? "1" : "0");
+          if (chart && chartContainer) {
+            setTimeout(() => {
+              chart.applyOptions({
+                width: chartContainer.clientWidth || 800,
+                height: chartContainer.clientHeight || 480,
+              });
+              scheduleSyncPositions();
+            }, 60);
+          }
+        });
+      }
+
       if (btnToggleWave) {
         btnToggleWave.addEventListener("click", () => {
           isWaveVisible = !isWaveVisible;
@@ -4267,7 +4290,9 @@
         <tr class="empty-row">
           <td colspan="6">ไม่มีออเดอร์ Limit ที่วางรอในสมุดคำสั่งซื้อ</td>
         </tr>`;
+      const elBtnSideOrderCount = document.getElementById("btnSideOrderCount");
       if (elOpenOrdersBadgeCount) elOpenOrdersBadgeCount.textContent = "0";
+      if (elBtnSideOrderCount) elBtnSideOrderCount.textContent = "0";
       if (elOpenOrdersTotalValue) elOpenOrdersTotalValue.textContent = "$0.00 Waiting";
       return;
     }
@@ -4277,7 +4302,9 @@
       totalValue += o.notionalUsdso || (o.price * o.qty);
     });
 
+    const elBtnSideOrderCount = document.getElementById("btnSideOrderCount");
     if (elOpenOrdersBadgeCount) elOpenOrdersBadgeCount.textContent = `${openOrders.length}`;
+    if (elBtnSideOrderCount) elBtnSideOrderCount.textContent = `${openOrders.length}`;
     if (elOpenOrdersTotalValue) elOpenOrdersTotalValue.textContent = `$${totalValue.toFixed(2)} Waiting`;
 
     // Sort: BUYs first (highest price first), then SELLs (lowest target price first)

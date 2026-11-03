@@ -381,10 +381,16 @@ body {
    ═══════════════════════════════════════════════════════════════════════════ */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 380px;
   gap: var(--gap-md);
   flex: 1;
   min-height: 520px;
+  width: 100%;
+  transition: grid-template-columns 0.2s ease;
+}
+
+.dashboard-grid.sidebar-collapsed {
+  grid-template-columns: 1fr;
 }
 
 .col-chart {
@@ -394,9 +400,21 @@ body {
   min-height: 540px;
   gap: 8px;
   width: 100%;
+  min-width: 0;
 }
 
 .col-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  min-width: 320px;
+  max-width: 420px;
+  min-height: 540px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.dashboard-grid.sidebar-collapsed .col-sidebar {
   display: none !important;
 }
 
@@ -3556,10 +3574,13 @@ input:checked + .slider:before { transform: translateX(20px); }
   width: 100%;
 }
 
-/* 3. Studio Full-Width Grid */
+/* 3. Studio Full-Width Grid with Collapsible Sidebar */
 .dashboard-grid {
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 380px;
   width: 100%;
+}
+.dashboard-grid.sidebar-collapsed {
+  grid-template-columns: 1fr;
 }
 
 .glow-ladder-card {

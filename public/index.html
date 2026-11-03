@@ -13,7 +13,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=3.32" />
+  <link rel="stylesheet" href="style.css?v=3.33" />
   <!-- TradingView Lightweight Charts -->
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 </head>
@@ -273,6 +273,7 @@
               <button class="btn-tool active" id="btnToggleHtfLines" title="เปิด/ปิด เส้นแนวรับแนวต้าน 4H HTF & POC">🏛️ 4H S/R</button>
               <button class="btn-tool active" id="btnToggleWave" title="เปิด/ปิด การแสดงเส้นรอบคลื่นและจุดสวิง Dow">🌊 รอบคลื่น</button>
               <button class="btn-tool" id="btnFitChart" title="ปรับขนาดกราฟให้พอดีหน้าจอ">⛶ จัดกึ่งกลางกราฟ</button>
+              <button class="btn-tool active" id="btnToggleOrderSidebar" title="เปิด/ปิด แผงออเดอร์ข้างกราฟ">📖 ออเดอร์รอ (<span id="btnSideOrderCount">0</span>)</button>
             </div>
           </div>
 
@@ -320,7 +321,7 @@
       </div>
 
       <!-- ──── COLUMN 2: Compact Grid Meter + Unified Multi-Tab Portfolio Dock (Hidden in Clean Studio Mode) ──── -->
-      <aside class="col-sidebar" style="display: none !important;">
+      <aside class="col-sidebar" id="colSidebar">
         <!-- 1. Compact Dynamic Grid Channel Meter (100% Ceiling to 0% Floor) -->
         <div class="hud-card glow-ladder-card" id="gridLadderCard">
           <div class="card-header">
@@ -570,13 +571,13 @@
         <div class="hud-card sidebar-activity-card" id="activityFeedSection">
           <div class="card-header activity-card-header">
             <div class="activity-tabs">
-              <button class="act-tab-btn active" id="tabTradesBtn" data-target="trades" title="รายการจับคู่ซื้อขายสำเร็จล่าสุด">
+              <button class="act-tab-btn" id="tabTradesBtn" data-target="trades" title="รายการจับคู่ซื้อขายสำเร็จล่าสุด">
                 <span class="tab-icon">⚡</span> เทรด (<span id="tradesCount">0</span>)
               </button>
-              <button class="act-tab-btn" id="tabOpenOrdersBtn" data-target="openorders" title="คำสั่ง Limit Order ที่วางรออยู่ในตลาดขณะนี้">
+              <button class="act-tab-btn active" id="tabOpenOrdersBtn" data-target="openorders" title="คำสั่ง Limit Order ที่วางรออยู่ในตลาดขณะนี้">
                 <span class="tab-icon">📖</span> ออเดอร์รอ (<span id="openOrdersBadgeCount">0</span>)
               </button>
-              <button class="act-tab-btn" id="tabHoldingLotsBtn" data-target="holdinglots" style="display: none;">
+              <button class="act-tab-btn" id="tabHoldingLotsBtn" data-target="holdinglots" title="ล็อตเหรียญที่ถือครองแยกตามไม้">
                 <span class="tab-icon">📦</span> ไม้ที่ถือ (<span id="lotsBadgeCount">0</span>)
               </button>
               <button class="act-tab-btn" id="tabAllBtn" data-target="all" title="ประวัติกิจกรรมทั้งหมดของบอท">
@@ -589,12 +590,12 @@
           </div>
 
           <!-- Pane 1: Trade Matches Feed -->
-          <div class="activity-feed" id="tradesFeed">
+          <div class="activity-feed" id="tradesFeed" style="display: none;">
             <div class="empty-feed">ยังไม่มีรายการจับคู่ซื้อขาย...</div>
           </div>
 
           <!-- Pane 2: Live Resting Open Orders Table -->
-          <div class="activity-feed" id="openOrdersFeed" style="display: none; padding: 6px 8px;">
+          <div class="activity-feed" id="openOrdersFeed" style="display: flex; padding: 6px 8px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 11px; color: #94a3b8; padding: 0 4px;">
               <span>รายการ Limit Order ที่ตั้งรอในตลาด</span>
               <span id="openOrdersTotalValue" style="color: #38bdf8; font-weight: 700;">$0.00 Waiting</span>
@@ -2858,7 +2859,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=3.47"></script>
+  <script src="app.js?v=3.48"></script>
 </body>
 
 </html>

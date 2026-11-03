@@ -2530,7 +2530,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         avgEntryPrice: avgEntry,
         effectiveSellTargets: (this.lastTelemetryData.sellLevels || []).map((rawLvl: number, idx: number) => {
           if (avgEntry <= 0) return rawLvl;
-          const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + (idx * 0.15);
+          const isDex = this.binance.hasGasFees || this.binance.isDex || this.binance.exchangeName === "dreamdex";
+          const feeBufferPct = isDex ? 0 : 0.16;
+          const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + feeBufferPct + (idx * 0.15);
           const minTargetPrice = avgEntry * (1 + targetProfitPct / 100);
           const shouldLockAboveAvg = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT" ||
             this.cfg.requireProfitAboveAvgEntry ||
@@ -4594,7 +4596,9 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         sellLevels: sellLevels,
         effectiveSellTargets: sellLevels.map((rawLvl, idx) => {
           if (avgEntry <= 0) return rawLvl;
-          const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + (idx * 0.15);
+          const isDex = this.binance.hasGasFees || this.binance.isDex || this.binance.exchangeName === "dreamdex";
+          const feeBufferPct = isDex ? 0 : 0.16;
+          const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + feeBufferPct + (idx * 0.15);
           const minTargetPrice = avgEntry * (1 + targetProfitPct / 100);
           const shouldLockAboveAvg = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT" ||
             this.cfg.requireProfitAboveAvgEntry ||
