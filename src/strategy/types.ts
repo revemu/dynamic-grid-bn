@@ -190,6 +190,7 @@ export interface IStrategyHost {
   getBuyLevelWeightFractions(enabledBuys?: boolean[], numLevels?: number, forceFirstActive?: boolean): number[];
   getCumulativeBuyTargetFraction(upToIdx: number, enabledBuys?: boolean[], numLevels?: number, forceFirstActive?: boolean): number;
   getMinProfitMultiplier(): number;
+  getFeeBufferPct(): number;
   getAvgEntryPrice(): number;
   baseHeld(): number;
   getTotalPortfolioValueQuote(refP: number): number;

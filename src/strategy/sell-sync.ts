@@ -213,8 +213,7 @@ export class SellOrderSynchronizer {
       const drawdownPct = avgEntry > 0 ? ((avgEntry - refPrice) / avgEntry) * 100 : 0;
       const isHeavyDrawdown = Boolean(drawdownPct >= 2.0 && currentHoldFraction >= 0.60);
       const isDowntrendEscape = Boolean(isHeavyDrawdown || isStuckPosition);
-      const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
-      const feeBufferPct = isDex ? 0 : 0.16;
+      const feeBufferPct = this.host.getFeeBufferPct();
       const effectiveMinProfitPct = isDowntrendEscape
         ? (this.host.cfg.breakevenEscapeProfitPct ?? 0.06) + feeBufferPct
         : Math.max(0.20, this.host.cfg.minNetProfitPct ?? 0.25) + feeBufferPct;
@@ -609,8 +608,7 @@ export class SellOrderSynchronizer {
 
           let effLvlPrice = lvlPrice;
           minProfitMulti = this.host.getMinProfitMultiplier();
-          const isDexRes = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
-          const feeBufferPctRes = isDexRes ? 0 : 0.16;
+          const feeBufferPctRes = this.host.getFeeBufferPct();
           if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry) && avgEntry > 0) {
             const minNetProfitPct = Math.max(0.15, this.host.cfg.minNetProfitPct ?? 0.25);
             const targetProfitPct = minNetProfitPct + feeBufferPctRes + (activeRank * 0.15);
@@ -736,8 +734,7 @@ export class SellOrderSynchronizer {
       let minDiff = Infinity;
       for (let idx = 0; idx < sellLevels.length; idx++) {
         const lvl = sellLevels[idx];
-        const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
-        const feeBufferPct = isDex ? 0 : 0.16;
+        const feeBufferPct = this.host.getFeeBufferPct();
         const targetProfitPct = Math.max(0.15, this.host.cfg.minNetProfitPct ?? 0.25) + feeBufferPct + (idx * 0.15);
         const liftedPrice = isLockAboveAvg ? Math.max(lvl, minAllowedSellPrice, avgEntry * (1 + targetProfitPct / 100)) : lvl;
 
@@ -916,8 +913,7 @@ export class SellOrderSynchronizer {
       }
 
       let lvlPrice = originalLvlPrice;
-      const isDex = this.host.binance.hasGasFees || this.host.binance.isDex || this.host.binance.exchangeName === "dreamdex";
-      const feeBufferPct = isDex ? 0 : 0.16;
+      const feeBufferPct = this.host.getFeeBufferPct();
       if ((mode === "PORTFOLIO_AVG_PROFIT" || this.host.cfg.requireProfitAboveAvgEntry || this.host.cfg.gridCutLossMode === "none") && avgEntry > 0) {
         const minNetProfitPct = Math.max(0.15, this.host.cfg.minNetProfitPct ?? 0.25);
         const targetProfitPct = minNetProfitPct + feeBufferPct + (activeRank * 0.15);

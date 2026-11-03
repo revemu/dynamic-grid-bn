@@ -792,9 +792,16 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
   /**
    * Returns the minimum net profit multiplier (e.g. 1.0025 for 0.25% minNetProfitPct) required for profitable exits.
    */
-  public getMinProfitMultiplier(): number {
+  public getFeeBufferPct(): number {
     const isDex = this.binance.hasGasFees || this.binance.isDex || this.binance.exchangeName === "dreamdex";
-    const feeBufferPct = isDex ? 0 : 0.16; // CEX maker/taker roundtrip fee buffer (0.075% x 2 + cushion)
+    if (isDex) return 0;
+    const isZeroFeeQuote = (this.quoteAsset || "").toUpperCase() === "FDUSD";
+    if (isZeroFeeQuote) return 0;
+    return 0.16; // Standard CEX maker/taker roundtrip fee buffer (0.075% x 2 + cushion)
+  }
+
+  public getMinProfitMultiplier(): number {
+    const feeBufferPct = this.getFeeBufferPct();
     const pct = Math.max(0.05, Number(this.cfg.minNetProfitPct ?? 0.25));
     return 1 + (pct + feeBufferPct) / 100;
   }
@@ -2530,8 +2537,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         avgEntryPrice: avgEntry,
         effectiveSellTargets: (this.lastTelemetryData.sellLevels || []).map((rawLvl: number, idx: number) => {
           if (avgEntry <= 0) return rawLvl;
-          const isDex = this.binance.hasGasFees || this.binance.isDex || this.binance.exchangeName === "dreamdex";
-          const feeBufferPct = isDex ? 0 : 0.16;
+          const feeBufferPct = this.getFeeBufferPct();
           const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + feeBufferPct + (idx * 0.15);
           const minTargetPrice = avgEntry * (1 + targetProfitPct / 100);
           const shouldLockAboveAvg = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT" ||
@@ -4596,8 +4602,7 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
         sellLevels: sellLevels,
         effectiveSellTargets: sellLevels.map((rawLvl, idx) => {
           if (avgEntry <= 0) return rawLvl;
-          const isDex = this.binance.hasGasFees || this.binance.isDex || this.binance.exchangeName === "dreamdex";
-          const feeBufferPct = isDex ? 0 : 0.16;
+          const feeBufferPct = this.getFeeBufferPct();
           const targetProfitPct = Math.max(0.15, this.cfg.minNetProfitPct ?? 0.25) + feeBufferPct + (idx * 0.15);
           const minTargetPrice = avgEntry * (1 + targetProfitPct / 100);
           const shouldLockAboveAvg = this.cfg.sellProfitMode === "PORTFOLIO_AVG_PROFIT" ||

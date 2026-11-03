@@ -8220,3 +8220,22 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.23`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
 
+---
+
+### 271. Dynamic Zero-Fee Quote Detection for FDUSD Pairs (`getFeeBufferPct()`) (v0.3.0.24)
+
+- **สาเหตุของปัญหา (Forensic Context)**:
+  - ในโค้ดเดิมมีการกำหนดค่า `feeBufferPct = 0.16%` แบบ Hardcoded คงที่สำหรับคู่เทรด CEX ทั้งหมด (0.075% x 2 + Cushion)
+  - อย่างไรก็ตาม คู่เทรดที่มี Quote Asset เป็น `FDUSD` บน Binance (เช่น ERAFDUSD) มีโปรโมชั่น **0% Trading Fee** ทำให้การบวกค่าธรรมเนียม 0.16% เข้าไปใน `minAllowedSellPrice` และเป้าขายกลายเป็นการยกฐานราคาขายสูงเกินความเป็นจริงโดยไม่จำเป็น ($0.0657 แทนที่จะเป็น $0.0656) ส่งผลให้คำสั่งขายออกช้าลง
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **เพิ่มเมธอด `getFeeBufferPct(): number` ใน `IStrategyHost` และ `DynamicGrid`**:
+     - หากเป็น DEX ➔ `0%`
+     - หากเป็น CEX ที่ Quote Asset คือ `FDUSD` ➔ `0%` (Zero-fee promotion)
+     - หากเป็น Quote Asset อื่น (เช่น `USDT`) ➔ `0.16%` (Normal CEX roundtrip fee)
+  2. **ซิงค์ทุกจุดคำนวณราคาขายและเป้าหมาย**:
+     - ใน `src/strategy/index.ts`: ใช้งานใน `getMinProfitMultiplier()` และ `effectiveSellTargets`
+     - ใน `src/strategy/sell-sync.ts`: ใช้งานใน `syncSellOrders` ทุกจุด ทั้งโหมด Standard Sell และ Resistance Sell Override
+     - สำหรับคู่ `ERAFDUSD` ราคาขายต่ำสุด (`minAllowedSellPrice`) เริ่มต้นที่ $0.0656 (+0.50% Net Profit) ได้ทันที ตรงกับระดับ Sell Target 4 บนกราฟ
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.24`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
