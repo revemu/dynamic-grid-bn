@@ -54,6 +54,11 @@ export class DashboardServer {
     usdc: string[];
   } | null = null;
   private currentScanProgress: any = null;
+  private lastBroadcastTickTs = 0;
+  private lastTickSignature = "";
+  private lastCriticalSignature = "";
+  private readonly minTickBroadcastIntervalMs = 1000;
+  private readonly maxTickBroadcastIntervalMs = 5000;
 
   constructor(private readonly opts: DashboardServerOptions) {
     this.db = opts.db || getDatabase();
@@ -204,8 +209,39 @@ export class DashboardServer {
     if (tickData && typeof tickData === "object" && !tickData.versionInfo) {
       tickData.versionInfo = APP_VERSION_INFO;
     }
+    // Always keep latestTick 100% fresh in memory for /api/state and initial page loads
     this.latestTick = tickData;
-    this.broadcast("tick", tickData);
+
+    // If no SSE clients are connected, skip JSON serialization and broadcasting completely
+    if (this.clients.size === 0) return;
+
+    const now = Date.now();
+    const timeSinceLastBroadcast = now - this.lastBroadcastTickTs;
+
+    // Detect critical state changes that must be sent immediately (position, pause, orders, channel bounds)
+    const criticalSig = `${tickData.isPaused}|${tickData.baseHeld ?? 0}|${tickData.openOrders?.length ?? 0}|${tickData.upperBound ?? 0}|${tickData.bottomBound ?? 0}|${tickData.zoneType ?? ""}|${tickData.botAction?.code ?? ""}|${tickData.activeLevelName ?? ""}`;
+    const isCriticalChange = this.lastCriticalSignature !== "" && this.lastCriticalSignature !== criticalSig;
+
+    // Detect incremental price / PnL changes
+    const fullSig = `${criticalSig}#${tickData.mid ?? 0}|${tickData.bestBid ?? 0}|${tickData.bestAsk ?? 0}|${tickData.binancePrice ?? 0}|${tickData.realizedPnl ?? 0}|${tickData.unrealizedPnl ?? 0}`;
+    const hasDataChanged = fullSig !== this.lastTickSignature;
+
+    // Decide whether to broadcast:
+    // 1. Critical state change: broadcast immediately (even if < 1s)
+    // 2. Data changed AND min interval (1000ms) has elapsed: broadcast
+    // 3. Max interval (5000ms) elapsed (Heartbeat): broadcast
+    // Otherwise: SKIP broadcast to save bandwidth, serialization overhead, and client CPU!
+    const shouldBroadcast =
+      isCriticalChange ||
+      (hasDataChanged && timeSinceLastBroadcast >= this.minTickBroadcastIntervalMs) ||
+      timeSinceLastBroadcast >= this.maxTickBroadcastIntervalMs;
+
+    if (shouldBroadcast) {
+      this.lastBroadcastTickTs = now;
+      this.lastTickSignature = fullSig;
+      this.lastCriticalSignature = criticalSig;
+      this.broadcast("tick", tickData);
+    }
   }
 
   resetState(opts?: { clearTrades?: boolean }): void {
@@ -213,9 +249,13 @@ export class DashboardServer {
       this.recentOrders = [];
     }
     this.latestTick = null;
+    this.lastTickSignature = "";
+    this.lastCriticalSignature = "";
+    this.lastBroadcastTickTs = 0;
   }
 
   public broadcast(event: string, data: any): void {
+    if (this.clients.size === 0) return;
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of this.clients) {
       try {

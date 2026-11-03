@@ -411,7 +411,7 @@ body {
   max-width: 420px;
   min-height: 540px;
   height: 100%;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .dashboard-grid.sidebar-collapsed .col-sidebar {
@@ -1605,7 +1605,8 @@ body {
 }
 
 .glow-ladder-card {
-  flex: 1.15;
+  flex: none;
+  height: auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -3584,7 +3585,8 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 
 .glow-ladder-card {
-  flex: 1.45;
+  flex: none;
+  height: auto;
   padding: 8px 10px;
   gap: 4px;
 }

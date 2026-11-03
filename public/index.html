@@ -273,7 +273,7 @@
               <button class="btn-tool active" id="btnToggleHtfLines" title="เปิด/ปิด เส้นแนวรับแนวต้าน 4H HTF & POC">🏛️ 4H S/R</button>
               <button class="btn-tool active" id="btnToggleWave" title="เปิด/ปิด การแสดงเส้นรอบคลื่นและจุดสวิง Dow">🌊 รอบคลื่น</button>
               <button class="btn-tool" id="btnFitChart" title="ปรับขนาดกราฟให้พอดีหน้าจอ">⛶ จัดกึ่งกลางกราฟ</button>
-              <button class="btn-tool active" id="btnToggleOrderSidebar" title="เปิด/ปิด แผงออเดอร์ข้างกราฟ">📖 ออเดอร์รอ (<span id="btnSideOrderCount">0</span>)</button>
+              <button class="btn-tool active" id="btnToggleOrderSidebar" title="เปิด/ปิด แผงข้างกราฟ">📊 แผงข้างกราฟ</button>
             </div>
           </div>
 
@@ -318,6 +318,124 @@
             </div>
           </div>
         </section>
+        <!-- ═══════════════════ Bottom Interactive Live Trade Log Section (Backtest Studio Style) ═══════════════════ -->
+    <section class="bt-trades-section live-trades-section" id="liveTradesSection">
+      <div class="trades-header">
+        <div class="trades-title-wrap">
+          <h2 class="trades-title">📋 ประวัติการซื้อขาย &amp; รอบการเทรด (Live Trade Log)</h2>
+          <span class="trades-hint">💡 คลิกที่แถวไม้เทรดเพื่อเลื่อนกราฟ (Scroll) และดูจุดซื้อ-ขายบนแท่งเทียน</span>
+        </div>
+        <div class="trades-header-controls" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <div class="trades-filter">
+            <button class="filter-btn active" id="btnLtTabFills" data-target="fills">⚡ ประวัติเทรด (<span id="ltCntFills">0</span>)</button>
+            <button class="filter-btn" id="btnLtTabRounds" data-target="rounds">🔄 สรุปรอบเทรด (<span id="ltCntRounds">0</span>)</button>
+            <button class="filter-btn" id="btnLtTabOrders" data-target="orders">📖 ออเดอร์รอ (<span id="ltCntOrders">0</span>)</button>
+            <button class="filter-btn" id="btnLtTabLots" data-target="lots">📦 ไม้ที่ถือ (<span id="ltCntLots">0</span>)</button>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-warning btn-sm" id="btnLtSyncBinance" title="ดึงประวัติการจับคู่คำสั่งจริงจาก Binance REST API มา Reconcile อัตโนมัติ" style="background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24; font-size: 11px; padding: 4px 8px;">
+              <span>🔄 Reconcile จาก Binance</span>
+            </button>
+            <button class="btn btn-primary btn-sm" id="btnLtAddTrade" style="font-size: 11px; padding: 4px 8px;">
+              <span>➕ เพิ่ม Trade Fill</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pane 1: Real Trade Fills Table -->
+      <div class="trades-table-wrap" id="ltPaneFills">
+        <table class="bt-table" id="ltFillsTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>เวลา (Time)</th>
+              <th>ฝั่ง (Side)</th>
+              <th>ราคา (Price)</th>
+              <th>จำนวน (Qty)</th>
+              <th>มูลค่า ($)</th>
+              <th>กำไร Realized PnL ($)</th>
+              <th>ประเภท / Action</th>
+              <th>สถานะ</th>
+            </tr>
+          </thead>
+          <tbody id="ltFillsTbody">
+            <tr>
+              <td colspan="9" class="td-empty">กำลังโหลดประวัติการซื้อขาย...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pane 2: Trade Rounds Summary Table -->
+      <div class="trades-table-wrap" id="ltPaneRounds" style="display: none;">
+        <table class="bt-table" id="ltRoundsTable">
+          <thead>
+            <tr>
+              <th>รอบที่</th>
+              <th>สถานะรอบ</th>
+              <th>เวลาเริ่ม (Entry)</th>
+              <th>เวลาปิด (Exit)</th>
+              <th>ระยะเวลา</th>
+              <th>ต้นทุนเฉลี่ย</th>
+              <th>ราคาขายเฉลี่ย</th>
+              <th>จำนวนรวม</th>
+              <th>กำไรสุทธิ ($)</th>
+              <th>กำไร (%)</th>
+            </tr>
+          </thead>
+          <tbody id="ltRoundsTbody">
+            <tr>
+              <td colspan="10" class="td-empty">ยังไม่มีข้อมูลรอบการเทรด</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pane 3: Open Orders Table -->
+      <div class="trades-table-wrap" id="ltPaneOrders" style="display: none;">
+        <table class="bt-table" id="ltOrdersTable">
+          <thead>
+            <tr>
+              <th>ฝั่ง (Side)</th>
+              <th>ระดับ / ชื่อ</th>
+              <th>ราคา ($)</th>
+              <th>จำนวน</th>
+              <th>มูลค่า ($)</th>
+              <th>สถานะ</th>
+              <th>Order ID</th>
+            </tr>
+          </thead>
+          <tbody id="ltOrdersTbody">
+            <tr>
+              <td colspan="7" class="td-empty">ไม่มีออเดอร์ตั้งรอในตลาด</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pane 4: Holding Lots Table -->
+      <div class="trades-table-wrap" id="ltPaneLots" style="display: none;">
+        <table class="bt-table" id="ltLotsTable">
+          <thead>
+            <tr>
+              <th>ไม้ที่</th>
+              <th>เวลาที่ซื้อ</th>
+              <th>ราคาทุน ($)</th>
+              <th>จำนวน</th>
+              <th>มูลค่า ($)</th>
+              <th>สัดส่วน</th>
+            </tr>
+          </thead>
+          <tbody id="ltLotsTbody">
+            <tr>
+              <td colspan="6" class="td-empty">ไม่มีเหรียญที่ถือครอง (ถือเงินสด 100%)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+      
       </div>
 
       <!-- ──── COLUMN 2: Compact Grid Meter + Unified Multi-Tab Portfolio Dock (Hidden in Clean Studio Mode) ──── -->
@@ -567,215 +685,11 @@
           </div>
         </div>
 
-        <!-- 2. Unified Multi-Tab Portfolio & Activity Dock (Trades / Open Orders / Lots / Log) -->
-        <div class="hud-card sidebar-activity-card" id="activityFeedSection">
-          <div class="card-header activity-card-header">
-            <div class="activity-tabs">
-              <button class="act-tab-btn" id="tabTradesBtn" data-target="trades" title="รายการจับคู่ซื้อขายสำเร็จล่าสุด">
-                <span class="tab-icon">⚡</span> เทรด (<span id="tradesCount">0</span>)
-              </button>
-              <button class="act-tab-btn active" id="tabOpenOrdersBtn" data-target="openorders" title="คำสั่ง Limit Order ที่วางรออยู่ในตลาดขณะนี้">
-                <span class="tab-icon">📖</span> ออเดอร์รอ (<span id="openOrdersBadgeCount">0</span>)
-              </button>
-              <button class="act-tab-btn" id="tabHoldingLotsBtn" data-target="holdinglots" title="ล็อตเหรียญที่ถือครองแยกตามไม้">
-                <span class="tab-icon">📦</span> ไม้ที่ถือ (<span id="lotsBadgeCount">0</span>)
-              </button>
-              <button class="act-tab-btn" id="tabAllBtn" data-target="all" title="ประวัติกิจกรรมทั้งหมดของบอท">
-                ทั้งหมด (<span id="ordersCount">0</span>)
-              </button>
-              <button class="act-tab-btn" id="tabOnchainBtn" data-target="onchain" style="display: none;">
-                <span class="tab-icon">⛓️</span> On-Chain (<span id="onchainCount">0</span>)
-              </button>
-            </div>
-          </div>
-
-          <!-- Pane 1: Trade Matches Feed -->
-          <div class="activity-feed" id="tradesFeed" style="display: none;">
-            <div class="empty-feed">ยังไม่มีรายการจับคู่ซื้อขาย...</div>
-          </div>
-
-          <!-- Pane 2: Live Resting Open Orders Table -->
-          <div class="activity-feed" id="openOrdersFeed" style="display: flex; padding: 6px 8px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 11px; color: #94a3b8; padding: 0 4px;">
-              <span>รายการ Limit Order ที่ตั้งรอในตลาด</span>
-              <span id="openOrdersTotalValue" style="color: #38bdf8; font-weight: 700;">$0.00 Waiting</span>
-            </div>
-            <div class="sidebar-mini-table-wrap">
-              <table class="sidebar-mini-table">
-                <thead>
-                  <tr>
-                    <th>ฝั่ง</th>
-                    <th>ระดับ</th>
-                    <th>ราคา</th>
-                    <th>จำนวน</th>
-                    <th>มูลค่า</th>
-                    <th>อายุ</th>
-                  </tr>
-                </thead>
-                <tbody id="openOrdersTableBody">
-                  <tr class="empty-row">
-                    <td colspan="6">ไม่มีออเดอร์ตั้งรอในตลาด</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Pane 3: Live Holding Lots Table -->
-          <div class="activity-feed" id="holdingLotsFeed" style="display: none; padding: 6px 8px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 11px; color: #94a3b8; padding: 0 4px;">
-              <span>ล็อตเหรียญที่ถือครองแยกตามไม้</span>
-              <span id="lotsTotalBase" style="color: #c084fc; font-weight: 700;">0.00 BASE</span>
-            </div>
-            <div class="sidebar-mini-table-wrap">
-              <table class="sidebar-mini-table">
-                <thead>
-                  <tr>
-                    <th>ไม้ที่</th>
-                    <th>ราคาทุน</th>
-                    <th>มูลค่า</th>
-                    <th>สัดส่วน</th>
-                  </tr>
-                </thead>
-                <tbody id="lotsTableBody">
-                  <tr class="empty-row">
-                    <td colspan="4">ยังไม่มีเหรียญที่ถือครอง (ถือเงินสด 100%)</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Pane 4: On-Chain Order Lifecycle Feed -->
-          <div class="activity-feed" id="onchainFeed" style="display: none;">
-            <div class="empty-feed">Waiting for on-chain order actions...</div>
-          </div>
-
-          <!-- Pane 5: Combined All Activity Feed -->
-          <div class="activity-feed" id="allFeed" style="display: none;">
-            <div class="empty-feed">กำลังรอการทำงานของกลยุทธ์...</div>
-          </div>
-        </div>
+        
       </aside>
     </div>
 
-    <!-- ═══════════════════ Bottom Interactive Live Trade Log Section (Backtest Studio Style) ═══════════════════ -->
-    <section class="bt-trades-section live-trades-section" id="liveTradesSection">
-      <div class="trades-header">
-        <div class="trades-title-wrap">
-          <h2 class="trades-title">📋 ประวัติการซื้อขาย &amp; รอบการเทรด (Live Trade Log)</h2>
-          <span class="trades-hint">💡 คลิกที่แถวไม้เทรดเพื่อเลื่อนกราฟ (Scroll) และดูจุดซื้อ-ขายบนแท่งเทียน</span>
-        </div>
-        <div class="trades-header-controls" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-          <div class="trades-filter">
-            <button class="filter-btn active" id="btnLtTabFills" data-target="fills">⚡ ประวัติเทรด (<span id="ltCntFills">0</span>)</button>
-            <button class="filter-btn" id="btnLtTabRounds" data-target="rounds">🔄 สรุปรอบเทรด (<span id="ltCntRounds">0</span>)</button>
-            <button class="filter-btn" id="btnLtTabOrders" data-target="orders">📖 ออเดอร์รอ (<span id="ltCntOrders">0</span>)</button>
-            <button class="filter-btn" id="btnLtTabLots" data-target="lots">📦 ไม้ที่ถือ (<span id="ltCntLots">0</span>)</button>
-          </div>
-          <div style="display: flex; gap: 6px;">
-            <button class="btn btn-warning btn-sm" id="btnLtSyncBinance" title="ดึงประวัติการจับคู่คำสั่งจริงจาก Binance REST API มา Reconcile อัตโนมัติ" style="background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24; font-size: 11px; padding: 4px 8px;">
-              <span>🔄 Reconcile จาก Binance</span>
-            </button>
-            <button class="btn btn-primary btn-sm" id="btnLtAddTrade" style="font-size: 11px; padding: 4px 8px;">
-              <span>➕ เพิ่ม Trade Fill</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Pane 1: Real Trade Fills Table -->
-      <div class="trades-table-wrap" id="ltPaneFills">
-        <table class="bt-table" id="ltFillsTable">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>เวลา (Time)</th>
-              <th>ฝั่ง (Side)</th>
-              <th>ราคา (Price)</th>
-              <th>จำนวน (Qty)</th>
-              <th>มูลค่า ($)</th>
-              <th>กำไร Realized PnL ($)</th>
-              <th>ประเภท / Action</th>
-              <th>สถานะ</th>
-            </tr>
-          </thead>
-          <tbody id="ltFillsTbody">
-            <tr>
-              <td colspan="9" class="td-empty">กำลังโหลดประวัติการซื้อขาย...</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Pane 2: Trade Rounds Summary Table -->
-      <div class="trades-table-wrap" id="ltPaneRounds" style="display: none;">
-        <table class="bt-table" id="ltRoundsTable">
-          <thead>
-            <tr>
-              <th>รอบที่</th>
-              <th>สถานะรอบ</th>
-              <th>เวลาเริ่ม (Entry)</th>
-              <th>เวลาปิด (Exit)</th>
-              <th>ระยะเวลา</th>
-              <th>ต้นทุนเฉลี่ย</th>
-              <th>ราคาขายเฉลี่ย</th>
-              <th>จำนวนรวม</th>
-              <th>กำไรสุทธิ ($)</th>
-              <th>กำไร (%)</th>
-            </tr>
-          </thead>
-          <tbody id="ltRoundsTbody">
-            <tr>
-              <td colspan="10" class="td-empty">ยังไม่มีข้อมูลรอบการเทรด</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Pane 3: Open Orders Table -->
-      <div class="trades-table-wrap" id="ltPaneOrders" style="display: none;">
-        <table class="bt-table" id="ltOrdersTable">
-          <thead>
-            <tr>
-              <th>ฝั่ง (Side)</th>
-              <th>ระดับ / ชื่อ</th>
-              <th>ราคา ($)</th>
-              <th>จำนวน</th>
-              <th>มูลค่า ($)</th>
-              <th>สถานะ</th>
-              <th>Order ID</th>
-            </tr>
-          </thead>
-          <tbody id="ltOrdersTbody">
-            <tr>
-              <td colspan="7" class="td-empty">ไม่มีออเดอร์ตั้งรอในตลาด</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Pane 4: Holding Lots Table -->
-      <div class="trades-table-wrap" id="ltPaneLots" style="display: none;">
-        <table class="bt-table" id="ltLotsTable">
-          <thead>
-            <tr>
-              <th>ไม้ที่</th>
-              <th>เวลาที่ซื้อ</th>
-              <th>ราคาทุน ($)</th>
-              <th>จำนวน</th>
-              <th>มูลค่า ($)</th>
-              <th>สัดส่วน</th>
-            </tr>
-          </thead>
-          <tbody id="ltLotsTbody">
-            <tr>
-              <td colspan="6" class="td-empty">ไม่มีเหรียญที่ถือครอง (ถือเงินสด 100%)</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    
   </div>
 
   <!-- Toast Notification System for Order Match & Cut Loss Alerts -->

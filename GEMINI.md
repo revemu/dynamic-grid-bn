@@ -8258,3 +8258,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
      - เมื่อสเปรดกลับมาแคบลงอยู่ในเกณฑ์ปกติ (`!isSpreadDislocated && this.wasSpreadDislocated`) บอทจะส่งข้อความแจ้งเตือนฟื้นตัวสีเขียว `🟢 Spread recovered to X.XX% (<= Max X.XX%) — resuming order execution` ทันที 1 ครั้ง เพื่อให้ผู้ใช้ทราบว่าบอทกลับมาส่งคำสั่งซื้อขายตามปกติแล้ว
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.25`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 273. Unified Chart Column Layout & Throttled SSE Tick Change Detection (v0.3.0.26)
+
+- **สาเหตุของปัญหา (Forensic Context)**:
+  1. **Layout ซ้ำซ้อน (Redundant Activity Feed & Stretched Table)**:
+     - แถบ Activity Feed ในแถบข้างขวา (`#activityFeedSection`) แสดงประวัติเทรด ไม้ที่ถือ และออเดอร์รอ ซ้ำซ้อนกับตาราง `Live Trade Log` (`#liveTradesSection`) ด้านล่าง
+     - ตารางด้านล่างเดิมอยู่นอก Grid ทำให้ขยายกว้างเต็ม 100% หน้าจอ (กินพื้นที่ใต้ทั้งกราฟและแถบข้าง) ทำให้แถบข้างขวาถูกตัดจบสั้น และไม่มีพื้นที่ว่างสำหรับใส่วิดเจ็ตหรือฟังก์ชันอื่นในอนาคต
+  2. **SSE Tick Flooding (High Server Load & DevTools Spam)**:
+     - ทุกๆ Tick Loop (ทุก 200ms) เซิร์ฟเวอร์จะทำการ JSON stringify อ็อบเจกต์ telemetry ขนาดใหญ่ (~111 KB) แล้วยิงผ่าน SSE (`/api/events`) ส่งไปยังทุกแท็บเบราว์เซอร์อย่างต่อเนื่อง (5 ครั้ง/วินาที หรือ ~550 KB/วินาที)
+     - สร้างภาระ CPU ให้กับ Server ในการ serialize สตริงขนาดใหญ่ และทำให้ Network DevTools รวมทั้ง DOM/JS runtime ในเบราว์เซอร์ต้อง parse ข้อมูลซ้ำๆ ทุก 200ms แม้ราคาหรือสถานะจะไม่เปลี่ยน
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **UI Layout Restructuring (`public/index.html` & `public/style.css`)**:
+     - ย้าย `<section class="bt-trades-section live-trades-section" id="liveTradesSection">` เข้าไปอยู่ภายใน `<div class="col-chart">` ใต้ `.chart-panel` ทันที ทำให้ตารางมีความกว้างพอดีเท่ากับกราฟ 100%
+     - ลบแถบซ้ำซ้อน `#activityFeedSection` ออกจาก `.col-sidebar` โดยให้คงเหลือเฉพาะ Grid Ladder Card ที่ปรับ `flex: none; height: auto;` ทำให้แถบข้างขวาขยายยาวคู่ขนานกับกราฟและตาราง พร้อมมีพื้นที่ว่างด้านล่างสำหรับเพิ่มวิดเจ็ตอื่นๆ ในอนาคต
+     - ปรับข้อความปุ่ม Toggle บนทูลบาร์กราฟเป็น `📊 แผงข้างกราฟ`
+  2. **Throttled SSE Tick Broadcast with Change Detection (`src/server.ts`)**:
+     - ใน `DashboardServer.updateTick(tickData)`:
+       - ยังคงอัปเดต `this.latestTick = tickData` ในหน่วยความจำทุก 200ms เสมอ เพื่อให้ API `/api/state` ดึงข้อมูลสดล่าสุดได้ตลอดเวลา
+       - หากไม่มีไคลเอนต์ SSE เชื่อมต่อ (`this.clients.size === 0`) จะข้ามการประมวลผลและการ Serialize สตริงทันที
+       - **Immediate Critical State Push**: หากสถานะหลักเปลี่ยนแปลง (เช่น `isPaused`, `baseHeld` / Inventory, จำนวนออเดอร์ `openOrders`, ขอบกรอบ `upperBound`/`bottomBound`, โซนราคา หรือ `botAction`) จะบรอดแคสต์ส่งให้เบราว์เซอร์ทันทีในระดับมิลลิวินาที
+       - **Throttled Price Increments**: เมื่อราคา Bid/Ask/Mid หรือ PnL เปลี่ยนแปลง จะส่งอัปเดตโดยหน่วงเวลาอย่างน้อย 1,000ms (1 วินาที) ต่อครั้ง ช่วยลดปริมาณข้อมูลลงกว่า 80%
+       - **Stationary Sleep & Heartbeat**: หากราคาและสถานะไม่มีการเปลี่ยนแปลง จะไม่ส่ง Event ใดๆ เลย และส่ง Heartbeat เพียง 1 ครั้งทุกๆ 5,000ms (5 วินาที)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.26`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
