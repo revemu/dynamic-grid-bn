@@ -2925,7 +2925,8 @@
         if (portfolioMode === "mafan_portfolio") {
           const maxSlots = Number(document.getElementById("rotBtMaxSlots")?.value) || 3;
           const tp1Target = document.getElementById("rotBtTp1Target")?.value || "EMA200";
-          const disasterSlVal = document.getElementById("rotBtDisasterSl")?.value || "12";
+          const disasterSlVal = document.getElementById("rotBtDisasterSl")?.value || "3.5";
+          const excludeToxicMemes = document.getElementById("rotBtExcludeMemes")?.value !== "false";
           const downtrendSitOutMode = document.getElementById("rotBtMacroGate")?.value || "dual";
           const rankBy = document.getElementById("rotBtRankBy")?.value || "COMPOSITE_QUALITY";
 
@@ -2936,6 +2937,7 @@
             partialTpAtEma200: tp1Target !== "none",
             lockBreakevenAtEma200: tp1Target !== "none",
             maxDisasterSlPct: disasterSlVal === "none" ? undefined : Number(disasterSlVal),
+            excludeToxicMemes,
             downtrendSitOutMode,
             rankBy,
           };

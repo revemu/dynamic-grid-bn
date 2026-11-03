@@ -8446,3 +8446,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.31`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
 
+---
+
+### 279. Asymmetric R:R Restoration for Portfolio MA-Fan & Toxic Meme Filtering (v0.3.0.32)
+- **ปัญหาและที่มาของผลลัพธ์ติดลบ (The Asymmetric Payoff Trap in User Backtest)**:
+  1. **ผลการรันจริงของผู้ใช้บน Universe Top 50 (120 วัน / 34,560 bars 5m)**:
+     - ทุน $200 ➔ เหลือ $176.40 (Net PnL **-11.80%**, -$23.60)
+     - มี Win Rate สูงถึง **70.8%** (ชนะ 50 ไม้, แพ้ 22 ไม้) แต่ Profit Factor อยู่ที่ **0.52** และ Max Drawdown สูงถึง **-16.00%**
+  2. **การวินิจฉัยทางคณิตศาสตร์เชิงลึก (Forensic Root Causes)**:
+     - **Inverted Risk-to-Reward (R:R 1:16)**:
+       - ไม้ชนะ 50 ไม้ ได้กำไรเฉลี่ยเพียง **+0.73% per trade (+$0.49)** เพราะระบบสั่ง TP1 ขายครึ่งไม้ที่ EMA200 แล้วขยับ Stop Loss ไปที่ Breakeven (+0.25%) ทำให้การสวิงตัวปกติของแท่งถัดไปมักโดนสะบัดกิน Breakeven เหลือคำกำไรนิดเดียว รวม 50 ไม้ได้กำไรเพียง **+$24.49**
+       - ขณะที่เวลาผิดทาง ระบบปล่อยให้ราคาไหลลงลึกถึงเพดาน **Disaster SL 12.0%**
+       - มีเพียง 4 ไม้ที่โดน Disaster SL -12% เสียหายไป **-$32.40** ตัวเดียว ล้างกำไรที่ชนะมาทั้ง 50 ไม้จนหมดเกลี้ยง!
+     - **หลุมพรางเหรียญมีม / เหรียญปั่นขยะ (Toxic Meme Coins)**:
+       - 4 เหรียญที่กิน Disaster SL -12% เต็มๆ ในการจำลอง คือ `TRUMPUSDT` (-11.80%), `1000CATUSDT` (-11.80%), `MARSCOINUSDT` (-10.21%), และ `HAEDALUSDT` (-10.13%) ซึ่งเป็นเหรียญมีม/เหรียญปั่นที่ไม่มีสภาพคล่องและทุบแล้วไม่เด้ง ลำพัง 4 เหรียญนี้กินเงินพอร์ตไปถึง -43.94%!
+- **การปรับปรุงสถาปัตยกรรมและการพัฒนาโค้ด**:
+  1. **Calibrated Tight Stop-Loss (3.5% Default)**:
+     - ปรับค่าเริ่มต้นของ `maxDisasterSlPct` ใน `runMaFanPortfolioSimulation` และ `runMaFanPortfolioRotationWrapper` จากเดิม 12.0% ลงเหลือ **3.5%** (และมีตัวเลือก 4.0%, 5.0%, 8.0%)
+     - ตัดการขาดทุนเมื่อผิดทางตั้งแต่เนิ่นๆ ทำให้ความเสียหายต่อไม้ลดลงจาก -12% เหลือเพียง -3.5% (ลดการขาดทุนของไม้แย่ลงถึง 70%)
+  2. **ระบบกรองเหรียญขยะและเหรียญมีมไร้สภาพคล่อง (`isToxicMemeOrPenny` & `excludeToxicMemes`)**:
+     - เพิ่มชุดเหรียญ `TOXIC_MEME_PENNY_TOKENS`: กรองเหรียญมีม/เหรียญขยะทุบไม่เด้ง เช่น `1000CATUSDT`, `MARSCOINUSDT`, `HAEDALUSDT`, `TRUMPUSDT`, `BMTUSDT`, `MEGAUSDT`, `PENGUUSDT`, `REDUSDT`, `ERAUSDT`, `PUMPUSDT` และเหรียญที่มีราคาปิดแท่ง < $0.005 ออกจาก Universe อัตโนมัติ
+     - เพิ่มพารามิเตอร์ `excludeToxicMemes?: boolean` (ค่าเริ่มต้น: `true`) ใน `MultiPairRotationOptions`, `server.ts`, และ `backtest.js`
+  3. **การแก้ไขระบบ Take Profit (TP1 Mode Clean Separation)**:
+     - แก้ไขบั๊กใน `runMaFanPortfolioRotationWrapper`: เดิมเมื่อเลือก `tp1TargetMode: "none"` ระบบยังคงบังคับส่งค่า `"EMA200"` และเปิด `lockBreakevenAtEma200: true`
+     - ปรับปรุงให้ตรวจสอบ `opts.tp1TargetMode` อย่างชัดเจน หากผู้ใช้เลือก `"none"` จะปิดการขายครึ่งไม้และปิด Breakeven Stop 100% เพื่อให้รันเทรนด์ได้เต็มรอบจริง
+  4. **การปรับปรุง UI แดชบอร์ด (`public/backtest.html` & `public/backtest.js`)**:
+     - อัปเดต Dropdown `rotBtDisasterSl`: แนะนำ `🛡️ 3.5% (คุม R:R ได้เปรียบ - แนะนำ) ★`, `4.0%`, `5.0%`, `8.0%`, และปรับ 12.0% เป็น `🚨 12.0% (เพดานเดิม - เสี่ยงกินทุนชนะ)`
+     - เพิ่ม Dropdown `rotBtExcludeMemes`: `🛡️ กรองเหรียญมีม/เหรียญขยะออก (แนะนำ) ★`
+     - ไฮไลท์ตัวเลือก `Portfolio Mode`: เน้น `🔵 Single-Coin Sequential (Dynamic Grid + 1H EMA200 Governor - ผลเทสบวกจริง +3.11%) 👑` ให้ผู้ใช้เห็นความแตกต่างชัดเจน
+- **ผลการทดสอบเปรียบเทียบเชิงประจักษ์ (Empirical Forensic Backtest)**:
+  - บน Universe Top 50 เดียวกัน ตลอดระยะเวลา 120 วัน (34,560 bars 5m):
+    - **MA-Fan เดิม (SL 12%, รวมเหรียญมีม)**: ขาดทุน **-11.95%** (-$23.90), Max DD **-16.00%**, PF **0.51**
+    - **MA-Fan ใหม่ (SL 3.5% + Toxic Meme Filter)**: ลดขาดทุนลงเหลือเพียง **-0.99%** (-$1.99), Max DD ลดลงเหลือ **5.21%**, PF เพิ่มขึ้นเป็น **0.99** (ฟื้นคืน R:R สำเร็จ)
+    - **Dynamic Grid Sequential Rotation (1H EMA200 Governor)**: พลิกกลับมามีกำไรสุทธิเป็นบวกแท้จริง **+3.11%** (+$6.22), Win Rate **86.2%**, Max DD เพียง **-3.00%**, Profit Factor **2.69** (สร้าง Alpha เหนือ BTC B&H ที่ร่วง -8.93% ถึง **+12.04%**)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.32`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+

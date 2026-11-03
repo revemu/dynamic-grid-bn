@@ -994,7 +994,8 @@ export class DashboardServer {
             const tp1TargetMode = parsed.tp1TargetMode || "EMA200";
             const lockBreakevenAtEma200 = parsed.lockBreakevenAtEma200 !== false;
             const partialTpAtEma200 = parsed.partialTpAtEma200 !== false;
-            const maxDisasterSlPct = parsed.maxDisasterSlPct !== undefined ? Number(parsed.maxDisasterSlPct) : 12;
+            const maxDisasterSlPct = parsed.maxDisasterSlPct !== undefined && parsed.maxDisasterSlPct !== "none" ? Number(parsed.maxDisasterSlPct) : 3.5;
+            const excludeToxicMemes = parsed.excludeToxicMemes !== false && parsed.excludeToxicMemes !== "false";
             const downtrendSitOutMode = parsed.downtrendSitOutMode || "dual";
             const rankBy = parsed.rankBy || "COMPOSITE_QUALITY";
 
@@ -1009,6 +1010,7 @@ export class DashboardServer {
               lockBreakevenAtEma200,
               partialTpAtEma200,
               maxDisasterSlPct,
+              excludeToxicMemes,
               downtrendSitOutMode,
               rankBy,
               customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,

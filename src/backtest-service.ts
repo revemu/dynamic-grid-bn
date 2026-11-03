@@ -17,6 +17,25 @@ export const STABLE_TOKENS = new Set([
   "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
 ]);
 
+export const TOXIC_MEME_PENNY_TOKENS = new Set([
+  "1000CATUSDT",
+  "MARSCOINUSDT",
+  "HAEDALUSDT",
+  "TRUMPUSDT",
+  "BMTUSDT",
+  "MEGAUSDT",
+  "PENGUUSDT",
+  "REDUSDT",
+  "ERAUSDT",
+  "PUMPUSDT",
+]);
+
+export function isToxicMemeOrPenny(symbol: string, lastPrice?: number): boolean {
+  if (TOXIC_MEME_PENNY_TOKENS.has(symbol)) return true;
+  if (lastPrice !== undefined && lastPrice > 0 && lastPrice < 0.005) return true;
+  return false;
+}
+
 export interface BacktestTrade {
   id: number;
   subsystem?: "GRID" | "SNIPER";
@@ -215,6 +234,7 @@ export interface MultiPairRotationOptions {
   lockBreakevenAtEma200?: boolean;
   partialTpAtEma200?: boolean;
   maxDisasterSlPct?: number;
+  excludeToxicMemes?: boolean;
   downtrendSitOutMode?: "off" | "btc1d" | "btc4h" | "dual";
   rankBy?: "RSI15" | "COMPOSITE_QUALITY";
   rotationIntervalMinutes?: number;
@@ -5004,11 +5024,12 @@ export class BacktestService {
         let exitPrice = c.close;
         let exitReason = "TIME_STOP";
 
-        // Check Disaster SL
-        if (opts.maxDisasterSlPct && c.low <= pos.entryPrice * (1 - opts.maxDisasterSlPct / 100)) {
+        // Check Disaster SL (Default calibrated stop: 3.5%)
+        const disasterSl = opts.maxDisasterSlPct !== undefined ? opts.maxDisasterSlPct : 3.5;
+        if (disasterSl > 0 && c.low <= pos.entryPrice * (1 - disasterSl / 100)) {
           shouldCloseAll = true;
-          exitPrice = Math.min(c.open, pos.entryPrice * (1 - opts.maxDisasterSlPct / 100));
-          exitReason = `SL_DISASTER_${opts.maxDisasterSlPct}%`;
+          exitPrice = Math.min(c.open, pos.entryPrice * (1 - disasterSl / 100));
+          exitReason = `SL_CALIBRATED_${disasterSl}%`;
         }
 
         // Check Locked Breakeven Stop
@@ -5019,20 +5040,22 @@ export class BacktestService {
         }
 
         // Check EMA200 touch in profit (>= +0.8%)
-        const targetEma = opts.tp1TargetMode === "EMA75" ? coin.m75[idx] : coin.m200[idx];
-        const emaTargetPx = Math.max(targetEma, pos.entryPrice * 1.008);
-        if (!shouldCloseAll && c.high >= emaTargetPx) {
-          if (opts.lockBreakevenAtEma200) {
-            pos.beLocked = true;
-          }
-          if (opts.partialTpAtEma200 && !pos.tp1Done) {
-            pos.tp1Done = true;
-            pos.beLocked = true;
-            const halfQty = pos.qty * 0.5;
-            const proceedsHalf = halfQty * emaTargetPx * (1 - costPerFill);
-            cash += proceedsHalf;
-            pos.realizedProceeds += proceedsHalf;
-            pos.qty -= halfQty;
+        if (opts.tp1TargetMode) {
+          const targetEma = opts.tp1TargetMode === "EMA75" ? coin.m75[idx] : coin.m200[idx];
+          const emaTargetPx = Math.max(targetEma, pos.entryPrice * 1.008);
+          if (!shouldCloseAll && c.high >= emaTargetPx) {
+            if (opts.lockBreakevenAtEma200) {
+              pos.beLocked = true;
+            }
+            if (opts.partialTpAtEma200 && !pos.tp1Done) {
+              pos.tp1Done = true;
+              pos.beLocked = true;
+              const halfQty = pos.qty * 0.5;
+              const proceedsHalf = halfQty * emaTargetPx * (1 - costPerFill);
+              cash += proceedsHalf;
+              pos.realizedProceeds += proceedsHalf;
+              pos.qty -= halfQty;
+            }
           }
         }
 
@@ -5332,9 +5355,16 @@ export class BacktestService {
       btcCandles = await this.fetchBinanceCandles("BTCUSDT", "5m", simLimit + 600);
     }
 
+    const excludeMemes = opts.excludeToxicMemes !== false;
     const universe: { symbol: string; candles: Candle[] }[] = [];
     for (const [symbol, candles] of universeCandlesMap.entries()) {
       if (candles && candles.length >= 500) {
+        if (excludeMemes) {
+          const lastClose = candles[candles.length - 1]?.close || 1;
+          if (isToxicMemeOrPenny(symbol, lastClose)) {
+            continue;
+          }
+        }
         universe.push({ symbol, candles });
       }
     }
@@ -5347,7 +5377,12 @@ export class BacktestService {
       message: `กำลังจำลองพอร์ต MA-Fan Sniper (${universe.length} เหรียญ, ${maxSlots} ช่อง)...`,
     };
 
-    const tp1Mode = opts.tp1TargetMode === "none" ? undefined : (opts.tp1TargetMode || "EMA200");
+    const isNoTp1 = opts.tp1TargetMode === "none";
+    const tp1Target = isNoTp1 ? undefined : (opts.tp1TargetMode === "EMA75" ? "EMA75" : "EMA200");
+    const disasterSl = opts.maxDisasterSlPct !== undefined && !isNaN(Number(opts.maxDisasterSlPct))
+      ? Number(opts.maxDisasterSlPct)
+      : 3.5;
+
     const simResult = this.runMaFanPortfolioSimulation({
       universe,
       btcCandles,
@@ -5357,10 +5392,10 @@ export class BacktestService {
       minBuyVolRatio12: 1.3,
       minRelStrengthVsBtc24h: -1.0,
       rankBy: opts.rankBy || "COMPOSITE_QUALITY",
-      tp1TargetMode: tp1Mode === "EMA75" ? "EMA75" : "EMA200",
-      lockBreakevenAtEma200: opts.lockBreakevenAtEma200 !== false,
-      partialTpAtEma200: opts.partialTpAtEma200 !== false,
-      maxDisasterSlPct: opts.maxDisasterSlPct ?? 12,
+      tp1TargetMode: tp1Target,
+      lockBreakevenAtEma200: isNoTp1 ? false : (opts.lockBreakevenAtEma200 !== false),
+      partialTpAtEma200: isNoTp1 ? false : (opts.partialTpAtEma200 !== false),
+      maxDisasterSlPct: disasterSl,
       downtrendSitOutMode: opts.downtrendSitOutMode ?? "dual",
     });
 

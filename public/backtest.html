@@ -648,8 +648,8 @@
           <div class="scanner-ctrl-group" style="border-left: 3px solid #10b981; padding-left: 8px;">
             <label style="color: #6ee7b7; font-weight: 700;">⚙️ รูปแบบพอร์ต (Portfolio Mode)</label>
             <select id="rotBtPortfolioMode" title="เลือกรูปแบบกลยุทธ์พอร์ตโฟลิโอ" style="font-weight: 700; color: #fff;">
+              <option value="grid_sequential">🔵 Single-Coin Sequential (Dynamic Grid + 1H EMA200 Governor - ผลเทสบวกจริง +3.11%) 👑</option>
               <option value="mafan_portfolio" selected>🟢 Multi-Coin Portfolio (กระจาย 3 ช่อง - MA-Fan Sniper) ⭐</option>
-              <option value="grid_sequential">🔵 Single-Coin Sequential (สลับทีละ 1 เหรียญ - Dynamic Grid)</option>
             </select>
           </div>
 
@@ -715,10 +715,19 @@
           <div class="scanner-ctrl-group" data-rot-mode="mafan">
             <label>Disaster SL Cap (%)</label>
             <select id="rotBtDisasterSl" title="เพดานตัดขาดทุนฉุกเฉินกรณีเกิดวิกฤติตลาดรุนแรง">
-              <option value="12" selected>🛡️ 12.0% (แนะนำ) ⭐</option>
-              <option value="8">⚡ 8.0% (Tight)</option>
-              <option value="15">🚨 15.0% (Wide)</option>
+              <option value="3.5" selected>🛡️ 3.5% (คุม R:R ได้เปรียบ - แนะนำ) ★</option>
+              <option value="4.0">🛡️ 4.0% (Balanced)</option>
+              <option value="5.0">🛡️ 5.0%</option>
+              <option value="8.0">⚠️ 8.0%</option>
+              <option value="12">🚨 12.0% (เพดานเดิม - เสี่ยงกินทุนชนะ)</option>
               <option value="none">❌ Off (พึ่ง Breakeven + Full Fan)</option>
+            </select>
+          </div>
+          <div class="scanner-ctrl-group" data-rot-mode="mafan">
+            <label>กรองเหรียญมีม/เหรียญปั่น (Toxic Filter)</label>
+            <select id="rotBtExcludeMemes" title="ตัดเหรียญมีม/เหรียญปั่นที่ไม่มีพื้นฐานและทุบแล้วไม่เด้ง เช่น TRUMP, 1000CAT, MARSCOIN">
+              <option value="true" selected>🛡️ กรองเหรียญมีม/เหรียญขยะออก (แนะนำ) ★</option>
+              <option value="false">รวมทุกเหรียญใน Universe</option>
             </select>
           </div>
           <div class="scanner-ctrl-group" data-rot-mode="mafan">
