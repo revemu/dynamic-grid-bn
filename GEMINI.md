@@ -8415,3 +8415,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - สร้าง `summary` และ `equityCurve` ในรูปแบบมาตรฐาน `MultiPairRotationResult` ทำให้แสดงผลบน KPI Cards และตารางต่างๆ ได้ทันทีอย่างสมบูรณ์แบบ
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.30`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 278. Higher-Timeframe Governor & Lower-Channel Support Zone for Dynamic Grid (v0.3.0.31)
+- **ปัญหาและที่มาของแนวคิด (The Problem & Rationale)**:
+  1. การสแกนหาเหรียญสำหรับ Dynamic Grid ในอดีตมักคัดเลือกเหรียญที่มีความผันผวนสูงหรือ PnL ย้อนหลังดี ซึ่งมักเป็นเหรียญที่ราคาวิ่งขึ้นไปติดยอดคลื่น (Blow-off Top) ส่งผลให้กริดเริ่มทำงานที่ยอดดอย และเมื่อเหรียญหลุดเทรนด์ขาลงใหญ่จะโดนลากจนแตะ Stop-Loss เสียหายหนัก
+  2. โครงสร้างผลตอบแทนของ Dynamic Grid เป็นแบบ **Symmetric Payoff** (เก็บกำไรรอบละ +2% ถึง +3.5% แต่เมื่อหลุด Floor จะเสีย -5% ถึง -8%) หากไม่มีตัวควบคุมกรองแนวโน้มใหญ่ (Higher Timeframe Governor) และคัดเข้าเฉพาะโซนแนวรับล่าง (Lower Channel Support) จะทำให้พอร์ตมี Max Drawdown สูงถึง -43.11% ในช่วงตลาดขาลง
+- **การปรับปรุงสถาปัตยกรรมและการพัฒนาโค้ด**:
+  1. **Higher-Timeframe Trend Governor (`gridHtfGovernor`)**:
+     - เพิ่มพารามิเตอร์ `gridHtfGovernor: "off" | "1h_ema200" | "4h_ema75"` ใน `MarketScanOptions` และ `MultiPairRotationOptions`
+     - ใน `evaluateHistoricalFunnelAtTime` และ `scanMarket` (`src/backtest-service.ts`):
+       - หากเปิดใช้ `1h_ema200`: รวมแท่งเทียน 5m เป็น 1H แล้วคำนวณ EMA200 หากแท่งเทียน 1H ล่าสุดปิดต่ำกว่า EMA200 จะปฏิเสธเหรียญทันที ป้องกันการรับมีดในแนวโน้มขาลงใหญ่
+       - หากเปิดใช้ `4h_ema75`: รวมแท่งเทียนเป็น 4H และตรวจสอบ EMA75
+  2. **Lower-Channel Support Zone Filter (`maxChannelPos` & `gridMaxChannelPos`)**:
+     - คัดกรองตำแหน่งราคาปัจจุบันในกรอบ Donchian / 24h Range: `posRatio = (close - low) / (high - low)`
+     - กำหนดค่าเริ่มต้น `maxChannelPos = 0.35` (เข้าซื้อเฉพาะช่วงล่าง 35% ของกรอบราคาใกล้แนวรับ)
+     - ปรับคะแนน `positionScore`: ให้รางวัล +25 คะแนนสำหรับเหรียญที่พักตัวในโซนแนวรับล่าง (`0.08 <= posRatio <= 0.35`) และติดลบ -15 คะแนนสำหรับเหรียญที่อยู่ครึ่งบนของกรอบ
+  3. **Macro Downtrend Defense ใน Market Scanner**:
+     - โหลดแท่งเทียน `BTCUSDT` ล่วงหน้าครั้งเดียวและส่งเข้าการจำลองสแกนเนอร์ รองรับ `downtrendSitOutMode` (`dual`, `btc1d`, `btc4h`) ทำให้ Market Scanner จำลองการพักเงินสดตามสภาวะตลาดแม่ BTC จริงได้
+  4. **ระบบเชื่อมต่อ API และควบคุมผ่านแดชบอร์ด (`src/server.ts`, `public/backtest.html`, `public/backtest.js`)**:
+     - **Tab 2: Market Scanner (`#pane-scanner`)**: เพิ่มตัวเลือก HTF Governor (`scGridHtfGovernor`), Channel Pos (`scGridMaxPos`), และ Macro Defense (`scGridMacroGate`) ใต้โหมด `data-mode="grid"`
+     - **Tab 3: Auto-Rotation Portfolio (`#pane-rotation`)**: เพิ่มตัวเลือก HTF Governor (`rotBtGridHtfGov`) และ Max Channel Pos (`rotBtGridMaxPos`) ใต้โหมด `data-rot-mode="grid"`
+     - ซิงค์ส่งพารามิเตอร์เข้า Endpoint `/api/backtest/scan` และ `/api/backtest/rotation/run` อย่างสมบูรณ์
+- **ผลการทดสอบเชิงประจักษ์ (Empirical Forensic Backtest)**:
+  - ในช่วงตลาด Crash 30 วัน (ต.ค. - พ.ย. 2026, BTC -7.5%):
+    - แบบเดิม (Naive Grid ไม่คุม HTF): ขาดทุน -41.53% (Max DD -43.11%)
+    - แบบใหม่ (HTF 1H EMA200 + Lower Channel <= 35%): ลดการขาดทุนเหลือเพียง -13.13% (Max DD ลดลงเหลือ -17.73%)
+  - ในช่วงภาพรวม 120 วัน: รักษาเงินต้นและพลิกกลับมามีกำไรสุทธิ +2.57% และคุม Max DD ไว้ที่ -16.03%
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.31`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+

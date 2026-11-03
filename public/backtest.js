@@ -2135,6 +2135,9 @@
       if (scCapitalZones) scCapitalZones.value = "2";
       if (scGridCutLossMode) scGridCutLossMode.value = "none";
       if (scLockChannel) scLockChannel.value = "dynamic";
+      if (scGridHtfGovernor) scGridHtfGovernor.value = "1h_ema200";
+      if (scGridMaxPos) scGridMaxPos.value = "0.35";
+      if (scGridMacroGate) scGridMacroGate.value = "dual";
       updateOptionVisibility(engine, ".scanner-controls-bar");
     }
   }
@@ -2231,6 +2234,9 @@
   const scLockChannel = document.getElementById("scLockChannel");
   const scCapitalZones = document.getElementById("scCapitalZones");
   const scGridCutLossMode = document.getElementById("scGridCutLossMode");
+  const scGridHtfGovernor = document.getElementById("scGridHtfGovernor");
+  const scGridMaxPos = document.getElementById("scGridMaxPos");
+  const scGridMacroGate = document.getElementById("scGridMacroGate");
   const scFeeTier = document.getElementById("scFeeTier");
   const scBudget = document.getElementById("scBudget");
   const scannerProgressFill = document.getElementById("scannerProgressFill");
@@ -2330,6 +2336,9 @@
         const lockChannelInPosition = scLockChannel ? scLockChannel.value === "locked" : false;
         const capitalZones = scCapitalZones ? (Number(scCapitalZones.value) || 2) : (inpCapitalZones ? (Number(inpCapitalZones.value) || 2) : 2);
         const gridCutLossMode = scGridCutLossMode ? scGridCutLossMode.value : (inpGridCutLossMode ? inpGridCutLossMode.value : "none");
+        const gridHtfGovernor = scGridHtfGovernor ? scGridHtfGovernor.value : "1h_ema200";
+        const maxChannelPos = scGridMaxPos ? Number(scGridMaxPos.value) : 0.35;
+        const gridMacroGate = scGridMacroGate ? scGridMacroGate.value : "dual";
 
         btnStartScan.disabled = true;
         let pollInterval = null;
@@ -2389,6 +2398,9 @@
               maxChannelWidthPct: 25.0,
               donchianPeriod: 48,
               channelMode: "DONCHIAN_ATR",
+              gridHtfGovernor,
+              maxChannelPos,
+              downtrendSitOutMode: tradeMode === "dynamic_grid" ? gridMacroGate : (macroGateMode !== "off" ? macroGateMode : undefined),
             }),
           });
 
@@ -2936,6 +2948,8 @@
           const enableSignalInvalidationExit = signalExitVal !== "off";
           const signalInvalidationMode = signalExitVal;
           const enableBtcMacroGate = document.getElementById("rotBtMacroGate")?.value !== "off";
+          const gridHtfGovernor = document.getElementById("rotBtGridHtfGov")?.value || "1h_ema200";
+          const gridMaxChannelPos = Number(document.getElementById("rotBtGridMaxPos")?.value) || 0.35;
 
           payload = {
             ...payload,
@@ -2946,6 +2960,8 @@
             enableSignalInvalidationExit,
             signalInvalidationMode,
             enableBtcMacroGate,
+            gridHtfGovernor,
+            gridMaxChannelPos,
           };
         }
 

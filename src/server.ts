@@ -1030,6 +1030,8 @@ export class DashboardServer {
             const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "calibrated");
             const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
             const enableBtcMacroGate = parsed.enableBtcMacroGate !== false && parsed.enableBtcMacroGate !== "false";
+            const gridHtfGovernor = (parsed.gridHtfGovernor || parsed.rotBtGridHtfGov || "1h_ema200") as "off" | "1h_ema200" | "4h_ema75";
+            const gridMaxChannelPos = parsed.gridMaxChannelPos !== undefined ? Number(parsed.gridMaxChannelPos) : (parsed.rotBtGridMaxPos !== undefined ? Number(parsed.rotBtGridMaxPos) : 0.35);
 
             result = await BacktestService.runMultiPairRotationSimulation({
               quoteAsset,
@@ -1047,6 +1049,8 @@ export class DashboardServer {
               signalInvalidationMode,
               enableBaseConfirmation,
               enableBtcMacroGate,
+              gridHtfGovernor,
+              gridMaxChannelPos,
               customWhitelist: Array.isArray(parsed.customWhitelist) ? parsed.customWhitelist : undefined,
               blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : undefined,
             });
@@ -1095,6 +1099,9 @@ export class DashboardServer {
           const maxChannelWidthPct = Number(parsed.maxChannelWidthPct) || 25.0;
           const donchianPeriod = Number(parsed.donchianPeriod) || 48;
           const channelMode = parsed.channelMode || "DONCHIAN_ATR";
+          const gridHtfGovernor = (parsed.gridHtfGovernor || parsed.scGridHtfGovernor || "1h_ema200") as "off" | "1h_ema200" | "4h_ema75";
+          const maxChannelPos = parsed.maxChannelPos !== undefined ? Number(parsed.maxChannelPos) : (parsed.scGridMaxPos !== undefined ? Number(parsed.scGridMaxPos) : 0.35);
+          const downtrendSitOutMode = parsed.downtrendSitOutMode || (parsed.tradeMode === "dynamic_grid" ? (parsed.scGridMacroGate || "dual") : undefined);
 
           let scanCostModel: { feePctPerSide: number; slippagePctPerFill: number } | undefined;
           if (parsed.feeTier === "zero" || parsed.feeTier === "none") {
@@ -1143,6 +1150,9 @@ export class DashboardServer {
             maxChannelWidthPct,
             donchianPeriod,
             channelMode,
+            downtrendSitOutMode,
+            gridHtfGovernor,
+            maxChannelPos,
             onProgress: (p) => {
               this.currentScanProgress = p;
               this.broadcast("scan_progress", p);

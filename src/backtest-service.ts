@@ -106,6 +106,9 @@ export interface MarketScanOptions {
   maxChannelWidthPct?: number;
   zoneMinDropPct?: number;
   zoneStabilizeCandles?: number;
+  downtrendSitOutMode?: "off" | "btc1d" | "btc4h" | "dual";
+  gridHtfGovernor?: "off" | "1h_ema200" | "4h_ema75";
+  maxChannelPos?: number;
   onProgress?: (info: { index: number; total: number; symbol: string; candlesCount: number; pnlPct?: number; winRate?: number; tradesCount?: number }) => void;
 }
 
@@ -231,6 +234,8 @@ export interface MultiPairRotationOptions {
   signalInvalidationMode?: "calibrated" | "strict_floor" | "off";
   enableBtcMacroGate?: boolean;
   gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+  gridHtfGovernor?: "off" | "1h_ema200" | "4h_ema75";
+  gridMaxChannelPos?: number;
 }
 
 export interface RotationLegRecord {
@@ -3368,6 +3373,17 @@ export class BacktestService {
 
     const candidates = targetTickers.slice(0, maxPairs);
 
+    // Fetch BTC candles once upfront for Downtrend Defense if enabled
+    let btcCandles: Candle[] | undefined = undefined;
+    if (opts.downtrendSitOutMode && opts.downtrendSitOutMode !== "off") {
+      try {
+        const fetchLimit = limit + 1200;
+        btcCandles = await this.fetchBinanceCandles("BTCUSDT", "5m", fetchLimit);
+      } catch (err: any) {
+        console.warn(`[MarketScanner] ⚠️ Could not fetch BTC candles for Macro Defense: ${err?.message}`);
+      }
+    }
+
     // 2. Run simulation in concurrent chunks of 3 (gentle pacing to avoid Binance 429)
     const results: MarketScanResultItem[] = [];
     const chunkSize = 3;
@@ -3393,6 +3409,51 @@ export class BacktestService {
             if (!candles || candles.length < 50) return;
             const actualWarmup = isAutoSpread ? Math.max(0, candles.length - limit) : 0;
 
+            if (opts.tradeMode === "dynamic_grid") {
+              // Check HTF Governor for Dynamic Grid:
+              if (opts.gridHtfGovernor === "1h_ema200" && candles.length >= 2400) {
+                const c1h = BacktestService.aggregateCandles(candles, 60);
+                if (c1h.length >= 200) {
+                  const c1hCloses = c1h.map((c) => c.close);
+                  const ema200_1h = calcEMA(c1hCloses, 200);
+                  const last1h = c1h[c1h.length - 1];
+                  const lastEma = ema200_1h[ema200_1h.length - 1];
+                  if (last1h && lastEma && last1h.close < lastEma) {
+                    return; // Skip coins in 1H macro downtrend
+                  }
+                }
+              } else if (opts.gridHtfGovernor === "4h_ema75" && candles.length >= 2400) {
+                const c4h = BacktestService.aggregateCandles(candles, 240);
+                if (c4h.length >= 75) {
+                  const c4hCloses = c4h.map((c) => c.close);
+                  const ema75_4h = calcEMA(c4hCloses, 75);
+                  const last4h = c4h[c4h.length - 1];
+                  const lastEma = ema75_4h[ema75_4h.length - 1];
+                  if (last4h && lastEma && last4h.close < lastEma) {
+                    return; // Skip coins in 4H macro downtrend
+                  }
+                }
+              }
+
+              // Check position in Donchian channel:
+              if (opts.maxChannelPos !== undefined && opts.maxChannelPos < 1.0) {
+                const donPeriod = opts.donchianPeriod ?? 48;
+                const recentSlice = candles.slice(-donPeriod);
+                let dH = -Infinity, dL = Infinity;
+                for (const rc of recentSlice) {
+                  if (rc.high > dH) dH = rc.high;
+                  if (rc.low < dL) dL = rc.low;
+                }
+                if (dH > dL && dL > 0) {
+                  const lastC = candles[candles.length - 1].close;
+                  const posInChannel = (lastC - dL) / (dH - dL);
+                  if (posInChannel > opts.maxChannelPos) {
+                    return; // Skip coins outside lower channel zone
+                  }
+                }
+              }
+            }
+
             const symCostModel = opts.costModel ?? (
               sym.endsWith("FDUSD")
                 ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
@@ -3402,6 +3463,8 @@ export class BacktestService {
             const rec = this.runMaFanSimulation(candles, {
               symbol: sym,
               timeframe,
+              btcCandles,
+              downtrendSitOutMode: opts.downtrendSitOutMode,
               spreadThreshold: opts.spreadThreshold ?? "auto",
               initialCapital: opts.initialCapital ?? 200,
               slBufferPct: opts.slBufferPct ?? 0.25,
@@ -3785,9 +3848,33 @@ export class BacktestService {
       if (range24hPct < 4.0 || range24hPct > 22.0) continue;
       // Smart Bear Market Gate: Only select coins with positive 24h momentum (no downtrend coins)
       if (change24hPct < 0.5 || change24hPct > 15.0) continue;
-      // Allow posRatio between 0.10 and 0.90 to embrace confirmed reversal leaders!
-      if (posRatio < 0.10 || posRatio > 0.90) continue;
+      
+      // Position in Channel / 24h Range: Default bottom 35% sweet spot for Grid accumulation!
+      const maxAllowedPos = gridOpts?.gridMaxChannelPos !== undefined ? Number(gridOpts.gridMaxChannelPos) : 0.35;
+      if (posRatio < 0.05 || posRatio > maxAllowedPos) continue;
       if (return4hPct < 0.0) continue; // Reject coins in negative momentum over past 4 hours
+
+      // HTF Trend Governor: Filter out coins in macro downtrend
+      const htfGov = gridOpts?.gridHtfGovernor ?? "1h_ema200";
+      if (htfGov === "1h_ema200" && idx >= 2400) {
+        const c1h = BacktestService.aggregateCandles(candles.slice(0, idx + 1), 60);
+        if (c1h.length >= 200) {
+          const closes1h = c1h.map((c) => c.close);
+          const ema200_1h = calcEMA(closes1h, 200);
+          const last1h = c1h[c1h.length - 1];
+          const lastEma = ema200_1h[ema200_1h.length - 1];
+          if (last1h && lastEma && last1h.close < lastEma) continue; // Reject HTF downtrend!
+        }
+      } else if (htfGov === "4h_ema75" && idx >= 2400) {
+        const c4h = BacktestService.aggregateCandles(candles.slice(0, idx + 1), 240);
+        if (c4h.length >= 75) {
+          const closes4h = c4h.map((c) => c.close);
+          const ema75_4h = calcEMA(closes4h, 75);
+          const last4h = c4h[c4h.length - 1];
+          const lastEma = ema75_4h[ema75_4h.length - 1];
+          if (last4h && lastEma && last4h.close < lastEma) continue;
+        }
+      }
 
       const ema20 = calcEmaLocal(candles, idx, 20);
       const ema60 = calcEmaLocal(candles, idx, 60);
@@ -3990,12 +4077,14 @@ export class BacktestService {
         }
 
         let positionScore = 0;
-        if (cand.posRatio >= 0.15 && cand.posRatio <= 0.50) {
-          positionScore = 15; // Sweet spot for pullback accumulation!
-        } else if (cand.posRatio > 0.50 && cand.posRatio <= 0.88) {
-          positionScore = 12; // Confirmed reversal uptrend reward!
-        } else if (cand.posRatio > 0.92) {
-          positionScore = -10; // Overbought climax penalty
+        if (cand.posRatio >= 0.08 && cand.posRatio <= 0.35) {
+          positionScore = 25; // Sweet spot for lower-channel Grid accumulation!
+        } else if (cand.posRatio > 0.35 && cand.posRatio <= 0.50) {
+          positionScore = 15;
+        } else if (cand.posRatio > 0.50 && cand.posRatio <= 0.70) {
+          positionScore = 5;
+        } else {
+          positionScore = -15; // Overbought climax penalty
         }
 
         const prevBar = slice500.length >= 2 ? slice500[slice500.length - 2] : lastBar;
@@ -4173,7 +4262,8 @@ export class BacktestService {
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
-          if (c.posRatio > 0.88) return false;
+          const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.35;
+          if (c.posRatio > maxPos) return false;
           const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
           return idx >= 0 && idx < cCandles.length - 10;
         }) || altCandidates.find((c) => {
@@ -4474,7 +4564,8 @@ export class BacktestService {
         const viable = candidates.find((c) => {
           if (c.compositeScore < 50) return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
-          if (c.posRatio > 0.88) return false;
+          const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.35;
+          if (c.posRatio > maxPos) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
           const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
