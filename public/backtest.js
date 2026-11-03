@@ -1682,7 +1682,7 @@
   }
 
   // Run Backtest Trigger
-  async function runBacktest() {
+  async function runBacktest(extraOpts = {}) {
     const symbol = getSelectedSymbol();
     const timeframe = inpTimeframe.value;
     const limit = Number(inpLimit.value) || 1000;
@@ -1735,6 +1735,7 @@
           lockChannelInPosition,
           capitalZones,
           gridCutLossMode,
+          ...extraOpts,
         }),
       });
 
@@ -2506,6 +2507,7 @@
         const sym = btn.getAttribute("data-sym");
         if (sym) {
           setSymbolValue(sym);
+          const isAlpacaScope = scScope?.value === "alpaca_stocks";
           if (scTimeframe && inpTimeframe) inpTimeframe.value = scTimeframe.value;
           if (scLimit && inpLimit) inpLimit.value = scLimit.value;
           if (scSpread && inpSpread) inpSpread.value = scSpread.value;
@@ -2520,7 +2522,7 @@
           if (scBaseConfirmation && inpBaseConfirmation) inpBaseConfirmation.value = scBaseConfirmation.value;
           if (scLockChannel && inpLockChannel) inpLockChannel.value = scLockChannel.value;
           if (scannerModalBackdrop) scannerModalBackdrop.style.display = "none";
-          runBacktest();
+          runBacktest(isAlpacaScope ? { exchange: "alpaca", quoteAsset: "USD" } : {});
         }
       });
     });

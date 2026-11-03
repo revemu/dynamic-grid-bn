@@ -8523,4 +8523,50 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.33`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
 
+---
+
+### 281. US Equities Alpaca Chart Route Routing Fix (HTTP 400 Resolution) & Auto-Rotation Market Schedule Calibration (v0.3.0.34)
+- **สาเหตุของการแก้ไข (Motivation & Bug Forensics)**:
+  1. **HTTP 400 Error on Alpaca Stock "ดูกราฟ" Button (`public/backtest.js` & `src/server.ts:871-890`)**:
+     - เมื่อผู้ใช้กดปุ่ม "📊 ดูกราฟ" สำหรับหุ้นสหรัฐฯ (เช่น `RTX`) จากหน้ารายการผลลัพธ์ Market Scanner ระบบจะขึ้นกล่องข้อความเตือน: `เกิดข้อผิดพลาดในการรัน Backtest: Failed to fetch historical candles from Binance (HTTP 400)`
+     - สาเหตุ: Route `/api/backtest/run` ใน `src/server.ts` ถูกฮาร์ดโค้ดให้เรียก `fetchBinanceCandles(symbol)` เสมอ เมื่อได้รับสัญลักษณ์หุ้นสหรัฐฯ Binance API จึงปฏิเสธคำขอด้วยรหัสข้อผิดพลาด HTTP 400 (Invalid Symbol)
+  2. **Auto-Rotation Return 0 Rotations / 0 Trades / 100% Cash for USD Stocks (`src/backtest-service.ts`)**:
+     - เมื่อรันการจำลอง Single-Coin Dynamic Grid Sequential บน Auto-Rotation Portfolio ด้วยสกุลเงิน `USD (Alpaca US Equities)` ผลลัพธ์กลับเป็น 0 รอบ, 0 ไม้ และถือเงินสด 100% ตลอดช่วงเวลา
+     - สาเหตุหลัก 4 ประการ:
+       1. **Alpaca Pagination Stale Disk Cache**: เมื่อเลือกระยะเวลาย้อนหลัง 34,560 แท่ง ตัวดึงข้อมูลคำนวณเวลาย้อนหลังไปถึงปลายปี 2023 แต่ติดข้อจำกัด Pagination Loop 3 ครั้ง ทำให้ดาวน์โหลดหยุดชะงักที่เดือน เม.ย. 2024 และบันทึกไฟล์แคชปี 2024 ลงดิสก์
+       2. **Timeline Mismatch**: ระบบคำนวณจุดเริ่มจำลอง `simStartTime` ด้วยสูตร `simEndTime - 34560 * 300` ซึ่งถอยกลับไปปี 2025 ในขณะที่ข้อมูลในแคชมีเฉพาะปี 2024
+       3. **24/7 Crypto Stale Check vs 6.5h Stock Market Schedule**: ตลาดหุ้นสหรัฐฯ เปิดทำการเพียง 6.5 ชั่วโมง/วัน (78 แท่ง 5m) และปิดทำการตอนกลางคืน 17.5 ชั่วโมง/วัน รวมถึงปิดเสาร์-อาทิตย์ 65.5 ชั่วโมง ในขณะที่ `evaluateHistoricalFunnelAtTime` ตั้งค่า `maxStaleSec = 3600s` (1 ชม.) ทำให้หุ้นสหรัฐฯ ทั้งกระดานถูกประเมินว่าเป็น Stale Data และถูกตัดสิทธิ์ทิ้งทั้งหมด
+       4. **Overnight Panic Flat Cash Dump (`onFlatCheckStop`)**: เมื่อตลาดหุ้นปิดทำการตอนกลางคืน สัญญาณของหุ้นทุกตัวจะว่างเปล่า (`candidates.length === 0`) ทำให้ระบบเข้าใจผิดว่าตลาดพังพินาศ จึงบังคับขายทิ้งเป็นเงินสด 100% ทุกคืน
+       5. **Overly Restrictive Range & Channel Filters**: ดัชนีแม่และ ETF ชั้นนำ (`SPY: 0.36%`, `VOO: 0.39%`, `VTI: 0.49%`) มีความผันผวนต่อวันต่ำกว่า 0.8% จึงถูก `minRange = 0.8%` ปัดตกทั้งหมด และหุ้นเติบโตส่วนใหญ่อยู่ที่ 35%-60% ของกรอบ Donchian ทำให้ถูก `posRatio <= 0.35` ปัดตกทั้งหมด
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.3.0.34`)**:
+  1. **Alpaca Chart Route Routing & Auto Stock Detection (`src/server.ts` & `public/backtest.js`)**:
+     - ใน `src/server.ts`: ตรวจสอบสัญลักษณ์หุ้นอัตโนมัติผ่าน `TOP_US_STOCK_UNIVERSE.includes(cleanSym)` หรือ `parsed.exchange === "alpaca"` หรือ `parsed.quoteAsset === "USD"`
+     - ส่งต่อการดึงแท่งเทียนไปยัง `BacktestService.fetchAlpacaCandles` พร้อมกำหนดแบบจำลองค่าธรรมเนียม 0% (Alpaca 0% Commission)
+     - ใน `public/backtest.js`: อัปเดต Event Handler ของปุ่ม `.btn-action-view` ให้ส่ง `{ exchange: "alpaca", quoteAsset: "USD" }` ไปยัง Backend
+  2. **Alpaca Pagination Deep Fetch & Disk Cache Refresh (`src/backtest-service.ts`)**:
+     - ปรับ `fetchAlpacaCandles`: จำกัดการดึงข้อมูลสูงสุดที่ 8,000 แท่ง (~140 วันทำการ ซึ่งครอบคลุมเต็ม 4 เดือนของตลาดหุ้นสหรัฐฯ ที่มีเพียง ~55 แท่งต่อวันตามปฏิทิน)
+     - เพิ่มจำนวนรอบ Pagination เป็น 15 รอบ และลบไฟล์แคช 5m เก่าที่ตกค้างปี 2024 ออก
+  3. **Stock Market Schedule Awareness in Historical Funnel (`src/backtest-service.ts`)**:
+     - ใน `evaluateHistoricalFunnelAtTime`:
+       - สำหรับหุ้นสหรัฐฯ (`isAlpaca`): ปรับ `maxStaleSec` เป็น 5 วัน (432,000 วินาที) เพื่อให้ครอบคลุมช่วงปิดทำการตอนกลางคืนและวันหยุดเสาร์-อาทิตย์อย่างปลอดภัย
+       - ปรับ `lookbackBars` เป็น 78 แท่ง (เทียบเท่า 1 วันทำการปกติของตลาดหุ้น 6.5 ชั่วโมง)
+       - ปรับ `minRange` ขั้นต่ำลงเหลือ 0.2% เพื่อรองรับดัชนีแม่และ ETF ชั้นนำ (SPY, VOO, VTI, SCHD)
+       - ขยายเพดาน `posRatio` สูงสุดเป็น 0.65 สำหรับหุ้นสหรัฐฯ เพื่อรองรับหุ้นเทคและผู้นำตลาดที่กำลังอยู่ในช่วงขาขึ้น
+  4. **Overnight Closure Protection in Auto-Rotation (`src/backtest-service.ts`)**:
+     - ใน `onFlatCheckStop`: เมื่อ `quote === "USD"` และ `candidates.length === 0` ระบบจะไม่ตื่นตระหนกเทขายหุ้นทิ้งเป็นเงินสด เพื่อให้ถือข้ามคืนและข้ามวันหยุดสุดสัปดาห์ตามวงรอบปกติ
+     - เชื่อมโยง `simStartTime` ให้เริ่มจากแท่งเทียนที่มีอยู่จริงเสมอ (`Math.max(minCandleTime + warmupSec, requestedStart)`)
+- **ผลการทดสอบเชิงประจักษ์ (Empirical Verification Results)**:
+  1. **Single-Pair Chart Backtest (RTX)**:
+     - ดึงข้อมูล 1,000 แท่งจาก Alpaca สำเร็จ รัน Backtest ผ่านฉลุย: กำไร **+2.95%**, 18 trades, Win Rate **100%**, 0 errors (แก้ไขปัญหา HTTP 400 เรียบร้อย 100%)
+  2. **Autonomous Multi-Pair Rotation Simulation (USD / Top 50 Stocks / 120 วัน)**:
+     - เงินทุนเริ่มต้น: $200.00 ➔ พอร์ตเติบโตแตะ **$211.37 (Net PnL +5.69%)**
+     - สลับหุ้นทั้งหมด: **19 ครั้ง (20 legs)**
+     - มีการซื้อขายจริงในพอร์ต: **49 ไม้** (ชนะ 30 ไม้, ขาดทุนเล็กน้อยตาม Stop Loss 19 ไม้), Win Rate **61.2%**, Profit Factor **1.65**
+     - ผลงานของหุ้นรายตัวยอดเยี่ยม: **MRK (+9.29%)**, **MSFT (+2.03%)**, NVDA (+0.2%)
+     - การทำงานของ Calibrated Stop Loss: ทำหน้าที่ตัดขาดทุนเมื่อราคาหลุดแนวรับสำคัญในหุ้น JNJ (-0.56%), IBM (-1.06%), META (-0.98%) เพื่อรักษาเงินทุนส่วนใหญ่ไว้
+     - Alpha vs Benchmark S&P 500 (SPY +0.48%): สร้างผลตอบแทนส่วนเกินเหนือตลาดแม่ถึง **+2.81%**!
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.34`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
+
+
 

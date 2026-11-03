@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Candle } from "./market-structure.js";
 import { BotDatabase, getDatabase } from "./db.js";
 import { APP_VERSION_INFO } from "./version.js";
-import { BacktestService } from "./backtest-service.js";
+import { BacktestService, TOP_US_STOCK_UNIVERSE } from "./backtest-service.js";
 import { readLatestDecisionSnapshots } from "./strategy/ma-fan/decision-log.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -868,9 +868,18 @@ export class DashboardServer {
           const htfMinutes = supervisorTimeframe === "1h" ? 60 : 15;
           const htfLimit = Math.max(300, Math.ceil((fetchLimit * tfMinutes) / htfMinutes) + 50);
 
-          let feePctPerSide = 0.075;
+          const cleanSym = symbol.toUpperCase().replace(/[\/\-_:]/g, "").replace(/USD$/, "");
+          const isAlpaca = parsed.exchange === "alpaca" ||
+                           parsed.quoteAsset === "USD" ||
+                           TOP_US_STOCK_UNIVERSE.includes(cleanSym) ||
+                           TOP_US_STOCK_UNIVERSE.includes(symbol.toUpperCase());
+
+          let feePctPerSide = isAlpaca ? 0.0 : 0.075;
           let slippagePctPerFill = 0.01;
-          if (parsed.feeTier === "zero" || (parsed.feeTier === "auto" && symbol.endsWith("FDUSD"))) {
+          if (isAlpaca) {
+            feePctPerSide = 0.0;
+            slippagePctPerFill = 0.01;
+          } else if (parsed.feeTier === "zero" || (parsed.feeTier === "auto" && symbol.endsWith("FDUSD"))) {
             feePctPerSide = 0.0;
             slippagePctPerFill = 0.0;
           } else if (parsed.feeTier === "standard") {
@@ -879,10 +888,7 @@ export class DashboardServer {
           } else if (parsed.feeTier === "bnb") {
             feePctPerSide = 0.075;
             slippagePctPerFill = 0.01;
-          } else if (parsed.feeTier === "none") {
-            feePctPerSide = 0;
-            slippagePctPerFill = 0;
-          } else if (symbol.endsWith("FDUSD")) {
+          } else if (parsed.feeTier === "none" || symbol.endsWith("FDUSD")) {
             feePctPerSide = 0;
             slippagePctPerFill = 0;
           }
@@ -891,14 +897,18 @@ export class DashboardServer {
           const hlMode = parsed.enableBaseConfirmationFilter !== undefined ? Boolean(parsed.enableBaseConfirmationFilter) : false;
           const hlModeStr = hlMode ? "ON (รอสร้างฐาน HL - บอทจริง)" : "OFF (Pure Grid - ดักเก็บทุกรอบ)";
           const downtrendSitOut = (parsed.downtrendSitOut || "dual") as "off" | "btc1d" | "btc4h" | "dual";
-          console.log(`[Backtest] 🚀 Running Backtest: ${symbol} (${timeframe}, ${limit} bars, Engine: ${parsed.tradeMode || "dip_hunter"}, HL Filter: ${hlModeStr}, SitOut: ${downtrendSitOut})...`);
+          console.log(`[Backtest] 🚀 Running Backtest: ${symbol} (${timeframe}, ${limit} bars, Engine: ${parsed.tradeMode || "dip_hunter"}, HL Filter: ${hlModeStr}, SitOut: ${downtrendSitOut}, Market: ${isAlpaca ? "Alpaca US" : "Binance"})...`);
 
           const fetches: Promise<any>[] = [
-            BacktestService.fetchBinanceCandles(symbol, timeframe, fetchLimit),
-            BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, htfLimit).catch(() => []),
+            isAlpaca ? BacktestService.fetchAlpacaCandles(cleanSym, timeframe, fetchLimit) : BacktestService.fetchBinanceCandles(symbol, timeframe, fetchLimit),
+            isAlpaca ? BacktestService.fetchAlpacaCandles(cleanSym, supervisorTimeframe, htfLimit).catch(() => []) : BacktestService.fetchBinanceCandles(symbol, supervisorTimeframe, htfLimit).catch(() => []),
           ];
           if (downtrendSitOut !== "off") {
-            fetches.push(BacktestService.fetchBinanceCandles("BTCUSDT", "5m", fetchLimit).catch(() => []));
+            fetches.push(
+              isAlpaca
+                ? BacktestService.fetchAlpacaCandles("SPY", "5m", fetchLimit).catch(() => [])
+                : BacktestService.fetchBinanceCandles("BTCUSDT", "5m", fetchLimit).catch(() => [])
+            );
           }
 
           const [candles, candlesHtf, btcCandles] = await Promise.all(fetches);

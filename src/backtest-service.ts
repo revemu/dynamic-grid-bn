@@ -426,7 +426,22 @@ export class BacktestService {
     else if (interval === "1h") { tf = "1Hour"; intervalMinutes = 60; }
     else if (interval === "1d") { tf = "1Day"; intervalMinutes = 1440; }
 
-    const daysBack = Math.max(30, Math.ceil((limit * intervalMinutes) / 250) * 1.5);
+    // In US Equities: 6.5 trading hours/day (390 mins), 5 days/week.
+    // 5m: 78 bars/trading day -> ~55 bars/calendar day.
+    // 15m: 26 bars/trading day -> ~18 bars/calendar day.
+    // 1h: 6.5 bars/trading day -> ~4.6 bars/calendar day.
+    // 1d: 1 bar/trading day -> ~0.71 bars/calendar day.
+    let barsPerCalendarDay = 55;
+    if (interval === "1m") barsPerCalendarDay = 270;
+    else if (interval === "5m") barsPerCalendarDay = 55;
+    else if (interval === "15m") barsPerCalendarDay = 18;
+    else if (interval === "1h") barsPerCalendarDay = 4.6;
+    else if (interval === "1d") barsPerCalendarDay = 0.71;
+
+    // For US stocks, clamp excessive limit (e.g. 34,560 bars of 5m is ~1.7 years) to max 8,000 bars (~145 calendar days)
+    // so all pairs fetch recent live history fast and remain synchronized!
+    const effectiveLimit = Math.min(8000, limit);
+    const daysBack = Math.max(30, Math.ceil(effectiveLimit / barsPerCalendarDay) + 14);
     const startDate = new Date(nowMs - daysBack * 86400 * 1000);
     const startIso = startDate.toISOString().split(".")[0] + "Z";
 
@@ -434,7 +449,7 @@ export class BacktestService {
     const apiSecret = process.env.ALPACA_API_SECRET || "2boZiaaqiLDfDEM9XSULbXq2iW69B9WcAEPu234MeuN2";
     const dataUrl = process.env.ALPACA_DATA_URL || "https://data.alpaca.markets";
 
-    console.log(`[CandleFeed] 📥 Alpaca ${cleanSym} (${interval}): Fetching up to ${limit} bars from ${startIso}...`);
+    console.log(`[CandleFeed] 📥 Alpaca ${cleanSym} (${interval}): Fetching up to ${effectiveLimit} bars from ${startIso}...`);
 
     let candles: Candle[] = [];
     let pageToken: string | undefined = undefined;
@@ -472,7 +487,7 @@ export class BacktestService {
 
       pageToken = d.next_page_token;
       attempts++;
-    } while (pageToken && candles.length < limit && attempts < 3);
+    } while (pageToken && candles.length < effectiveLimit && attempts < 15);
 
     const map = new Map<number, Candle>();
     for (const c of candles) map.set(c.time, c);
@@ -3895,9 +3910,11 @@ export class BacktestService {
     // 🛡️ 1. Point-in-Time Market Breadth (% of Top Universe pairs above 5h EMA60):
     let aboveEma60Count = 0;
     let totalBreadthPairs = 0;
+    const maxStaleSec = isAlpaca ? 86400 * 5 : 3600;
+
     for (const [sym, candles] of universeCandles.entries()) {
       if (isAlpaca) {
-        if (sym === "SPY" || !candles || candles.length < 288) continue;
+        if (sym === "SPY" || !candles || candles.length < 78) continue;
       } else {
         if (sym.startsWith("BTC") || SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym) || !candles || candles.length < 288) continue;
       }
@@ -3913,7 +3930,7 @@ export class BacktestService {
           high = mid - 1;
         }
       }
-      if (idx >= 60 && targetTime - candles[idx].time <= 3600) {
+      if (idx >= (isAlpaca ? 20 : 60) && targetTime - candles[idx].time <= maxStaleSec) {
         totalBreadthPairs++;
         const curClose = candles[idx].close;
         const ema60 = calcEmaLocal(candles, idx, 60);
@@ -3927,7 +3944,9 @@ export class BacktestService {
     const btcCandles = isAlpaca
       ? (universeCandles.get("SPY") || universeCandles.get("SPYUSD"))
       : (universeCandles.get(`BTC${quoteAsset}`) || universeCandles.get("BTCUSDT"));
-    if (btcCandles && btcCandles.length >= 288) {
+    const btcMinBars = isAlpaca ? 78 : 288;
+
+    if (btcCandles && btcCandles.length >= btcMinBars) {
       let low = 0;
       let high = btcCandles.length - 1;
       let bIdx = -1;
@@ -3940,26 +3959,28 @@ export class BacktestService {
           high = mid - 1;
         }
       }
-      if (bIdx >= 287) {
+      if (bIdx >= btcMinBars - 1) {
         const btcClose = btcCandles[bIdx].close;
-        const btcOpen24h = btcCandles[bIdx - 287].open;
+        const btcOpen24h = btcCandles[bIdx - (btcMinBars - 1)].open;
         if (btcOpen24h > 0) {
           btcChange24hPct = ((btcClose - btcOpen24h) / btcOpen24h) * 100;
         }
 
         if (gridOpts?.enableBtcMacroGate !== false) {
-          // A. Market-wide Breadth Dump Guard: If < 35% of coins are above 5h EMA, sit out in 100% Cash!
-          if (totalBreadthPairs >= 5 && marketBreadthPct < 35) {
+          // A. Market-wide Breadth Dump Guard: If < 25-35% of pairs are above 5h EMA, sit out in 100% Cash!
+          if (totalBreadthPairs >= 5 && marketBreadthPct < (isAlpaca ? 25 : 35)) {
             return [];
           }
 
           // B. Bitcoin / S&P 500 Macro Gate:
-          const slice288 = btcCandles.slice(bIdx - 287, bIdx + 1);
-          const sma288 = slice288.reduce((s: number, c: Candle) => s + c.close, 0) / 288;
+          const sliceBtc = btcCandles.slice(bIdx - (btcMinBars - 1), bIdx + 1);
+          const smaBtc = sliceBtc.reduce((s: number, c: Candle) => s + c.close, 0) / sliceBtc.length;
           const btcOpen4h = btcCandles[Math.max(0, bIdx - 48)].open;
           const ret4hPct = ((btcClose - btcOpen4h) / btcOpen4h) * 100;
 
-          if (btcClose < sma288 * 0.990 || ret4hPct < -1.0) {
+          const smaFactor = isAlpaca ? 0.985 : 0.990;
+          const retFactor = isAlpaca ? -2.5 : -1.0;
+          if (btcClose < smaBtc * smaFactor || ret4hPct < retFactor) {
             return []; // Macro breakdown: zero candidates allowed -> stay in Cash!
           }
         }
@@ -3980,7 +4001,8 @@ export class BacktestService {
 
     // Stage 1: Point-in-Time 24h rolling window filter
     for (const [sym, candles] of universeCandles.entries()) {
-      if (!candles || candles.length < 288) continue;
+      const minCandles = isAlpaca ? 78 : 288;
+      if (!candles || candles.length < minCandles) continue;
       if (!isAlpaca && (SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym))) continue;
 
       let low = 0;
@@ -3996,15 +4018,15 @@ export class BacktestService {
         }
       }
 
-      if (idx < 287) continue;
+      if (idx < minCandles - 1) continue;
 
-      // Stale candle check: candle time should be within 1 hour of targetTime
-      if (targetTime - candles[idx].time > 3600) continue;
+      // Stale candle check: candle time should be within maxStaleSec of targetTime
+      if (targetTime - candles[idx].time > maxStaleSec) continue;
 
       // Ensure there are at least 5 candles ahead to actually simulate
       if (candles.length - 1 - idx < 5) continue;
 
-      const slice24h = candles.slice(idx - 287, idx + 1);
+      const slice24h = candles.slice(idx - (minCandles - 1), idx + 1);
       let high24h = -Infinity;
       let low24h = Infinity;
       let quoteVol24h = 0;
@@ -4028,7 +4050,7 @@ export class BacktestService {
       const return4hPct = open4h > 0 ? ((lastPrice - open4h) / open4h) * 100 : 0;
 
       if (quoteVol24h < minVol) continue;
-      const minRange = isAlpaca ? 0.8 : 4.0;
+      const minRange = isAlpaca ? 0.2 : 4.0;
       const maxRange = isAlpaca ? 30.0 : 22.0;
       if (range24hPct < minRange || range24hPct > maxRange) continue;
       // Smart Bear Market Gate: Only select assets with healthy momentum (no downtrend assets)
@@ -4036,8 +4058,10 @@ export class BacktestService {
       if (change24hPct < minChange || change24hPct > 15.0) continue;
       
       // Position in Channel / 24h Range: Default bottom 35% sweet spot for Grid accumulation!
-      const maxAllowedPos = gridOpts?.gridMaxChannelPos !== undefined ? Number(gridOpts.gridMaxChannelPos) : 0.35;
-      if (posRatio < 0.05 || posRatio > maxAllowedPos) continue;
+      // In US stocks, quality equities trade smoothly around 35%-65% channel; allow up to 65% for equities.
+      const defaultMaxPos = isAlpaca ? 0.65 : 0.35;
+      const maxAllowedPos = gridOpts?.gridMaxChannelPos !== undefined ? Number(gridOpts.gridMaxChannelPos) : defaultMaxPos;
+      if (posRatio < 0.05 || (posRatio > maxAllowedPos && (!isAlpaca || posRatio > 0.65))) continue;
       if (return4hPct < (isAlpaca ? -1.0 : 0.0)) continue; // Reject assets in steep negative momentum
 
       // HTF Trend Governor: Filter out assets in macro downtrend
@@ -4353,16 +4377,23 @@ export class BacktestService {
     }
 
     // 2. Compute timeline boundaries across major pairs with full history
+    let minCandleTime = Infinity;
     let maxCandleTime = 0;
     for (const candles of universeCandles.values()) {
-      if (candles.length > 0) {
+      if (candles.length >= 100) {
+        const firstTime = candles[0].time;
         const lastTime = candles[candles.length - 1].time;
+        if (firstTime < minCandleTime) minCandleTime = firstTime;
         if (lastTime > maxCandleTime) maxCandleTime = lastTime;
       }
     }
 
     const simEndTime = maxCandleTime > 0 ? maxCandleTime : Math.floor(Date.now() / 1000);
-    const simStartTime = simEndTime - simLimit * 300;
+    const warmupSec = (quote === "USD" ? 78 : 288) * 300;
+    const requestedStart = simEndTime - simLimit * 300;
+    const simStartTime = Number.isFinite(minCandleTime)
+      ? Math.max(minCandleTime + warmupSec, requestedStart)
+      : requestedStart;
 
     console.log(`[RotationBacktest] 🚀 Starting simulation: quote=${quote}, simLimit=${simLimit} bars (${((simLimit * 300) / 86400).toFixed(1)} days), universeLoaded=${universeCandles.size} pairs`);
     console.log(`[RotationBacktest] 📅 Timeline bounds: start=${new Date(simStartTime * 1000).toISOString()} (${simStartTime}) ➔ end=${new Date(simEndTime * 1000).toISOString()} (${simEndTime})`);
@@ -4521,7 +4552,7 @@ export class BacktestService {
         enableBaseConfirmationFilter: opts.enableBaseConfirmation ?? true,
         enableDipHunterEntryGuard: opts.enableDipHunterEntryGuard ?? true,
         gridCutLossMode: opts.gridCutLossMode ?? "none",
-        costModel: quote === "FDUSD"
+        costModel: (quote === "FDUSD" || quote === "USD")
           ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
           : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 },
         saveToHistory: false,
@@ -4536,6 +4567,11 @@ export class BacktestService {
           });
 
           if (candidates.length === 0) {
+            // For US stocks, markets close overnight (17.5h/day) and on weekends (65.5h).
+            // Do not panic-dump the active stock to cash merely due to market closure.
+            if (quote === "USD") {
+              return false;
+            }
             // Market breakdown or BTC Macro Gate active: force flat exit to 100% Cash!
             console.log(
               `[RotationBacktest] 🛡️ [Leg #${legIndex}] Macro Gate / Market breakdown active at ${new Date(
