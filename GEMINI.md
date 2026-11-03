@@ -8597,6 +8597,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.35`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 283. Multi-Coin MA-Fan Portfolio Dynamic Asset Labeling (RS vs SPY, Penny Toxic Filter, Stock Terminology) (v0.3.0.36)
+- **สาเหตุของการแก้ไข (Motivation & User Feedback)**:
+  - ผู้ใช้แจ้งข้อสังเกตพร้อมภาพหน้าจอ: *"เกณฑ์เลือกเหรียญก็ยังเป็น BTC นะ"*
+  - การตรวจสอบ: ในแท็บ **Auto-Rotation Portfolio (โหมด Multi-Coin MA-Fan Sniper)** กล่องตัวเลือก **เกณฑ์เลือกเหรียญ (Ranking)** (`#rotBtRankBy`) ยังคงฮาร์ดโค้ดข้อความว่า `💎 Composite Quality (Buyer Volume + RS vs BTC) ⭐`
+  - นอกจากนี้ ยังมีป้ายกำกับและตัวเลือกอื่นๆ ในโหมดพอร์ตโฟลิโอที่ยังใช้คำศัพท์เฉพาะของตลาดคริปโต (เช่น "เหรียญ", "เหรียญมีม/เหรียญปั่น", "All-in ทีละเหรียญ") แม้จะเลือกสกุลเงิน `USD (Alpaca US Equities)`
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation & Dynamic UI Adaptation)**:
+  1. **Dynamic Ranking Criteria & Toxic Filter (`public/backtest.js` & `public/backtest.html`)**:
+     - ขยายฟังก์ชัน `updateRotationMacroGateUI` ให้ครอบคลุมทุกการตั้งค่าของพอร์ตโฟลิโอ:
+       - **เกณฑ์เลือกสินทรัพย์ (`#rotBtRankBy`)**:
+         - ตลาดหุ้นสหรัฐฯ (`USD`): ปรับป้ายเป็น **`เกณฑ์เลือกหุ้น (Ranking)`** และตัวเลือกเป็น **`💎 Composite Quality (Buyer Volume + RS vs SPY) ⭐`**
+         - ตลาดคริปโต (`FDUSD/USDT`): แสดงเป็น **`เกณฑ์เลือกเหรียญ (Ranking)`** และ **`RS vs BTC`**
+       - **ตัวกรองสินทรัพย์เสี่ยงสูง (`#rotBtExcludeMemes`)**:
+         - ตลาดหุ้นสหรัฐฯ: ปรับป้ายเป็น **`กรองหุ้นเพนนี/หุ้นปั่นเสี่ยงสูง (Toxic Filter)`** และตัวเลือกเป็น **`🛡️ กรองหุ้นเพนนี/หุ้นเก็งกำไรเสี่ยงสูงออก (แนะนำ) ★`** / **`รวมทุกหุ้นใน Universe`**
+         - ตลาดคริปโต: แสดงเป็น **`กรองเหรียญมีม/เหรียญปั่น`** และ **`🛡️ กรองเหรียญมีม/เหรียญขยะออก`**
+       - **จำนวนช่องถือครอง (`#rotBtMaxSlots`)**:
+         - ตลาดหุ้นสหรัฐฯ: ปรับป้ายเป็น **`จำนวนช่องถือหุ้น (Max Slots)`** และตัวเลือกเป็น **`1 ช่อง (All-in ทีละหุ้น)`**
+       - **การตัดขาดทุนสัญญาณ (`#rotBtSignalExit`)**:
+         - ตลาดหุ้นสหรัฐฯ: ปรับป้ายเป็น **`เมื่อหุ้นเสียทรง (Signal Exit)`**
+  2. **Dynamic Table Headers in Simulation Results (`public/backtest.html` & `public/backtest.js`)**:
+     - ปรับหัวตารางประวัติการสลับอัตโนมัติ: **`📋 ไทม์ไลน์การสลับหุ้น (Rotation Journey Log)`** และคอลัมน์ **`หุ้น (Symbol)`**
+     - ปรับหัวตารางผลงานรายตัว: **`🏆 อันดับหุ้นสร้างกำไรสูงสุด (Per-Stock Profit Contribution)`**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.36`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 

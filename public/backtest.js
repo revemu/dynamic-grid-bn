@@ -127,7 +127,7 @@
     }
   }
 
-  // Update Rotation Macro Gate (BTC vs SPY)
+  // Update Rotation Macro Gate & Asset Labels (BTC vs SPY, Coins vs Stocks)
   function updateRotationMacroGateUI(quoteAsset) {
     const isStock = quoteAsset === "USD";
     const label = document.getElementById("rotBtMacroGateLabel");
@@ -153,6 +153,102 @@
           <option value="btc4h"${curVal === "btc4h" ? " selected" : ""}>⏱️ กรองตาม 4H (EMA75) เท่านั้น</option>
           <option value="off"${curVal === "off" ? " selected" : ""}>⚡ ปิดตัวกรอง (เทรดตามปกติ)</option>
         `;
+    }
+
+    // Dynamic Ranking Criteria (RS vs SPY vs BTC)
+    const labelRank = document.getElementById("rotBtRankByLabel");
+    const selectRank = document.getElementById("rotBtRankBy");
+    if (labelRank) {
+      labelRank.textContent = isStock ? "เกณฑ์เลือกหุ้น (Ranking)" : "เกณฑ์เลือกเหรียญ (Ranking)";
+    }
+    if (selectRank) {
+      const curRankVal = selectRank.value || "COMPOSITE_QUALITY";
+      selectRank.innerHTML = isStock
+        ? `
+          <option value="COMPOSITE_QUALITY"${curRankVal === "COMPOSITE_QUALITY" ? " selected" : ""}>💎 Composite Quality (Buyer Volume + RS vs SPY) ⭐</option>
+          <option value="RSI15"${curRankVal === "RSI15" ? " selected" : ""}>📈 RSI 15m</option>
+        `
+        : `
+          <option value="COMPOSITE_QUALITY"${curRankVal === "COMPOSITE_QUALITY" ? " selected" : ""}>💎 Composite Quality (Buyer Volume + RS vs BTC) ⭐</option>
+          <option value="RSI15"${curRankVal === "RSI15" ? " selected" : ""}>📈 RSI 15m</option>
+        `;
+    }
+
+    // Dynamic Toxic Filter Label & Options (Penny Stocks vs Meme Coins)
+    const labelMemes = document.getElementById("rotBtExcludeMemesLabel");
+    const selectMemes = document.getElementById("rotBtExcludeMemes");
+    if (labelMemes) {
+      labelMemes.textContent = isStock ? "กรองหุ้นเพนนี/หุ้นปั่นเสี่ยงสูง (Toxic Filter)" : "กรองเหรียญมีม/เหรียญปั่น (Toxic Filter)";
+    }
+    if (selectMemes) {
+      const curMemeVal = selectMemes.value || "true";
+      selectMemes.title = isStock
+        ? "ตัดหุ้นเพนนี/หุ้นเก็งกำไรเสี่ยงสูงที่ไม่มีพื้นฐานและทุบแล้วไม่เด้ง"
+        : "ตัดเหรียญมีม/เหรียญปั่นที่ไม่มีพื้นฐานและทุบแล้วไม่เด้ง เช่น TRUMP, 1000CAT, MARSCOIN";
+      selectMemes.innerHTML = isStock
+        ? `
+          <option value="true"${curMemeVal === "true" ? " selected" : ""}>🛡️ กรองหุ้นเพนนี/หุ้นเก็งกำไรเสี่ยงสูงออก (แนะนำ) ★</option>
+          <option value="false"${curMemeVal === "false" ? " selected" : ""}>รวมทุกหุ้นใน Universe</option>
+        `
+        : `
+          <option value="true"${curMemeVal === "true" ? " selected" : ""}>🛡️ กรองเหรียญมีม/เหรียญขยะออก (แนะนำ) ★</option>
+          <option value="false"${curMemeVal === "false" ? " selected" : ""}>รวมทุกเหรียญใน Universe</option>
+        `;
+    }
+
+    // Dynamic Max Slots Label & Options
+    const labelSlots = document.getElementById("rotBtMaxSlotsLabel");
+    const selectSlots = document.getElementById("rotBtMaxSlots");
+    if (labelSlots) {
+      labelSlots.textContent = isStock ? "จำนวนช่องถือหุ้น (Max Slots)" : "จำนวนช่องถือเหรียญ (Max Slots)";
+    }
+    if (selectSlots) {
+      const curSlotsVal = selectSlots.value || "3";
+      selectSlots.innerHTML = isStock
+        ? `
+          <option value="1"${curSlotsVal === "1" ? " selected" : ""}>1 ช่อง (All-in ทีละหุ้น)</option>
+          <option value="2"${curSlotsVal === "2" ? " selected" : ""}>2 ช่อง (50% ต่อช่อง)</option>
+          <option value="3"${curSlotsVal === "3" ? " selected" : ""}>3 ช่อง (33.3% ต่อช่อง - แนะนำ) ⭐</option>
+          <option value="4"${curSlotsVal === "4" ? " selected" : ""}>4 ช่อง (25% ต่อช่อง)</option>
+          <option value="5"${curSlotsVal === "5" ? " selected" : ""}>5 ช่อง (20% ต่อช่อง)</option>
+        `
+        : `
+          <option value="1"${curSlotsVal === "1" ? " selected" : ""}>1 ช่อง (All-in ทีละเหรียญ)</option>
+          <option value="2"${curSlotsVal === "2" ? " selected" : ""}>2 ช่อง (50% ต่อช่อง)</option>
+          <option value="3"${curSlotsVal === "3" ? " selected" : ""}>3 ช่อง (33.3% ต่อช่อง - แนะนำ) ⭐</option>
+          <option value="4"${curSlotsVal === "4" ? " selected" : ""}>4 ช่อง (25% ต่อช่อง)</option>
+          <option value="5"${curSlotsVal === "5" ? " selected" : ""}>5 ช่อง (20% ต่อช่อง)</option>
+        `;
+    }
+
+    // Dynamic Signal Exit & HTF Gov Labels
+    const labelSignalExit = document.getElementById("rotBtSignalExitLabel");
+    if (labelSignalExit) {
+      labelSignalExit.textContent = isStock ? "เมื่อหุ้นเสียทรง (Signal Exit)" : "เมื่อเหรียญเสียทรง (Signal Exit)";
+    }
+    const selectGov = document.getElementById("rotBtGridHtfGov");
+    if (selectGov) {
+      selectGov.title = isStock
+        ? "คัดเฉพาะหุ้นที่แท่งเทียน 1H ยืนเหนือ EMA200 เข้าพอร์ต"
+        : "คัดเฉพาะเหรียญที่แท่งเทียน 1H ยืนเหนือ EMA200 เข้าพอร์ต";
+    }
+
+    // Dynamic Table Headings in Results Section
+    const journeyTitle = document.getElementById("rotJourneyTitle");
+    if (journeyTitle) {
+      journeyTitle.textContent = isStock ? "📋 ไทม์ไลน์การสลับหุ้น (Rotation Journey Log)" : "📋 ไทม์ไลน์การสลับคู่เหรียญ (Rotation Journey Log)";
+    }
+    const thSym = document.getElementById("rotThSymbol");
+    if (thSym) {
+      thSym.textContent = isStock ? "หุ้น (Symbol)" : "คู่เหรียญ (Pair)";
+    }
+    const contribTitle = document.getElementById("rotContributionTitle");
+    if (contribTitle) {
+      contribTitle.textContent = isStock ? "🏆 อันดับหุ้นสร้างกำไรสูงสุด (Per-Stock Profit Contribution)" : "🏆 อันดับเหรียญสร้างกำไรสูงสุด (Per-Pair Profit Contribution)";
+    }
+    const thContribSym = document.getElementById("rotThContribSymbol");
+    if (thContribSym) {
+      thContribSym.textContent = isStock ? "หุ้น (Symbol)" : "คู่เหรียญ";
     }
   }
 

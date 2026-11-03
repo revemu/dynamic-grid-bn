@@ -697,7 +697,7 @@
 
           <!-- 3. MA-Fan Multi-Coin Portfolio Options (Dynamic display) -->
           <div class="scanner-ctrl-group" data-rot-mode="mafan">
-            <label>จำนวนช่องถือเหรียญ (Max Slots)</label>
+            <label id="rotBtMaxSlotsLabel">จำนวนช่องถือเหรียญ (Max Slots)</label>
             <select id="rotBtMaxSlots" title="จำนวนเหรียญที่ถือครองพร้อมกันสูงสุด (กระจายเงินทุนช่องละเท่าๆ กัน)">
               <option value="1">1 ช่อง (All-in ทีละเหรียญ)</option>
               <option value="2">2 ช่อง (50% ต่อช่อง)</option>
@@ -726,14 +726,14 @@
             </select>
           </div>
           <div class="scanner-ctrl-group" data-rot-mode="mafan">
-            <label>กรองเหรียญมีม/เหรียญปั่น (Toxic Filter)</label>
+            <label id="rotBtExcludeMemesLabel">กรองเหรียญมีม/เหรียญปั่น (Toxic Filter)</label>
             <select id="rotBtExcludeMemes" title="ตัดเหรียญมีม/เหรียญปั่นที่ไม่มีพื้นฐานและทุบแล้วไม่เด้ง เช่น TRUMP, 1000CAT, MARSCOIN">
               <option value="true" selected>🛡️ กรองเหรียญมีม/เหรียญขยะออก (แนะนำ) ★</option>
               <option value="false">รวมทุกเหรียญใน Universe</option>
             </select>
           </div>
           <div class="scanner-ctrl-group" data-rot-mode="mafan">
-            <label>เกณฑ์เลือกเหรียญ (Ranking)</label>
+            <label id="rotBtRankByLabel">เกณฑ์เลือกเหรียญ (Ranking)</label>
             <select id="rotBtRankBy" title="เกณฑ์การเลือกเหรียญเข้าพอร์ตเมื่อมีสัญญาณพร้อมกันหลายตัว">
               <option value="COMPOSITE_QUALITY" selected>💎 Composite Quality (Buyer Volume + RS vs BTC) ⭐</option>
               <option value="RSI15">📈 RSI 15m</option>
@@ -781,7 +781,7 @@
             </select>
           </div>
           <div class="scanner-ctrl-group" data-rot-mode="grid">
-            <label>เมื่อเหรียญเสียทรง (Signal Exit)</label>
+            <label id="rotBtSignalExitLabel">เมื่อเหรียญเสียทรง (Signal Exit)</label>
             <select id="rotBtSignalExit">
               <option value="calibrated" selected>🛡️ ตัดขาดทุนเมื่อขาดทุนเกิน 4% (Calibrated Stop)</option>
               <option value="off">⏳ ถือรอจบรอบ Flat (ไม่ Stop Loss)</option>
@@ -842,7 +842,7 @@
         <!-- Section 1: Rotation Journey Timeline -->
         <div id="rotationBtResultsSection" style="display: none;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin: 15px 0 8px 0;">
-            <h4 style="margin: 0; font-size: 14px; color: #e2e8f0;">📋 ไทม์ไลน์การสลับคู่เหรียญ (Rotation Journey Log)</h4>
+            <h4 id="rotJourneyTitle" style="margin: 0; font-size: 14px; color: #e2e8f0;">📋 ไทม์ไลน์การสลับคู่เหรียญ (Rotation Journey Log)</h4>
             <span style="font-size: 11px; color: #94a3b8;">💡 กดปุ่ม '📈 ดูกราฟ' เพื่อเลื่อนและซูมดูกราฟของช่วงเวลานั้น</span>
           </div>
           <div class="scanner-table-wrap" style="max-height: 280px; overflow-y: auto;">
@@ -851,7 +851,7 @@
                 <tr>
                   <th>รอบ</th>
                   <th>ช่วงเวลา (Period)</th>
-                  <th>คู่เหรียญ (Pair)</th>
+                  <th id="rotThSymbol">คู่เหรียญ (Pair)</th>
                   <th>เหตุผล (Trigger)</th>
                   <th>คะแนน (Score)</th>
                   <th>ทุนเริ่มต้น ➔ จบรอบ</th>
@@ -867,14 +867,14 @@
 
           <!-- Section 2: Per-Pair Contribution Breakdown -->
           <div style="margin: 15px 0 8px 0;">
-            <h4 style="margin: 0; font-size: 14px; color: #e2e8f0;">🏆 อันดับเหรียญสร้างกำไรสูงสุด (Per-Pair Profit Contribution)</h4>
+            <h4 id="rotContributionTitle" style="margin: 0; font-size: 14px; color: #e2e8f0;">🏆 อันดับเหรียญสร้างกำไรสูงสุด (Per-Pair Profit Contribution)</h4>
           </div>
           <div class="scanner-table-wrap" style="max-height: 200px; overflow-y: auto;">
             <table class="bt-table" id="rotationPairContribTable">
               <thead>
                 <tr>
                   <th>อันดับ</th>
-                  <th>คู่เหรียญ</th>
+                  <th id="rotThContribSymbol">คู่เหรียญ</th>
                   <th>จำนวนรอบที่ถือ</th>
                   <th>ระยะเวลาถือครองรวม</th>
                   <th>จำนวนไม้เทรด</th>
