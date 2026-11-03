@@ -7,7 +7,8 @@
 import fs from "fs";
 import path from "path";
 import { Candle, RibbonEngine, ExhaustionEngine, AutoCalibrator, RollingSpreadCalibrator, MaFanCoreRules, RegimeSupervisor, CushionMode, RibbonState, ExhaustionState, WaterfallGuardMode } from "./strategy/ma-fan/index.js";
-import { calcATR } from "./strategy/ma-fan/ribbon.js";
+import { calcATR, calcEMA } from "./strategy/ma-fan/ribbon.js";
+import { calcRSI, calcMACD } from "./strategy/ma-fan/exhaustion.js";
 import { DowStructureEngine } from "./market-structure.js";
 import { getActiveBinanceTradingSymbols } from "./exchange/binance/client.js";
 import { isSyntheticOrStock } from "./pair-rotator.js";
@@ -1361,6 +1362,13 @@ export class BacktestService {
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
+      tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";
+      lockBreakevenAtEma200?: boolean;
+      maxDisasterSlPct?: number;
+      minBuyVolRatio12?: number;
+      maxUpperRibbonSpreadPct?: number;
+      minRelStrengthVsBtc24h?: number;
+      btcCandles?: Candle[];
     }
   ): BacktestRecord {
     const symbol = opts.symbol.toUpperCase().replace(/[\/\-_:]/g, "");
@@ -2340,6 +2348,13 @@ export class BacktestService {
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
+      tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";
+      lockBreakevenAtEma200?: boolean;
+      maxDisasterSlPct?: number;
+      minBuyVolRatio12?: number;
+      maxUpperRibbonSpreadPct?: number;
+      minRelStrengthVsBtc24h?: number;
+      btcCandles?: Candle[];
     }
   ): BacktestRecord {
     if (opts.tradeMode === "dynamic_grid") {
@@ -2549,10 +2564,29 @@ export class BacktestService {
       }
     }
 
+    const btcTimeMap = new Map<number, number>();
+    if (opts.btcCandles && opts.btcCandles.length > 0) {
+      for (let bi = 0; bi < opts.btcCandles.length; bi++) {
+        btcTimeMap.set(opts.btcCandles[bi]!.time, bi);
+      }
+    }
+
     for (let i = startIdx; i < candles.length; i++) {
       const c = candles[i]!;
       const ribbon = ribbonStates[i]!;
       const curAtr = atrs[i] ?? (c.close * 0.003);
+
+      let btc24hReturnPct: number | undefined;
+      if (btcTimeMap.size > 0 && opts.btcCandles) {
+        const bIdx = btcTimeMap.get(c.time);
+        if (bIdx !== undefined && bIdx >= 96) {
+          const bClose = opts.btcCandles[bIdx]!.close;
+          const bOpen24 = opts.btcCandles[bIdx - 96]!.open;
+          if (bOpen24 > 0) {
+            btc24hReturnPct = ((bClose - bOpen24) / bOpen24) * 100;
+          }
+        }
+      }
 
       // Evaluate Higher Timeframe Regime (aligns with Live Bot)
       const htfRegime = RegimeSupervisor.evaluateHtfRegime(candlesHtf, supervisorTf, c.time, tp1Ratio);
@@ -2683,7 +2717,18 @@ export class BacktestService {
           enableFastCut: opts.enableFastCut !== false,
           fastCutThresholdPct: opts.fastCutThresholdPct ?? -0.80,
           stagnationBars: opts.stagnationBars ?? 6,
+          tp1TargetMode: opts.tp1TargetMode,
+          lockBreakevenAtEma200: opts.lockBreakevenAtEma200,
+          maxDisasterSlPct: opts.maxDisasterSlPct,
         });
+
+        if (exitDecision.action === "NONE" && exitDecision.newStopLossPrice) {
+          if (activeSide === "LONG" && exitDecision.newStopLossPrice > stopLossPrice) {
+            stopLossPrice = exitDecision.newStopLossPrice;
+          } else if (activeSide === "SHORT" && exitDecision.newStopLossPrice < stopLossPrice) {
+            stopLossPrice = exitDecision.newStopLossPrice;
+          }
+        }
 
         // 1. TP2 Exit (Macro Runner / Trailing Stop)
         if (exitDecision.action === "TP2") {
@@ -2962,6 +3007,10 @@ export class BacktestService {
           maxSlPct: opts.maxSlPct,
           tradeMode,
           tradeDirection,
+          minBuyVolRatio12: opts.minBuyVolRatio12,
+          maxUpperRibbonSpreadPct: opts.maxUpperRibbonSpreadPct,
+          minRelStrengthVsBtc24h: opts.minRelStrengthVsBtc24h,
+          btc24hReturnPct,
         });
 
         if (opts.onlyEntryIdx === undefined && evaluations[i]) {
@@ -4541,5 +4590,516 @@ export class BacktestService {
     this.latestRotationResult = result;
     this.rotationBtProgress = { phase: "complete", completed: 100, total: 100, currentSymbol: "", message: "Simulation completed successfully!" };
     return result;
+  }
+
+  /**
+   * Run full-fidelity Autonomous Multi-Pair MA-Fan Reversal Portfolio Simulation
+   * Evaluates Bottom Fan -> 8/16 Cross -> MA4 Pullback entries across a portfolio with strictly 0 look-ahead.
+   */
+  public static runMaFanPortfolioSimulation(opts: {
+    universe: { symbol: string; candles: Candle[] }[];
+    btcCandles: Candle[];
+    maxSlots?: number;
+    initialCapital?: number;
+    limitPenetrationPct?: number;
+    minBreadth25Pct?: number;
+    requireBtcNotDumping?: boolean;
+    requireCoin1hRsi40?: boolean;
+    minBuyVolRatio12?: number;
+    minRelStrengthVsBtc24h?: number;
+    maxUpperRibbonSpreadPct?: number;
+    rankBy?: "RSI15" | "COMPOSITE_QUALITY";
+    tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";
+    lockBreakevenAtEma200?: boolean;
+    partialTpAtEma200?: boolean;
+    maxDisasterSlPct?: number;
+    maxHoldHours?: number;
+  }): {
+    initialCapital: number;
+    finalEquity: number;
+    netPnlQuote: number;
+    netPnlPct: number;
+    maxDrawdownPct: number;
+    calmarRatio: number;
+    profitFactor: number;
+    totalTrades: number;
+    winningTrades: number;
+    losingTrades: number;
+    winRate: number;
+    avgHoldHours: number;
+    avgMaePct: number;
+    btcBuyHoldPct: number;
+    alphaVsBtcPct: number;
+    trades: {
+      symbol: string;
+      entryTime: number;
+      exitTime: number;
+      entryPrice: number;
+      exitPrice: number;
+      pnlPct: number;
+      maePct: number;
+      holdHours: number;
+      isWin: boolean;
+      exitReason: string;
+    }[];
+  } {
+    const costPerFill = (0.075 + 0.01) / 100;
+    const penetration = (opts.limitPenetrationPct ?? 0.10) / 100;
+    const maxSlots = Math.max(1, opts.maxSlots ?? 3);
+    const initialCapital = Math.max(10, opts.initialCapital ?? 100);
+    let cash = initialCapital;
+
+    interface CoinPrecalc {
+      symbol: string;
+      c15: Candle[];
+      timeMap15: Map<number, number>;
+      m4: number[];
+      m8: number[];
+      m16: number[];
+      m25: number[];
+      m75: number[];
+      m200: number[];
+      rsi15: number[];
+      macdHist15: number[];
+      c1h: Candle[];
+      m200_1h: number[];
+      rsi1h: number[];
+    }
+
+    const precalc: CoinPrecalc[] = [];
+    for (const u of opts.universe) {
+      if (!u.candles || u.candles.length < 500) continue;
+      const c15 = BacktestService.aggregateCandles(u.candles, 15);
+      if (c15.length < 220) continue;
+      const closes15 = c15.map((c) => c.close);
+      const timeMap15 = new Map<number, number>();
+      c15.forEach((c, idx) => timeMap15.set(c.time, idx));
+
+      const c1h = BacktestService.aggregateCandles(u.candles, 60);
+      const closes1h = c1h.map((c) => c.close);
+
+      precalc.push({
+        symbol: u.symbol,
+        c15,
+        timeMap15,
+        m4: calcEMA(closes15, 4),
+        m8: calcEMA(closes15, 8),
+        m16: calcEMA(closes15, 16),
+        m25: calcEMA(closes15, 25),
+        m75: calcEMA(closes15, 75),
+        m200: calcEMA(closes15, 200),
+        rsi15: calcRSI(c15, 14),
+        macdHist15: calcMACD(c15).hist,
+        c1h,
+        m200_1h: calcEMA(closes1h, 200),
+        rsi1h: calcRSI(c1h, 14),
+      });
+    }
+
+    if (precalc.length === 0) {
+      throw new Error("No eligible coins with sufficient history for MA-Fan Portfolio simulation");
+    }
+
+    const btc15 = BacktestService.aggregateCandles(opts.btcCandles, 15);
+    const btcTimeMap = new Map<number, number>();
+    btc15.forEach((c, idx) => btcTimeMap.set(c.time, idx));
+
+    const startT = Math.max(...precalc.map((c) => c.c15[220]?.time ?? 0), btc15[220]?.time ?? 0);
+    const endT = Math.min(...precalc.map((c) => c.c15[c.c15.length - 1]?.time ?? Infinity), btc15[btc15.length - 1]?.time ?? Infinity);
+
+    const btcStart = btc15.find((c) => c.time >= startT)?.close ?? 1;
+    const btcEnd = btc15.filter((c) => c.time <= endT).at(-1)?.close ?? btcStart;
+    const btcBuyHoldPct = btcStart > 0 ? ((btcEnd - btcStart) / btcStart) * 100 : 0;
+
+    // Precompute Breadth & BTC Macro at each 15m step (strictly known at idx - 1)
+    const macroMap = new Map<number, { b25: number; btcNotDumping: boolean; btcRet24h: number }>();
+    for (let t = startT; t <= endT; t += 900) {
+      let a25 = 0, tot = 0;
+      for (const c of precalc) {
+        if (c.symbol === "BTCUSDT") continue;
+        const idx = c.timeMap15.get(t);
+        if (idx !== undefined && idx > 200) {
+          tot++;
+          if (c.c15[idx - 1].close > c.m25[idx - 1]) a25++;
+        }
+      }
+      const bIdx = btcTimeMap.get(t) ?? 200;
+      const prev = bIdx - 1;
+      let sma96 = btc15[prev]?.close ?? 1;
+      if (prev >= 96) {
+        let s = 0;
+        for (let k = prev - 95; k <= prev; k++) s += btc15[k]?.close ?? 0;
+        sma96 = s / 96;
+      }
+      const btcClose = btc15[prev]?.close ?? 1;
+      const btcRet4h = prev >= 16 ? ((btcClose - btc15[prev - 16].open) / btc15[prev - 16].open) * 100 : 0;
+      const btcRet24h = prev >= 96 ? ((btcClose - btc15[prev - 96].open) / btc15[prev - 96].open) * 100 : 0;
+
+      macroMap.set(t, {
+        b25: tot > 0 ? (a25 / tot) * 100 : 50,
+        btcNotDumping: btcClose >= sma96 * 0.99 && btcRet4h >= -1.2,
+        btcRet24h,
+      });
+    }
+
+    interface ActivePos {
+      symbol: string;
+      entryTime: number;
+      entryPrice: number;
+      allocatedCapital: number;
+      qty: number;
+      troughPrice: number;
+      peakPrice: number;
+      lastKnownPrice: number;
+      beLocked: boolean;
+      tp1Done: boolean;
+      realizedProceeds: number;
+    }
+
+    let activePositions: ActivePos[] = [];
+    const completedTrades: {
+      symbol: string;
+      entryTime: number;
+      exitTime: number;
+      entryPrice: number;
+      exitPrice: number;
+      pnlPct: number;
+      maePct: number;
+      holdHours: number;
+      isWin: boolean;
+      exitReason: string;
+    }[] = [];
+
+    let peakEquity = initialCapital;
+    let maxDdPct = 0;
+
+    interface CoinSetupState {
+      hadBottomFan: boolean;
+      fanExpiryTime: number;
+      waitingPullback: boolean;
+      pullbackExpiryTime: number;
+      waitFromTime: number;
+      bottomLow: number;
+    }
+
+    const states = new Map<string, CoinSetupState>();
+    const p1Map = new Map<string, number>();
+    for (const c of precalc) {
+      states.set(c.symbol, {
+        hadBottomFan: false,
+        fanExpiryTime: 0,
+        waitingPullback: false,
+        pullbackExpiryTime: 0,
+        waitFromTime: 0,
+        bottomLow: Infinity,
+      });
+      p1Map.set(c.symbol, 0);
+    }
+
+    for (let t = startT; t <= endT; t += 900) {
+      const closeT = t + 900;
+
+      // 1. Update Active Positions & Exits
+      const surviving: ActivePos[] = [];
+      for (const pos of activePositions) {
+        const coin = precalc.find((c) => c.symbol === pos.symbol)!;
+        const idx = coin.timeMap15.get(t);
+        if (idx === undefined) {
+          surviving.push(pos);
+          continue;
+        }
+        const c = coin.c15[idx];
+        pos.lastKnownPrice = c.close;
+        pos.troughPrice = Math.min(pos.troughPrice, c.low);
+        pos.peakPrice = Math.max(pos.peakPrice, c.high);
+
+        let shouldCloseAll = false;
+        let exitPrice = c.close;
+        let exitReason = "TIME_STOP";
+
+        // Check Disaster SL
+        if (opts.maxDisasterSlPct && c.low <= pos.entryPrice * (1 - opts.maxDisasterSlPct / 100)) {
+          shouldCloseAll = true;
+          exitPrice = Math.min(c.open, pos.entryPrice * (1 - opts.maxDisasterSlPct / 100));
+          exitReason = `SL_DISASTER_${opts.maxDisasterSlPct}%`;
+        }
+
+        // Check Locked Breakeven Stop
+        if (!shouldCloseAll && pos.beLocked && c.low <= pos.entryPrice * 1.0025) {
+          shouldCloseAll = true;
+          exitPrice = Math.min(c.open, pos.entryPrice * 1.0025);
+          exitReason = "SL_BREAKEVEN";
+        }
+
+        // Check EMA200 touch in profit (>= +0.8%)
+        const targetEma = opts.tp1TargetMode === "EMA75" ? coin.m75[idx] : coin.m200[idx];
+        const emaTargetPx = Math.max(targetEma, pos.entryPrice * 1.008);
+        if (!shouldCloseAll && c.high >= emaTargetPx) {
+          if (opts.lockBreakevenAtEma200) {
+            pos.beLocked = true;
+          }
+          if (opts.partialTpAtEma200 && !pos.tp1Done) {
+            pos.tp1Done = true;
+            pos.beLocked = true;
+            const halfQty = pos.qty * 0.5;
+            const proceedsHalf = halfQty * emaTargetPx * (1 - costPerFill);
+            cash += proceedsHalf;
+            pos.realizedProceeds += proceedsHalf;
+            pos.qty -= halfQty;
+          }
+        }
+
+        // Check Full Bullish Fan (4 > 8 > 16 > 25 > 75 > 200)
+        const isBullishFan =
+          coin.m4[idx] > coin.m8[idx] &&
+          coin.m8[idx] > coin.m16[idx] &&
+          coin.m16[idx] > coin.m25[idx] &&
+          coin.m25[idx] > coin.m75[idx] &&
+          coin.m75[idx] > coin.m200[idx];
+
+        if (!shouldCloseAll && isBullishFan) {
+          shouldCloseAll = true;
+          exitPrice = c.close;
+          exitReason = "FULL_BULLISH_FAN";
+        }
+
+        const holdHours = (t - pos.entryTime) / 3600;
+        if (!shouldCloseAll && opts.maxHoldHours && holdHours >= opts.maxHoldHours) {
+          shouldCloseAll = true;
+          exitPrice = c.close;
+          exitReason = "MAX_HOLD_HOURS";
+        }
+
+        if (shouldCloseAll) {
+          const finalProceeds = pos.qty * exitPrice * (1 - costPerFill);
+          cash += finalProceeds;
+          const totalProceeds = pos.realizedProceeds + finalProceeds;
+          const netPnlPct = ((totalProceeds - pos.allocatedCapital) / pos.allocatedCapital) * 100;
+          const maePct = ((pos.troughPrice - pos.entryPrice) / pos.entryPrice) * 100;
+          completedTrades.push({
+            symbol: pos.symbol,
+            entryTime: pos.entryTime,
+            exitTime: t,
+            entryPrice: pos.entryPrice,
+            exitPrice,
+            pnlPct: netPnlPct,
+            maePct,
+            holdHours,
+            isWin: netPnlPct > 0,
+            exitReason,
+          });
+          const st = states.get(pos.symbol)!;
+          st.hadBottomFan = false;
+          st.waitingPullback = false;
+          st.bottomLow = Infinity;
+        } else {
+          surviving.push(pos);
+        }
+      }
+      activePositions = surviving;
+
+      // 2. Scan for Candidate Fills (strictly prior-bar idx - 1)
+      const macro = macroMap.get(t) ?? { b25: 50, btcNotDumping: true, btcRet24h: 0 };
+      const isMacroOk =
+        (opts.minBreadth25Pct === undefined || macro.b25 >= opts.minBreadth25Pct) &&
+        (!opts.requireBtcNotDumping || macro.btcNotDumping);
+
+      interface Cand {
+        symbol: string;
+        entryPrice: number;
+        barLow: number;
+        barHigh: number;
+        barClose: number;
+        score: number;
+      }
+      const candidates: Cand[] = [];
+
+      for (const coin of precalc) {
+        const idx = coin.timeMap15.get(t);
+        if (idx === undefined || idx < 200) continue;
+        const st = states.get(coin.symbol)!;
+        const c = coin.c15[idx];
+        const isHeld = activePositions.some((p) => p.symbol === coin.symbol);
+
+        let p1 = p1Map.get(coin.symbol)!;
+        while (p1 + 1 < coin.c1h.length && coin.c1h[p1 + 1].time + 3600 <= closeT) p1++;
+        p1Map.set(coin.symbol, p1);
+
+        if (!isHeld && isMacroOk && st.waitingPullback && t > st.waitFromTime && t <= st.pullbackExpiryTime) {
+          const prev = idx - 1;
+          const limitP = coin.m4[prev];
+          if (coin.m8[prev] >= coin.m16[prev] && c.low <= limitP * (1 - penetration)) {
+            let pass = true;
+            if (opts.requireCoin1hRsi40 && coin.rsi1h[p1] < 40) pass = false;
+
+            let buyVolRatio12 = 1.0;
+            if (pass) {
+              let upV = 0, dnV = 0;
+              for (let k = Math.max(0, prev - 11); k <= prev; k++) {
+                const b = coin.c15[k];
+                const qv = b.volume * b.close;
+                if (b.close >= b.open) upV += qv;
+                else dnV += qv;
+              }
+              buyVolRatio12 = dnV > 0 ? upV / dnV : 2.0;
+              if (opts.minBuyVolRatio12 !== undefined && buyVolRatio12 < opts.minBuyVolRatio12) pass = false;
+            }
+
+            let relStrength24h = 0;
+            if (pass) {
+              const coinRet24h = ((coin.c15[prev].close - coin.c15[Math.max(0, prev - 96)].open) / coin.c15[Math.max(0, prev - 96)].open) * 100;
+              relStrength24h = coinRet24h - macro.btcRet24h;
+              if (opts.minRelStrengthVsBtc24h !== undefined && relStrength24h < opts.minRelStrengthVsBtc24h) pass = false;
+            }
+
+            let upperSpreadPct = 0;
+            if (pass) {
+              upperSpreadPct = ((coin.m200[prev] - coin.m75[prev]) / coin.m200[prev]) * 100;
+              if (opts.maxUpperRibbonSpreadPct !== undefined && upperSpreadPct > opts.maxUpperRibbonSpreadPct) pass = false;
+            }
+
+            if (pass) {
+              const fillPrice = Math.min(c.open, limitP);
+              const score =
+                opts.rankBy === "COMPOSITE_QUALITY"
+                  ? Math.min(3, buyVolRatio12) * 20 + Math.max(-5, Math.min(10, relStrength24h)) * 3 - upperSpreadPct * 10
+                  : coin.rsi15[prev];
+              candidates.push({
+                symbol: coin.symbol,
+                entryPrice: fillPrice,
+                barLow: c.low,
+                barHigh: c.high,
+                barClose: c.close,
+                score,
+              });
+            }
+          }
+        }
+
+        if (st.waitingPullback && (t >= st.pullbackExpiryTime || coin.m8[idx] < coin.m16[idx])) {
+          st.waitingPullback = false;
+        }
+
+        const isBottomFan =
+          coin.m4[idx] < coin.m8[idx] &&
+          coin.m8[idx] < coin.m16[idx] &&
+          coin.m16[idx] < coin.m25[idx] &&
+          coin.m25[idx] < coin.m75[idx] &&
+          coin.m75[idx] < coin.m200[idx];
+
+        if (isBottomFan) {
+          st.hadBottomFan = true;
+          st.fanExpiryTime = t + 20 * 900;
+          st.bottomLow = Math.min(st.bottomLow, c.low);
+        }
+        if (t > st.fanExpiryTime && !st.waitingPullback && !isHeld) {
+          st.hadBottomFan = false;
+          st.bottomLow = Infinity;
+        }
+
+        const is8Cross16Up = coin.m8[idx - 1] <= coin.m16[idx - 1] && coin.m8[idx] > coin.m16[idx];
+        if (!isHeld && !st.waitingPullback && st.hadBottomFan && is8Cross16Up) {
+          const rsiOk = coin.rsi15[idx] >= 35 && coin.rsi15[idx] > coin.rsi15[idx - 1];
+          const macdOk = coin.macdHist15[idx] > coin.macdHist15[idx - 1];
+          if (rsiOk && macdOk) {
+            st.waitingPullback = true;
+            st.waitFromTime = t;
+            st.pullbackExpiryTime = t + 12 * 900;
+          }
+        }
+      }
+
+      // 3. Allocate free slots
+      const freeSlots = maxSlots - activePositions.length;
+      if (freeSlots > 0 && candidates.length > 0) {
+        candidates.sort((a, b) => b.score - a.score);
+        const chosen = candidates.slice(0, freeSlots);
+        for (const ch of chosen) {
+          const currentFree = maxSlots - activePositions.length;
+          const alloc = cash / currentFree;
+          if (alloc < 1.0) continue;
+          cash -= alloc;
+          const qty = (alloc * (1 - costPerFill)) / ch.entryPrice;
+          activePositions.push({
+            symbol: ch.symbol,
+            entryTime: t,
+            entryPrice: ch.entryPrice,
+            allocatedCapital: alloc,
+            qty,
+            troughPrice: Math.min(ch.entryPrice, ch.barLow),
+            peakPrice: Math.max(ch.entryPrice, ch.barHigh),
+            lastKnownPrice: ch.barClose,
+            beLocked: false,
+            tp1Done: false,
+            realizedProceeds: 0,
+          });
+          const st = states.get(ch.symbol)!;
+          st.waitingPullback = false;
+          st.hadBottomFan = false;
+        }
+      }
+
+      // 4. Mark to market
+      let openVal = 0;
+      for (const pos of activePositions) {
+        openVal += pos.qty * pos.lastKnownPrice;
+      }
+      const eq = cash + openVal;
+      if (eq > peakEquity) peakEquity = eq;
+      const dd = ((peakEquity - eq) / peakEquity) * 100;
+      if (dd > maxDdPct) maxDdPct = dd;
+    }
+
+    // Force MTM at end
+    for (const pos of activePositions) {
+      const finalProceeds = pos.qty * pos.lastKnownPrice * (1 - costPerFill);
+      cash += finalProceeds;
+      const totalProceeds = pos.realizedProceeds + finalProceeds;
+      const netPnlPct = ((totalProceeds - pos.allocatedCapital) / pos.allocatedCapital) * 100;
+      const maePct = ((pos.troughPrice - pos.entryPrice) / pos.entryPrice) * 100;
+      completedTrades.push({
+        symbol: pos.symbol,
+        entryTime: pos.entryTime,
+        exitTime: endT,
+        entryPrice: pos.entryPrice,
+        exitPrice: pos.lastKnownPrice,
+        pnlPct: netPnlPct,
+        maePct,
+        holdHours: (endT - pos.entryTime) / 3600,
+        isWin: netPnlPct > 0,
+        exitReason: "END_OF_PERIOD_MTM",
+      });
+    }
+
+    const netPnlQuote = cash - initialCapital;
+    const netPnlPct = (netPnlQuote / initialCapital) * 100;
+    const wins = completedTrades.filter((x) => x.isWin);
+    const losses = completedTrades.filter((x) => !x.isWin);
+    const sumW = wins.reduce((s, x) => s + x.pnlPct, 0);
+    const sumL = Math.abs(losses.reduce((s, x) => s + x.pnlPct, 0));
+    const profitFactor = sumL > 0 ? Number((sumW / sumL).toFixed(2)) : (sumW > 0 ? 99 : 0);
+    const winRate = completedTrades.length > 0 ? Number(((wins.length / completedTrades.length) * 100).toFixed(1)) : 0;
+    const avgHoldHours = completedTrades.length > 0 ? Number((completedTrades.reduce((s, x) => s + x.holdHours, 0) / completedTrades.length).toFixed(1)) : 0;
+    const avgMaePct = completedTrades.length > 0 ? Number((completedTrades.reduce((s, x) => s + x.maePct, 0) / completedTrades.length).toFixed(2)) : 0;
+    const calmarRatio = maxDdPct > 0 ? Number((netPnlPct / maxDdPct).toFixed(2)) : 0;
+
+    return {
+      initialCapital,
+      finalEquity: Number(cash.toFixed(2)),
+      netPnlQuote: Number(netPnlQuote.toFixed(2)),
+      netPnlPct: Number(netPnlPct.toFixed(2)),
+      maxDrawdownPct: Number(maxDdPct.toFixed(2)),
+      calmarRatio,
+      profitFactor,
+      totalTrades: completedTrades.length,
+      winningTrades: wins.length,
+      losingTrades: losses.length,
+      winRate,
+      avgHoldHours,
+      avgMaePct,
+      btcBuyHoldPct: Number(btcBuyHoldPct.toFixed(2)),
+      alphaVsBtcPct: Number((netPnlPct - btcBuyHoldPct).toFixed(2)),
+      trades: completedTrades,
+    };
   }
 }

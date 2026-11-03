@@ -62,7 +62,7 @@ export interface MaFanConfig {
   useAtrAdaptiveSpread: boolean;
   atrMultiplier: number;
   tp1Ratio: number; // e.g. 0.50 (50%)
-  tp1Target: "EMA25";
+  tp1Target?: "EMA25" | "EMA75" | "EMA200";
   tp2Target: "MACRO_OR_TRAILING";
   trailingPullbackPct: number; // e.g. 0.45%
   breakevenFeeBufferPct: number; // e.g. 0.05%
@@ -83,6 +83,13 @@ export interface MaFanConfig {
   maxPositionBudgetUsd: number;
   isDryRun?: boolean;
   startPaused?: boolean;
+  // Enhanced winning conditions & exits (Backtest Simulation & Research)
+  lockBreakevenAtEma200?: boolean; // When price touches EMA200, raise SL to Breakeven
+  partialTpAtEma200?: boolean; // Sell TP1 at EMA200
+  minBuyVolRatio12?: number; // UpVol / DnVol over prior 12 bars (e.g. 1.30)
+  minRelStrengthVsBtc24h?: number; // 24h return vs BTC (e.g. -1.0%)
+  maxUpperRibbonSpreadPct?: number; // (EMA200 - EMA75)/EMA200 * 100 <= X% (e.g. 1.20%)
+  maxDisasterSlPct?: number; // Catastrophe SL cap (e.g. 8.0%)
 }
 
 export interface CalibrationResult {

@@ -17,7 +17,7 @@ export interface WaterfallMetrics {
 }
 
 export interface EntryChecklistItem {
-  id: "spread" | "order" | "hook" | "oversold" | "noFallingKnife" | "upside" | "wick" | "waterfall" | "rr" | "macroGate" | "circuitBreaker";
+  id: "spread" | "order" | "hook" | "oversold" | "noFallingKnife" | "upside" | "wick" | "waterfall" | "rr" | "macroGate" | "circuitBreaker" | "volAbsorption" | "upperRibbon" | "relStrengthBtc";
   name: string;
   passed: boolean;
   actualText: string;
@@ -186,6 +186,10 @@ export class MaFanCoreRules {
     enableNoFallingKnife?: boolean;
     circuitBreakerActive?: boolean;
     maxSlPct?: number;
+    minBuyVolRatio12?: number;
+    minRelStrengthVsBtc24h?: number;
+    btc24hReturnPct?: number;
+    maxUpperRibbonSpreadPct?: number;
   }): EntryDecision {
     const {
       candles,
@@ -464,6 +468,48 @@ export class MaFanCoreRules {
       macroBlockReason = `ขาลงลึกใต้ EMA200 1H (${d.toFixed(1)}% หรือเส้นชันลง)`;
     }
 
+    // Buyer Volume Absorption Check
+    let buyVolRatio12 = 1.0;
+    let isVolAbsorptionPassed = true;
+    if (opts.minBuyVolRatio12 !== undefined && opts.minBuyVolRatio12 > 0) {
+      let upVol = 0;
+      let dnVol = 0;
+      for (let k = Math.max(0, currentIndex - 11); k <= currentIndex; k++) {
+        const c = candles[k];
+        if (!c) continue;
+        const qv = (c.volume || 0) * c.close;
+        if (c.close >= c.open) upVol += qv;
+        else dnVol += qv;
+      }
+      buyVolRatio12 = dnVol > 0 ? upVol / dnVol : (upVol > 0 ? 2.0 : 1.0);
+      if (buyVolRatio12 < opts.minBuyVolRatio12) {
+        isVolAbsorptionPassed = false;
+      }
+    }
+
+    // Upper Ribbon Spread Compression (EMA200 - EMA75) / EMA200
+    let upperRibbonSpreadPct = 0;
+    let isUpperRibbonPassed = true;
+    if (opts.maxUpperRibbonSpreadPct !== undefined && opts.maxUpperRibbonSpreadPct > 0 && ribbon.ema200 > 0 && ribbon.ema75 > 0) {
+      upperRibbonSpreadPct = ((ribbon.ema200 - ribbon.ema75) / ribbon.ema200) * 100;
+      if (upperRibbonSpreadPct > opts.maxUpperRibbonSpreadPct) {
+        isUpperRibbonPassed = false;
+      }
+    }
+
+    // Relative Strength vs BTC Check
+    let relStrengthVsBtc = 0;
+    let isRelStrengthPassed = true;
+    if (opts.minRelStrengthVsBtc24h !== undefined && opts.btc24hReturnPct !== undefined) {
+      const idx24hAgo = Math.max(0, currentIndex - 96);
+      const c24hAgo = candles[idx24hAgo];
+      const coin24hRet = c24hAgo && c24hAgo.open > 0 ? ((closePrice - c24hAgo.open) / c24hAgo.open) * 100 : 0;
+      relStrengthVsBtc = coin24hRet - opts.btc24hReturnPct;
+      if (relStrengthVsBtc < opts.minRelStrengthVsBtc24h) {
+        isRelStrengthPassed = false;
+      }
+    }
+
     // Circuit Breaker Check
 
     const items: EntryChecklistItem[] = [
@@ -559,6 +605,36 @@ export class MaFanCoreRules {
       });
     }
 
+    if (opts.minBuyVolRatio12 !== undefined) {
+      items.push({
+        id: "volAbsorption",
+        name: "แรงซื้อสะสม (Volume Absorption)",
+        passed: isVolAbsorptionPassed,
+        actualText: `${buyVolRatio12.toFixed(2)}x`,
+        requiredText: `≥ ${opts.minBuyVolRatio12.toFixed(2)}x`,
+      });
+    }
+
+    if (opts.maxUpperRibbonSpreadPct !== undefined) {
+      items.push({
+        id: "upperRibbon",
+        name: "ริบบิ้นบนบีบแคบ (Upper Ribbon)",
+        passed: isUpperRibbonPassed,
+        actualText: `${upperRibbonSpreadPct.toFixed(2)}%`,
+        requiredText: `≤ ${opts.maxUpperRibbonSpreadPct.toFixed(2)}%`,
+      });
+    }
+
+    if (opts.minRelStrengthVsBtc24h !== undefined) {
+      items.push({
+        id: "relStrengthBtc",
+        name: "ความแข็งแกร่งเทียบ BTC (Rel Strength)",
+        passed: isRelStrengthPassed,
+        actualText: `${relStrengthVsBtc.toFixed(2)}%`,
+        requiredText: `≥ ${opts.minRelStrengthVsBtc24h.toFixed(2)}%`,
+      });
+    }
+
     const passedCount = items.filter((it) => it.passed).length;
     const totalCount = items.length;
     const allPassed = passedCount === totalCount;
@@ -581,7 +657,10 @@ export class MaFanCoreRules {
       exhaustion.isOversoldExhaustion &&
       isDownside &&
       hasLowerWickAbsorption &&
-      passesNoFallingKnife;
+      passesNoFallingKnife &&
+      isVolAbsorptionPassed &&
+      isUpperRibbonPassed &&
+      isRelStrengthPassed;
 
     if (!qualified) {
       return {
@@ -956,6 +1035,10 @@ export class MaFanCoreRules {
     maxSlPct?: number;
     tradeMode?: "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid";
     tradeDirection?: "long" | "short" | "both";
+    minBuyVolRatio12?: number;
+    minRelStrengthVsBtc24h?: number;
+    btc24hReturnPct?: number;
+    maxUpperRibbonSpreadPct?: number;
   }): EntryDecision {
     const tradeMode = opts.tradeMode ?? "dip_hunter";
     const tradeDirection = opts.tradeDirection ?? "long";
@@ -1124,6 +1207,9 @@ export class MaFanCoreRules {
     enableFastCut?: boolean;
     fastCutThresholdPct?: number;
     stagnationBars?: number;
+    tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";
+    lockBreakevenAtEma200?: boolean;
+    maxDisasterSlPct?: number;
   }): ExitDecision {
     const {
       highPrice,
@@ -1265,6 +1351,28 @@ export class MaFanCoreRules {
     }
 
     // ─── LONG POSITION EXITS (DEFAULT) ───────────────────────────────────
+    // Disaster Stop Loss Check
+    if (opts.maxDisasterSlPct !== undefined && opts.maxDisasterSlPct > 0 && lowPrice <= entryPrice * (1 - opts.maxDisasterSlPct / 100)) {
+      return {
+        action: "SL",
+        exitPrice: entryPrice * (1 - opts.maxDisasterSlPct / 100),
+        reason: `Disaster Stop Loss Triggered (-${opts.maxDisasterSlPct.toFixed(1)}%)`,
+      };
+    }
+
+    // Lock Breakeven at EMA200
+    if (opts.lockBreakevenAtEma200 && ribbon.ema200 > 0 && highPrice >= ribbon.ema200 && highPrice >= entryPrice * (1 + beFeeBuffer * 2)) {
+      const beSl = entryPrice * (1 + beFeeBuffer);
+      if (beSl > stopLossPrice) {
+        return {
+          action: "NONE",
+          exitPrice: 0,
+          newStopLossPrice: beSl,
+          reason: "Lock Breakeven at EMA200",
+        };
+      }
+    }
+
     // ── Priority 1: Stop Loss / Breakeven Stop Check ────────────────────────
     // If price falls to or below stopLossPrice, SL takes absolute precedence
     if (lowPrice <= stopLossPrice) {
@@ -1337,15 +1445,16 @@ export class MaFanCoreRules {
       }
     }
 
-    // ── Priority 3: TP1 at EMA 25 & Trapped Breakeven Rescue ────────────────
+    // ── Priority 3: TP1 at Target EMA & Trapped Breakeven Rescue ────────────────
     if (!tp1Filled) {
-      // Trapped Position Rescue only activates if held for >= 3 bars and EMA25 drifted below entry
-      const isTrapped = (barsHeld !== undefined && barsHeld >= 3) && (ribbon.ema25 <= entryPrice * 1.0015);
+      const targetEma = opts.tp1TargetMode === "EMA200" ? ribbon.ema200 : (opts.tp1TargetMode === "EMA75" ? ribbon.ema75 : ribbon.ema25);
+      // Trapped Position Rescue only activates if held for >= 3 bars and targetEma drifted below entry
+      const isTrapped = (barsHeld !== undefined && barsHeld >= 3) && (targetEma <= entryPrice * 1.0015);
       const minProfitFrac = Math.max((opts.tp1MinProfitPct ?? 0.20) / 100, beFeeBuffer);
       const minProfitPrice = isTrapped
         ? entryPrice * (1 + beFeeBuffer)
         : entryPrice * (1 - minProfitFrac);
-      const tp1Target = Math.max(ribbon.ema25, minProfitPrice);
+      const tp1Target = Math.max(targetEma, minProfitPrice);
 
       if (highPrice >= tp1Target) {
         // Trend-Aware Breathing Cushion for Breakeven SL:
@@ -1361,6 +1470,7 @@ export class MaFanCoreRules {
           ? stopLossPrice
           : Math.max(stopLossPrice, entryPrice * (1 + beFeeBuffer));
 
+        const targetLabel = opts.tp1TargetMode || "EMA 25";
         return {
           action: "TP1",
           exitPrice: tp1Target,
@@ -1370,7 +1480,7 @@ export class MaFanCoreRules {
             ? "Trapped Position Breakeven Rescue"
             : cushionApplied
             ? "TP1 Mean Reversion (HTF Bull Cushion Active)"
-            : "TP1 Mean Reversion at EMA 25",
+            : `TP1 Mean Reversion at ${targetLabel}`,
         };
       }
     }

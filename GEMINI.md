@@ -8303,3 +8303,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
        - **โหมดหยุดชั่วคราว (Paused)**: พิมพ์ Heartbeat ทุกๆ **120 วินาที (2 นาที)** เพื่อให้หน้าต่าง Terminal คลีน สบายตา และมีเฉพาะข้อมูลที่จำเป็น
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.27`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
+
+---
+
+### 275. MA-Fan Winning Reversal Conditions & Backtest Portfolio Simulation Engine (v0.3.0.28)
+
+- **สาเหตุและที่มา (Forensic Rationale)**:
+  1. **Forensic Trap of Blind Holding for Full Bullish Fan (`4>8>16>25>75>200`)**:
+     - จากการวิเคราะห์สถิติสัญญาณ Bottom Fan Reversal (`4 < 8 < 16 < 25 < 75 < 200` ➔ `8 >= 16` Crossover ➔ Limit Pullback ที่ `MA 4`) กว่า 1,078 ไม้บน Binance Spot:
+       - **90.9%** วิ่งขึ้นไปแตะ EMA 25 ในแดนบวก
+       - **82.0%** วิ่งขึ้นไปแตะ EMA 75 ในแดนบวก
+       - **69.9% – 73.2%** วิ่งขึ้นไปแตะ EMA 200 ในแดนบวก
+       - แต่มีเพียง **43.2% – 52.9%** เท่านั้นที่สามารถวิ่งทะลุและรอให้เส้นช้าอย่าง EMA 75 วิ่งตัดเหนือ EMA 200 เพื่อสร้าง Full Bullish Fan ครบ 6 เส้น
+     - ผลคือ **67.0% ของไม้ที่ขาดทุน** แท้จริงแล้วราคาได้พุ่งทำกำไรแตะ EMA 75/EMA 200 เรียบร้อยแล้ว แต่เพราะระบบบังคับรอออกที่ Full Fan ทำให้ราคาชนแนวต้าน EMA 200 แล้วย่อตัวทุบกลับลงมากลายเป็นไม้ขาดทุน!
+  2. **MA Fan Winning Characteristics (Prior-Bar Zero-Lookahead Causal Analysis)**:
+     - **Upper Ribbon Compression**: ไม้ที่ชนะจริง เส้น EMA 75 กับ EMA 200 บีบแคบเข้าหากัน (`Upper Ribbon Spread <= 1.2%` เทียบกับไม้แพ้ที่กว้าง > 1.6%)
+     - **Buyer Volume Absorption**: สัญญาณที่มีแรงซื้อสะสมมากกว่าแรงขาย (`UpVol / DnVol >= 1.3x`) ในช่วง 12 แท่ง (3 ชม.) ก่อนเข้า มีอัตรากำไรเฉลี่ยเป็นบวกชัดเจน
+     - **Relative Strength vs BTC**: เหรียญที่ผลตอบแทน 24 ชม. ไม่อ่อนแอกว่าบิตคอยน์ (`RelStrengthVsBtc24h >= -1.0%`) ดัน Net Return จาก `+12.89%` ขึ้นไปเป็น `+48.01%` (PF 1.96, MaxDD -12.41%)
+     - **Macro Gate**: การกรองภาพรวมตลาด (Market Breadth >= 50% & BTC Not Dumping) ช่วยลด Max Drawdown ช่วงตลาดขาลงจาก -38.56% เหลือ -21.75%
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Implementation Details)**:
+  1. **ขยาย Core Rules Engine (`src/strategy/ma-fan/types.ts` & `src/strategy/ma-fan/core-rules.ts`)**:
+     - เพิ่มออปชัน: `minBuyVolRatio12`, `minRelStrengthVsBtc24h`, `maxUpperRibbonSpreadPct`, `tp1TargetMode: "EMA25" | "EMA75" | "EMA200"`, `lockBreakevenAtEma200`, `maxDisasterSlPct`
+     - ใน `evaluateEntry`: คำนวณ Volume Absorption, Upper Ribbon Compression และ Relative Strength vs BTC พร้อมบรรจุเข้า Checklist รายการตรวจสอบแบบสมบูรณ์
+     - ใน `evaluateExits`: รองรับการขายล็อกกำไร TP1 ที่ EMA 75 หรือ EMA 200, รองรับการยกระดับ Stop Loss สู่ Breakeven ทันทีที่แตะแนวต้าน EMA 200, และเพิ่ม Disaster SL Cap ป้องกันความเสี่ยง Black Swan
+  2. **ยกระดับระบบจำลอง Backtest Simulation (`src/backtest-service.ts`)**:
+     - อัปเกรด `runMaFanSimulation` ให้รองรับพารามิเตอร์เงื่อนไขชนะและทางเลือก Exit ใหม่ครบทุกตัว
+     - เพิ่มฟังก์ชัน `BacktestService.runMaFanPortfolioSimulation(...)` สำหรับการจำลองพอร์ตมัลติคอยน์ (Multi-Coin Portfolio Simulation) พร้อมตรวจสอบ Fill Limit Order ย้อนหลังอย่างแม่นยำ ปราศจาก Look-ahead Bias 100%
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.28`** ใน `package.json` และ `src/version.ts` ผ่าน `npm run typecheck` 100%
