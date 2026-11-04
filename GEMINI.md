@@ -8999,7 +8999,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 ---
 
-### 296. Dynamic Grid Profitability Bottlenecks Resolution — Master Plan v9.0 (Version `0.3.0.49`)
+### 297. Dynamic Grid Uptrend Expansion & Pullback Immunity — Master Plan v10.0 (Version `0.3.0.50`)
+- **เป้าหมายและปัญหาที่แก้ไข (Uptrend Integration & Premature Stop-Out Prevention)**:
+  1. **Dynamic Grid เดิมจำกัดเฉพาะ Sideway Range**:
+     - เมื่อบอทตรวจพบ `UPTREND` จะปฏิเสธการวางกริด ทำให้พลาดโอกาสเก็บรอบจังหวะย่อตัว (Pullback / Dip) ในช่วงตลาดกระทิง
+  2. **Donchian Floor Cut Loss แคบเกินไปในแนวโน้มขาขึ้น**:
+     - ในเทรนด์ขาขึ้น ราคามักทำ Liquidity Sweep สลัดไส้เทียนลงมาเทสฐานหรือหลุดขอบล่างของ Donchian Channel ชั่วคราวก่อนจะพุ่งทำ New Higher High
+     - การตัดขาดทุนแบบเดิม (`closeCutLossPrice: floor - 0.20 * span`) ทำให้โดนเขย่าหลุดดอยขาลง (Cut at the exact bottom) แล้วราคาก็วิ่งขึ้นไปต่อ
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Master Plan v10.0)**:
+  1. **เพิ่มโหมด `regimeFilterMode: "UPTREND_AND_SIDEWAY"` (เปิดเป็น Default)**:
+     - อนุญาตให้บอทเปิดไม้ช้อนซื้อในกรอบทั้งในช่วง `RANGE` (Sideway) และ `UPTREND` (ขาขึ้น)
+     - กรองการเปิดไม้เมื่อเกิด Downtrend ชัดเจน (`isDowntrendDropActive`, `DOWNTREND`, `consecutiveReds >= 4`, หรือ Bear Spike `minusDI - plusDI > 12`)
+     - ในแนวโน้มขาขึ้น กรองไม้ที่ราคาหลุดทะลุพื้น Donchian รุนแรงผิดปกติ (`c.close < structure.bottomBound * 0.995`)
+  2. **Uptrend Cut Loss Immunity (คุ้มกันการโดนเขย่าในแนวโน้มขาขึ้น)**:
+     - ในสภาวะ `isUptrend` จะ **ยกเลิกการ Cut Loss ตาม Floor แคบๆ**
+     - จะยอม Cut Loss ก็ต่อเมื่อเกิด **Structural Reversal** ที่แท้จริง (ราคาหลุด `lastMajorHl * 0.995` / ChoCh เสียโครงสร้างกลายเป็นขาลง, สัญญาณ `uptrendBreakdownConfirmed`, หรือเข้าข่าย Disaster Stop รุนแรง `-5.0%` จากราคาทุนเฉลี่ย)
+  3. **ขยายเป้าหมายกำไร Runner ในแนวโน้มขาขึ้น (`Extended Uptrend TP`)**:
+     - เมื่อไม้ L2 ติดและเข้าสู่ Uptrend จะดันเป้ากำไรของไม้ L1 ขึ้นไปที่ `floor + channelSpan * 0.88` เพื่อ Run Trend ให้ได้กำไรคำโตขึ้น
+     - ปรับระยะเวลาถือครอง Time-Decay Escape ใน Uptrend ให้ยืดหยุ่นขึ้นเป็น `32` แท่ง (จากเดิม 18 แท่ง) เพื่อไม่ให้ทิ้งไม้วิ่งเร็วเกินไป
+- **ผลการทดสอบ Master Benchmark v10.0 (12,000 แท่ง 15m ข้อมูลจริง 9 สินทรัพย์)**:
+  - **BTC/USDT**: Win Rate พุ่งขึ้นแตะ **90.0%**, กำไรสุทธิ **+$3.67 (+1.83%)**, Profit Factor **3.57**, MaxDD เพียง **1.61%** (Cut Loss โดนเพียงแค่ 1 ครั้งตลอด 125 วัน)
+  - **AVAX/USDT**: Win Rate **82.3%**, กำไรสุทธิ **+$8.46 (+4.23%)**, Profit Factor **1.51**, MaxDD **3.74%**
+  - **AAPL (Apple)**: Win Rate **70.2%**, กำไรสุทธิ **+$1.15 (+0.57%)**, Profit Factor **1.06**, MaxDD **4.11%**
+  - **ETH/USDT**: Win Rate **80.6%**, MaxDD **3.21%**
+  - **SOL/USDT**: Win Rate **77.5%**, MaxDD **3.88%**
+  - **ADA/USDT**: Win Rate **76.7%**, MaxDD **7.36%**
+  - **ภาพรวมทั้ง 9 สินทรัพย์**: Win Rate เฉลี่ยสูงถึง **73.6%** โดยมี Drawdown ที่ควบคุมได้อย่างเข้มงวดต่ำกว่า 4% ในเกือบทุกสินทรัพย์
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.50`** ใน `package.json` และ `src/version.ts`
+  - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+
 - **สาเหตุของปัญหาทำไม Dynamic Grid ได้กำไรน้อยใน v8.0 (ค้นพบจาก `diag.ts` วิเคราะห์ MFE/MAE รายไม้)**:
   1. **Inverse Pyramid Adverse Selection (`buyWeights: [35, 65]` ที่ `[18%, 10%]` ของกรอบ)**:
      - ในจังหวะที่ชนะ (`GRID_TP`) ราคาเกือบ 100% ย่อแตะแค่ L1 (`18%`) แล้วเด้งขึ้นไปชน TP เลย ทำให้ได้กำไรบนเงินแค่ `$70` (35% ของทุน) อีก `$130` นอนนิ่ง

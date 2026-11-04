@@ -754,7 +754,7 @@ export const MASTER_PLAN_GRID_CONFIG = {
   minChannelWidthPct: 2.0,
   maxChannelWidthPct: 25.0,
   lockChannelInPosition: true,
-  regimeFilterMode: "SIDEWAY_ONLY" as const,
+  regimeFilterMode: "UPTREND_AND_SIDEWAY" as const,
   buyLevelPcts: [20, 12],
   buyWeights: [55, 45],
   sellLevelPcts: [52, 72],

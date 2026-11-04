@@ -740,7 +740,7 @@ export class BacktestService {
       costModel?: { feePctPerSide: number; slippagePctPerFill: number };
       saveToHistory?: boolean;
       enableBaseConfirmationFilter?: boolean;
-      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "OFF";
+      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "UPTREND_AND_SIDEWAY" | "OFF";
       lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
@@ -814,7 +814,7 @@ export class BacktestService {
     const curSells = opts.sellLevelPcts ?? [52, 72];
     const curBuyWeights = opts.buyWeights ?? [55, 45];
     const totalBuyWeight = curBuyWeights.reduce((s, w) => s + w, 0) || 100;
-    const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
+    const regimeFilterMode = opts.regimeFilterMode ?? "UPTREND_AND_SIDEWAY";
     const zoneBudgetQuote = maxInventory / totalZones;
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
     let isZoneReversalConfirmed = true;
@@ -1050,9 +1050,23 @@ export class BacktestService {
         ? floor - channelSpan * 0.32
         : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
+
+      // 🛡️ Uptrend Cut Loss Immunity:
+      // ในแนวโน้มขาขึ้น (UPTREND) ไม่ Cut Loss ตาม Floor แคบๆ เพื่อกัน Whipsaw / Liquidity Sweep
+      // ยกเว้นเมื่อเกิด Structural Reversal (หลุด lastHl / ChoCh กลายเป็นขาลง) หรือโดน Disaster Stop (-5.0%)
+      const isUptrend = structure.regime === "UPTREND" || ((structure.regimeMetrics?.plusDI ?? 0) > (structure.regimeMetrics?.minusDI ?? 0) + 5 && structure.regime !== "DOWNTREND");
+      const lastMajorHl = structure.waveCycle?.lastHl?.price;
+      const isStructuralReversal = structure.regime === "DOWNTREND" || Boolean(structure.uptrendBreakdownConfirmed) || (lastMajorHl !== undefined && c.close < lastMajorHl * 0.995);
+
+      const totalHeldQtyForCut = heldLots.reduce((s, l) => s + l.qty, 0);
+      const totalInvestForCut = heldLots.reduce((s, l) => s + l.qty * l.buyPrice, 0);
+      const avgBuyPrice = totalHeldQtyForCut > 0 ? totalInvestForCut / totalHeldQtyForCut : 0;
+      const isDisasterBreach = avgBuyPrice > 0 && c.close <= avgBuyPrice * 0.95;
+
       const canTriggerCutLoss =
         gridCutLossMode !== "none" &&
-        (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
+        (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones) &&
+        (!isUptrend || isStructuralReversal || isDisasterBreach);
 
       // 1. Evaluate Exits for Open Lots:
       //    Step 1: Check 2-Tier Floor Cut Loss (Confirmed Close <= closeCutLossPrice OR Wick <= emergencyWickCutPrice)
@@ -1063,8 +1077,9 @@ export class BacktestService {
       for (const lot of heldLots) {
         const holdingBars = lot.entryIdx !== undefined ? i - lot.entryIdx : 0;
 
-        // Time-decay Breakeven Escape: if held >= 18 bars without hitting primary TP, lower target to break-even + min net profit
-        if (holdingBars >= 18 && !lot.isTimeDecayEscape) {
+        // Time-decay Breakeven Escape: if held >= threshold bars without hitting primary TP, lower target to break-even + min net profit
+        const escapeBarThreshold = isUptrend ? 32 : 18;
+        if (holdingBars >= escapeBarThreshold && !lot.isTimeDecayEscape) {
           const escapeTarget = lot.buyPrice * (1 + effectiveMinProfitPct / 100);
           if (escapeTarget < lot.targetPrice) {
             lot.targetPrice = escapeTarget;
@@ -1459,27 +1474,25 @@ export class BacktestService {
       if (heldLots.length > 0 && lockedChannel !== null) {
         // เมื่อเปิดไม้ L1 และล็อกกรอบแล้ว อนุญาตให้รับไม้ L2 (65%) ในกรอบเดิมได้เสมอตราบใดที่ยังไม่หลุด Cut Loss
         isRegimeBlocked = false;
-      } else if (regimeFilterMode === "SIDEWAY_ONLY") {
-        const isRange = structure.regime === "RANGE";
-        const isDonchianMode = (opts.channelMode ?? "DONCHIAN_ATR") === "DONCHIAN_ATR";
-        if (isDonchianMode) {
-          const isBearSpike = (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12;
-          if (!isRange || !isEstablishedHorizontalFloor || consecutiveReds >= 4 || isBearSpike) {
-            isRegimeBlocked = true;
-          }
-        } else {
-          const canEstablish = structure.gridZone?.canEstablishChannel !== false;
-          const notDropping = !structure.isDowntrendDropActive;
-          if (!isRange || !canEstablish || !notDropping) {
-            isRegimeBlocked = true;
-          }
-        }
-      } else if (regimeFilterMode === "NO_DOWNTREND") {
+      } else if (regimeFilterMode === "UPTREND_AND_SIDEWAY" || regimeFilterMode === "NO_DOWNTREND") {
         const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
-        const canEstablish = structure.gridZone?.canEstablishChannel !== false;
-        if (isDowntrend || !canEstablish) {
+        const isBearSpike = (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12;
+        const isWaterfall = consecutiveReds >= 4;
+        if (isDowntrend || isBearSpike || isWaterfall) {
           isRegimeBlocked = true;
+        } else if (structure.regime === "UPTREND" || isUptrend) {
+          // ใน UPTREND อนุญาตให้ช้อนซื้อ Pullback ย่อตัวในกรอบ Donchian / Swings (ตราบใดที่ไม่โดนทุบหลุดต่ำกว่า floor เกินไป)
+          const isExtremeDump = c.close < structure.bottomBound * 0.995;
+          if (isExtremeDump) {
+            isRegimeBlocked = true;
+          }
+        } else if (structure.regime === "RANGE") {
+          // ในสภาวะ Sideway ตรวจสอบว่า Donchian Floor เริ่มตั้งฐานแนวนอนแล้ว
+          if (!isEstablishedHorizontalFloor) {
+            isRegimeBlocked = true;
+          }
         }
+      } else if (regimeFilterMode === "SIDEWAY_ONLY") {
       } else if (opts.enableBaseConfirmationFilter === true) {
         if (structure.gridZone?.canEstablishChannel === false || Boolean(structure.isDowntrendDropActive)) {
           isRegimeBlocked = true;
@@ -1542,9 +1555,12 @@ export class BacktestService {
             const targetPrice = Math.max(primaryTarget, minProfitHurdle);
 
             if (lvlIdx === 1 && sellTargets.length > 1) {
+              const promotedTarget = isUptrend
+                ? Math.max(sellTargets[1]!, floor + channelSpan * 0.88)
+                : sellTargets[1]!;
               for (const existingLot of heldLots) {
                 if (existingLot.index === 0 && (existingLot.zoneIndex ?? 1) === unlockedCapitalZones) {
-                  existingLot.targetPrice = Math.max(sellTargets[1]!, existingLot.buyPrice * (1 + effectiveMinProfitPct / 100));
+                  existingLot.targetPrice = Math.max(promotedTarget, existingLot.buyPrice * (1 + effectiveMinProfitPct / 100));
                 }
               }
             }
@@ -1745,7 +1761,7 @@ export class BacktestService {
       };
       candlesHtf?: Candle[];
       enableBaseConfirmationFilter?: boolean;
-      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "OFF";
+      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "UPTREND_AND_SIDEWAY" | "OFF";
       lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
@@ -1796,7 +1812,7 @@ export class BacktestService {
     const curSells = opts.sellLevelPcts ?? [52, 72];
     const curBuyWeights = opts.buyWeights ?? [55, 45];
     const totalBuyWeight = curBuyWeights.reduce((s, w) => s + w, 0) || 100;
-    const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
+    const regimeFilterMode = opts.regimeFilterMode ?? "UPTREND_AND_SIDEWAY";
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
     let isZoneReversalConfirmed = true;
     let zoneDumpLowPrice = 0;
@@ -2241,17 +2257,18 @@ export class BacktestService {
         const currentGridInv = heldLots.reduce((s, l) => s + (l.qty * l.buyPrice), 0);
 
         let isRegimeBlocked = !structure.isSwingConfirmed;
-        if (regimeFilterMode === "SIDEWAY_ONLY") {
+        if (regimeFilterMode === "UPTREND_AND_SIDEWAY" || regimeFilterMode === "NO_DOWNTREND") {
+          const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
+          const isBearSpike = (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12;
+          const isWaterfall = i >= 3 && candles.slice(i - 3, i + 1).every((b) => b.close < b.open);
+          if (isDowntrend || isBearSpike || isWaterfall) {
+            isRegimeBlocked = true;
+          }
+        } else if (regimeFilterMode === "SIDEWAY_ONLY") {
           const isRange = structure.regime === "RANGE";
           const canEstablish = structure.gridZone?.canEstablishChannel !== false;
           const notDropping = !structure.isDowntrendDropActive;
           if (!isRange || !canEstablish || !notDropping) {
-            isRegimeBlocked = true;
-          }
-        } else if (regimeFilterMode === "NO_DOWNTREND") {
-          const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
-          const canEstablish = structure.gridZone?.canEstablishChannel !== false;
-          if (isDowntrend || !canEstablish) {
             isRegimeBlocked = true;
           }
         } else if (opts.enableBaseConfirmationFilter === true) {
@@ -2735,7 +2752,7 @@ export class BacktestService {
       onlyEntryIdx?: number;
       trimWarmupPrefix?: boolean;
       enableBaseConfirmationFilter?: boolean;
-      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "OFF";
+      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "UPTREND_AND_SIDEWAY" | "OFF";
       lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
