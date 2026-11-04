@@ -757,6 +757,7 @@ export class BacktestService {
       gridTrailingProfitLockTargetRatio?: number;
       buyLevelPcts?: number[];
       sellLevelPcts?: number[];
+      buyWeights?: number[];
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
       startTradingBarIndex?: number;
@@ -808,8 +809,10 @@ export class BacktestService {
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const makerRoundtripFeePct = makerCostPerFill * 2 * 100;
     const effectiveMinProfitPct = Math.max(minNetProfitPct, makerRoundtripFeePct + 0.20);
-    const curBuys = opts.buyLevelPcts ?? [20, 8];
+    const curBuys = opts.buyLevelPcts ?? [18, 10];
     const curSells = opts.sellLevelPcts ?? [60, 80];
+    const curBuyWeights = opts.buyWeights ?? [35, 65];
+    const totalBuyWeight = curBuyWeights.reduce((s, w) => s + w, 0) || 100;
     const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
     const zoneBudgetQuote = maxInventory / totalZones;
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
@@ -1018,34 +1021,50 @@ export class BacktestService {
           const totalInvestQuote = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
           const avgEntry = totalHeldQty > 0 ? (totalInvestQuote / totalHeldQty) : 0;
 
+          const hasL2Held = heldLots.some((l) => l.index === 1);
           for (const lot of heldLots) {
             if (zoneExitMode === "ORIGINAL_TARGETS" && lot.targetPrice > 0) {
               continue;
             }
             const lotSafeBase = Math.max(avgEntry, lot.buyPrice);
             const lotMinProfitTarget = lotSafeBase * (1 + effectiveMinProfitPct / 100);
-            const dynamicTarget = sellTargets[lot.index] ?? (lotSafeBase * 1.015);
+            let dynamicTarget = sellTargets[0] ?? (lotSafeBase * 1.015);
+            if ((hasL2Held || (sellTargets.length > 1 && lot.targetPrice >= (sellTargets[1] ?? 0) * 0.999)) && lot.index === 0 && sellTargets.length > 1) {
+              dynamicTarget = sellTargets[1]!;
+            }
             lot.targetPrice = Math.max(dynamicTarget, lotMinProfitTarget);
           }
         }
       }
 
-      const floorBuf = opts.floorBufferPct ?? 0.6;
-      const cutLossPrice = floorBuf > 0 ? floor * (1 - floorBuf / 100) : floor * 0.994;
+      // Span-Relative 2-Tier Hybrid Cut Loss:
+      // - Tier 1 (Confirmed Close): 22% of channelSpan below floor
+      // - Tier 2 (Emergency Wick):  45% of channelSpan below floor
+      const closeCutLossPrice = channelSpan > 0
+        ? floor - channelSpan * 0.22
+        : floor * (1 - (opts.floorBufferPct ?? 0.6) / 100);
+      const emergencyWickCutPrice = channelSpan > 0
+        ? floor - channelSpan * 0.45
+        : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 2.0) / 100);
+      const cutLossPrice = closeCutLossPrice;
       const canTriggerCutLoss =
         gridCutLossMode !== "none" &&
         (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
 
-      // 1. Evaluate Exits for Open Lots (Pessimistic Ordering without Time-Travel Bug):
-      //    Step 1: Check Floor Cut Loss
+      // 1. Evaluate Exits for Open Lots:
+      //    Step 1: Check 2-Tier Floor Cut Loss (Confirmed Close <= closeCutLossPrice OR Wick <= emergencyWickCutPrice)
       //    Step 2: Check Trailing Stop armed from previous candles
       //    Step 3: Check Resting Limit Take Profit (60% / 80%)
-      //    Step 4: Update peakPrice & arm Ratchet Trailing Stop (38% / 55%) for subsequent candles
+      //    Step 4: Update peakPrice & arm Ratchet Trailing Stop (26% / 56%) for subsequent candles
       const remainingLots: typeof heldLots = [];
       for (const lot of heldLots) {
+        const isEmergencyWickHit = canTriggerCutLoss && c.low <= emergencyWickCutPrice;
+        const isConfirmedCloseCutHit = canTriggerCutLoss && c.close <= closeCutLossPrice;
+
         // 1) Cut Loss Hit (Taker Execution with Taker Fee + Taker Slippage)
-        if (canTriggerCutLoss && c.low <= cutLossPrice) {
-          const exitPrice = cutLossPrice * (1 - takerSlippagePct / 100);
+        if (isEmergencyWickHit || isConfirmedCloseCutHit) {
+          const rawCutExit = isEmergencyWickHit ? emergencyWickCutPrice : c.close;
+          const exitPrice = rawCutExit * (1 - takerSlippagePct / 100);
           const proceeds = lot.qty * exitPrice * (1 - takerFeePct / 100);
           const invest = lot.qty * lot.buyPrice;
           const pnlQuote = proceeds - invest;
@@ -1063,7 +1082,7 @@ export class BacktestService {
             side: "LONG",
             entryTime: lot.entryTime,
             entryPrice: lot.buyPrice,
-            stopLossPrice: cutLossPrice,
+            stopLossPrice: rawCutExit,
             fanSpreadAtEntry: 0,
             exitTime: c.time,
             exitPrice,
@@ -1160,13 +1179,13 @@ export class BacktestService {
             losses++;
           }
 
-          // Tranche Hand-off: เมื่อไม้ที่ 1 ขาย TP สำเร็จ ยก Stop ของไม้ที่ 2 ขึ้นมาล็อกกำไรที่ 38% ของกรอบทันที (มีผลตั้งแต่แท่งถัดไป)
+          // Tranche Hand-off: เมื่อไม้แรกขาย TP สำเร็จ ยก Stop ของไม้ Runner ที่เหลือขึ้นมาล็อกกำไรที่ 26% ของกรอบ (มีพื้นที่ให้ย่อกลางกรอบได้)
           for (const rem of heldLots) {
             if (rem.id !== lot.id) {
               rem.beLocked = true;
               const handoffStop = Math.max(
                 rem.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
-                floor + channelSpan * 0.38
+                floor + channelSpan * 0.26
               );
               rem.stopLossPrice = Math.max(rem.stopLossPrice ?? cutLossPrice, handoffStop);
             }
@@ -1207,23 +1226,23 @@ export class BacktestService {
         // 4) Update peakPrice & Ratchet Trailing Stop for subsequent candles
         lot.peakPrice = Math.max(lot.peakPrice ?? lot.buyPrice, c.high);
         if (enableGridTrailingStop && channelSpan > 0) {
-          // ขั้นที่ 1: ราคาแตะ 60% ของกรอบ -> ล็อกกำไรที่ 38% ของกรอบ
+          // ขั้นที่ 1: ราคาแตะ 60% ของกรอบ -> ล็อกกำไรที่ 26% ของกรอบ (เหนือทุนไม้แรก และไม่โดนสะบัดกินตอนพักตัวกลางกรอบ)
           if (lot.peakPrice >= floor + channelSpan * 0.60) {
             lot.beLocked = true;
-            const lock38 = Math.max(
+            const lock26 = Math.max(
               lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
-              floor + channelSpan * 0.38
+              floor + channelSpan * 0.26
             );
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock38);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock26);
           }
-          // ขั้นที่ 2: ราคาแตะ 70% ของกรอบ -> ยกล็อกกำไรเพิ่มเป็น 55% ของกรอบ
-          if (lot.peakPrice >= floor + channelSpan * 0.70) {
+          // ขั้นที่ 2: ราคาแตะ 72% ของกรอบ -> ยกล็อกกำไรเพิ่มเป็น 56% ของกรอบ
+          if (lot.peakPrice >= floor + channelSpan * 0.72) {
             lot.profitLocked = true;
-            const lock55 = Math.max(
+            const lock56 = Math.max(
               lot.buyPrice * (1 + makerCostPerFill * 2 + 0.004),
-              floor + channelSpan * 0.55
+              floor + channelSpan * 0.56
             );
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock55);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock56);
           }
         }
 
@@ -1450,27 +1469,36 @@ export class BacktestService {
       if (isTradingActive && !isHlWaiting && !isZoneWaiting && passesDipHunterGuard) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           if (heldLots.length >= maxLotsForUnlockedZones) break;
+          const levelWeight = curBuyWeights[lvlIdx] ?? (100 / Math.max(1, buyLevels.length));
+          const weightedTrancheQuote = zoneBudgetQuote * (levelWeight / totalBuyWeight);
           const currentInv = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
-          if (currentInv + trancheQuote > effectiveMaxInventory || cash < trancheQuote) continue;
+          if (currentInv + weightedTrancheQuote > effectiveMaxInventory * 1.001 || cash < weightedTrancheQuote * 0.999) continue;
 
           const bl = buyLevels[lvlIdx];
           const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
           // Queue Penetration: Price must trade through Limit Buy by 0.05%
-          if (!alreadyFilledInCurrentZone && c.low <= bl * 0.9995 && (!canTriggerCutLoss || c.close >= cutLossPrice)) {
+          // Also verify bar does not trigger cut loss on the entry candle
+          if (!alreadyFilledInCurrentZone && c.low <= bl * 0.9995 && (!canTriggerCutLoss || (c.close > closeCutLossPrice && c.low > emergencyWickCutPrice))) {
             tradeCounter++;
             const buyPrice = bl;
-            const invest = trancheQuote;
+            const invest = Math.min(cash, weightedTrancheQuote);
             const fillQty = (invest / buyPrice) * (1 - makerCostPerFill);
             cash -= invest;
 
-            const totalHeldQtyBefore = heldLots.reduce((sum, l) => sum + l.qty, 0);
-            const totalInvestBefore = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
-            const newAvgEntry = (totalInvestBefore + invest) / (totalHeldQtyBefore + fillQty);
-            const lotSafeBase = Math.max(newAvgEntry, buyPrice);
-            const minProfitHurdle = lotSafeBase * (1 + effectiveMinProfitPct / 100);
+            // Target Pairing Strategy:
+            // L2 (deep lot, 65% weight at 10% span) takes profit at sellTargets[0] (60% span).
+            // When L2 is filled, promote L1 (runner lot, 35% weight at 18% span) to sellTargets[1] (80% span).
+            const minProfitHurdle = buyPrice * (1 + effectiveMinProfitPct / 100);
+            const primaryTarget = sellTargets[0] ?? (buyPrice * 1.015);
+            const targetPrice = Math.max(primaryTarget, minProfitHurdle);
 
-            const rawTarget = sellTargets[lvlIdx] ?? (buyPrice * 1.015);
-            const targetPrice = Math.max(rawTarget, minProfitHurdle);
+            if (lvlIdx === 1 && sellTargets.length > 1) {
+              for (const existingLot of heldLots) {
+                if (existingLot.index === 0 && (existingLot.zoneIndex ?? 1) === unlockedCapitalZones) {
+                  existingLot.targetPrice = Math.max(sellTargets[1]!, existingLot.buyPrice * (1 + effectiveMinProfitPct / 100));
+                }
+              }
+            }
 
             heldLots.push({
               id: tradeCounter,
@@ -1681,6 +1709,7 @@ export class BacktestService {
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       buyLevelPcts?: number[];
       sellLevelPcts?: number[];
+      buyWeights?: number[];
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
       tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";
@@ -1712,8 +1741,10 @@ export class BacktestService {
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const zoneBudgetQuote = gridInitialCap / totalZones;
-    const curBuys = opts.buyLevelPcts ?? [20, 8];
+    const curBuys = opts.buyLevelPcts ?? [18, 10];
     const curSells = opts.sellLevelPcts ?? [60, 80];
+    const curBuyWeights = opts.buyWeights ?? [35, 65];
+    const totalBuyWeight = curBuyWeights.reduce((s, w) => s + w, 0) || 100;
     const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
     let isZoneReversalConfirmed = true;
@@ -2667,6 +2698,7 @@ export class BacktestService {
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
       buyLevelPcts?: number[];
       sellLevelPcts?: number[];
+      buyWeights?: number[];
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
       tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";

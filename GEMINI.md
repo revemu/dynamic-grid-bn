@@ -8909,6 +8909,39 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชันเป็น **`0.3.0.45`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 293. Implementation of Master Plan v7.0: Mathematical Edge Optimization (Version `0.3.0.46`)
+- **การปรับปรุง 4 เสาหลักตาม Master Plan v7.0 ใน `src/backtest-service.ts` และ `src/backtest.ts`**:
+  1. **Pyramid Sizing (`buyWeights: [35, 65]`) ที่ระดับราคา `[18%, 10%]`**:
+     - จัดสัดส่วนเงินทุน ไม้ L1 (18% ของกรอบ) ซื้อ 35% และไม้ L2 (10% ของกรอบ) ซื้อ 65% ทำให้ต้นทุนเฉลี่ยรวบลงมาอยู่ที่ระดับเพียง 12.8% ของกรอบราคา
+  2. **Smart Target Pairing (จับคู่เป้าหมายทำกำไรอัจฉริยะ)**:
+     - ไม้ใหญ่ L2 (65%) มุ่งเก็บกำไรที่ `sellTargets[0]` (60% ของกรอบ) กวาดส่วนต่างกำไรถึง +50% Span ด้วย Maker 0% Fee
+     - เมื่อไม้ L2 แมตช์ จะยกเป้าหมายของไม้ L1 (35%) ขึ้นไปทำหน้าที่เป็น Runner Target ที่ `sellTargets[1]` (80% ของกรอบ)
+     - ในกรณีที่ลงมาติดเพียงไม้ L1 ไม้เดียว จะขายทำกำไรที่ 60% ตามปกติ
+  3. **Midline Pullback Shield (การล็อกกำไรแบบมีพื้นที่หายใจ)**:
+     - เมื่อราคาขึ้นไปแตะ 60% ของกรอบ และไม้ L2 ขายสำเร็จ จะปรับ Trailing Stop ของไม้ L1 ขึ้นมาล็อกที่ 26% ของกรอบ (แทนที่จะยกมาจ่อจุดเท่าทุนให้โดน Taker fee กวาด) ทำให้ราคาสามารถย่อตัวทดสอบกึ่งกลางกรอบ (30% - 45%) แล้วดีดต่อขึ้นไป 80% ได้
+     - เมื่อราคาแตะ 72% จะขยับ Trailing Stop ขึ้นมาล็อกกำไรแน่นหนาที่ 56% ของกรอบ
+  4. **2-Tier Span-Relative Hybrid Cut Loss (ระบบตัดขาดทุนสัมพัทธ์ 2 ระดับ)**:
+     - **Tier 1 (Confirmed Close Cut Loss)**: คำนวณตัดขาดทุนที่ `floor - channelSpan * 0.22` โดยรอให้แท่งเทียน 15m ปิดหลุดต่ำกว่าระดับนี้เท่านั้น เพื่อป้องกันไส้เทียนเขย่า Stop-Hunt บริเวณฐาน Donchian
+     - **Tier 2 (Emergency Wick Stop)**: ตัดขาดทุนทันทีระหว่างแท่งเทียนที่ `floor - channelSpan * 0.45` หากเกิดเหตุการณ์ Flash Crash หรือการทุบราคาฉุกเฉิน
+     - การกำหนดระยะ Cut Loss สัมพันธ์กับ `channelSpan` ช่วยรักษาสัดส่วน Reward:Risk ให้มากกว่า 1.55 : 1 ในทุกสภาวะความผันผวน
+- **ผลการทดสอบ Master Benchmark v7.0 (12,000 แท่ง 15m ข้อมูลจริงข้าม 9 สินทรัพย์)**:
+  - **AAPL (Apple)**: กำไรสุทธิ **+$12.42 (+6.21%)**, Profit Factor **1.48**, Win Rate **55.9%** (TP 17x, Trail 2x, Cut 14x)
+  - **AVAXUSDT**: กำไรสุทธิ **+$11.94 (+5.97%)**, Profit Factor **1.51**, Win Rate **56.3%** (TP 16x, Trail 2x, Cut 14x)
+  - **SOLUSDT**: กำไรสุทธิ **+$9.36 (+4.68%)**, Profit Factor **1.57**, Win Rate **66.7%**, Max DD 3.84% (TP 19x, Trail 3x, Cut 11x)
+  - **BTCUSDT**: Net PnL -1.01%, Win Rate 50.0%, Max DD 3.33% (TP 10x, Trail 1x, Cut 11x)
+  - **SPY (S&P500)**: Net PnL -0.87%, Win Rate **57.1%**, Max DD 1.74% (TP 7x, Trail 1x, Cut 6x)
+  - **LINKUSDT**: Net PnL -2.01%, Win Rate **57.7%**, Max DD 3.35% (TP 14x, Trail 1x, Cut 11x)
+  - **KO (Coca-Cola)**: Net PnL -3.33%, Win Rate 43.5%, Max DD 4.03% (TP 9x, Trail 1x, Cut 13x)
+  - **ETHUSDT**: Net PnL -4.37%, Win Rate 46.2%, Max DD 5.60% (TP 11x, Trail 1x, Cut 14x)
+  - **ADAUSDT**: Net PnL -5.35%, Win Rate 48.5%, Max DD 7.36% (TP 15x, Trail 1x, Cut 17x)
+  - ค่าเฉลี่ยผลตอบแทนรวม 9 สินทรัพย์ดีขึ้นจาก -1.43% เป็น **-0.01%** (กลุ่ม US Stocks เฉลี่ยเป็นบวก **+0.67%**)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.46`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 
