@@ -798,18 +798,34 @@ export class BacktestService {
 
     const atrs = calcATR(candles, 14);
 
-    // คำนวณ EMA50 และ EMA200 สำหรับคัดกรอง Macro Uptrend ที่แท้จริง (ป้องกัน Bear Market Rally หลอก)
+    // คำนวณ Multi-Timeframe EMAs บนฐาน 15m (O(N) Zero-Lookahead):
+    // - 15m EMA50  = 50 bars
+    // - 1H  EMA20  = 80 bars  | 1H EMA50  = 200 bars
+    // - 4H  EMA20  = 320 bars | 4H EMA50  = 800 bars
     const ema50s: number[] = new Array(candles.length).fill(0);
+    const ema80s: number[] = new Array(candles.length).fill(0);
     const ema200s: number[] = new Array(candles.length).fill(0);
+    const ema320s: number[] = new Array(candles.length).fill(0);
+    const ema800s: number[] = new Array(candles.length).fill(0);
     if (candles.length > 0) {
       const k50 = 2 / (50 + 1);
+      const k80 = 2 / (80 + 1);
       const k200 = 2 / (200 + 1);
-      ema50s[0] = candles[0].close;
-      ema200s[0] = candles[0].close;
+      const k320 = 2 / (320 + 1);
+      const k800 = 2 / (800 + 1);
+      const c0 = candles[0].close;
+      ema50s[0] = c0;
+      ema80s[0] = c0;
+      ema200s[0] = c0;
+      ema320s[0] = c0;
+      ema800s[0] = c0;
       for (let idx = 1; idx < candles.length; idx++) {
         const cl = candles[idx].close;
         ema50s[idx] = cl * k50 + ema50s[idx - 1] * (1 - k50);
+        ema80s[idx] = cl * k80 + ema80s[idx - 1] * (1 - k80);
         ema200s[idx] = cl * k200 + ema200s[idx - 1] * (1 - k200);
+        ema320s[idx] = cl * k320 + ema320s[idx - 1] * (1 - k320);
+        ema800s[idx] = cl * k800 + ema800s[idx - 1] * (1 - k800);
       }
     }
 
@@ -1069,42 +1085,86 @@ export class BacktestService {
         : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
 
-      // 🛡️ Macro Uptrend Identification & Bounded Cushion Immunity:
+      // 🌐 Multi-Timeframe (4H & 1H) Macro Governor Evaluation:
       const curEma50 = ema50s[i] ?? c.close;
-      const curEma200 = ema200s[i] ?? c.close;
-      const prevEma200 = ema200s[Math.max(0, i - 10)] ?? curEma200;
+      const cur1hEma20 = ema80s[i] ?? c.close;
+      const prev1hEma20 = ema80s[Math.max(0, i - 4)] ?? cur1hEma20;
+      const cur1hEma50 = ema200s[i] ?? c.close;
+      const prev1hEma50 = ema200s[Math.max(0, i - 8)] ?? cur1hEma50;
+      const cur4hEma20 = ema320s[i] ?? c.close;
+      const prev4hEma20 = ema320s[Math.max(0, i - 16)] ?? cur4hEma20;
+      const cur4hEma50 = ema800s[i] ?? c.close;
+      const prev4hEma50 = ema800s[Math.max(0, i - 16)] ?? cur4hEma50;
+
+      // คำนวณกรอบราคา 4H (ย้อนหลัง 15 แท่ง 4H = 240 แท่ง 15m)
+      let htf4hHigh = c.high;
+      let htf4hLow = c.low;
+      const htfStart = Math.max(0, i - 240);
+      for (let k = htfStart; k <= i; k++) {
+        if (candles[k].high > htf4hHigh) htf4hHigh = candles[k].high;
+        if (candles[k].low < htf4hLow) htf4hLow = candles[k].low;
+      }
+      const htf4hSpan = Math.max(0, htf4hHigh - htf4hLow);
+      const htf4hPosRatio = htf4hSpan > 0 ? (c.close - htf4hLow) / htf4hSpan : 0.5;
+
+      // วิเคราะห์ทิศทาง 4H และ 1H
+      const is4hBull =
+        c.close > cur4hEma50 &&
+        cur4hEma20 >= cur4hEma50 * 0.999 &&
+        cur4hEma50 >= prev4hEma50 * 0.9998;
+      const is4hBear =
+        c.close < cur4hEma50 &&
+        cur4hEma20 < cur4hEma50 * 0.999 &&
+        cur4hEma20 < prev4hEma20;
+      const is1hBearFlow =
+        c.close < cur1hEma20 &&
+        cur1hEma20 < cur1hEma50 &&
+        cur1hEma20 < prev1hEma20;
+      const is1hStabilized =
+        c.close >= (candles[Math.max(0, i - 3)]?.open ?? c.open) ||
+        c.close >= cur1hEma20 * 0.998 ||
+        cur1hEma20 >= prev1hEma20;
+
       const isMacroUptrend =
-        structure.regime === "UPTREND" &&
-        c.close > curEma200 &&
-        curEma50 >= curEma200 * 0.999 &&
-        curEma200 >= prevEma200;
+        (structure.regime === "UPTREND" || is4hBull) &&
+        c.close > cur1hEma50 &&
+        curEma50 >= cur1hEma50 * 0.999 &&
+        cur1hEma50 >= prev1hEma50;
       const isUptrend = isMacroUptrend;
 
-      // ขอบเขต Cut Loss พิเศษสำหรับไม้ในเทรนด์ขาขึ้น (ถ่างระยะกันสะบัดออกไปเป็น -38% / -48% ของกรอบ แต่ไม่เกิน -1.8% จากทุน)
+      // ขอบเขต Cut Loss พิเศษตามสภาวะ 4H (4H Bull ถ่างระยะกันสะบัด / 4H Bear บีบระยะตัดไฟแต่ต้นลม)
       const uptrendCloseCutPrice = channelSpan > 0
         ? floor - channelSpan * 0.38
         : closeCutLossPrice * 0.995;
       const uptrendWickCutPrice = channelSpan > 0
         ? floor - channelSpan * 0.48
         : emergencyWickCutPrice * 0.995;
+      const bear4hCloseCutPrice = channelSpan > 0
+        ? floor - channelSpan * 0.16
+        : closeCutLossPrice;
+      const bear4hWickCutPrice = channelSpan > 0
+        ? floor - channelSpan * 0.26
+        : emergencyWickCutPrice;
 
       const baseCanTriggerCutLoss =
         gridCutLossMode !== "none" &&
         (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
 
-      // 1. Evaluate Exits for Open Lots:
-      //    Step 1: Check 2-Tier Floor Cut Loss (Confirmed Close <= closeCutLossPrice OR Wick <= emergencyWickCutPrice)
-      //    Step 2: Check Trailing Stop armed from previous candles
-      //    Step 3: Check Resting Limit Take Profit (60% / 80%)
-      //    Step 4: Update peakPrice & arm Ratchet Trailing Stop (Early BE 40% / Mid 52% / Runner 65%) for subsequent candles
       const remainingLots: typeof heldLots = [];
       for (const lot of heldLots) {
         const holdingBars = lot.entryIdx !== undefined ? i - lot.entryIdx : 0;
-        const isLotUptrendProtected = Boolean(lot.enteredInUptrend && c.close >= curEma200 * 0.996);
+        const isLotUptrendProtected = Boolean(
+          lot.enteredInUptrend &&
+          c.close >= cur1hEma50 * 0.996 &&
+          !is4hBear
+        );
 
-        // หากราคาย่อลงมาแตะโซน Cut Loss ปกติในขาขึ้น ให้ปรับเป้าขายลงมาที่จุดคุ้มทุน+กำไรขั้นต่ำทันที
+        // ปรับเวลาถือครอง (Time-Decay Escape) ตามกระแสน้ำของ 4H:
+        // - 4H Bear: รีบออกที่จุดคุ้มทุนภายใน 10 แท่ง (2.5 ชม.) ก่อนที่คลื่น 4H จะทุบซ้ำ
+        // - 4H Bull: ให้เวลาถือรันเทรนด์ 22 แท่ง (5.5 ชม.)
+        // - 4H Range: 16 แท่ง (4 ชม.)
         const isDippedBelowNormalFloor = isLotUptrendProtected && c.low <= closeCutLossPrice;
-        const escapeBarThreshold = isLotUptrendProtected ? 22 : 18;
+        const escapeBarThreshold = isLotUptrendProtected ? 22 : (is4hBear ? 10 : 16);
 
         if ((holdingBars >= escapeBarThreshold || isDippedBelowNormalFloor) && !lot.isTimeDecayEscape) {
           const escapeTarget = lot.buyPrice * (1 + effectiveMinProfitPct / 100);
@@ -1116,10 +1176,10 @@ export class BacktestService {
 
         const effectiveCloseCut = isLotUptrendProtected
           ? Math.max(uptrendCloseCutPrice, lot.buyPrice * 0.982)
-          : closeCutLossPrice;
+          : (is4hBear ? bear4hCloseCutPrice : closeCutLossPrice);
         const effectiveWickCut = isLotUptrendProtected
           ? Math.max(uptrendWickCutPrice, lot.buyPrice * 0.978)
-          : emergencyWickCutPrice;
+          : (is4hBear ? bear4hWickCutPrice : emergencyWickCutPrice);
 
         const isEmergencyWickHit = baseCanTriggerCutLoss && c.low <= effectiveWickCut;
         const isConfirmedCloseCutHit = baseCanTriggerCutLoss && c.close <= effectiveCloseCut;
@@ -1506,6 +1566,25 @@ export class BacktestService {
       const minRecent4Low = recent4Lows.length > 0 ? Math.min(...recent4Lows) : c.low;
       const isEstablishedHorizontalFloor = structure.bottomBound > 0 && minRecent4Low > structure.bottomBound * 1.0005;
 
+      // 🌐 HTF (4H & 1H) Value Zone & Momentum Gate (ป้องกันการตั้งกริดซื้อบนยอดดอย 4H และกัน Bear Flag 15m):
+      let isHtfBlocked = false;
+      if (is4hBear) {
+        // ในขาลง 4H: อนุญาตให้ช้อนเฉพาะก้นกรอบ 4H (<= 48%) และกราฟ 1H ต้องเริ่มหยุดไหลแล้วเท่านั้น
+        if (htf4hPosRatio > 0.48 || (is1hBearFlow && !is1hStabilized)) {
+          isHtfBlocked = true;
+        }
+      } else if (is4hBull) {
+        // ในขาขึ้น 4H: อนุญาตให้รับย่อตัวได้ถึง 80% ของกรอบ 4H (บล็อกเฉพาะยอดดอยบนสุด 20%)
+        if (htf4hPosRatio > 0.80) {
+          isHtfBlocked = true;
+        }
+      } else {
+        // ในไซด์เวย์ 4H: ห้ามซื้อโซนแพงด้านบน (> 68% ของกรอบ 4H) หรือตอนที่ 1H กำลังเทลงแรง
+        if (htf4hPosRatio > 0.68 || (is1hBearFlow && !is1hStabilized)) {
+          isHtfBlocked = true;
+        }
+      }
+
       let isRegimeBlocked = !structure.isSwingConfirmed;
       if (heldLots.length > 0 && lockedChannel !== null) {
         // เมื่อเปิดไม้ L1 และล็อกกรอบแล้ว อนุญาตให้รับไม้ L2 (65%) ในกรอบเดิมได้เสมอตราบใดที่ยังไม่หลุด Cut Loss
@@ -1516,13 +1595,19 @@ export class BacktestService {
         const isDonchianMode = (opts.channelMode ?? "DONCHIAN_ATR") === "DONCHIAN_ATR";
         if (isDonchianMode) {
           const isBearSpike = (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12;
-          if ((!isRange && !isBullishRegime) || !isEstablishedHorizontalFloor || consecutiveReds >= 4 || isBearSpike) {
+          if (
+            isHtfBlocked ||
+            (!isRange && !isBullishRegime) ||
+            !isEstablishedHorizontalFloor ||
+            consecutiveReds >= 4 ||
+            isBearSpike
+          ) {
             isRegimeBlocked = true;
           }
         } else {
           const canEstablish = structure.gridZone?.canEstablishChannel !== false;
           const notDropping = !structure.isDowntrendDropActive;
-          if ((!isRange && !isBullishRegime) || !canEstablish || !notDropping) {
+          if (isHtfBlocked || (!isRange && !isBullishRegime) || !canEstablish || !notDropping) {
             isRegimeBlocked = true;
           }
         }
