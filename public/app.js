@@ -8094,10 +8094,24 @@
       const isTop = idx === 0;
       const pnlColor = item.netPnlPct >= 0 ? "#10b981" : "#ef4444";
       const chgColor = item.change24hPct >= 0 ? "#10b981" : "#ef4444";
+
+      const grade = item.dnaGrade || "B";
+      const gradeBg = grade === "S" ? "rgba(168, 85, 247, 0.2)" : grade === "A" ? "rgba(16, 185, 129, 0.2)" : grade === "AVOID" ? "rgba(239, 68, 68, 0.2)" : "rgba(245, 158, 11, 0.2)";
+      const gradeColor = grade === "S" ? "#c084fc" : grade === "A" ? "#34d399" : grade === "AVOID" ? "#f87171" : "#fbbf24";
+      const gradeBorder = grade === "S" ? "#a855f7" : grade === "A" ? "#10b981" : grade === "AVOID" ? "#ef4444" : "#f59e0b";
+      const gradeIcon = grade === "S" ? "💎" : grade === "A" ? "🟢" : grade === "AVOID" ? "🔴" : "🟡";
+
+      const dnaBadge = `
+        <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:4px; background:${gradeBg}; color:${gradeColor}; border:1px solid ${gradeBorder}; font-weight:700; font-size:11px;">
+          ${gradeIcon} ${grade} <span style="font-size:10px; opacity:0.85;">(${item.dnaScore ?? 0})</span>
+        </span>
+      `;
+
       return `
         <tr style="${isTop ? 'background: rgba(16, 185, 129, 0.12); font-weight: bold;' : ''}">
           <td style="text-align: center;">${isTop ? '⭐ ' : ''}#${idx + 1}</td>
           <td style="color: #38bdf8;">${item.symbol}</td>
+          <td>${dnaBadge}</td>
           <td><span class="badge" style="background: ${item.compositeScore >= 60 ? '#10b981' : '#f59e0b'}; color: #fff; padding: 2px 6px; border-radius: 4px;">${item.compositeScore}/100</span></td>
           <td style="color: ${pnlColor};">${item.netPnlPct >= 0 ? '+' : ''}${item.netPnlPct.toFixed(2)}%</td>
           <td>${item.winRate.toFixed(1)}%</td>

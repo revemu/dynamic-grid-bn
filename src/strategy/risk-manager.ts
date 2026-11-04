@@ -296,11 +296,14 @@ export class RiskManager {
     const { refPrice, bestBid, lowerBound, span, cancelOrderInternal, sellTrancheIOC } = params;
     if (span <= 0 || lowerBound <= 0) return false;
 
-    const beRatio = this.host.cfg.gridTrailingBreakevenRatio ?? 0.50;
-    const profitLockRatio = this.host.cfg.gridTrailingProfitLockRatio ?? 0.70;
+    const beRatio = this.host.cfg.gridTrailingBreakevenRatio ?? 0.44;
+    const step2Ratio = (this.host.cfg as any).gridTrailingStep2Ratio ?? 0.52;
+    const profitLockRatio = this.host.cfg.gridTrailingProfitLockRatio ?? 0.65;
     const profitLockTargetRatio = this.host.cfg.gridTrailingProfitLockTargetRatio ?? 0.50;
 
     const beTriggerPrice = lowerBound + span * beRatio;
+    const step2TriggerPrice = lowerBound + span * step2Ratio;
+    const step2StopPrice = lowerBound + span * 0.30;
     const profitLockTriggerPrice = lowerBound + span * profitLockRatio;
     const profitLockStopPrice = lowerBound + span * profitLockTargetRatio;
 
@@ -311,23 +314,27 @@ export class RiskManager {
       // Track peak price since entry
       lot.peakPrice = Math.max(lot.peakPrice ?? lot.price, refPrice);
 
-      // 1. Ratchet to Profit Lock if reached 70% of span
+      // 1. Ratchet Step 3 (Runner Lock): reached >= 65% of span -> Stop at 50%
       if (lot.peakPrice >= profitLockTriggerPrice) {
         if (!lot.profitLocked) {
           lot.profitLocked = true;
           this.host.log(
-            `🎯 [GRID TRAILING STOP] Lot @ $${lot.price.toFixed(6)} activated Profit Lock (Peak $${lot.peakPrice.toFixed(6)} >= 70% Span). Trailing Stop raised to Center ($${profitLockStopPrice.toFixed(6)})!`,
+            `🎯 [GRID TRAILING STOP] Lot @ $${lot.price.toFixed(6)} activated Step 3 Runner Lock (Peak $${lot.peakPrice.toFixed(6)} >= 65% Span). Trailing Stop raised to Center 50% ($${profitLockStopPrice.toFixed(6)})!`,
           );
         }
         lot.stopLossPrice = Math.max(lot.stopLossPrice ?? 0, profitLockStopPrice);
       }
-      // 2. Ratchet to Break-even if reached 50% of span (Center)
-      else if (lot.peakPrice >= beTriggerPrice) {
-        const bePrice = lot.price * 1.003; // entry + 0.3% roundtrip fee buffer
+      // 2. Ratchet Step 2 (Mid-Box Lock): reached >= 52% of span -> Stop at 30%
+      else if (lot.peakPrice >= step2TriggerPrice) {
+        lot.stopLossPrice = Math.max(lot.stopLossPrice ?? 0, step2StopPrice);
+      }
+      // 3. Ratchet Step 1 (Break-even Shield): reached >= 44% of span (or +0.70% gain) -> Lock entry + fee + 0.22%
+      else if (lot.peakPrice >= beTriggerPrice || (lot.peakPrice >= lot.price * 1.007)) {
+        const bePrice = lot.price * 1.0035; // entry + fee + 0.22% min net profit
         if (!lot.beLocked) {
           lot.beLocked = true;
           this.host.log(
-            `🛡️ [GRID TRAILING STOP] Lot @ $${lot.price.toFixed(6)} activated Break-even Lock (Peak $${lot.peakPrice.toFixed(6)} >= 50% Span). Stop Loss raised to $${bePrice.toFixed(6)}!`,
+            `🛡️ [GRID TRAILING STOP] Lot @ $${lot.price.toFixed(6)} activated Step 1 Breakeven Lock (Peak $${lot.peakPrice.toFixed(6)} >= 44% Span). Stop Loss raised to $${bePrice.toFixed(6)}!`,
           );
         }
         lot.stopLossPrice = Math.max(lot.stopLossPrice ?? 0, bePrice);

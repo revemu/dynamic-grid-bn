@@ -27,7 +27,7 @@ export const defaultStrategyConfig = {
   set strategyMode(v: "dynamic_grid" | "swing_trade" | "ma_fan") { this.strategyType = v; },
 
   // ── MA Fan Strategy Parameters ──────────────────────────────────────────
-  maFanExecutionTimeframe: "5m" as "5m" | "15m",
+  maFanExecutionTimeframe: "15m" as "5m" | "15m",
   maFanSupervisorTimeframe: "15m" as "15m" | "1h",
   maFanAutoCalibrateSpreadOnSwitch: true,
   maFanManualSpreadPct: 0.40,
@@ -41,7 +41,7 @@ export const defaultStrategyConfig = {
   maFanBullCushion: false,
   maFanWaterfallGuard: true,
   maFanMacroGate: "noDeepBear" as "off" | "noDeepBear" | "bullOnly",
-  maFanTradeMode: "dip_hunter" as "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid",
+  maFanTradeMode: "dynamic_grid" as "dip_hunter" | "trend_rider" | "dual" | "dynamic_grid" | "dual_hybrid",
   maFanTradeDirection: "long" as "long" | "short" | "both",
   maFanUpsideFloor: true,
   maFanCircuitBreaker: true,
@@ -161,23 +161,23 @@ export const defaultStrategyConfig = {
   /** When true, only maintains/places sell orders when price is at or above Buy Level 1 (>= 42%). Default true. */
   enableSellAboveBuyLevel1: true,
   /** Active toggles for Buy Levels 1..5. If a level is disabled, it is skipped and budget is redistributed among active levels. */
-  enabledBuyLevels: [true, true, true, true, true] as boolean[],
+  enabledBuyLevels: [true, true, false, false, false] as boolean[],
   /** Active toggles for Sell Targets 1..5. If a target is disabled, it is skipped and inventory is redistributed among active targets. */
-  enabledSellTargets: [true, true, true, true, true] as boolean[],
-  /** Grid zone percentage allocations for Buy Levels 1..5 (default [42, 32, 22, 12, 2]%). */
-  buyLevelPcts: [42, 32, 22, 12, 2] as number[],
-  /** Grid zone percentage allocations for Sell Targets 1..5 (default [52, 62, 72, 82, 92]%). */
-  sellLevelPcts: [52, 62, 72, 82, 92] as number[],
+  enabledSellTargets: [true, true, false, false, false] as boolean[],
+  /** Grid zone percentage allocations for Buy Levels 1..5 (default [20, 12, 8, 4, 2]%). */
+  buyLevelPcts: [20, 12, 8, 4, 2] as number[],
+  /** Grid zone percentage allocations for Sell Targets 1..5 (default [52, 72, 82, 90, 95]%). */
+  sellLevelPcts: [52, 72, 82, 90, 95] as number[],
   /** Relative tranche weights for Sell Targets 1..5 (default [50, 50, 0, 0, 0]). */
   sellLevelWeights: [50, 50, 0, 0, 0] as number[],
   /**
    * Buy Tranche Sizing Mode:
-   * 1. "PYRAMID" (Default): Weighted sizing [10%, 15%, 20%, 25%, 30%] from Buy L1..L5 to pull average entry lower toward the floor.
-   * 2. "EQUAL": Equal 20% allocation per active buy level.
+   * 1. "PYRAMID" (Default): Weighted sizing [55%, 45%, 0%, 0%, 0%] from Buy L1..L2 to pull average entry lower toward the floor.
+   * 2. "EQUAL": Equal allocation per active buy level.
    */
   buySizingMode: "PYRAMID" as "EQUAL" | "PYRAMID",
-  /** Relative tranche weights for Buy Levels 1..5 when buySizingMode === "PYRAMID" (default [10, 15, 20, 25, 30]). */
-  buyLevelWeights: [10, 15, 20, 25, 30] as number[],
+  /** Relative tranche weights for Buy Levels 1..5 when buySizingMode === "PYRAMID" (default [55, 45, 0, 0, 0]). */
+  buyLevelWeights: [55, 45, 0, 0, 0] as number[],
   /** Minimum net profit spread (%) above cost basis required for sell targets to prevent fee-eroded micro-exits in narrow channels (default 0.25%). */
   minNetProfitPct: 0.25,
   /** Breakeven/micro-profit percentage required for LH Dynamic Escape during confirmed downtrend (LH+LL) to escape safely (default 0.06%). */
@@ -250,12 +250,16 @@ export const defaultStrategyConfig = {
   // ── Grid Trailing Stop & Ratchet Profit Lock ───────────────────────────
   /** When true, activates dynamic Ratchet Step Trailing Stop for held grid lots to lock profits and rotate cashflow faster. Default true. */
   enableGridTrailingStop: true,
-  /** Channel span ratio threshold to trigger Break-even lock (moving Stop Loss to entry + fee). Default 0.50 (Center of channel). */
-  gridTrailingBreakevenRatio: 0.50,
-  /** Channel span ratio threshold to trigger Profit Lock (moving Stop Loss to 50% of channel). Default 0.70. */
-  gridTrailingProfitLockRatio: 0.70,
+  /** Channel span ratio threshold to trigger Break-even lock (moving Stop Loss to entry + fee). Default 0.44 (44% of channel). */
+  gridTrailingBreakevenRatio: 0.44,
+  /** Channel span ratio threshold to trigger Profit Lock Step 2 (moving Stop Loss to 30% of channel). Default 0.52. */
+  gridTrailingStep2Ratio: 0.52,
+  /** Channel span ratio threshold to trigger Profit Lock (moving Stop Loss to 50% of channel). Default 0.65. */
+  gridTrailingProfitLockRatio: 0.65,
   /** Channel span ratio where Stop Loss is locked when profit lock triggers. Default 0.50. */
   gridTrailingProfitLockTargetRatio: 0.50,
+  /** Time-decay breakeven escape: holding bars on dowTimeframe before lowering limit sell to entry+profit (default 18 bars = 4.5h on 15m). */
+  gridTimeDecayBars: 18,
 
   // ── Support & Resistance Channel Calculation Mode ────────────────────────
   /**

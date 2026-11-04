@@ -101,6 +101,15 @@ export interface MarketScanResultItem {
   bestTradePct: number;
   worstTradePct: number;
   spreadThreshold: number;
+  dnaScore?: number;
+  dnaGrade?: "S" | "A" | "B" | "AVOID";
+  bounce52Rate?: number;
+  dipWickPct?: number;
+  span48Pct?: number;
+  er48?: number;
+  upDownSymmetry?: number;
+  posInChannelPct?: number;
+  gridStage?: string;
 }
 
 export type MaFanStage = "READY_BUY" | "DIP_RETEST" | "WATCHING_BOTTOM" | "BULLISH_TREND" | "NEUTRAL";
@@ -4148,7 +4157,7 @@ export class BacktestService {
    */
   public static async scanMarket(opts: MarketScanOptions): Promise<MarketScanResultItem[]> {
     const scope = opts.scope || "top20";
-    const timeframe = opts.timeframe || "5m";
+    const timeframe = opts.timeframe || "15m";
     const limit = Math.min(60000, Math.max(100, opts.limit || 1000));
     const isAlpaca = scope === "alpaca_stocks" || opts.exchange === "alpaca" || opts.quoteAsset === "USD";
 
@@ -4291,6 +4300,33 @@ export class BacktestService {
               zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
             });
 
+            let dna: any = undefined;
+            try {
+              dna = this.evaluateGridDna(candles, isAlpaca ? "STOCK" : "CRYPTO");
+            } catch (err) {}
+
+            let posInChannelPct: number | undefined = undefined;
+            let gridStage: string | undefined = undefined;
+            if (candles.length >= 48) {
+              const last48 = candles.slice(-48);
+              const hh48 = Math.max(...last48.map((c) => c.high));
+              const ll48 = Math.min(...last48.map((c) => c.low));
+              const span48 = hh48 - ll48;
+              const lastC = candles[candles.length - 1]!;
+              if (span48 > 0) {
+                posInChannelPct = Math.round(((lastC.close - ll48) / span48) * 100);
+                if (dna && (dna.grade === "AVOID")) {
+                  gridStage = "🔴 AVOID";
+                } else if (posInChannelPct <= 22) {
+                  gridStage = "🟢 โซนซื้อ (Buy L1/L2)";
+                } else if (posInChannelPct <= 52) {
+                  gridStage = "⏳ รอย่อตัว (Mid-Box)";
+                } else {
+                  gridStage = "🚀 โซนทำกำไร (Upper TP)";
+                }
+              }
+            }
+
             results.push({
               rank: 0,
               symbol: sym,
@@ -4309,6 +4345,15 @@ export class BacktestService {
               bestTradePct: rec.summary.bestTradePct,
               worstTradePct: rec.summary.worstTradePct,
               spreadThreshold: rec.spreadThreshold,
+              dnaScore: dna?.dnaScore,
+              dnaGrade: dna?.grade,
+              bounce52Rate: dna?.bounce52Rate,
+              dipWickPct: dna?.dipWickPct,
+              span48Pct: dna?.span48Pct,
+              er48: dna?.er48,
+              upDownSymmetry: dna?.upDownSymmetry,
+              posInChannelPct,
+              gridStage,
             });
 
             console.log(`[MarketScanner] [${results.length}/${candidates.length}] ✅ ${sym}: Net PnL ${(rec.summary.netPnlPct >= 0 ? '+' : '')}${rec.summary.netPnlPct.toFixed(2)}% (${rec.summary.totalTrades} trades, WR ${rec.summary.winRate.toFixed(1)}%)`);

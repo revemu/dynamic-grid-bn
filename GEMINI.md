@@ -9260,3 +9260,27 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 
 
+
+
+---
+
+## 305. v0.3.0.58 — Master Plan v17.0: Single-Strategy Consolidation (Dynamic Grid v14.0 Core + Market DNA) & Unified Scanner/Rotator UI
+
+- **ปรัชญาและวัตถุประสงค์หลัก (Core Directives)**:
+  1. **ยุบรวมระบบเหลือกลยุทธ์เดียว (Single Strategy Consolidation)**: ปรับค่าคอนฟิกและเครื่องยนต์เทรดหลักทั้งระบบให้เป็น `Dynamic Grid (v14.0 Core + Market DNA)` เพียงหนึ่งเดียว เพื่อมุ่งเน้นการทำเงินในตลาดไซด์เวย์และย่อตัว ส่วนโค้ดของกลยุทธ์อื่น (`ma_fan`, `dip_hunter`, `trend_rider`, `swing_trade`) ถูกเก็บรักษาไว้ในระบบหลังบ้านเพื่อนำมาพัฒนาต่อยอดสำหรับตลาดกระทิงดุหรือตลาดหมีในอนาคต
+  2. **Lab-to-Live Parity 100%**:
+     - ซิงค์พารามิเตอร์ระดับชั้นกริด `buyLevelPcts: [20, 12]`, น้ำหนัก `[55, 45]`, เป้าขายสมดุลกลางกรอบ `sellLevelPcts: [52, 72]`
+     - ซิงค์ระบบ **3-Step Ratchet Trailing Stop** ใน [`src/strategy/risk-manager.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/strategy/risk-manager.ts) (Step 1 แตะ `44%` กรอบ หรือ `+0.70%` ล็อกทุน + `0.22%`, Step 2 แตะ `52%` ล็อกที่ `30%`, Step 3 แตะ `65%` ล็อกที่ `50%`)
+     - รองรับเกราะ **Time-Decay Escape** (`18 แท่ง` 15m)
+  3. **🧬 Market DNA Scanner & Full Visibility Upgrade**:
+     - อัปเกรดแท็บ Market Scanner ใน [`public/backtest.html`](file:///c:/Sites/github/dynamic-grid-bn/public/backtest.html) และ [`public/backtest.js`](file:///c:/Sites/github/dynamic-grid-bn/public/backtest.js) เป็น **`🧬 Dynamic Grid DNA Scanner`** แสดงป้ายเกรด 💎 `S` / 🟢 `A` / 🟡 `B` / 🔴 `AVOID`, สถิติ `Bounce 52%`, `Dip Wick%`, `Span 48b`, `Sim PnL%`, และสถานะตำแหน่งราคาในกรอบ Donchian 48 แท่ง (`🟢 โซนซื้อ L1/L2`, `⏳ รอย่อตัว`, `🚀 โซนบน`)
+     - ปรับปรุงหน้าต่าง `🔄 Auto-Rotate` ใน [`public/index.html`](file:///c:/Sites/github/dynamic-grid-bn/public/index.html) และ [`public/app.js`](file:///c:/Sites/github/dynamic-grid-bn/public/app.js) ให้แสดงคอลัมน์ `🧬 DNA Grade` ชัดเจน
+     - บังคับเกณฑ์ใน [`src/pair-rotator.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/pair-rotator.ts) ให้ระบบสลับคู่เหรียญอัตโนมัติเลือกเฉพาะเหรียญที่ได้ **Grade S หรือ Grade A เท่านั้น** หากไม่มีให้ถือเงินสด 100% (Sit-Out Defense)
+     - แก้ไขปุ่ม `⚡ สลับบอท` ให้สลับไปรันกลยุทธ์ `dynamic_grid` บน `15m` ถูกต้อง 100%
+- **ผลการทดสอบ Master Benchmark (12,000 แท่ง 15m ข้อมูลจริง 9 สินทรัพย์)**:
+  - **🧬 Grid DNA Grade S/A Average Net Return**: **+6.39%** (`SOL +6.70%`, `AVAX +8.52%`, `AAPL +3.94%`)
+  - **Overall Average Net Return**: **+1.57%**
+  - **Crypto 6-Asset Average**: **+1.95%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.58`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)

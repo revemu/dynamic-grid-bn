@@ -447,15 +447,23 @@ export class AutonomousPairRotator {
       return { rotated: false, report: [], reason: "No candidate scores evaluated" };
     }
 
-    // 🛡️ Minimum Market Depth Rule: If fewer than 2 pairs score >= 50, market lacks breadth -> sit out in Cash!
-    const viableScored = report.filter((r) => r.compositeScore >= 50);
-    if (viableScored.length < 2) {
-      const reason = `🛡️ Minimum Market Depth Gate active: Only ${viableScored.length} pair(s) scored >= 50. Market lacks broad momentum. Holding 100% Cash.`;
+    // 🛡️ DNA Strict Gate: Only allow rotation into Grade S or Grade A candidates
+    const gradeCandidates = report.filter((r) => r.dnaGrade === "S" || r.dnaGrade === "A");
+    if (gradeCandidates.length === 0) {
+      const reason = `🛡️ DNA Strict Gate active: No candidate achieved Grade S or A DNA. Market unfavorable for Dynamic Grid. Holding 100% Cash.`;
       this.log(reason);
       return { rotated: false, report, reason };
     }
 
-    const bestCandidate = report[0]!;
+    // 🛡️ Minimum Market Depth Rule: If fewer than 2 pairs score >= 50, market lacks breadth -> sit out in Cash!
+    const viableScored = gradeCandidates.filter((r) => r.compositeScore >= 50);
+    if (viableScored.length < 1) {
+      const reason = `🛡️ Minimum Market Depth Gate active: No Grade S/A pair scored >= 50. Holding 100% Cash.`;
+      this.log(reason);
+      return { rotated: false, report, reason };
+    }
+
+    const bestCandidate = gradeCandidates[0]!;
     const currentScoreItem = report.find((r) => r.symbol === normCurrent);
     const currentScore = currentScoreItem ? currentScoreItem.compositeScore : 0;
 

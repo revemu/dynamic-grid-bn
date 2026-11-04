@@ -380,8 +380,8 @@
       <div class="studio-tab-content">
         <div class="studio-tab-header">
           <div class="modal-title-group">
-            <h3 class="bt-modal-title" id="scStudioTitle">⚡ MA-Fan Setup Scanner (สแกนหาตัวพร้อมเล่น - กางล่าง + กลับตัว)</h3>
-            <span class="modal-subtitle" id="scStudioSubtitle">สแกนโครงสร้างคลื่นแบบ Real-time หาจุดกลับตัวที่พัดกางล่างสุด (Bottom Fan Exhaustion) พร้อมเข้าทำรอบทันที</span>
+            <h3 class="bt-modal-title" id="scStudioTitle">🧬 Dynamic Grid DNA Scanner (สแกนคัดเกรด S / A + โซนรับของ)</h3>
+            <span class="modal-subtitle" id="scStudioSubtitle">สแกนวิเคราะห์ 5 มิติ Market DNA (Bounce 52%, Dip Wick, Sweet-Spot Span, ER48, Symmetry) และจำลองผลกริด v14.0 แบบ Real-time</span>
           </div>
         </div>
 
@@ -391,20 +391,19 @@
           <div class="scanner-ctrl-group" style="border-left: 2px solid #38bdf8; padding-left: 6px;">
             <label style="color: #38bdf8; font-weight: 700;">📡 รูปแบบสแกน (Scan Mode)</label>
             <select id="scScanType" style="font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4);">
-              <option value="mafan_setups" selected>⚡ สแกนหาตัวพร้อมเล่น (MA-Fan Setup: กางล่าง + กลับตัว) ⭐</option>
-              <option value="backtest_leaderboard">📊 Historical Leaderboard (ดูผลงานย้อนหลัง)</option>
+              <option value="grid_dna" selected>🧬 สแกนหาเหรียญ Grade S / A (Dynamic Grid DNA) ⭐</option>
+              <option value="backtest_leaderboard">📊 Historical Leaderboard (ผลงานย้อนหลัง + DNA)</option>
+              <option value="mafan_setups">⚡ MA-Fan Setup (กางล่าง + กลับตัว)</option>
             </select>
           </div>
 
-          <!-- 0.1 Stage Filter (Setup Mode) -->
-          <div class="scanner-ctrl-group sc-setup-only" id="groupScStageFilter">
-            <label style="color: #10b981; font-weight: 700;">จังหวะพร้อมเล่น (Stage)</label>
-            <select id="scStageFilter">
-              <option value="all" selected>🌟 ทุกจังหวะ (All Stages)</option>
-              <option value="READY_BUY">🔥 พร้อมเข้าเล่น (Bottom Fan Reversal) เท่านั้น</option>
-              <option value="DIP_RETEST">⏳ รอย่อตัว (Dip Re-test) เท่านั้น</option>
-              <option value="WATCHING_BOTTOM">👀 เฝ้าระวังพัดกางล่าง (Bottom Exhaustion) เท่านั้น</option>
-              <option value="BULLISH_TREND">🚀 พัดกางบน (Bullish Fan Trend) เท่านั้น</option>
+          <!-- 0.1 DNA Filter -->
+          <div class="scanner-ctrl-group" id="groupScDnaFilter">
+            <label style="color: #10b981; font-weight: 700;">🧬 คัดเกรด DNA</label>
+            <select id="scDnaFilter">
+              <option value="grade_sa" selected>💎 เฉพาะ Grade S / A (แนะนำ)</option>
+              <option value="in_buy_zone">🟢 อยู่ในโซนซื้อ L1/L2 (Pos ≤ 25%)</option>
+              <option value="all">🌟 ทุกเกรด (All Grades)</option>
             </select>
           </div>
 
@@ -434,9 +433,8 @@
           <div class="scanner-ctrl-group">
             <label>Timeframe</label>
             <select id="scTimeframe">
-              <option value="1m">1m (Scalp)</option>
-              <option value="5m" selected>5m (Execution)</option>
-              <option value="15m">15m (Supervisor)</option>
+              <option value="15m" selected>15m (Dynamic Grid Standard)</option>
+              <option value="5m">5m (Fast Execution)</option>
               <option value="1h">1h (Macro)</option>
             </select>
           </div>

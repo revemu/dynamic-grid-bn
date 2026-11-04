@@ -2512,15 +2512,17 @@
     } else {
       scannerTableHead.innerHTML = `
         <tr id="scannerTableHeadRow">
-          <th style="width: 50px;">อันดับ</th>
-          <th>คู่เหรียญ</th>
-          <th>24h Volume</th>
-          <th>กำไรสุทธิ (%)</th>
+          <th style="width: 45px;">#</th>
+          <th>คู่เหรียญ / หุ้น</th>
+          <th>🧬 DNA Grade</th>
+          <th>สถานะในกรอบ (Stage & Pos)</th>
+          <th>Bounce 52%</th>
+          <th>Dip Wick%</th>
+          <th>Span 48b</th>
+          <th>Sim PnL (%)</th>
           <th>Win Rate</th>
-          <th>จำนวนไม้</th>
-          <th>Profit Factor</th>
           <th>Max DD</th>
-          <th>Best Trade</th>
+          <th>24h Volume</th>
           <th>การกระทำ</th>
         </tr>
       `;
@@ -2982,12 +2984,22 @@
   function renderScannerLeaderboard(items) {
     if (!scannerTableBody) return;
     if (!items || items.length === 0) {
-      scannerTableBody.innerHTML = `<tr><td colspan="10" class="td-empty">ไม่พบเหรียญที่เข้าเงื่อนไขหรือเกิดข้อผิดพลาดในการดึงข้อมูล</td></tr>`;
+      scannerTableBody.innerHTML = `<tr><td colspan="12" class="td-empty">ไม่พบเหรียญที่เข้าเงื่อนไขหรือเกิดข้อผิดพลาดในการดึงข้อมูล</td></tr>`;
       return;
     }
 
+    const dnaFilter = document.getElementById("scDnaFilter")?.value || "grade_sa";
+    let filtered = items;
+    if (dnaFilter === "grade_sa") {
+      filtered = items.filter((i) => i.dnaGrade === "S" || i.dnaGrade === "A");
+      if (filtered.length === 0) filtered = items; // Fallback to all if no S/A
+    } else if (dnaFilter === "in_buy_zone") {
+      filtered = items.filter((i) => (i.posInChannelPct ?? 100) <= 25 && i.dnaGrade !== "AVOID");
+      if (filtered.length === 0) filtered = items;
+    }
+
     let html = "";
-    items.forEach((item, idx) => {
+    filtered.forEach((item, idx) => {
       const rank = item.rank || idx + 1;
       const rankClass = rank === 1 ? "rank-1" : rank === 2 ? "rank-2" : rank === 3 ? "rank-3" : "";
       const rankBadge = `<span class="rank-badge ${rankClass}">${rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : rank}</span>`;
@@ -2999,17 +3011,37 @@
       const pnlClass = item.netPnlPct > 0 ? "text-profit" : item.netPnlPct < 0 ? "text-loss" : "";
       const pnlSign = item.netPnlPct > 0 ? "+" : "";
 
+      const grade = item.dnaGrade || "B";
+      const gradeBg = grade === "S" ? "rgba(168, 85, 247, 0.2)" : grade === "A" ? "rgba(16, 185, 129, 0.2)" : grade === "AVOID" ? "rgba(239, 68, 68, 0.2)" : "rgba(245, 158, 11, 0.2)";
+      const gradeColor = grade === "S" ? "#c084fc" : grade === "A" ? "#34d399" : grade === "AVOID" ? "#f87171" : "#fbbf24";
+      const gradeBorder = grade === "S" ? "#a855f7" : grade === "A" ? "#10b981" : grade === "AVOID" ? "#ef4444" : "#f59e0b";
+      const gradeIcon = grade === "S" ? "💎" : grade === "A" ? "🟢" : grade === "AVOID" ? "🔴" : "🟡";
+
+      const dnaBadge = `
+        <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px; background:${gradeBg}; color:${gradeColor}; border:1px solid ${gradeBorder}; font-weight:700; font-size:11px;">
+          ${gradeIcon} ${grade} <span style="font-size:10px; opacity:0.85;">(${item.dnaScore ?? 0})</span>
+        </span>
+      `;
+
+      const pos = item.posInChannelPct !== undefined ? `${item.posInChannelPct}%` : "--";
+      const stage = item.gridStage || (item.posInChannelPct !== undefined ? (item.posInChannelPct <= 22 ? "🟢 โซนซื้อ L1/L2" : item.posInChannelPct <= 52 ? "⏳ รอย่อตัว" : "🚀 โซนบน") : "--");
+
       html += `
         <tr>
           <td style="text-align: center;">${rankBadge}</td>
           <td><b>${item.symbol}</b></td>
-          <td><span style="font-family: var(--font-mono); color: var(--text-muted);">${volStr}</span></td>
+          <td>${dnaBadge}</td>
+          <td style="font-size: 11px;">
+            <div style="font-weight:600; color:#e2e8f0;">${stage}</div>
+            <div style="font-size:10px; color:#94a3b8;">Pos: ${pos} ของกรอบ</div>
+          </td>
+          <td style="font-family: var(--font-mono); color:#38bdf8;">${item.bounce52Rate !== undefined ? `${item.bounce52Rate.toFixed(1)}%` : '--'}</td>
+          <td style="font-family: var(--font-mono); color:#a78bfa;">${item.dipWickPct !== undefined ? `${item.dipWickPct.toFixed(1)}%` : '--'}</td>
+          <td style="font-family: var(--font-mono);">${item.span48Pct !== undefined ? `${item.span48Pct.toFixed(1)}%` : '--'}</td>
           <td class="${pnlClass}" style="font-weight: 700; font-family: var(--font-mono);">${pnlSign}${item.netPnlPct.toFixed(2)}%</td>
           <td style="font-weight: 600;">${item.winRate.toFixed(1)}% <span style="font-size: 10.5px; color: var(--text-muted);">(${item.winTrades}W/${item.lossTrades}L)</span></td>
-          <td>${item.tradesCount} ไม้</td>
-          <td style="font-family: var(--font-mono);">${item.profitFactor.toFixed(2)}</td>
           <td class="text-loss" style="font-family: var(--font-mono);">${item.maxDrawdownPct.toFixed(2)}%</td>
-          <td class="text-profit" style="font-family: var(--font-mono);">+${item.bestTradePct.toFixed(2)}%</td>
+          <td><span style="font-family: var(--font-mono); color: var(--text-muted);">${volStr}</span></td>
           <td>
             <button class="btn-action-view" data-sym="${item.symbol}" title="ดูกราฟและผลเทรดเหรียญนี้ทันที">📊 ดูกราฟ</button>
             <button class="btn-action-trade" data-sym="${item.symbol}" title="สลับบอทจริงไปเทรดเหรียญนี้">⚡ สลับบอท</button>
@@ -3089,18 +3121,12 @@
         const enableBaseConfirmationFilter = scBaseConfirmation ? scBaseConfirmation.value === "on" : true;
         const lockChannelInPosition = scLockChannel ? scLockChannel.value === "locked" : false;
 
-        const confirmMsg = `ต้องการสลับบอทจริงไปเทรด ${sym} พร้อมนำ Config ที่สแกนไปใช้งานหรือไม่?\n\n` +
+        const confirmMsg = `ต้องการสลับบอทจริงไปเทรด ${sym} ด้วยกลยุทธ์ Dynamic Grid หรือไม่?\n\n` +
           `• คู่เหรียญ: ${sym}\n` +
           `• Timeframe: ${timeframe}\n` +
-          `• Min Spread: ${isAutoSpread ? "Auto Calibrate ⚡" : `${spreadVal}%`}\n` +
-          `• Engine: ${tradeMode}\n` +
-          `• Direction: ${tradeDirection}\n` +
+          `• Strategy: Dynamic Grid (v14.0 Core + Market DNA)\n` +
           `• Base Filter (HL): ${enableBaseConfirmationFilter ? "On (รอสร้างฐาน HL - บอทจริง)" : "Off (Pure Grid - ดักเก็บทุกรอบ)"}\n` +
-          `• พฤติกรรมกรอบ: ${lockChannelInPosition ? "🔒 ล็อคกรอบขณะถือไม้ (Position Lock)" : "🔄 ขยับกรอบตามแท่งปิด (Dynamic Trailing)"}\n` +
-          `• SL Mode: ${useRatchetSl ? "Ratchet SL" : "Fixed SL"}\n` +
-          `• Circuit Breaker: ${enableCircuitBreaker ? "On" : "Off"}\n` +
-          `• Upside Floor: ${enableUpsideFloor ? "On" : "Off"}\n` +
-          `• Macro Gate: ${macroGateMode}`;
+          `• Channel: ${lockChannelInPosition ? "Locked" : "Dynamic"}`;
 
         if (!confirm(confirmMsg)) return;
 
@@ -3109,15 +3135,10 @@
         try {
           const payload = {
             symbol: sym,
-            maFanExecutionTimeframe: timeframe,
-            maFanAutoCalibrateSpreadOnSwitch: isAutoSpread,
-            ...(isAutoSpread ? {} : { maFanManualSpreadPct: Number(spreadVal) }),
-            maFanUseRatchetSl: useRatchetSl,
-            maFanCircuitBreaker: enableCircuitBreaker,
-            maFanUpsideFloor: enableUpsideFloor,
-            maFanMacroGate: macroGateMode,
-            maFanTradeMode: tradeMode,
-            maFanTradeDirection: tradeDirection,
+            strategyType: "dynamic_grid",
+            maFanTradeMode: "dynamic_grid",
+            dowTimeframe: timeframe,
+            tradingTimeframe: timeframe,
             enableBaseConfirmationFilter,
             enableWaterfallKnifeGuard: enableBaseConfirmationFilter,
             lockChannelInPosition,

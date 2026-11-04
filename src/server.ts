@@ -1136,7 +1136,63 @@ export class DashboardServer {
           }
 
           this.currentScanProgress = { index: 0, total: 0, symbol: "Starting...", candlesCount: 0 };
-          const scanType = (parsed.scanType || "mafan_setups") as "mafan_setups" | "backtest_leaderboard";
+          const scanType = (parsed.scanType || "grid_dna") as "grid_dna" | "mafan_setups" | "backtest_leaderboard";
+
+          if (scanType === "grid_dna" || scanType === "backtest_leaderboard") {
+            const hlModeStr = enableBaseConfirmationFilter ? "ON (รอสร้างฐาน HL - บอทจริง)" : "OFF (Pure Grid - ดักเก็บทุกรอบ)";
+            console.log(`[MarketScanner] 🚀 Starting Dynamic Grid Market Scan (Scope: ${scope}, TF: ${timeframe}, Limit: ${limit} bars, Engine: dynamic_grid, HL Filter: ${hlModeStr})...`);
+
+            const results = await BacktestService.scanMarket({
+              scope,
+              timeframe,
+              limit,
+              spreadThreshold,
+              useRatchetSl,
+              initialCapital: Number(parsed.budget) || Number(liveCfg.maFanMaxBudgetUsd) || 200,
+              slBufferPct: parsed.slBufferPct !== undefined ? Number(parsed.slBufferPct) : (Number(liveCfg.maFanSlBufferPct) || 0.25),
+              useAtrAdaptiveSpread: liveCfg.maFanUseAtrAdaptiveSpread ?? true,
+              atrMultiplier: Number(liveCfg.maFanAtrMultiplier) || 1.25,
+              trailingPullbackPct: parsed.trailingPullbackPct !== undefined ? Number(parsed.trailingPullbackPct) : (Number(liveCfg.maFanTrailingPullbackPct) || 0.45),
+              tp1Ratio: parsed.tp1Ratio !== undefined ? Number(parsed.tp1Ratio) : (Number(liveCfg.maFanTp1Ratio) || 0.5),
+              breakevenFeeBufferPct: parsed.breakevenFeeBufferPct !== undefined ? Number(parsed.breakevenFeeBufferPct) : (Number(liveCfg.maFanBreakevenFeeBufferPct) || 0.05),
+              supervisorTimeframe: (parsed.supervisorTimeframe || liveCfg.maFanSupervisorTimeframe || "15m") as "15m" | "1h",
+              cushionMode: parsed.cushionMode ?? (liveCfg.maFanBullCushion ? "htfBull" : "off"),
+              waterfallGuardMode: parsed.waterfallGuardMode ?? (liveCfg.maFanWaterfallGuard !== false ? "combined" : "off"),
+              costModel: scanCostModel,
+              macroGateMode,
+              enableUpsideFloor,
+              enableCircuitBreaker,
+              enableFastCut,
+              fastCutThresholdPct,
+              stagnationBars,
+              maxSlPct,
+              tradeMode: "dynamic_grid",
+              tradeDirection: "long",
+              enableBaseConfirmationFilter,
+              lockChannelInPosition,
+              capitalZones,
+              gridCutLossMode,
+              minChannelWidthPct,
+              maxChannelWidthPct,
+              donchianPeriod,
+              channelMode,
+              downtrendSitOutMode,
+              gridHtfGovernor,
+              maxChannelPos,
+              onProgress: (p) => {
+                this.currentScanProgress = p;
+                this.broadcast("scan_progress", p);
+              },
+            });
+
+            // Sort by DNA Score and Net PnL
+            results.sort((a, b) => ((b.dnaScore ?? 0) * 1.5 + b.netPnlPct) - ((a.dnaScore ?? 0) * 1.5 + a.netPnlPct));
+            results.forEach((item, idx) => { item.rank = idx + 1; });
+
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ success: true, count: results.length, results }));
+            return;
+          }
 
           if (scanType === "mafan_setups") {
             console.log(`[MarketScanner] ⚡ Starting MA-Fan Live Setup Scan (Scope: ${scope}, TF: ${timeframe})...`);
