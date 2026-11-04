@@ -1007,6 +1007,13 @@ export class BacktestService {
         cur1hEma50 >= prev1hEma50;
       const isUptrend = isMacroUptrend;
 
+      // Anti-Climax / Parabolic Pullback detection from 60H highs:
+      // Price was near top of 60H range (htf4hPosRatio > 0.68) or wide 12H span (>5.0%) while 1H momentum breaks down
+      const ltfRawFloor = structure.bottomBound;
+      const ltfRawSpan = structure.upperBound - ltfRawFloor;
+      const isWideSpan = ltfRawFloor > 0 && (ltfRawSpan / ltfRawFloor) > 0.050;
+      const isParabolicPullback = (htf4hPosRatio > 0.68 || isWideSpan) && (is1hBearFlow || (c.close < cur1hEma20 && cur1hEma20 < prev1hEma20));
+
       let floor: number;
       let ceiling: number;
       let center: number;
@@ -1030,10 +1037,10 @@ export class BacktestService {
         const ltfSpan = ltfCeiling - ltfFloor;
         if (ltfSpan <= 0) continue;
 
-        // 🌟 Scoped Asymmetric MTF Channel (Master Plan v14.0):
-        // - เมื่อตลาดไม่ได้อยู่ในขาลงใหญ่ 4H (!is4hBear): ใช้กรอบ 15m/1H มาตรฐาน 100% (รักษาไม้ทำเงินของ ETH และ AVAX ครบถ้วน)
-        // - เมื่อตลาดอยู่ในขาลงใหญ่ 4H (is4hBear): ถอยแนวรับ Floor ลงไปยึดค่าเฉลี่ยฐาน 24 ชั่วโมง (htf24hLow) เพื่อป้องกันการรับตื้นกลางอากาศ
-        if (is4hBear && ltfFloor > htf24hLow) {
+        // 🌟 Scoped Asymmetric MTF Channel (Master Plan v15.0):
+        // - เมื่อ 4H Bear หรือกำลังเกิด Parabolic Pullback จากยอดดอย และกรอบ LTF ลอยเหนือฐาน 24H:
+        //   ดึง Floor ลงมาผสมกับฐาน 24H (htf24hLow) เพื่อป้องกันการตั้งรับกลางอากาศ
+        if ((is4hBear || isParabolicPullback) && ltfFloor > htf24hLow) {
           floor = (ltfFloor + htf24hLow) * 0.5;
           channelSpan = Math.min(ltfSpan, floor * 0.045);
           ceiling = floor + channelSpan;
@@ -1146,7 +1153,7 @@ export class BacktestService {
         }
       }
 
-      // Span-Relative 2-Tier Hybrid Cut Loss:
+      // Span-Relative 2-Tier Hybrid Cut Loss with Bounded Max-Loss Cap per Lot:
       // - Tier 1 (Confirmed Close): 20% of channelSpan below floor
       // - Tier 2 (Bounded Hard Stop): 32% of channelSpan below floor (caps maximum loss on long breakdown candles)
       const closeCutLossPrice = channelSpan > 0
@@ -1156,14 +1163,6 @@ export class BacktestService {
         ? floor - channelSpan * 0.32
         : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
-
-      // ขอบเขต Cut Loss พิเศษสำหรับไม้ในเทรนด์ขาขึ้น (4H/Macro Bull ถ่างระยะกันสะบัดเป็น -38% / -48% ของกรอบ)
-      const uptrendCloseCutPrice = channelSpan > 0
-        ? floor - channelSpan * 0.38
-        : closeCutLossPrice * 0.995;
-      const uptrendWickCutPrice = channelSpan > 0
-        ? floor - channelSpan * 0.48
-        : emergencyWickCutPrice * 0.995;
 
       const baseCanTriggerCutLoss =
         gridCutLossMode !== "none" &&
@@ -1193,12 +1192,13 @@ export class BacktestService {
           }
         }
 
-        const effectiveCloseCut = isLotUptrendProtected
-          ? Math.max(uptrendCloseCutPrice, lot.buyPrice * 0.982)
-          : closeCutLossPrice;
-        const effectiveWickCut = isLotUptrendProtected
-          ? Math.max(uptrendWickCutPrice, lot.buyPrice * 0.978)
-          : emergencyWickCutPrice;
+        // Bounded Loss Cap per Lot: ป้องกันความเสียหายหนักในเหรียญที่กรอบถ่างกว้าง (>5%) หลังพุ่งแรง
+        // จำกัดเพดานขาดทุนสูงสุดต่อไม้ไม่เกิน -1.45% (Close) และ -1.85% (Wick)
+        const maxLossClosePrice = lot.buyPrice * 0.9855;
+        const maxLossWickPrice = lot.buyPrice * 0.9815;
+
+        const effectiveCloseCut = Math.max(closeCutLossPrice, maxLossClosePrice);
+        const effectiveWickCut = Math.max(emergencyWickCutPrice, maxLossWickPrice);
 
         const isEmergencyWickHit = baseCanTriggerCutLoss && c.low <= effectiveWickCut;
         const isConfirmedCloseCutHit = baseCanTriggerCutLoss && c.close <= effectiveCloseCut;
@@ -1379,10 +1379,10 @@ export class BacktestService {
         const refEntrySpan = (lot.ceilingAtEntry && lot.floorAtEntry) ? (lot.ceilingAtEntry - lot.floorAtEntry) : channelSpan;
         if (enableGridTrailingStop && refEntrySpan > 0 && lot.peakPrice > lot.buyPrice) {
           const roundtripTakerCost = makerCostPerFill + takerCostPerFill;
-          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 44% ของกรอบ (หรือบวก >= +0.65% จากทุน) และราคาปิดยืนเหนือจุดล็อกทุน
-          const lockEarly = lot.buyPrice * (1 + roundtripTakerCost + 0.0020);
+          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 46% ของกรอบ (หรือบวก >= +0.75% จากทุน) และราคาปิดยืนเหนือจุดล็อกทุน
+          const lockEarly = lot.buyPrice * (1 + roundtripTakerCost + 0.0026);
           if (
-            (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.44 || lot.peakPrice >= lot.buyPrice * 1.0065) &&
+            (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.46 || lot.peakPrice >= lot.buyPrice * 1.0075) &&
             c.close > lockEarly
           ) {
             lot.beLocked = true;
@@ -1585,13 +1585,39 @@ export class BacktestService {
       const minRecent4Low = recent4Lows.length > 0 ? Math.min(...recent4Lows) : c.low;
       const isEstablishedHorizontalFloor = floor > 0 && minRecent4Low > floor * 1.0005;
 
-      // 🌐 Scoped 4H Bear Gate (แทรกแซงเฉพาะเมื่อกราฟ 4H เป็นขาลงชัดเจน เพื่อไม่ให้ไปตัดไม้ทำกำไรของ ETH/AVAX ในช่วง Sideway/Bull):
+      // 🌐 Scoped HTF / Anti-Climax Block:
       let isHtfBlocked = false;
       if (is4hBear) {
         if (htf4hPosRatio > 0.52 || (is1hBearFlow && !is1hStabilized)) {
           isHtfBlocked = true;
         }
+      } else if (isParabolicPullback) {
+        if (htf4hPosRatio > 0.65 || (is1hBearFlow && !is1hStabilized)) {
+          isHtfBlocked = true;
+        }
       }
+
+      // 🧬 Market DNA Kaufman Efficiency Ratio (ER48) over previous 48 closed candles (Zero look-ahead)
+      let er48 = 0.14;
+      if (i >= 48) {
+        const netDisp = Math.abs(candles[i - 1].close - candles[i - 48].close);
+        let pathSum = 0;
+        for (let j = i - 47; j <= i - 1; j++) {
+          pathSum += Math.abs(candles[j].close - candles[j - 1].close);
+        }
+        if (pathSum > 0) {
+          er48 = netDisp / pathSum;
+        }
+      }
+
+      // Anti-FastKnife & Demand Absorption Check for new entries:
+      const prevCandle = i > 0 ? candles[i - 1] : c;
+      const prevBarRange = prevCandle.high - prevCandle.low;
+      const prevLowerWick = Math.min(prevCandle.open, prevCandle.close) - prevCandle.low;
+      const prevLowerWickRatio = prevBarRange > 0 ? prevLowerWick / prevBarRange : 0;
+      const isPrevSolidRed = prevCandle.close < prevCandle.open && prevLowerWickRatio < 0.12 && prevCandle.low < (candles[Math.max(0, i - 2)]?.low ?? prevCandle.low);
+      const isKnifeDumpingOnWideChannel = (channelSpan / floor > 0.048) && isPrevSolidRed;
+      const isOneWayMomentumDumping = er48 > 0.38 && c.close < curEma50 && c.close < cur1hEma20;
 
       let isRegimeBlocked = !structure.isSwingConfirmed;
       if (heldLots.length > 0 && lockedChannel !== null) {
@@ -1605,6 +1631,8 @@ export class BacktestService {
           const isBearSpike = (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12;
           if (
             isHtfBlocked ||
+            isKnifeDumpingOnWideChannel ||
+            isOneWayMomentumDumping ||
             (!isRange && !isBullishRegime) ||
             !isEstablishedHorizontalFloor ||
             consecutiveReds >= 4 ||
@@ -1615,7 +1643,7 @@ export class BacktestService {
         } else {
           const canEstablish = structure.gridZone?.canEstablishChannel !== false;
           const notDropping = !structure.isDowntrendDropActive;
-          if (isHtfBlocked || (!isRange && !isBullishRegime) || !canEstablish || !notDropping) {
+          if (isHtfBlocked || isKnifeDumpingOnWideChannel || isOneWayMomentumDumping || (!isRange && !isBullishRegime) || !canEstablish || !notDropping) {
             isRegimeBlocked = true;
           }
         }

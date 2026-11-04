@@ -9150,9 +9150,44 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - **LINK/USDT**: ผลขาดทุนลดลงฮวบจาก -$8.46 เหลือเพียง **-$2.67 (-1.33%)**, Win Rate **76.6%**
   - **ETH/USDT**: ผลงานฟื้นตัวจาก -$4.56 ขึ้นมาเกือบเท่าทุนที่ **-$0.39 (-0.19%)**, Profit Factor **0.99**
   - **ADA/USDT**: ผลขาดทุนต่ำเพียง **-$2.82 (-1.41%)**, Win Rate **75.5%**
+---
+
+## 303. v0.3.0.56 — Master Plan v15.0: Market DNA Adaptive Grid & Out-of-Sample Generalization (`src/backtest-service.ts`, `package.json`, `src/version.ts`)
+
+- **สาเหตุของปัญหาและข้อค้นพบจากการทดสอบ Out-of-Sample 50 สินทรัพย์ (Market DNA Research across 59 Assets)**:
+  1. **Altcoin Parabolic Pullback Trap**:
+     - เหรียญที่ขาดทุนหนักที่สุดในกลุ่ม Out-of-Sample ไม่ได้อยู่ในขาลง 4H แต่เป็นเหรียญที่เพิ่งพุ่งแรงมาก (`ZEC +144%`, `INJ +44.7%`, `AAVE +45.8%`, `LTC +21.5%`) ทำให้ `!is4hBear` แต่มีแรงเทขายระดับ 1 ชั่วโมง (`is1hBearFlow` หลุด 1H EMA20) บอทเดิมไม่มีเกราะป้องกันจึงไปตั้งรับมีดบนยอดดอย
+  2. **Payoff Asymmetry จากการถ่าง Uptrend Cut Loss Cushion (`-0.38 * span`)**:
+     - การถ่าง Cut Loss ในขาขึ้นทำให้เวลาหลุดกรอบในเหรียญที่กรอบกว้าง (`span > 5%`) เสียหายหนักถึง `-2.0%` ถึง `-2.5%` ต่อไม้ ทำให้ต้องชนะ Trail ถึง 4–5 ไม้กว่าจะตามทุนคืนได้
+  3. **One-Way Momentum & Fast-Knife Drops**:
+     - สถิติบ่งชี้ว่าเหรียญที่ชนะตลาดจะมีค่า `Kaufman Efficiency Ratio (ER48) <= 0.147` (แกว่งสลับฟันปลา) และมีสัดส่วนไส้เทียนล่าง (`DipWick >= 32%`) เมื่อลงมาแตะแนวรับ ขณะที่ช่วงขาดทุนมักเกิดจากแท่งแดงตันไร้ไส้ล่างทิ้งตัวลงมาต่อเนื่อง
+- **การปรับปรุงและสถาปัตยกรรมใหม่ (Master Plan v15.0)**:
+  1. **Anti-Climax / Parabolic Pullback Guard**:
+     - ตรวจจับเมื่อราคาอยู่ในโซนบนของ 60H (`htf4hPosRatio > 0.68`) หรือกรอบกว้างผิดปกติ (`span > 5.0%`) และโมเมนตัม 1H ไหลลง (`is1hBearFlow` หรือ `c.close < 1hEma20 && 1hEma20 < prev1hEma20`)
+     - ถอย Floor ลงไปผสมกับฐาน 24H (`(ltfFloor + htf24hLow) * 0.5`) และบล็อกการรับมีดจนกว่าจะสร้างฐานหยุดไหล
+  2. **Unified Bounded Max-Loss Cap per Lot**:
+     - ยกเลิกการถ่าง Cut Loss ในขาขึ้น กลับมาใช้ระยะมาตรฐาน `-0.20 * span` (Close) และ `-0.32 * span` (Wick)
+     - กำหนดเพดานขาดทุนสูงสุดต่อไม้ไม่เกิน `-1.45%` (Close Cut) และ `-1.85%` (Emergency Wick Cut) ป้องกันความเสียหายหนักในเหรียญกรอบกว้าง
+  3. **Market DNA Zero-Lookahead Filters (`er48` & Fast-Knife Wick Filter)**:
+     - คำนวณ `ER48` ย้อนหลัง 48 แท่งที่ปิดแล้ว หาก `er48 > 0.38` และราคากำลังไหลลงทางเดียว ให้ชะลอการเปิดไม้แรก
+     - หากกรอบกว้าง (`span > 4.8%`) และแท่งก่อนหน้าเป็นแท่งแดงทิ้งตัวไร้ไส้ล่าง (`prevLowerWickRatio < 0.12`) ให้รอแท่งดึงไส้ล่างก่อนตั้งรับ
+  4. **Ratchet Trailing Stop Step 1 Optimization**:
+     - ขยับจุดเริ่มติดอาวุธ Step 1 จาก 44% เป็น 46% ของกรอบ (หรือ `+0.75%` จากทุน) และล็อกกำไรที่ `+0.26%` เหนือต้นทุนรวม เพิ่มอัตราการวิ่งไปชน `GRID_TP` (52% ของกรอบ Fee 0%)
+- **ผลการทดสอบเปรียบเทียบ (Empirical Validation)**:
+  - **9 Standard Benchmark Assets**:
+    - **Crypto 6-Asset Average**: **พุ่งทำสถิติสูงสุดใหม่ที่ +2.31%** (จากเดิม +1.95%)
+    - **ETH/USDT**: **พลิกจากขาดทุนขึ้นมาทำกำไรที่ +$1.31 (+0.66%)**
+    - **ADA/USDT**: **พลิกจากขาดทุนขึ้นมาทำกำไรมหาศาลที่ +$9.29 (+4.64%)**
+    - **Overall Average Net Return**: คงความแข็งแกร่งที่ **+1.51%**
+  - **50 Out-of-Sample Assets (Unseen Market)**:
+    - **Crypto OOS Average**: **ลดผลขาดทุนลงมากกว่าครึ่งจาก -6.19% เหลือเพียง -2.76% (ดีขึ้นถึง +3.43%)**
+    - **Crypto Alt/DeFi Group**: ลดผลขาดทุนจาก -9.63% เหลือ -3.30% (โดย `UNI` พุ่งจาก +4.37% เป็น `+10.12%`, `TRUMP` พุ่งเป็น `+9.59%`, `FIL` พลิกเป็น `+2.41%`, `WLD` พลิกเป็น `+1.54%`, `NEAR` พลิกเป็น `+2.83%`, `HBAR` พลิกเป็น `+0.98%`)
+    - **Stock Value Group**: `XOM` พุ่งจาก +6.20% เป็น **`+8.86%`** (PF 4.00, MaxDD เพียง 1.79%), `MA` พลิกเป็น `+0.60%`
+    - **Overall OOS Average**: ขาดทุนลดลงจาก -3.02% เหลือเพียง **-1.47%**
 - **Version Bump & Typecheck**:
-  - อัปเดตเวอร์ชันเป็น **`0.3.0.55`** ใน `package.json` และ `src/version.ts`
-  - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.56`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+
 
 
 
