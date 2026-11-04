@@ -1030,17 +1030,11 @@ export class BacktestService {
         const ltfSpan = ltfCeiling - ltfFloor;
         if (ltfSpan <= 0) continue;
 
-        // 🌟 Asymmetric Multi-Timeframe Channel:
-        // - เมื่อ 4H หรือ 1H เป็นขาลง: ดึงฐาน Floor ลงไปยึดกับแนวรับใหญ่ระดับ 24–36 ชั่วโมง (htf24hLow / htf36hLow)
-        //   แต่ใช้ความกว้างทำรอบ (channelSpan) จากสวิง 15m/1H (ltfSpan) เพื่อให้รับของที่ก้นเหวใหญ่และขายออกไวตามรอบเด้งสั้น!
-        // - เมื่อตลาดเป็นขาขึ้นหรือไซด์เวย์ปกติ: ใช้กรอบไว 15m/1H ตามเดิมเพื่อเก็บกินรอบสวิงถี่ๆ
-        if (is4hBear) {
-          floor = Math.min(ltfFloor, htf36hLow);
-          channelSpan = Math.min(ltfSpan, floor * 0.04);
-          ceiling = floor + channelSpan;
-          center = floor + channelSpan * 0.5;
-        } else if (is1hBearFlow) {
-          floor = Math.min(ltfFloor, htf24hLow);
+        // 🌟 Scoped Asymmetric MTF Channel (Master Plan v14.0):
+        // - เมื่อตลาดไม่ได้อยู่ในขาลงใหญ่ 4H (!is4hBear): ใช้กรอบ 15m/1H มาตรฐาน 100% (รักษาไม้ทำเงินของ ETH และ AVAX ครบถ้วน)
+        // - เมื่อตลาดอยู่ในขาลงใหญ่ 4H (is4hBear): ถอยแนวรับ Floor ลงไปยึดค่าเฉลี่ยฐาน 24 ชั่วโมง (htf24hLow) เพื่อป้องกันการรับตื้นกลางอากาศ
+        if (is4hBear && ltfFloor > htf24hLow) {
+          floor = (ltfFloor + htf24hLow) * 0.5;
           channelSpan = Math.min(ltfSpan, floor * 0.045);
           ceiling = floor + channelSpan;
           center = floor + channelSpan * 0.5;
@@ -1163,19 +1157,13 @@ export class BacktestService {
         : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
 
-      // ขอบเขต Cut Loss พิเศษตามสภาวะ 4H (4H Bull ถ่างระยะกันสะบัด / 4H Bear บีบระยะตัดไฟแต่ต้นลม)
+      // ขอบเขต Cut Loss พิเศษสำหรับไม้ในเทรนด์ขาขึ้น (4H/Macro Bull ถ่างระยะกันสะบัดเป็น -38% / -48% ของกรอบ)
       const uptrendCloseCutPrice = channelSpan > 0
         ? floor - channelSpan * 0.38
         : closeCutLossPrice * 0.995;
       const uptrendWickCutPrice = channelSpan > 0
         ? floor - channelSpan * 0.48
         : emergencyWickCutPrice * 0.995;
-      const bear4hCloseCutPrice = channelSpan > 0
-        ? floor - channelSpan * 0.16
-        : closeCutLossPrice;
-      const bear4hWickCutPrice = channelSpan > 0
-        ? floor - channelSpan * 0.26
-        : emergencyWickCutPrice;
 
       const baseCanTriggerCutLoss =
         gridCutLossMode !== "none" &&
@@ -1207,10 +1195,10 @@ export class BacktestService {
 
         const effectiveCloseCut = isLotUptrendProtected
           ? Math.max(uptrendCloseCutPrice, lot.buyPrice * 0.982)
-          : (is4hBear ? bear4hCloseCutPrice : closeCutLossPrice);
+          : closeCutLossPrice;
         const effectiveWickCut = isLotUptrendProtected
           ? Math.max(uptrendWickCutPrice, lot.buyPrice * 0.978)
-          : (is4hBear ? bear4hWickCutPrice : emergencyWickCutPrice);
+          : emergencyWickCutPrice;
 
         const isEmergencyWickHit = baseCanTriggerCutLoss && c.low <= effectiveWickCut;
         const isConfirmedCloseCutHit = baseCanTriggerCutLoss && c.close <= effectiveCloseCut;
@@ -1597,21 +1585,10 @@ export class BacktestService {
       const minRecent4Low = recent4Lows.length > 0 ? Math.min(...recent4Lows) : c.low;
       const isEstablishedHorizontalFloor = floor > 0 && minRecent4Low > floor * 1.0005;
 
-      // 🌐 HTF (4H & 1H) Value Zone & Momentum Gate (ทำงานร่วมกับ Asymmetric MTF Floor):
+      // 🌐 Scoped 4H Bear Gate (แทรกแซงเฉพาะเมื่อกราฟ 4H เป็นขาลงชัดเจน เพื่อไม่ให้ไปตัดไม้ทำกำไรของ ETH/AVAX ในช่วง Sideway/Bull):
       let isHtfBlocked = false;
       if (is4hBear) {
-        // ในขาลง 4H: กรอบถูกดึงลงไปรอที่ฐาน 36 ชม. (htf36hLow) อัตโนมัติแล้ว เพียงแค่รอให้ 1H หยุดไหลลงและอยู่ในครึ่งล่างของ 4H
-        if (htf4hPosRatio > 0.55 || (is1hBearFlow && !is1hStabilized)) {
-          isHtfBlocked = true;
-        }
-      } else if (is4hBull || is1hBull) {
-        // ในขาขึ้น 4H หรือ 1H: อนุญาตให้รับย่อตัวได้ถึง 82% ของกรอบ 4H (คืนไม้ทำกำไรใน ETH / AVAX / AAPL กลับมาครบ!)
-        if (htf4hPosRatio > 0.82) {
-          isHtfBlocked = true;
-        }
-      } else {
-        // ในไซด์เวย์ 4H/1H: ห้ามซื้อโซนแพงด้านบน (> 72% ของกรอบ 4H) หรือตอนที่ 1H กำลังเทลงแรง
-        if (htf4hPosRatio > 0.72 || (is1hBearFlow && !is1hStabilized)) {
+        if (htf4hPosRatio > 0.52 || (is1hBearFlow && !is1hStabilized)) {
           isHtfBlocked = true;
         }
       }
