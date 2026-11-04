@@ -308,7 +308,10 @@ export class DowStructureEngine {
 
     // 5.1 Trendline-Aware Ceiling Adjustment:
     // If an unbroken descending trendline is pressing down below upperBound, cap the channel ceiling to respect the trendline
+    // (Skip for DONCHIAN_ATR so true 48-bar Donchian ceiling is never artificially crushed during pullbacks into the buy zone)
     if (
+      mode !== "DONCHIAN_ATR" &&
+      (mode as string) !== "DONCHIAN" &&
       isSwingConfirmed &&
       bottomBound > 0 &&
       upperBound > bottomBound &&

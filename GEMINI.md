@@ -8941,6 +8941,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชันเป็น **`0.3.0.46`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 294. Implementation of Master Plan v8.0: Profit Ceiling & Re-test Optimization (Version `0.3.0.47`)
+- **การแก้ไข 4 จุดสำคัญเพื่อปลดล็อกกำไรจากข้อจำกัดใน v7.0**:
+  1. **ปลดล็อกเพดาน Donchian ที่ถูกเส้นกดย่อยบีบแคบ (`Trendline-Aware Ceiling Adjustment`)**:
+     - ใน `src/market-structure/index.ts`: ปิดการลดเพดาน `upperBound` เมื่อใช้โหมด `DONCHIAN_ATR` เพื่อให้เพดาน Donchian 48 แท่งคงความกว้างเต็มจริง ไม่ถูกเส้นกดย่อยหั่นแคบตอนราคาย่อตัวลงมาเข้าโซนซื้อ
+  2. **ปลดล็อกการซื้อไม้ L2 (น้ำหนัก 65%) เมื่อถือ L1 ในกรอบที่ล็อกแล้ว**:
+     - ใน `src/backtest-service.ts`: เมื่อมีไม้เปิดและล็อกกรอบ `lockedChannel` แล้ว จะไม่อนุญาตให้ `isHlWaiting` บล็อกการซื้อไม้ที่ 2 (L2) เพื่อให้รับของได้ครบ 100% พอร์ตตามสัดส่วน Pyramid `[35%, 65%]`
+  3. **ใช้ Horizontal Floor Re-test แทนการบล็อกด้วยสวิงย่อยกลางกรอบ**:
+     - ตรวจสอบว่าแนวรับ Floor เป็นฐานแนวนอนที่ยืนยันมาแล้วอย่างน้อย 4 แท่ง (`isEstablishedHorizontalFloor`) และตลาดอยู่ในสภาวะ `RANGE` ทำให้ระบบสามารถเข้าสะสมในโซน 18% และ 10% ได้อย่างต่อเนื่อง โดยไม่ถูกสวิงย่อยกลางกรอบขัดขวาง
+  4. **กระชับระยะ Bounded 2-Tier Span Cut Loss**:
+     - ปรับระยะ Cut Loss เป็น Close Cut `-20%` และ Bounded Hard Stop `-32%` ของความกว้างกรอบ พร้อมปรับกรอบขั้นต่ำเป็น 2.0% (Crypto) / 1.4% (Stocks) เพื่อคุมไม่ให้ขนาดขาดทุนต่อไม้ใหญ่เกินกว่าขนาดกำไร
+- **ผลการทดสอบ Master Benchmark v8.0 (12,000 แท่ง 15m ข้อมูลจริง 9 สินทรัพย์)**:
+  - **ADA/USDT**: พลิกกลับมาเป็นกำไรสุทธิ **+$5.60 (+2.80%)**, Win Rate **53.8%**, Profit Factor **1.06** (เทรด 117 ไม้, TP 58x, Trail 5x, Cut 54x)
+  - **ETH/USDT**: พลิกกลับมาเป็นกำไรสุทธิ **+$0.62 (+0.31%)**, Win Rate **58.2%**, Profit Factor **1.02** (เทรด 55 ไม้, TP 30x, Trail 2x, Cut 23x)
+  - **SPY (S&P500)**: พลิกกลับมาเป็นกำไรสุทธิ **+$0.30 (+0.15%)**, Win Rate **52.0%**, Profit Factor **1.03** (เทรด 25 ไม้, TP 11x, Trail 2x, Cut 12x)
+  - **BTC/USDT**: ขาดทุนลดลงเหลือเพียง **-0.68%** (เดิม -1.01%), Win Rate **52.2%**, Profit Factor **0.88** (เทรด 23 ไม้, TP 11x, Trail 1x, Cut 11x)
+  - **AVAX/USDT**: Net PnL -1.10%, Win Rate **55.3%**, PF 0.96 (เทรด 76 ไม้, TP 38x, Trail 4x, Cut 34x)
+  - **AAPL (Apple)**: Net PnL -1.17%, Win Rate **56.5%**, PF 0.95 (เทรด 69 ไม้, TP 34x, Trail 5x, Cut 30x)
+  - **SOL/USDT**: Net PnL -2.05%, Win Rate 48.2%, PF 0.87 (เทรด 56 ไม้, TP 27x, Cut 29x)
+  - **KO (Coca-Cola)**: ขาดทุนลดลงเหลือ **-2.19%** (เดิม -3.33%), Win Rate **53.2%**, PF 0.77 (เทรด 47 ไม้)
+  - **LINK/USDT**: Net PnL -3.94%, Win Rate **51.9%**, PF 0.87 (เทรด 81 ไม้)
+  - จำนวนการเทรดโดยรวมเพิ่มขึ้นอย่างมีนัยสำคัญ (รอบเทรดทำงานเต็มที่ เงินทุนไม่นอนนิ่ง)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.47`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 

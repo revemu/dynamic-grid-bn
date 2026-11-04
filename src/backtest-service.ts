@@ -900,8 +900,8 @@ export class BacktestService {
 
       const curAtr = atrs[i] ?? (c.close * 0.005);
       const atrPct = c.close > 0 ? (curAtr / c.close) * 100 : 0.5;
-      const minWidthFloor = opts.minChannelWidthPct ?? 1.5;
-      const dynamicMinWidth = Math.max(minWidthFloor, Math.min(4.0, atrPct * 3.5));
+      const minWidthFloor = opts.minChannelWidthPct ?? 2.0;
+      const dynamicMinWidth = Math.max(minWidthFloor, Math.min(4.5, atrPct * 4.0));
 
       const structure = dow.getStructure(c.close, undefined, {
         useOnlyClosedCandles: true,
@@ -1038,14 +1038,14 @@ export class BacktestService {
       }
 
       // Span-Relative 2-Tier Hybrid Cut Loss:
-      // - Tier 1 (Confirmed Close): 22% of channelSpan below floor
-      // - Tier 2 (Emergency Wick):  45% of channelSpan below floor
+      // - Tier 1 (Confirmed Close): 20% of channelSpan below floor
+      // - Tier 2 (Bounded Hard Stop): 32% of channelSpan below floor (caps maximum loss on long breakdown candles)
       const closeCutLossPrice = channelSpan > 0
-        ? floor - channelSpan * 0.22
+        ? floor - channelSpan * 0.20
         : floor * (1 - (opts.floorBufferPct ?? 0.6) / 100);
       const emergencyWickCutPrice = channelSpan > 0
-        ? floor - channelSpan * 0.45
-        : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 2.0) / 100);
+        ? floor - channelSpan * 0.32
+        : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
       const canTriggerCutLoss =
         gridCutLossMode !== "none" &&
@@ -1061,9 +1061,11 @@ export class BacktestService {
         const isEmergencyWickHit = canTriggerCutLoss && c.low <= emergencyWickCutPrice;
         const isConfirmedCloseCutHit = canTriggerCutLoss && c.close <= closeCutLossPrice;
 
-        // 1) Cut Loss Hit (Taker Execution with Taker Fee + Taker Slippage)
+        // 1) Cut Loss Hit (Taker Execution with Taker Fee + Taker Slippage, capped at emergencyWickCutPrice)
         if (isEmergencyWickHit || isConfirmedCloseCutHit) {
-          const rawCutExit = isEmergencyWickHit ? emergencyWickCutPrice : c.close;
+          const rawCutExit = isEmergencyWickHit
+            ? emergencyWickCutPrice
+            : Math.max(c.close, emergencyWickCutPrice);
           const exitPrice = rawCutExit * (1 - takerSlippagePct / 100);
           const proceeds = lot.qty * exitPrice * (1 - takerFeePct / 100);
           const invest = lot.qty * lot.buyPrice;
@@ -1418,13 +1420,29 @@ export class BacktestService {
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
       const trancheQuote = zoneBudgetQuote / Math.max(1, curBuys.length);
 
+      // ตรวจสอบว่าแนวรับ Floor ของ Donchian เป็นฐานแนวนอนที่ตั้งตัวแล้ว (ไม่ได้เพิ่งทุบทำจุดต่ำสุดใหม่ใน 4 แท่งล่าสุด)
+      const recent4Lows = candles.slice(Math.max(0, i - 3), i + 1).map((x) => x.low);
+      const minRecent4Low = recent4Lows.length > 0 ? Math.min(...recent4Lows) : c.low;
+      const isEstablishedHorizontalFloor = structure.bottomBound > 0 && minRecent4Low > structure.bottomBound * 1.0005;
+
       let isRegimeBlocked = !structure.isSwingConfirmed;
-      if (regimeFilterMode === "SIDEWAY_ONLY") {
+      if (heldLots.length > 0 && lockedChannel !== null) {
+        // เมื่อเปิดไม้ L1 และล็อกกรอบแล้ว อนุญาตให้รับไม้ L2 (65%) ในกรอบเดิมได้เสมอตราบใดที่ยังไม่หลุด Cut Loss
+        isRegimeBlocked = false;
+      } else if (regimeFilterMode === "SIDEWAY_ONLY") {
         const isRange = structure.regime === "RANGE";
-        const canEstablish = structure.gridZone?.canEstablishChannel !== false;
-        const notDropping = !structure.isDowntrendDropActive;
-        if (!isRange || !canEstablish || !notDropping) {
-          isRegimeBlocked = true;
+        const isDonchianMode = (opts.channelMode ?? "DONCHIAN_ATR") === "DONCHIAN_ATR";
+        if (isDonchianMode) {
+          const isBearSpike = (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12;
+          if (!isRange || !isEstablishedHorizontalFloor || consecutiveReds >= 4 || isBearSpike) {
+            isRegimeBlocked = true;
+          }
+        } else {
+          const canEstablish = structure.gridZone?.canEstablishChannel !== false;
+          const notDropping = !structure.isDowntrendDropActive;
+          if (!isRange || !canEstablish || !notDropping) {
+            isRegimeBlocked = true;
+          }
         }
       } else if (regimeFilterMode === "NO_DOWNTREND") {
         const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
