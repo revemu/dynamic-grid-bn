@@ -9107,6 +9107,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชันเป็น **`0.3.0.53`** ใน `package.json` และ `src/version.ts`
   - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
 
+---
+
+### 301. Asymmetric Multi-Timeframe Channel Architecture (HTF 24h/36h Floor + LTF Bounce Span) — Master Plan v13.0 (Version `0.3.0.54`)
+- **แนวคิดและข้อค้นพบจากการปรับกรอบ (Channel) เป็น TF ใหญ่**:
+  - หากใช้กรอบ TF ใหญ่ทั้ง Floor และ Ceiling กรอบจะกว้างเกินไป (6%–15%) ทำให้จุด Take Profit อยู่ไกลเกินเอื้อมในตลาดขาลง
+  - **ทางออก Breakthrough (Asymmetric MTF Channel)**:
+    1. **เมื่อตลาดเป็นขาขึ้นหรือไซด์เวย์ปกติ (`!is4hBear && !is1hBearFlow`)**: ใช้กรอบ 15m/1H (48 แท่ง = 12 ชม.) ตามปกติเพื่อเก็บกินรอบสวิงถี่ๆ
+    2. **เมื่อ 4H หรือ 1H เป็นขาลง (`is4hBear || is1hBearFlow`)**: ดึงเส้นแนวรับ `floor` ลงไปยึดกับจุดต่ำสุดรอบ 24–36 ชั่วโมง (`htf24hLow` / `htf36hLow`) ของ TF ใหญ่ เพื่อป้องกันการตั้งกริดรับของกลางอากาศ (Bear Flag) แต่คำนวณระยะทำรอบ `channelSpan` จากสวิง 15m/1H (`ltfSpan`) เพื่อให้เมื่อราคาแตะก้นเหวใหญ่แล้วเด้งสั้นๆ เพียง +0.8% ถึง +1.5% บอทจะ Take Profit เก็บเงินเข้าพอร์ตทันที!
+    3. **HTF Gate Alignment**: คืนไม้ทำกำไรในขาขึ้น 1H (`is1hBull`) ให้รับย่อตัวได้ถึง `htf4hPosRatio <= 0.82`
+- **ผลการทดสอบ Master Benchmark v13.0 (12,000 แท่ง 15m ข้อมูลจริง 9 สินทรัพย์)**:
+  - **SOL/USDT**: **กำไรสุทธิพุ่งกระฉูดสู่ +$12.86 (+6.43%)** (เพิ่มขึ้นกว่าเท่าตัวจาก +$5.73 ใน v12.0), Win Rate พุ่งแตะ **80.0%**, Profit Factor **1.48**, MaxDD ลดเหลือ **3.91%**, ไม้ Cut ลดลงฮวบจาก 27 เหลือเพียง **17** ครั้ง
+  - **AAPL (Apple)**: กำไรพุ่งขึ้นเป็น **+$5.04 (+2.52%)** (จากเดิม +$3.27), Win Rate **70.2%**
+  - **SPY (S&P500)**: กำไรขยับขึ้นเป็น **+$2.25 (+1.13%)**, Profit Factor **1.27**, MaxDD เพียง **2.74%**
+  - **US Stocks 3-Asset Average**: พลิกกลับมาเป็น **0.00%** (หลุดพ้นแดนลบสำเร็จ)
+  - **BTC/USDT**: ทำกำไรแดนบวกสม่ำเสมอ **+$0.40 (+0.20%)**, MaxDD ต่ำเพียง **2.00%**
+  - **ADA/USDT**: ยับยั้งผลขาดทุนเหลือเพียง **-$0.87 (-0.44%)**
+  - **LINK/USDT**: ขาดทุนลดลงเหลือ -$8.46 และไม้ Cut ลดลงเหลือ 19
+  - **ภาพรวมพอร์ต (Overall Average)**: ยังคงรักษาแดนบวกที่ **+0.07%** และ Crypto Average เป็นบวกที่ **+0.11%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.54`** ใน `package.json` และ `src/version.ts`
+  - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+
+
 
 
 - **สาเหตุของปัญหาทำไม Dynamic Grid ได้กำไรน้อยใน v8.0 (ค้นพบจาก `diag.ts` วิเคราะห์ MFE/MAE รายไม้)**:

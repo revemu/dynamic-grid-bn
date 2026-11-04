@@ -949,6 +949,64 @@ export class BacktestService {
         floorBufferPct: opts.floorBufferPct ?? 0.0,
       });
 
+      // 🌐 Multi-Timeframe (4H & 1H) Macro Governor & Structural Floor Calculation:
+      const curEma50 = ema50s[i] ?? c.close;
+      const cur1hEma20 = ema80s[i] ?? c.close;
+      const prev1hEma20 = ema80s[Math.max(0, i - 4)] ?? cur1hEma20;
+      const cur1hEma50 = ema200s[i] ?? c.close;
+      const prev1hEma50 = ema200s[Math.max(0, i - 8)] ?? cur1hEma50;
+      const cur4hEma20 = ema320s[i] ?? c.close;
+      const prev4hEma20 = ema320s[Math.max(0, i - 16)] ?? cur4hEma20;
+      const cur4hEma50 = ema800s[i] ?? c.close;
+      const prev4hEma50 = ema800s[Math.max(0, i - 16)] ?? cur4hEma50;
+
+      // คำนวณกรอบราคา 4H (240 แท่ง = 60 ชม.), 36h (144 แท่ง), และ 24h (96 แท่ง) แบบใช้เฉพาะแท่งที่ปิดแล้ว (i - 1) เพื่อป้องกัน Lookahead
+      const closedEndIdx = Math.max(0, i - 1);
+      let htf4hHigh = candles[closedEndIdx].high;
+      let htf4hLow = candles[closedEndIdx].low;
+      let htf36hLow = candles[closedEndIdx].low;
+      let htf24hLow = candles[closedEndIdx].low;
+      const start240 = Math.max(0, closedEndIdx - 240);
+      const start144 = Math.max(0, closedEndIdx - 144);
+      const start96 = Math.max(0, closedEndIdx - 96);
+      for (let k = start240; k <= closedEndIdx; k++) {
+        const ck = candles[k];
+        if (ck.high > htf4hHigh) htf4hHigh = ck.high;
+        if (ck.low < htf4hLow) htf4hLow = ck.low;
+        if (k >= start144 && ck.low < htf36hLow) htf36hLow = ck.low;
+        if (k >= start96 && ck.low < htf24hLow) htf24hLow = ck.low;
+      }
+      const htf4hSpan = Math.max(0, htf4hHigh - htf4hLow);
+      const htf4hPosRatio = htf4hSpan > 0 ? (c.close - htf4hLow) / htf4hSpan : 0.5;
+
+      // วิเคราะห์ทิศทาง 4H และ 1H
+      const is4hBull =
+        c.close > cur4hEma50 &&
+        cur4hEma20 >= cur4hEma50 * 0.999 &&
+        cur4hEma50 >= prev4hEma50 * 0.9998;
+      const is4hBear =
+        c.close < cur4hEma50 &&
+        cur4hEma20 < cur4hEma50 * 0.999 &&
+        cur4hEma20 < prev4hEma20;
+      const is1hBull =
+        c.close > cur1hEma50 &&
+        cur1hEma20 >= cur1hEma50 * 0.999;
+      const is1hBearFlow =
+        c.close < cur1hEma20 &&
+        cur1hEma20 < cur1hEma50 &&
+        cur1hEma20 < prev1hEma20;
+      const is1hStabilized =
+        c.close >= (candles[Math.max(0, i - 3)]?.open ?? c.open) ||
+        c.close >= cur1hEma20 * 0.998 ||
+        cur1hEma20 >= prev1hEma20;
+
+      const isMacroUptrend =
+        (structure.regime === "UPTREND" || is4hBull) &&
+        c.close > cur1hEma50 &&
+        curEma50 >= cur1hEma50 * 0.999 &&
+        cur1hEma50 >= prev1hEma50;
+      const isUptrend = isMacroUptrend;
+
       let floor: number;
       let ceiling: number;
       let center: number;
@@ -967,11 +1025,31 @@ export class BacktestService {
         lastZoneUnlockFloor = undefined;
         lockedChannel = null;
 
-        floor = structure.bottomBound;
-        ceiling = structure.upperBound;
-        center = structure.centerPrice;
-        channelSpan = ceiling - floor;
-        if (channelSpan <= 0) continue;
+        const ltfFloor = structure.bottomBound;
+        const ltfCeiling = structure.upperBound;
+        const ltfSpan = ltfCeiling - ltfFloor;
+        if (ltfSpan <= 0) continue;
+
+        // 🌟 Asymmetric Multi-Timeframe Channel:
+        // - เมื่อ 4H หรือ 1H เป็นขาลง: ดึงฐาน Floor ลงไปยึดกับแนวรับใหญ่ระดับ 24–36 ชั่วโมง (htf24hLow / htf36hLow)
+        //   แต่ใช้ความกว้างทำรอบ (channelSpan) จากสวิง 15m/1H (ltfSpan) เพื่อให้รับของที่ก้นเหวใหญ่และขายออกไวตามรอบเด้งสั้น!
+        // - เมื่อตลาดเป็นขาขึ้นหรือไซด์เวย์ปกติ: ใช้กรอบไว 15m/1H ตามเดิมเพื่อเก็บกินรอบสวิงถี่ๆ
+        if (is4hBear) {
+          floor = Math.min(ltfFloor, htf36hLow);
+          channelSpan = Math.min(ltfSpan, floor * 0.04);
+          ceiling = floor + channelSpan;
+          center = floor + channelSpan * 0.5;
+        } else if (is1hBearFlow) {
+          floor = Math.min(ltfFloor, htf24hLow);
+          channelSpan = Math.min(ltfSpan, floor * 0.045);
+          ceiling = floor + channelSpan;
+          center = floor + channelSpan * 0.5;
+        } else {
+          floor = ltfFloor;
+          ceiling = ltfCeiling;
+          center = structure.centerPrice;
+          channelSpan = ltfSpan;
+        }
 
         buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
         sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
@@ -1085,53 +1163,6 @@ export class BacktestService {
         : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
 
-      // 🌐 Multi-Timeframe (4H & 1H) Macro Governor Evaluation:
-      const curEma50 = ema50s[i] ?? c.close;
-      const cur1hEma20 = ema80s[i] ?? c.close;
-      const prev1hEma20 = ema80s[Math.max(0, i - 4)] ?? cur1hEma20;
-      const cur1hEma50 = ema200s[i] ?? c.close;
-      const prev1hEma50 = ema200s[Math.max(0, i - 8)] ?? cur1hEma50;
-      const cur4hEma20 = ema320s[i] ?? c.close;
-      const prev4hEma20 = ema320s[Math.max(0, i - 16)] ?? cur4hEma20;
-      const cur4hEma50 = ema800s[i] ?? c.close;
-      const prev4hEma50 = ema800s[Math.max(0, i - 16)] ?? cur4hEma50;
-
-      // คำนวณกรอบราคา 4H (ย้อนหลัง 15 แท่ง 4H = 240 แท่ง 15m)
-      let htf4hHigh = c.high;
-      let htf4hLow = c.low;
-      const htfStart = Math.max(0, i - 240);
-      for (let k = htfStart; k <= i; k++) {
-        if (candles[k].high > htf4hHigh) htf4hHigh = candles[k].high;
-        if (candles[k].low < htf4hLow) htf4hLow = candles[k].low;
-      }
-      const htf4hSpan = Math.max(0, htf4hHigh - htf4hLow);
-      const htf4hPosRatio = htf4hSpan > 0 ? (c.close - htf4hLow) / htf4hSpan : 0.5;
-
-      // วิเคราะห์ทิศทาง 4H และ 1H
-      const is4hBull =
-        c.close > cur4hEma50 &&
-        cur4hEma20 >= cur4hEma50 * 0.999 &&
-        cur4hEma50 >= prev4hEma50 * 0.9998;
-      const is4hBear =
-        c.close < cur4hEma50 &&
-        cur4hEma20 < cur4hEma50 * 0.999 &&
-        cur4hEma20 < prev4hEma20;
-      const is1hBearFlow =
-        c.close < cur1hEma20 &&
-        cur1hEma20 < cur1hEma50 &&
-        cur1hEma20 < prev1hEma20;
-      const is1hStabilized =
-        c.close >= (candles[Math.max(0, i - 3)]?.open ?? c.open) ||
-        c.close >= cur1hEma20 * 0.998 ||
-        cur1hEma20 >= prev1hEma20;
-
-      const isMacroUptrend =
-        (structure.regime === "UPTREND" || is4hBull) &&
-        c.close > cur1hEma50 &&
-        curEma50 >= cur1hEma50 * 0.999 &&
-        cur1hEma50 >= prev1hEma50;
-      const isUptrend = isMacroUptrend;
-
       // ขอบเขต Cut Loss พิเศษตามสภาวะ 4H (4H Bull ถ่างระยะกันสะบัด / 4H Bear บีบระยะตัดไฟแต่ต้นลม)
       const uptrendCloseCutPrice = channelSpan > 0
         ? floor - channelSpan * 0.38
@@ -1160,11 +1191,11 @@ export class BacktestService {
         );
 
         // ปรับเวลาถือครอง (Time-Decay Escape) ตามกระแสน้ำของ 4H:
-        // - 4H Bear: รีบออกที่จุดคุ้มทุนภายใน 10 แท่ง (2.5 ชม.) ก่อนที่คลื่น 4H จะทุบซ้ำ
+        // - 4H Bear: รีบออกที่จุดคุ้มทุนภายใน 12 แท่ง (3 ชม.) ก่อนที่คลื่น 4H จะทุบซ้ำ
         // - 4H Bull: ให้เวลาถือรันเทรนด์ 22 แท่ง (5.5 ชม.)
-        // - 4H Range: 16 แท่ง (4 ชม.)
+        // - 4H Range / 1H Bull: 18 แท่ง (4.5 ชม.)
         const isDippedBelowNormalFloor = isLotUptrendProtected && c.low <= closeCutLossPrice;
-        const escapeBarThreshold = isLotUptrendProtected ? 22 : (is4hBear ? 10 : 16);
+        const escapeBarThreshold = isLotUptrendProtected ? 22 : (is4hBear && !is1hBull ? 12 : 18);
 
         if ((holdingBars >= escapeBarThreshold || isDippedBelowNormalFloor) && !lot.isTimeDecayEscape) {
           const escapeTarget = lot.buyPrice * (1 + effectiveMinProfitPct / 100);
@@ -1561,26 +1592,26 @@ export class BacktestService {
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
       const trancheQuote = zoneBudgetQuote / Math.max(1, curBuys.length);
 
-      // ตรวจสอบว่าแนวรับ Floor ของ Donchian เป็นฐานแนวนอนที่ตั้งตัวแล้ว (ไม่ได้เพิ่งทุบทำจุดต่ำสุดใหม่ใน 4 แท่งล่าสุด)
+      // ตรวจสอบว่าแนวรับ Floor ปัจจุบัน (ทั้งกรณี LTF และ HTF 24h/36h Floor) เป็นฐานแนวนอนที่ตั้งตัวแล้ว (ไม่ได้เพิ่งทุบทำจุดต่ำสุดใหม่ใน 4 แท่งล่าสุด)
       const recent4Lows = candles.slice(Math.max(0, i - 3), i + 1).map((x) => x.low);
       const minRecent4Low = recent4Lows.length > 0 ? Math.min(...recent4Lows) : c.low;
-      const isEstablishedHorizontalFloor = structure.bottomBound > 0 && minRecent4Low > structure.bottomBound * 1.0005;
+      const isEstablishedHorizontalFloor = floor > 0 && minRecent4Low > floor * 1.0005;
 
-      // 🌐 HTF (4H & 1H) Value Zone & Momentum Gate (ป้องกันการตั้งกริดซื้อบนยอดดอย 4H และกัน Bear Flag 15m):
+      // 🌐 HTF (4H & 1H) Value Zone & Momentum Gate (ทำงานร่วมกับ Asymmetric MTF Floor):
       let isHtfBlocked = false;
       if (is4hBear) {
-        // ในขาลง 4H: อนุญาตให้ช้อนเฉพาะก้นกรอบ 4H (<= 48%) และกราฟ 1H ต้องเริ่มหยุดไหลแล้วเท่านั้น
-        if (htf4hPosRatio > 0.48 || (is1hBearFlow && !is1hStabilized)) {
+        // ในขาลง 4H: กรอบถูกดึงลงไปรอที่ฐาน 36 ชม. (htf36hLow) อัตโนมัติแล้ว เพียงแค่รอให้ 1H หยุดไหลลงและอยู่ในครึ่งล่างของ 4H
+        if (htf4hPosRatio > 0.55 || (is1hBearFlow && !is1hStabilized)) {
           isHtfBlocked = true;
         }
-      } else if (is4hBull) {
-        // ในขาขึ้น 4H: อนุญาตให้รับย่อตัวได้ถึง 80% ของกรอบ 4H (บล็อกเฉพาะยอดดอยบนสุด 20%)
-        if (htf4hPosRatio > 0.80) {
+      } else if (is4hBull || is1hBull) {
+        // ในขาขึ้น 4H หรือ 1H: อนุญาตให้รับย่อตัวได้ถึง 82% ของกรอบ 4H (คืนไม้ทำกำไรใน ETH / AVAX / AAPL กลับมาครบ!)
+        if (htf4hPosRatio > 0.82) {
           isHtfBlocked = true;
         }
       } else {
-        // ในไซด์เวย์ 4H: ห้ามซื้อโซนแพงด้านบน (> 68% ของกรอบ 4H) หรือตอนที่ 1H กำลังเทลงแรง
-        if (htf4hPosRatio > 0.68 || (is1hBearFlow && !is1hStabilized)) {
+        // ในไซด์เวย์ 4H/1H: ห้ามซื้อโซนแพงด้านบน (> 72% ของกรอบ 4H) หรือตอนที่ 1H กำลังเทลงแรง
+        if (htf4hPosRatio > 0.72 || (is1hBearFlow && !is1hStabilized)) {
           isHtfBlocked = true;
         }
       }
