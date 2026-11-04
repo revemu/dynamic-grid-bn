@@ -784,7 +784,17 @@ export class BacktestService {
     const initialCapital = opts.initialCapital ?? 200;
     const maxInventory = opts.maxInventoryQuote ?? initialCapital;
     const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
-    const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
+    const makerFeePct = cm.feePctPerSide ?? 0;
+    const makerSlippagePct = cm.slippagePctPerFill ?? 0;
+    const makerCostPerFill = (makerFeePct + makerSlippagePct) / 100;
+
+    // Realistic Institutional Taker Costs for Emergency Exits (Stop Loss / Trailing Stop)
+    const takerFeePct = makerFeePct > 0 ? makerFeePct : 0.075;
+    const takerSlippagePct = 0.10;
+    const takerCostPerFill = (takerFeePct + takerSlippagePct) / 100;
+    const costPerFill = makerCostPerFill;
+
+    const atrs = calcATR(candles, 14);
 
     const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 2));
     const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
@@ -796,7 +806,7 @@ export class BacktestService {
     const gridTrailingProfitLockTargetRatio = opts.gridTrailingProfitLockTargetRatio ?? 0.50;
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
-    const roundtripFeePct = costPerFill * 2 * 100;
+    const roundtripFeePct = (makerCostPerFill + takerCostPerFill) * 100;
     const effectiveMinProfitPct = Math.max(minNetProfitPct, roundtripFeePct + 0.20);
     const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
     const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
@@ -885,12 +895,16 @@ export class BacktestService {
 
       const isTradingActive = i >= startIdx;
 
+      const curAtr = atrs[i] ?? (c.close * 0.005);
+      const atrPct = c.close > 0 ? (curAtr / c.close) * 100 : 0.5;
+      const dynamicMinWidth = Math.max(2.5, Math.min(opts.minChannelWidthPct ?? 6.0, atrPct * 5));
+
       const structure = dow.getStructure(c.close, undefined, {
         useOnlyClosedCandles: true,
         mode: opts.channelMode ?? "DONCHIAN_ATR",
         donchianLookback: opts.donchianPeriod ?? 48,
-        minChannelWidthPct: opts.minChannelWidthPct ?? 6.0,
-        maxChannelWidthPct: opts.maxChannelWidthPct ?? 20.0,
+        minChannelWidthPct: dynamicMinWidth,
+        maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
         floorBufferPct: opts.floorBufferPct ?? 0.0,
       });
 
@@ -1021,46 +1035,48 @@ export class BacktestService {
         gridCutLossMode !== "none" &&
         (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
 
-      // 1. Evaluate Sells & Cut Losses for Open Lots
+      // Regime Breakdown Escape: If market turns DOWNTREND, pull target down to Break-even to escape on Dead Cat Bounce
+      const isMarketDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
+      if (isMarketDowntrend && heldLots.length > 0) {
+        const totalHeldQty = heldLots.reduce((sum, l) => sum + l.qty, 0);
+        const totalInvestQuote = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+        const avgEntry = totalHeldQty > 0 ? (totalInvestQuote / totalHeldQty) : 0;
+        const beEscapeTarget = avgEntry * (1 + (makerCostPerFill * 2 + 0.0015));
+        for (const lot of heldLots) {
+          if (lot.targetPrice > beEscapeTarget) {
+            lot.targetPrice = beEscapeTarget;
+            (lot as any).isBeEscape = true;
+          }
+        }
+      }
+
+      // 1. Evaluate Exits for Open Lots (Pessimistic Ordering: Cut Loss -> Trailing Stop -> Take Profit)
       const remainingLots: typeof heldLots = [];
       for (const lot of heldLots) {
         // Track peak price since entry
         lot.peakPrice = Math.max(lot.peakPrice ?? lot.buyPrice, c.high);
 
-        // Dynamic Ratchet Trailing Stop updates
-        if (enableGridTrailingStop) {
-          const beTriggerPrice = floor + channelSpan * gridTrailingBreakevenRatio;
-          const profitLockTriggerPrice = floor + channelSpan * gridTrailingProfitLockRatio;
-          const profitLockStopPrice = floor + channelSpan * gridTrailingProfitLockTargetRatio;
-          const beStopPrice = lot.buyPrice * (1 + (roundtripFeePct + 0.10) / 100);
-
-          if (lot.peakPrice >= profitLockTriggerPrice) {
+        // Tranche Hand-off: When price reaches 70% of span, raise stop loss to 55% of span
+        if (enableGridTrailingStop && channelSpan > 0) {
+          if (lot.peakPrice >= floor + channelSpan * 0.70) {
             lot.profitLocked = true;
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, profitLockStopPrice);
-          } else if (lot.peakPrice >= beTriggerPrice) {
-            lot.beLocked = true;
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, beStopPrice);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, floor + channelSpan * 0.55);
           }
         }
 
-        // Take Profit Hit
-        if (c.high >= lot.targetPrice) {
-          const exitPrice = lot.targetPrice;
-          const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+        // 1) Cut Loss Hit (Taker Execution with Taker Fee + Taker Slippage)
+        if (canTriggerCutLoss && c.low <= cutLossPrice) {
+          const exitPrice = cutLossPrice * (1 - takerSlippagePct / 100);
+          const proceeds = lot.qty * exitPrice * (1 - takerFeePct / 100);
           const invest = lot.qty * lot.buyPrice;
           const pnlQuote = proceeds - invest;
           const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
           cash += proceeds;
-          const exitCost = lot.qty * exitPrice * costPerFill;
+          const exitCost = lot.qty * exitPrice * takerCostPerFill;
           totalFeesQuote += lot.costQuote + exitCost;
 
-          if (pnlQuote >= 0) {
-            grossProfit += pnlQuote;
-            wins++;
-          } else {
-            grossLoss += Math.abs(pnlQuote);
-            losses++;
-          }
+          grossLoss += Math.abs(pnlQuote);
+          losses++;
 
           trades.push({
             id: lot.id,
@@ -1072,7 +1088,7 @@ export class BacktestService {
             fanSpreadAtEntry: 0,
             exitTime: c.time,
             exitPrice,
-            exitType: "GRID_TP",
+            exitType: "GRID_CUT",
             pnlQuote,
             pnlPct,
             holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
@@ -1086,23 +1102,23 @@ export class BacktestService {
 
           markers.push({
             time: c.time,
-            position: "aboveBar",
-            color: "#a855f7",
+            position: "belowBar",
+            color: "#ef4444",
             shape: "arrowDown",
-            text: `🟣 GRID SELL #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+            text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
           });
           continue;
         }
 
-        // Trailing Stop Hit (Ratchet Profit Lock or Break-even Lock)
+        // 2) Trailing Stop Hit (Taker Execution with Taker Fee + Taker Slippage)
         if (enableGridTrailingStop && lot.stopLossPrice && lot.stopLossPrice > cutLossPrice && c.low <= lot.stopLossPrice) {
-          const exitPrice = lot.stopLossPrice;
-          const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+          const exitPrice = lot.stopLossPrice * (1 - takerSlippagePct / 100);
+          const proceeds = lot.qty * exitPrice * (1 - takerFeePct / 100);
           const invest = lot.qty * lot.buyPrice;
           const pnlQuote = proceeds - invest;
           const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
           cash += proceeds;
-          const exitCost = lot.qty * exitPrice * costPerFill;
+          const exitCost = lot.qty * exitPrice * takerCostPerFill;
           totalFeesQuote += lot.costQuote + exitCost;
 
           if (pnlQuote >= 0) {
@@ -1146,19 +1162,35 @@ export class BacktestService {
           continue;
         }
 
-        // Cut Loss Hit
-        if (canTriggerCutLoss && c.low <= cutLossPrice) {
-          const exitPrice = cutLossPrice;
-          const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+        // 3) Take Profit Hit (Maker Resting Order with 0.05% Queue Penetration)
+        if (c.high >= lot.targetPrice * 1.0005) {
+          const exitPrice = lot.targetPrice;
+          const proceeds = lot.qty * exitPrice * (1 - makerCostPerFill);
           const invest = lot.qty * lot.buyPrice;
           const pnlQuote = proceeds - invest;
           const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
           cash += proceeds;
-          const exitCost = lot.qty * exitPrice * costPerFill;
+          const exitCost = lot.qty * exitPrice * makerCostPerFill;
           totalFeesQuote += lot.costQuote + exitCost;
 
-          grossLoss += Math.abs(pnlQuote);
-          losses++;
+          if (pnlQuote >= 0) {
+            grossProfit += pnlQuote;
+            wins++;
+          } else {
+            grossLoss += Math.abs(pnlQuote);
+            losses++;
+          }
+
+          const exitType = (lot as any).isBeEscape ? "GRID_BE_ESCAPE" : "GRID_TP";
+
+          // Tranche Hand-off: If a lot hits TP, raise remaining lots' stop to lock solid gain (38% of Span)
+          const handOffStopPrice = floor + channelSpan * 0.38;
+          for (const rem of heldLots) {
+            if (rem.id !== lot.id) {
+              rem.profitLocked = true;
+              rem.stopLossPrice = Math.max(rem.stopLossPrice ?? cutLossPrice, handOffStopPrice);
+            }
+          }
 
           trades.push({
             id: lot.id,
@@ -1170,7 +1202,7 @@ export class BacktestService {
             fanSpreadAtEntry: 0,
             exitTime: c.time,
             exitPrice,
-            exitType: "GRID_CUT",
+            exitType,
             pnlQuote,
             pnlPct,
             holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
@@ -1184,10 +1216,10 @@ export class BacktestService {
 
           markers.push({
             time: c.time,
-            position: "belowBar",
-            color: "#ef4444",
+            position: "aboveBar",
+            color: (lot as any).isBeEscape ? "#f59e0b" : "#a855f7",
             shape: "arrowDown",
-            text: `🔴 GRID CUT #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (${pnlPct.toFixed(2)}%)`,
+            text: `${(lot as any).isBeEscape ? "🟡 GRID ESCAPE" : "🟣 GRID SELL"} #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
           });
           continue;
         }
@@ -1385,16 +1417,17 @@ export class BacktestService {
       const isHlWaiting = isRegimeBlocked;
       const isZoneWaiting = zoneRequireReversal && unlockedCapitalZones > 1 && !isZoneReversalConfirmed;
 
-      // Dip Hunter Entry Absorption Guard
+      // Dip Hunter Entry Absorption Guard (Evaluated on Closed Candle i-1 to avoid lookahead bias)
       let passesDipHunterGuard = true;
       if (opts.enableDipHunterEntryGuard !== false) {
         const isWaterfall = consecutiveReds >= 4;
-        const candleRange = c.high - c.low;
-        const lowerWick = Math.min(c.open, c.close) - c.low;
-        const lowerWickPct = candleRange > 0 ? (lowerWick / candleRange) * 100 : 0;
-        const isGreenCandle = c.close >= c.open;
         const prevCandle = i > 0 ? candles[i - 1] : c;
-        const isNoFallingKnife = c.low >= prevCandle.low;
+        const prevRange = prevCandle.high - prevCandle.low;
+        const prevLowerWick = Math.min(prevCandle.open, prevCandle.close) - prevCandle.low;
+        const prevLowerWickPct = prevRange > 0 ? (prevLowerWick / prevRange) * 100 : 0;
+        const isGreenCandle = prevCandle.close >= prevCandle.open;
+        const prevPrevCandle = i > 1 ? candles[i - 2] : prevCandle;
+        const isNoFallingKnife = prevCandle.low >= prevPrevCandle.low;
 
         let isBad24hDrop = false;
         if (i >= 288) {
@@ -1403,7 +1436,7 @@ export class BacktestService {
           if (change24hPct < -5.5) isBad24hDrop = true;
         }
 
-        const hasAbsorption = isGreenCandle || lowerWickPct >= 15 || (isNoFallingKnife && lowerWickPct >= 8);
+        const hasAbsorption = isGreenCandle || prevLowerWickPct >= 15 || (isNoFallingKnife && prevLowerWickPct >= 8);
         if (isWaterfall || isBad24hDrop || !hasAbsorption) {
           passesDipHunterGuard = false;
         }
@@ -1414,11 +1447,12 @@ export class BacktestService {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           const bl = buyLevels[lvlIdx];
           const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
-          if (!alreadyFilledInCurrentZone && c.low <= bl && (!canTriggerCutLoss || c.close >= cutLossPrice)) {
+          // Queue Penetration: Price must trade through Limit Buy by 0.05%
+          if (!alreadyFilledInCurrentZone && c.low <= bl * 0.9995 && (!canTriggerCutLoss || c.close >= cutLossPrice)) {
             tradeCounter++;
             const buyPrice = bl;
             const invest = trancheQuote;
-            const fillQty = (invest / buyPrice) * (1 - costPerFill);
+            const fillQty = (invest / buyPrice) * (1 - makerCostPerFill);
             cash -= invest;
 
             const totalHeldQtyBefore = heldLots.reduce((sum, l) => sum + l.qty, 0);
@@ -1438,7 +1472,7 @@ export class BacktestService {
               buyPrice,
               entryTime: c.time,
               targetPrice,
-              costQuote: invest * costPerFill,
+              costQuote: invest * makerCostPerFill,
               floorAtEntry: floor,
               ceilingAtEntry: ceiling,
               centerAtEntry: center,

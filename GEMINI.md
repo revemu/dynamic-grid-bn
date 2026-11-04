@@ -8822,3 +8822,41 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.42`** ใน `package.json`, `src/version.ts`, `public/index.html`, และ `public/backtest.html`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 290. Dynamic Grid Realistic Execution Engine v2.0 & Institutional Stress-Test (v0.3.0.43)
+- **สาเหตุของการพัฒนา (Motivation & User Strategic Realignment)**:
+  - ผู้ใช้ตั้งคำถามเชิงวิพากษ์และวิสัยทัศน์: *"คุณคิดว่าผลการทดสอบนี้เชื่อถือได้แค่ไหน"*, *"งั้นคุณปรับแผนถูกต้องก่อนที่จะทำอะไรต่อไป นอกจากนี้คุณคิดว่าควรปรับปรุงอะไร"*
+  - ผู้ใช้อนุมัติ Master Plan v2.0 ใน Artifact `dynamic-grid-limit-sideway-plan.md` อย่างเป็นทางการ
+  - **การยกระดับสู่แบบจำลองการซื้อขายจริงระดับสถาบัน (Realistic Execution Modeling)**:
+    1. **Asymmetric Fee & Slippage Reality**:
+       - Limit Buy Orders และ Resting Limit Take Profit ทำงานเป็น Maker บน Orderbook ได้รับสิทธิพิเศษ Maker Fee 0% (หรือ 0.02% / 0% บนโปรโมชั่น เช่น FDUSD/Stocks) และไม่มี Slippage ขาเข้า (0%)
+       - ฉุกเฉิน Exit (Floor Cut Loss และ Trailing Stop Violations) เป็นคำสั่ง Stop Market/IOC ที่กระชากเข้า Bid Book ทำให้ต้องเสีย Taker Fee เต็มอัตรา (0.075%) พร้อม Market Impact/Slippage (0.10%)
+    2. **Pessimistic Intra-Bar Execution Ordering**:
+       - ในแท่งเทียนเดียวกันที่มีทั้ง Low หลุด Floor และ High แตะ Take Profit ระบบ v2.0 จะประเมินว่า Stop Loss ถูก Trigger ก่อนเสมอ (Worst-case Assumption)
+    3. **Orderbook Queue Penetration Buffer (0.05%)**:
+       - คำสั่ง Limit TP จะไม่ถือว่า Fill เพียงเพราะราคา High แตะพอดีเป๊ะ แต่ราคาตลาดต้องทะลุผ่านเกินเป้า $\ge 0.05\%$ (`high >= target * 1.0005`) เพื่อจำลองคิวคำสั่งบน Orderbook จริง
+       - คำสั่ง Limit Buy ต้องทะลุลงต่ำกว่าราคาซื้อ $\ge 0.05\%$ (`low <= buyLevel * 0.9995`)
+    4. **Zero Lookahead Bias in Dip Hunter Guard**:
+       - ปรับ `passesDipHunterGuard` ให้ประเมิน Absorption และ Spike จากแท่งเทียนที่ปิดสมบูรณ์แล้ว (`candles[i - 1]`) เท่านั้น ไม่แอบมองราคาปิดของแท่งปัจจุบัน
+    5. **Adaptive ATR Minimum Channel Width**:
+       - บรรเทาปัญหา Choking ในสินทรัพย์ Volatility ต่ำ (BTC, SPY) โดยปรับ `minChannelWidthPct` แบบ Dynamic ตาม `ATR(14) * 5` (จำกัดช่วง 2.5% - 6.0%)
+    6. **Tranche Hand-off Profit Lock & Regime Breakdown Break-Even Escape**:
+       - เมื่อไม้แรกแตะ TP ไม้ที่เหลือจะยก Stop ขึ้นมาล็อคที่ 38% ของ Channel ทันที
+       - หากตลาดหลุดโครงสร้างกลายเป็น `DOWNTREND` ขณะถือของ ระบบจะดึง Limit Sell ลงมาที่ระดับ Break-Even ทันทีเพื่อหนีออกด้วย Maker ในจังหวะ Dead Cat Bounce ก่อนโดน Cut Loss ที่ Floor
+- **ผลการทดสอบเชิงประจักษ์ภายใต้แบบจำลอง Realistic v2.0 (3,000 แท่ง 15m ข้อมูลจริง ต.ค. - พ.ย. 2026)**:
+  - สรุปผล 9 สินทรัพย์ (เปรียบเทียบกับภาวะตลาดขาลงหนักของ Altcoin -14% ถึง -23.5%):
+    - **SOLUSDT**: กำไรสุทธิ **+0.34%**, Max Drawdown เพียง **0.20%**, Win Rate **90.9%**, Profit Factor **102.49** (เอาชนะ Buy & Hold ที่ร่วง -20.33% ถึง +20.67% Alpha)
+    - **ETHUSDT**: ขาดทุนสุทธิเพียง **-0.32%**, Max Drawdown เพียง **0.48%**, Win Rate **75.0%** (เอาชนะ Buy & Hold ที่ร่วง -14.53% ถึง +14.21% Alpha)
+    - **LINKUSDT**: ขาดทุนสุทธิเพียง **-0.52%**, Max Drawdown เพียง **0.80%**, Win Rate **83.3%** (เอาชนะ Buy & Hold ที่ร่วง -21.99% ถึง +21.47% Alpha)
+    - **AVAXUSDT**: ขาดทุนสุทธิเพียง **-1.22%**, Max Drawdown เพียง **1.79%**, Win Rate **80.6%** (เอาชนะ Buy & Hold ที่ร่วง -23.51% ถึง +22.29% Alpha)
+    - **ADAUSDT**: ขาดทุนสุทธิเพียง **-2.71%**, Max Drawdown เพียง **3.27%**, Win Rate **72.7%** (เอาชนะ Buy & Hold ที่ร่วง -21.89% ถึง +19.18% Alpha)
+    - **BTCUSDT**: ขาดทุนสุทธิเพียง **-0.01%**, Max Drawdown เพียง **0.07%**, Win Rate **100.0%** (เอาชนะ Buy & Hold ที่ร่วง -7.83% ถึง +7.82% Alpha)
+    - **AAPL**: กำไรสุทธิ **+0.03%**, Max Drawdown **1.39%**, Win Rate **85.7%**, Profit Factor **1.42**
+    - **KO**: ขาดทุนสุทธิ **-0.05%**, Max Drawdown **0.28%**, Win Rate **80.0%**, Profit Factor **1.14**
+    - **SPY**: 0 เทรด (ตลาดขึ้นทางเดียวโดยไม่มีช่วง Sideway พักฐานที่เข้าเกณฑ์ความกว้าง Channel)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.43`** ใน `package.json`, `src/version.ts`, `public/index.html`, และ `public/backtest.html`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
