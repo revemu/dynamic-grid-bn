@@ -9184,9 +9184,34 @@ When investigating live production behavior, debugging issues, or analyzing trad
     - **Crypto Alt/DeFi Group**: ลดผลขาดทุนจาก -9.63% เหลือ -3.30% (โดย `UNI` พุ่งจาก +4.37% เป็น `+10.12%`, `TRUMP` พุ่งเป็น `+9.59%`, `FIL` พลิกเป็น `+2.41%`, `WLD` พลิกเป็น `+1.54%`, `NEAR` พลิกเป็น `+2.83%`, `HBAR` พลิกเป็น `+0.98%`)
     - **Stock Value Group**: `XOM` พุ่งจาก +6.20% เป็น **`+8.86%`** (PF 4.00, MaxDD เพียง 1.79%), `MA` พลิกเป็น `+0.60%`
     - **Overall OOS Average**: ขาดทุนลดลงจาก -3.02% เหลือเพียง **-1.47%**
+---
+
+## 304. v0.3.0.57 — Master Plan v16.0: Core Engine v14.0 Restoration + 5-Signal Market DNA Suitability Scanner & Autonomous Pair Selector (`src/backtest-service.ts`, `src/pair-rotator.ts`, `src/backtest.ts`, `package.json`, `src/version.ts`)
+
+- **ปรัชญาหลัก (Core Principle — Stop Chasing Shadows)**:
+  - การพยายามบิดและรัดคอกลยุทธ์เพื่อช่วยเหรียญที่ไม่เหมาะกับ Grid (One-Way Bleeders / Pump & Dump) ใน v15.0 ได้ตัดทอนกำไรของเหรียญและหุ้นทำเงินหลัก (Golden Assets เช่น `PEPE`, `DOGE`, `AVAX`, `SOL`, `TSLA`, `ORCL`, `AAPL`, `SPY`) ลงอย่างหนัก
+  - แนวทางที่ถูกต้องคือ **คืนความคมของ Core Engine v14.0 ไว้ 100%** แล้วใช้ **5 สัญญาณ Market DNA** คัดเฉพาะสินทรัพย์ที่เกิดมาเพื่อกลยุทธ์นี้เข้าเทรด
+- **การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **Core Engine Restoration to v14.0**:
+     - คืนค่า Scoped 4H Bear Gate (`is4hBear`), คืนค่า Cut Loss `-0.20 * span` / `-0.38 * span` ในขาขึ้น และคืนค่า Ratchet Trailing Stop Step 1 ที่ 44% ของกรอบ
+     - ส่งผลให้ผลตอบแทนบน 9 สินทรัพย์หลักมาตรฐานกลับคืนสู่จุดสูงสุด: **Crypto 6-Asset Average +1.95%, Overall +1.57% (`SOL +6.70%`, `AVAX +8.52%`, `SPY +2.53%`, `AAPL +3.94%`)**
+  2. **Grid DNA Suitability Scanner (`BacktestService.evaluateGridDna`)**:
+     - เพิ่มฟังก์ชันวิเคราะห์โครงสร้างแท่งเทียน 5 มิติ (Zero Look-Ahead):
+       - `Bounce52% & CleanBounce%`: อัตราการเด้งจากโซนล่าง 20% สู่กลางกรอบ 52%
+       - `DipWick%`: สัดส่วนไส้เทียนล่างรับแรงซื้อ (Pinbar Stop-Hunt Demand Absorption)
+       - `Span48%`: ความกว้างกรอบ Donchian 48 แท่งในโซน Sweet Spot (2.8%–5.9% ใน Crypto, 2.6%–6.0% ในหุ้น)
+       - `ER48` & `VR16`: Kaufman Efficiency Ratio และ Variance Ratio ยืนยันพฤติกรรม Mean-Reversion
+       - `UpDownSymmetry`: สัดส่วนขนาดแท่งเขียวเทียบแท่งแดง (แรงดีดกลับชนะแรงทุบ)
+     - คำนวณคะแนน `dnaScore (0–100)` และจัดเกรด `S / A / B / AVOID`
+  3. **Autonomous Pair Rotator Upgrade (`src/pair-rotator.ts`)**:
+     - ปรับคะแนน `compositeScore` ของ Stage 2 ใน `AutonomousPairRotator` ให้ยึด Market DNA เป็นแกนหลัก 40 คะแนน ผสานกับ Backtest Simulation Score 30 คะแนน, Structure 15 คะแนน, Position 10 คะแนน, Liquidity 5 คะแนน และตัดคะแนน -35 สำหรับเกรด AVOID
+  4. **DNA Suitability Audit in Master Benchmark (`src/backtest.ts`)**:
+     - เพิ่มคอลัมน์ `DNA Grade` และ `Score` ในตารางผลลัพธ์ Benchmark
+     - สรุปผลลัพธ์ของกลุ่ม **Grade S/A Average Net Return สูงถึง +6.39%** (คัดเฉพาะตัวที่เข้าทางกลยุทธ์ เช่น `SOL`, `AVAX`, `AAPL`) ขณะที่ตัวที่มีความเสี่ยง (`KO`, `ADA`, `BTC`, `ETH`, `LINK`) ถูกคัดออกเป็น Grade B
 - **Version Bump & Typecheck**:
-  - อัปเดตเวอร์ชันเป็น **`0.3.0.56`** ใน `package.json` และ `src/version.ts`
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.57`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบ `npm run typecheck` ผ่าน 100% (0 errors)
+
 
 
 

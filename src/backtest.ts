@@ -824,6 +824,7 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
     const minWidth = item.assetClass === "STOCK" ? 1.4 : 2.0;
 
     console.log(`[Benchmark] (${results.length + 1}/${assets.length}) Evaluating ${item.symbol}...`);
+    const dna = BacktestService.evaluateGridDna(candles, item.assetClass);
     const res = BacktestService.runDynamicGridSimulation(candles, {
       ...MASTER_PLAN_GRID_CONFIG,
       symbol: item.symbol,
@@ -865,16 +866,21 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
       openCount: openTrades.length,
       avgWinPct,
       avgLossPct,
+      dnaScore: dna.dnaScore,
+      dnaGrade: dna.grade,
+      isGridFit: dna.isGridFit,
     });
   }
 
   // Print results table
-  console.log("----------------------------------------------------------------------------------------------------------------------------------");
-  console.log("| Asset        | Bars   | B&H (%)  | Net Ret ($) | Net Ret (%) | Trades | WinRate | PF    | MaxDD | TP   | Trail | Escape | Cut |");
-  console.log("----------------------------------------------------------------------------------------------------------------------------------");
+  console.log("--------------------------------------------------------------------------------------------------------------------------------------------------");
+  console.log("| Asset        | DNA Grade | Score | Bars   | B&H (%)  | Net Ret ($) | Net Ret (%) | Trades | WinRate | PF    | MaxDD | TP   | Trail | Escape | Cut |");
+  console.log("--------------------------------------------------------------------------------------------------------------------------------------------------");
 
   for (const r of results) {
     const symStr = r.label.padEnd(12);
+    const gradeStr = `[${r.dnaGrade}]`.padStart(9);
+    const scoreStr = String(r.dnaScore).padStart(5);
     const barsStr = String(r.candlesCount).padStart(6);
     const bhStr = `${r.bhReturnPct >= 0 ? "+" : ""}${r.bhReturnPct.toFixed(1)}%`.padStart(8);
     const retQStr = `${r.netPnlQuote >= 0 ? "+" : ""}$${r.netPnlQuote.toFixed(2)}`.padStart(11);
@@ -888,9 +894,9 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
     const escStr = String(r.escapeCount).padStart(6);
     const cutStr = String(r.cutCount).padStart(3);
 
-    console.log(`| ${symStr} | ${barsStr} | ${bhStr} | ${retQStr} | ${retPctStr} | ${trStr} | ${wrStr} | ${pfStr} | ${ddStr} | ${tpStr} | ${trlStr} | ${escStr} | ${cutStr} |`);
+    console.log(`| ${symStr} | ${gradeStr} | ${scoreStr} | ${barsStr} | ${bhStr} | ${retQStr} | ${retPctStr} | ${trStr} | ${wrStr} | ${pfStr} | ${ddStr} | ${tpStr} | ${trlStr} | ${escStr} | ${cutStr} |`);
   }
-  console.log("----------------------------------------------------------------------------------------------------------------------------------\n");
+  console.log("--------------------------------------------------------------------------------------------------------------------------------------------------\n");
 
   // Summary statistics
   const totalCrypto = results.filter((r) => r.assetClass === "CRYPTO");
@@ -900,10 +906,14 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
   const avgStockRet = totalStock.reduce((s, r) => s + r.netPnlPct, 0) / Math.max(1, totalStock.length);
   const overallRet = results.reduce((s, r) => s + r.netPnlPct, 0) / Math.max(1, results.length);
 
+  const gradeSAndA = results.filter((r) => r.dnaGrade === "S" || r.dnaGrade === "A");
+  const avgGradeSA = gradeSAndA.length > 0 ? gradeSAndA.reduce((s, r) => s + r.netPnlPct, 0) / gradeSAndA.length : 0;
+
   console.log(`📊 Benchmark Summary:`);
-  console.log(`   - Overall Average Net Return: ${overallRet >= 0 ? "+" : ""}${overallRet.toFixed(2)}%`);
-  console.log(`   - Crypto 6-Asset Average:     ${avgCryptoRet >= 0 ? "+" : ""}${avgCryptoRet.toFixed(2)}%`);
-  console.log(`   - US Stocks 3-Asset Average:  ${avgStockRet >= 0 ? "+" : ""}${avgStockRet.toFixed(2)}%`);
+  console.log(`   - Overall Average Net Return:      ${overallRet >= 0 ? "+" : ""}${overallRet.toFixed(2)}%`);
+  console.log(`   - Crypto 6-Asset Average:          ${avgCryptoRet >= 0 ? "+" : ""}${avgCryptoRet.toFixed(2)}%`);
+  console.log(`   - US Stocks 3-Asset Average:       ${avgStockRet >= 0 ? "+" : ""}${avgStockRet.toFixed(2)}%`);
+  console.log(`   - 🧬 Grid DNA Grade S/A Average:    ${avgGradeSA >= 0 ? "+" : ""}${avgGradeSA.toFixed(2)}% (${gradeSAndA.length}/${results.length} assets pass hard suitability gates)`);
 
   // Save report JSON
   const reportPath = path.resolve(process.cwd(), "data", "backtest-master-report.json");

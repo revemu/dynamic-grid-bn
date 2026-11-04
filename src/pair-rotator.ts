@@ -19,6 +19,12 @@ export interface RotationCandidateScore {
   structureScore: number;
   positionScore: number;
   liquidityScore: number;
+  dnaScore?: number;
+  dnaGrade?: "S" | "A" | "B" | "AVOID";
+  bounce52Rate?: number;
+  dipWickPct?: number;
+  er48?: number;
+  upDownSymmetry?: number;
   netPnlPct: number;
   winRate: number;
   tradesCount: number;
@@ -338,83 +344,68 @@ export class AutonomousPairRotator {
           ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
           : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
 
-        // Run dynamic grid backtest
-        const rec = BacktestService.runMaFanSimulation(candles5m, {
+        // 🧬 1. Market DNA Evaluation across 15m / 5m candle history
+        const evalCandles = (candles15m && candles15m.length >= 60) ? candles15m : candles5m;
+        const dna = BacktestService.evaluateGridDna(evalCandles, "CRYPTO");
+
+        // 2. Production Dynamic Grid Simulation with MASTER_PLAN_GRID_CONFIG (Core v14.0)
+        const simRes = BacktestService.runDynamicGridSimulation(evalCandles, {
           symbol: sym,
-          timeframe: "5m",
-          spreadThreshold: "auto",
           initialCapital: 200,
-          slBufferPct: 0.25,
-          useRatchetSl: true,
-          useAtrAdaptiveSpread: true,
-          atrMultiplier: 1.25,
-          trailingPullbackPct: 0.45,
-          tp1Ratio: 0.5,
-          breakevenFeeBufferPct: 0.05,
-          supervisorTimeframe: "15m",
-          candlesHtf: candles15m.length > 0 ? candles15m : undefined,
-          saveToHistory: false,
-          cushionMode: "off",
-          waterfallGuardMode: "off",
+          channelMode: "DONCHIAN_ATR",
+          donchianPeriod: 48,
+          minChannelWidthPct: 2.0,
+          maxChannelWidthPct: 25.0,
+          lockChannelInPosition: true,
+          regimeFilterMode: "UPTREND_AND_SIDEWAY",
+          buyLevelPcts: [20, 12],
+          buyWeights: [55, 45],
+          sellLevelPcts: [52, 72],
+          capitalZones: 1,
+          zoneMinDropPct: 2.5,
+          floorBufferPct: 0.6,
+          gridCutLossMode: "entry_floor",
+          enableGridTrailingStop: true,
           costModel: symCostModel,
-          macroGateMode: "off",
-          enableUpsideFloor: true,
-          enableCircuitBreaker: true,
-          enableFastCut: true,
-          fastCutThresholdPct: -0.80,
-          stagnationBars: 6,
-          maxSlPct: 1.80,
-          tradeMode: "dynamic_grid",
-          tradeDirection: "long",
-          capitalZones: cfg.capitalZones ?? 2,
-          channelMode: cfg.channelMode ?? "DONCHIAN_ATR",
-          donchianPeriod: cfg.donchianLookback ?? 48,
-          minChannelWidthPct: cfg.minChannelWidthPct ?? 6.0,
-          maxChannelWidthPct: cfg.maxChannelWidthPct ?? 25.0,
-          zoneMinDropPct: cfg.zoneMinDropPct ?? 2.5,
-          zoneStabilizeCandles: cfg.zoneStabilizeCandles ?? 3,
+          saveToHistory: false,
         });
 
-        const summary = rec.summary;
+        const summary = simRes.summary;
+
+        // Market DNA Points (up to 40 pts)
+        const dnaPoints = Math.round(dna.dnaScore * 0.40);
+
+        // Simulation Performance Score (up to 30 pts)
         let simScore = 0;
-
-        if (summary.netPnlPct > 0 && summary.maxDrawdownPct <= 22 && summary.totalTrades >= 2) {
-          // PnL & trade frequency component (up to 25 pts)
-          const pnlComponent = Math.min(25, summary.netPnlPct * 3.5 + summary.totalTrades * 1.5);
-          // Win rate & low drawdown component (up to 20 pts)
-          const wrComponent = Math.min(20, Math.max(0, (summary.winRate - 50) * 0.4) + Math.max(0, 16 - summary.maxDrawdownPct));
-          simScore = Math.min(45, Math.max(0, pnlComponent + wrComponent));
+        if (summary.netPnlPct > 0 && summary.maxDrawdownPct <= 18) {
+          const pnlComponent = Math.min(18, summary.netPnlPct * 3.0 + summary.totalTrades * 1.0);
+          const wrComponent = Math.min(12, Math.max(0, (summary.winRate - 50) * 0.3) + Math.max(0, 12 - summary.maxDrawdownPct));
+          simScore = Math.min(30, Math.max(0, pnlComponent + wrComponent));
         }
 
-        // Structure score (up to 30 pts)
+        // Structure & Volatility Sweet Spot (up to 15 pts)
         let structureScore = 0;
-        const recentCandles = candles5m.slice(-48);
-        const donchianHigh = Math.max(...recentCandles.map((c) => c.high));
-        const donchianLow = Math.min(...recentCandles.map((c) => c.low));
-        const channelWidthPct = donchianLow > 0 ? ((donchianHigh - donchianLow) / donchianLow) * 100 : 0;
-
-        if (channelWidthPct >= 5.5 && channelWidthPct <= 16.0) {
-          structureScore += 20;
-        } else if (channelWidthPct >= 16.0 && channelWidthPct <= 22.0) {
-          structureScore += 10;
+        if (dna.avgSpan48Pct >= 2.8 && dna.avgSpan48Pct <= 5.8) {
+          structureScore = 15;
+        } else if (dna.avgSpan48Pct >= 2.2 && dna.avgSpan48Pct <= 7.0) {
+          structureScore = 8;
         }
 
-        if (change24h >= -4.0) {
-          structureScore += 10;
-        }
-
-        // Position in channel score (up to 15 pts)
+        // Position in Range Score (up to 10 pts)
         let positionScore = 0;
-        if (posInRange >= 0.15 && posInRange <= 0.45) {
-          positionScore = 15; // Prime bottom accumulation zone
-        } else if (posInRange > 0.45 && posInRange <= 0.60) {
-          positionScore = 8;  // Mid channel
+        if (posInRange >= 0.12 && posInRange <= 0.40) {
+          positionScore = 10; // Prime bottom accumulation zone
+        } else if (posInRange > 0.40 && posInRange <= 0.60) {
+          positionScore = 5;  // Mid channel
         }
 
-        // Liquidity score (up to 10 pts)
-        const liquidityScore = Math.min(10, Math.max(0, (Math.log10(quoteVol) - 6) * 4));
+        // Liquidity Score (up to 5 pts)
+        const liquidityScore = Math.min(5, Math.max(0, (Math.log10(quoteVol) - 6) * 2));
 
-        const compositeScore = Math.round(simScore + structureScore + positionScore + liquidityScore);
+        // Penalty for AVOID / poor DNA
+        const dnaPenalty = dna.grade === "AVOID" ? -35 : (dna.grade === "B" ? -10 : 0);
+
+        const compositeScore = Math.max(0, Math.min(100, Math.round(dnaPoints + simScore + structureScore + positionScore + liquidityScore + dnaPenalty)));
 
         report.push({
           symbol: sym,
@@ -423,6 +414,12 @@ export class AutonomousPairRotator {
           structureScore: Math.round(structureScore),
           positionScore: Math.round(positionScore),
           liquidityScore: Math.round(liquidityScore),
+          dnaScore: dna.dnaScore,
+          dnaGrade: dna.grade,
+          bounce52Rate: dna.bounce52Rate,
+          dipWickPct: dna.avgDipWickPct,
+          er48: dna.avgEr48,
+          upDownSymmetry: dna.upDownSymmetry,
           netPnlPct: summary.netPnlPct,
           winRate: summary.winRate,
           tradesCount: summary.totalTrades,
@@ -431,8 +428,8 @@ export class AutonomousPairRotator {
           change24hPct: change24h,
           range24hPct: range24h,
           posInRange,
-          channelWidthPct,
-          reason: `Sim: +${summary.netPnlPct.toFixed(1)}% (${summary.totalTrades}T, WR ${summary.winRate.toFixed(0)}%, DD ${summary.maxDrawdownPct.toFixed(1)}%) | Width: ${channelWidthPct.toFixed(1)}% | Pos: ${(posInRange * 100).toFixed(0)}%`,
+          channelWidthPct: dna.avgSpan48Pct,
+          reason: `DNA: [${dna.grade}] Score ${dna.dnaScore} (Bounce=${dna.bounce52Rate.toFixed(1)}%, Wick=${dna.avgDipWickPct.toFixed(1)}%, Span=${dna.avgSpan48Pct.toFixed(2)}%) | Sim: ${summary.netPnlPct >= 0 ? '+' : ''}${summary.netPnlPct.toFixed(1)}% (${summary.totalTrades}T, WR ${summary.winRate.toFixed(0)}%, DD ${summary.maxDrawdownPct.toFixed(1)}%) | Pos: ${(posInRange * 100).toFixed(0)}%`,
         });
       } catch (e: any) {
         this.log(`Error simulating candidate ${sym}: ${e.message}`);

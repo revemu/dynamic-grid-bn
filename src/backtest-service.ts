@@ -378,6 +378,23 @@ export interface MultiPairRotationResult {
   allTrades: Array<BacktestTrade & { symbol: string; legIndex: number }>;
 }
 
+export interface GridDnaMetrics {
+  bounce52Rate: number;      // % of touches at <=20% that hit 52% of box before -20%
+  cleanBounceRate: number;   // % of touches that bounce cleanly to 52%
+  bounce35Rate: number;      // % of touches that hit 35% of box (Step 1 early lock)
+  fastKnifeRate: number;     // % of touches that slice straight down to -20% within <=8 bars
+  bounceToKnifeRatio: number;
+  avgDipWickPct: number;     // Average lower wick ratio on dip bars
+  avgSpan48Pct: number;      // Average 48-bar Donchian channel span %
+  avgEr48: number;           // Average Kaufman Efficiency Ratio over 48 bars
+  vr16: number;              // Variance Ratio (4H vs 15m)
+  upDownSymmetry: number;    // Up body sum vs Down body sum
+  dnaScore: number;          // 0 - 100 composite score
+  grade: "S" | "A" | "B" | "AVOID";
+  isGridFit: boolean;
+  reasons: string[];
+}
+
 const DB_PATH = path.resolve(process.cwd(), "data", "backtest-history.db.json");
 const SCAN_DB_PATH = path.resolve(process.cwd(), "data", "market-scan.db.json");
 
@@ -403,6 +420,239 @@ export class BacktestService {
 
   public static getLatestRotationResult(): MultiPairRotationResult | null {
     return this.latestRotationResult;
+  }
+
+  /**
+   * 🧬 Market DNA Evaluator for Dynamic Grid Suitability
+   * Evaluates the intrinsic structural and orderbook price-action characteristics:
+   * 1. Dip-to-Midline Bounce Rate (First-passage rate from 20% to 52% vs -20% cut)
+   * 2. Lower-Wick Absorption at support (Pinbar Stop-Hunt demand)
+   * 3. Channel Width Sweet-Spot (Span48%)
+   * 4. Kaufman Efficiency Ratio (ER48) & Variance Ratio (VR16) (Mean-reversion vs directional drift)
+   * 5. Bull/Bear Candle Body Symmetry
+   */
+  public static evaluateGridDna(
+    candles: Candle[],
+    assetClass: "CRYPTO" | "STOCK" = "CRYPTO"
+  ): GridDnaMetrics {
+    const n = candles.length;
+    if (n < 60) {
+      return {
+        bounce52Rate: 0,
+        cleanBounceRate: 0,
+        bounce35Rate: 0,
+        fastKnifeRate: 0,
+        bounceToKnifeRatio: 0,
+        avgDipWickPct: 0,
+        avgSpan48Pct: 0,
+        avgEr48: 1.0,
+        vr16: 1.0,
+        upDownSymmetry: 1.0,
+        dnaScore: 0,
+        grade: "AVOID",
+        isGridFit: false,
+        reasons: ["Insufficient candle history (< 60 bars)"],
+      };
+    }
+
+    let dipTouches = 0;
+    let bounce52 = 0;
+    let cleanBounces = 0;
+    let bounce35 = 0;
+    let fastKnife = 0;
+    const spans: number[] = [];
+    const dipWicks: number[] = [];
+    const er48s: number[] = [];
+
+    const r1: number[] = [];
+    const r16: number[] = [];
+    let upRangeSum = 0;
+    let downRangeSum = 0;
+
+    for (let i = 1; i < n; i++) {
+      const prev = candles[i - 1]!;
+      const cur = candles[i]!;
+      r1.push(Math.log(cur.close / prev.close));
+      if (i >= 16) {
+        r16.push(Math.log(cur.close / candles[i - 16]!.close));
+      }
+      if (cur.close >= cur.open) upRangeSum += (cur.high - cur.low) / cur.open;
+      else downRangeSum += (cur.high - cur.low) / cur.open;
+    }
+
+    for (let i = 48; i < n - 24; i++) {
+      let hi = -Infinity;
+      let lo = Infinity;
+      let pathSum = 0;
+      for (let j = i - 48; j < i; j++) {
+        const b = candles[j]!;
+        if (b.high > hi) hi = b.high;
+        if (b.low < lo) lo = b.low;
+        if (j > i - 48) pathSum += Math.abs(b.close - candles[j - 1]!.close);
+      }
+      const span = hi - lo;
+      if (lo <= 0 || span <= 0) continue;
+      spans.push((span / lo) * 100);
+      if (pathSum > 0) {
+        er48s.push(Math.abs(candles[i - 1]!.close - candles[i - 48]!.close) / pathSum);
+      }
+
+      const cur = candles[i]!;
+      const lvl20 = lo + 0.20 * span;
+      const lvl35 = lo + 0.35 * span;
+      const lvl52 = lo + 0.52 * span;
+      const cutLvl = lo - 0.20 * span;
+
+      if (cur.low <= lvl20 && candles[i - 1]!.close > lvl20) {
+        const rng = cur.high - cur.low;
+        if (rng > 0) {
+          dipWicks.push(((Math.min(cur.open, cur.close) - cur.low) / rng) * 100);
+        }
+
+        let outcome = 0;
+        let hit35 = false;
+        let knife = false;
+        let bouncedClean = false;
+
+        for (let k = i + 1; k < Math.min(n, i + 32); k++) {
+          if (candles[k]!.high >= lvl35) hit35 = true;
+          if (candles[k]!.low <= cutLvl) {
+            outcome = -1;
+            if (k - i <= 8) knife = true;
+            break;
+          }
+          if (candles[k]!.high >= lvl52) {
+            outcome = 1;
+            bouncedClean = true;
+            break;
+          }
+        }
+        if (outcome !== 0) {
+          dipTouches++;
+          if (outcome === 1) bounce52++;
+          if (hit35) bounce35++;
+          if (knife) fastKnife++;
+          if (bouncedClean) cleanBounces++;
+        }
+      }
+    }
+
+    const mean = (arr: number[]) => (arr.length > 0 ? arr.reduce((s, x) => s + x, 0) / arr.length : 0);
+    const variance = (arr: number[]) => {
+      if (arr.length < 2) return 0;
+      const m = mean(arr);
+      return arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1);
+    };
+
+    const var1 = variance(r1);
+    const var16 = variance(r16);
+    const vr16 = var1 > 0 ? var16 / (16 * var1) : 1.0;
+
+    const bounce52Rate = dipTouches > 0 ? (bounce52 / dipTouches) * 100 : 0;
+    const cleanBounceRate = dipTouches > 0 ? (cleanBounces / dipTouches) * 100 : 0;
+    const bounce35Rate = dipTouches > 0 ? (bounce35 / dipTouches) * 100 : 0;
+    const fastKnifeRate = dipTouches > 0 ? (fastKnife / dipTouches) * 100 : 0;
+    const bounceToKnifeRatio = fastKnife > 0 ? bounce52 / fastKnife : bounce52;
+    const avgDipWickPct = mean(dipWicks);
+    const avgSpan48Pct = mean(spans);
+    const avgEr48 = mean(er48s);
+    const upDownSymmetry = downRangeSum > 0 ? upRangeSum / downRangeSum : 1.0;
+
+    const reasons: string[] = [];
+
+    // Scoring components (Total 100):
+    // 1. Bounce 52% & Clean Bounce (35 pts)
+    let bounceScore = 0;
+    if (bounce52Rate >= 58) bounceScore = 35;
+    else if (bounce52Rate >= 54) bounceScore = 28;
+    else if (bounce52Rate >= 50) bounceScore = 18;
+    else bounceScore = 5;
+
+    // 2. Dip Wick Absorption (20 pts)
+    let wickScore = 0;
+    const wickThreshold = assetClass === "STOCK" ? 27.0 : 32.0;
+    if (avgDipWickPct >= wickThreshold + 3) wickScore = 20;
+    else if (avgDipWickPct >= wickThreshold) wickScore = 15;
+    else if (avgDipWickPct >= wickThreshold - 4) wickScore = 10;
+    else wickScore = 3;
+
+    // 3. Span Sweet Spot (20 pts)
+    let spanScore = 0;
+    const minSpan = assetClass === "STOCK" ? 2.2 : 2.8;
+    const maxSpan = assetClass === "STOCK" ? 6.0 : 5.8;
+    if (avgSpan48Pct >= minSpan && avgSpan48Pct <= maxSpan) spanScore = 20;
+    else if (avgSpan48Pct >= minSpan * 0.8 && avgSpan48Pct <= maxSpan * 1.2) spanScore = 10;
+    else spanScore = 0;
+
+    // 4. Mean-Reversion Efficiency ER48 & VR16 (15 pts)
+    let erScore = 0;
+    const maxEr = assetClass === "STOCK" ? 0.20 : 0.148;
+    if (avgEr48 <= maxEr && vr16 <= 1.05) erScore = 15;
+    else if (avgEr48 <= maxEr * 1.15) erScore = 9;
+    else erScore = 2;
+
+    // 5. Up/Down Symmetry (10 pts)
+    let symScore = 0;
+    if (upDownSymmetry >= 1.03) symScore = 10;
+    else if (upDownSymmetry >= 0.98) symScore = 6;
+    else symScore = 1;
+
+    const dnaScore = Math.min(100, Math.round(bounceScore + wickScore + spanScore + erScore + symScore));
+
+    // Hard Gate Verification
+    const isCryptoFit =
+      assetClass === "CRYPTO" &&
+      bounce52Rate >= 56.0 &&
+      bounceToKnifeRatio >= 1.88 &&
+      avgDipWickPct >= 31.2 &&
+      avgSpan48Pct >= 2.8 &&
+      avgSpan48Pct <= 6.0 &&
+      avgEr48 <= 0.148 &&
+      upDownSymmetry >= 1.02;
+
+    const isStockFit =
+      assetClass === "STOCK" &&
+      bounce52Rate >= 54.0 &&
+      bounceToKnifeRatio >= 2.20 &&
+      avgDipWickPct >= 25.0 &&
+      avgSpan48Pct >= 2.6 &&
+      avgSpan48Pct <= 6.0 &&
+      upDownSymmetry >= 1.02;
+
+    const isGridFit = isCryptoFit || isStockFit;
+
+    let grade: "S" | "A" | "B" | "AVOID";
+    if (dnaScore >= 85 && isGridFit) grade = "S";
+    else if (dnaScore >= 72 && isGridFit) grade = "A";
+    else if (dnaScore >= 55) grade = "B";
+    else grade = "AVOID";
+
+    if (!isGridFit) {
+      if (bounce52Rate < 54.0) reasons.push(`Low midline bounce rate (${bounce52Rate.toFixed(1)}% < 54%)`);
+      if (avgDipWickPct < (assetClass === "STOCK" ? 25.0 : 31.0)) reasons.push(`Lack of demand absorption wick (${avgDipWickPct.toFixed(1)}%)`);
+      if (avgSpan48Pct < (assetClass === "STOCK" ? 1.8 : 2.7)) reasons.push(`Channel span too narrow (${avgSpan48Pct.toFixed(2)}%)`);
+      if (avgSpan48Pct > 6.0) reasons.push(`Channel span too erratic/wide (${avgSpan48Pct.toFixed(2)}% > 6.0%)`);
+      if (assetClass === "CRYPTO" && avgEr48 > 0.150) reasons.push(`High directional drift ER48 (${avgEr48.toFixed(3)} > 0.150)`);
+    } else {
+      reasons.push(`Strong mean-reverting absorption: Bounce=${bounce52Rate.toFixed(1)}%, DipWick=${avgDipWickPct.toFixed(1)}%, Span=${avgSpan48Pct.toFixed(2)}%`);
+    }
+
+    return {
+      bounce52Rate,
+      cleanBounceRate,
+      bounce35Rate,
+      fastKnifeRate,
+      bounceToKnifeRatio,
+      avgDipWickPct,
+      avgSpan48Pct,
+      avgEr48,
+      vr16,
+      upDownSymmetry,
+      dnaScore,
+      grade,
+      isGridFit,
+      reasons,
+    };
   }
 
   /**
@@ -1007,13 +1257,6 @@ export class BacktestService {
         cur1hEma50 >= prev1hEma50;
       const isUptrend = isMacroUptrend;
 
-      // Anti-Climax / Parabolic Pullback detection from 60H highs:
-      // Price was near top of 60H range (htf4hPosRatio > 0.68) or wide 12H span (>5.0%) while 1H momentum breaks down
-      const ltfRawFloor = structure.bottomBound;
-      const ltfRawSpan = structure.upperBound - ltfRawFloor;
-      const isWideSpan = ltfRawFloor > 0 && (ltfRawSpan / ltfRawFloor) > 0.050;
-      const isParabolicPullback = (htf4hPosRatio > 0.68 || isWideSpan) && (is1hBearFlow || (c.close < cur1hEma20 && cur1hEma20 < prev1hEma20));
-
       let floor: number;
       let ceiling: number;
       let center: number;
@@ -1037,10 +1280,10 @@ export class BacktestService {
         const ltfSpan = ltfCeiling - ltfFloor;
         if (ltfSpan <= 0) continue;
 
-        // 🌟 Scoped Asymmetric MTF Channel (Master Plan v15.0):
-        // - เมื่อ 4H Bear หรือกำลังเกิด Parabolic Pullback จากยอดดอย และกรอบ LTF ลอยเหนือฐาน 24H:
-        //   ดึง Floor ลงมาผสมกับฐาน 24H (htf24hLow) เพื่อป้องกันการตั้งรับกลางอากาศ
-        if ((is4hBear || isParabolicPullback) && ltfFloor > htf24hLow) {
+        // 🌟 Scoped Asymmetric MTF Channel (Master Plan v14.0):
+        // - เมื่อตลาดไม่ได้อยู่ในขาลงใหญ่ 4H (!is4hBear): ใช้กรอบ 15m/1H มาตรฐาน 100% (รักษาไม้ทำเงินของ ETH, AVAX, DOGE, PEPE ครบถ้วน)
+        // - เมื่อตลาดอยู่ในขาลงใหญ่ 4H (is4hBear): ถอยแนวรับ Floor ลงไปยึดค่าเฉลี่ยฐาน 24 ชั่วโมง (htf24hLow) เพื่อป้องกันการรับตื้นกลางอากาศ
+        if (is4hBear && ltfFloor > htf24hLow) {
           floor = (ltfFloor + htf24hLow) * 0.5;
           channelSpan = Math.min(ltfSpan, floor * 0.045);
           ceiling = floor + channelSpan;
@@ -1153,7 +1396,7 @@ export class BacktestService {
         }
       }
 
-      // Span-Relative 2-Tier Hybrid Cut Loss with Bounded Max-Loss Cap per Lot:
+      // Span-Relative 2-Tier Hybrid Cut Loss:
       // - Tier 1 (Confirmed Close): 20% of channelSpan below floor
       // - Tier 2 (Bounded Hard Stop): 32% of channelSpan below floor (caps maximum loss on long breakdown candles)
       const closeCutLossPrice = channelSpan > 0
@@ -1163,6 +1406,14 @@ export class BacktestService {
         ? floor - channelSpan * 0.32
         : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
+
+      // ขอบเขต Cut Loss พิเศษสำหรับไม้ในเทรนด์ขาขึ้น (4H/Macro Bull ถ่างระยะกันสะบัดเป็น -38% / -48% ของกรอบ)
+      const uptrendCloseCutPrice = channelSpan > 0
+        ? floor - channelSpan * 0.38
+        : closeCutLossPrice * 0.995;
+      const uptrendWickCutPrice = channelSpan > 0
+        ? floor - channelSpan * 0.48
+        : emergencyWickCutPrice * 0.995;
 
       const baseCanTriggerCutLoss =
         gridCutLossMode !== "none" &&
@@ -1192,13 +1443,12 @@ export class BacktestService {
           }
         }
 
-        // Bounded Loss Cap per Lot: ป้องกันความเสียหายหนักในเหรียญที่กรอบถ่างกว้าง (>5%) หลังพุ่งแรง
-        // จำกัดเพดานขาดทุนสูงสุดต่อไม้ไม่เกิน -1.45% (Close) และ -1.85% (Wick)
-        const maxLossClosePrice = lot.buyPrice * 0.9855;
-        const maxLossWickPrice = lot.buyPrice * 0.9815;
-
-        const effectiveCloseCut = Math.max(closeCutLossPrice, maxLossClosePrice);
-        const effectiveWickCut = Math.max(emergencyWickCutPrice, maxLossWickPrice);
+        const effectiveCloseCut = isLotUptrendProtected
+          ? Math.max(uptrendCloseCutPrice, lot.buyPrice * 0.982)
+          : closeCutLossPrice;
+        const effectiveWickCut = isLotUptrendProtected
+          ? Math.max(uptrendWickCutPrice, lot.buyPrice * 0.978)
+          : emergencyWickCutPrice;
 
         const isEmergencyWickHit = baseCanTriggerCutLoss && c.low <= effectiveWickCut;
         const isConfirmedCloseCutHit = baseCanTriggerCutLoss && c.close <= effectiveCloseCut;
@@ -1379,10 +1629,10 @@ export class BacktestService {
         const refEntrySpan = (lot.ceilingAtEntry && lot.floorAtEntry) ? (lot.ceilingAtEntry - lot.floorAtEntry) : channelSpan;
         if (enableGridTrailingStop && refEntrySpan > 0 && lot.peakPrice > lot.buyPrice) {
           const roundtripTakerCost = makerCostPerFill + takerCostPerFill;
-          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 46% ของกรอบ (หรือบวก >= +0.75% จากทุน) และราคาปิดยืนเหนือจุดล็อกทุน
-          const lockEarly = lot.buyPrice * (1 + roundtripTakerCost + 0.0026);
+          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 44% ของกรอบ (หรือบวก >= +0.65% จากทุน) และราคาปิดยืนเหนือจุดล็อกทุน
+          const lockEarly = lot.buyPrice * (1 + roundtripTakerCost + 0.0020);
           if (
-            (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.46 || lot.peakPrice >= lot.buyPrice * 1.0075) &&
+            (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.44 || lot.peakPrice >= lot.buyPrice * 1.0065) &&
             c.close > lockEarly
           ) {
             lot.beLocked = true;
@@ -1585,39 +1835,13 @@ export class BacktestService {
       const minRecent4Low = recent4Lows.length > 0 ? Math.min(...recent4Lows) : c.low;
       const isEstablishedHorizontalFloor = floor > 0 && minRecent4Low > floor * 1.0005;
 
-      // 🌐 Scoped HTF / Anti-Climax Block:
+      // 🌐 Scoped 4H Bear Gate (แทรกแซงเฉพาะเมื่อกราฟ 4H เป็นขาลงชัดเจน เพื่อไม่ให้ไปตัดไม้ทำกำไรของ ETH/AVAX ในช่วง Sideway/Bull):
       let isHtfBlocked = false;
       if (is4hBear) {
         if (htf4hPosRatio > 0.52 || (is1hBearFlow && !is1hStabilized)) {
           isHtfBlocked = true;
         }
-      } else if (isParabolicPullback) {
-        if (htf4hPosRatio > 0.65 || (is1hBearFlow && !is1hStabilized)) {
-          isHtfBlocked = true;
-        }
       }
-
-      // 🧬 Market DNA Kaufman Efficiency Ratio (ER48) over previous 48 closed candles (Zero look-ahead)
-      let er48 = 0.14;
-      if (i >= 48) {
-        const netDisp = Math.abs(candles[i - 1].close - candles[i - 48].close);
-        let pathSum = 0;
-        for (let j = i - 47; j <= i - 1; j++) {
-          pathSum += Math.abs(candles[j].close - candles[j - 1].close);
-        }
-        if (pathSum > 0) {
-          er48 = netDisp / pathSum;
-        }
-      }
-
-      // Anti-FastKnife & Demand Absorption Check for new entries:
-      const prevCandle = i > 0 ? candles[i - 1] : c;
-      const prevBarRange = prevCandle.high - prevCandle.low;
-      const prevLowerWick = Math.min(prevCandle.open, prevCandle.close) - prevCandle.low;
-      const prevLowerWickRatio = prevBarRange > 0 ? prevLowerWick / prevBarRange : 0;
-      const isPrevSolidRed = prevCandle.close < prevCandle.open && prevLowerWickRatio < 0.12 && prevCandle.low < (candles[Math.max(0, i - 2)]?.low ?? prevCandle.low);
-      const isKnifeDumpingOnWideChannel = (channelSpan / floor > 0.048) && isPrevSolidRed;
-      const isOneWayMomentumDumping = er48 > 0.38 && c.close < curEma50 && c.close < cur1hEma20;
 
       let isRegimeBlocked = !structure.isSwingConfirmed;
       if (heldLots.length > 0 && lockedChannel !== null) {
@@ -1631,8 +1855,6 @@ export class BacktestService {
           const isBearSpike = (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12;
           if (
             isHtfBlocked ||
-            isKnifeDumpingOnWideChannel ||
-            isOneWayMomentumDumping ||
             (!isRange && !isBullishRegime) ||
             !isEstablishedHorizontalFloor ||
             consecutiveReds >= 4 ||
@@ -1643,7 +1865,7 @@ export class BacktestService {
         } else {
           const canEstablish = structure.gridZone?.canEstablishChannel !== false;
           const notDropping = !structure.isDowntrendDropActive;
-          if (isHtfBlocked || isKnifeDumpingOnWideChannel || isOneWayMomentumDumping || (!isRange && !isBullishRegime) || !canEstablish || !notDropping) {
+          if (isHtfBlocked || (!isRange && !isBullishRegime) || !canEstablish || !notDropping) {
             isRegimeBlocked = true;
           }
         }
