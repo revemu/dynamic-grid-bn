@@ -796,7 +796,7 @@ export class BacktestService {
 
     const atrs = calcATR(candles, 14);
 
-    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 2));
+    const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 1));
     const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
     const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
     const gridCutLossMode = opts.gridCutLossMode ?? "entry_floor";
@@ -806,8 +806,8 @@ export class BacktestService {
     const gridTrailingProfitLockTargetRatio = opts.gridTrailingProfitLockTargetRatio ?? 0.50;
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
-    const roundtripFeePct = (makerCostPerFill + takerCostPerFill) * 100;
-    const effectiveMinProfitPct = Math.max(minNetProfitPct, roundtripFeePct + 0.20);
+    const makerRoundtripFeePct = makerCostPerFill * 2 * 100;
+    const effectiveMinProfitPct = Math.max(minNetProfitPct, makerRoundtripFeePct + 0.20);
     const curBuys = opts.buyLevelPcts ?? [20, 8];
     const curSells = opts.sellLevelPcts ?? [60, 80];
     const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
@@ -897,7 +897,8 @@ export class BacktestService {
 
       const curAtr = atrs[i] ?? (c.close * 0.005);
       const atrPct = c.close > 0 ? (curAtr / c.close) * 100 : 0.5;
-      const dynamicMinWidth = Math.max(2.5, Math.min(opts.minChannelWidthPct ?? 6.0, atrPct * 5));
+      const minWidthFloor = opts.minChannelWidthPct ?? 1.5;
+      const dynamicMinWidth = Math.max(minWidthFloor, Math.min(4.0, atrPct * 3.5));
 
       const structure = dow.getStructure(c.close, undefined, {
         useOnlyClosedCandles: true,
@@ -1029,55 +1030,19 @@ export class BacktestService {
         }
       }
 
-      const floorBuf = opts.floorBufferPct ?? 0.0;
-      const cutLossPrice = floorBuf > 0 ? floor * (1 - floorBuf / 100) : floor * 0.985;
+      const floorBuf = opts.floorBufferPct ?? 0.6;
+      const cutLossPrice = floorBuf > 0 ? floor * (1 - floorBuf / 100) : floor * 0.994;
       const canTriggerCutLoss =
         gridCutLossMode !== "none" &&
         (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
 
-      // Regime Breakdown Escape: If market turns DOWNTREND, pull target down to Break-even to escape on Dead Cat Bounce
-      const isMarketDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
-      if (isMarketDowntrend && heldLots.length > 0) {
-        const totalHeldQty = heldLots.reduce((sum, l) => sum + l.qty, 0);
-        const totalInvestQuote = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
-        const avgEntry = totalHeldQty > 0 ? (totalInvestQuote / totalHeldQty) : 0;
-        const beEscapeTarget = avgEntry * (1 + (makerCostPerFill * 2 + 0.0015));
-        for (const lot of heldLots) {
-          if (lot.targetPrice > beEscapeTarget) {
-            lot.targetPrice = beEscapeTarget;
-            (lot as any).isBeEscape = true;
-          }
-        }
-      }
-
-      // 1. Evaluate Exits for Open Lots (Pessimistic Ordering: Cut Loss -> Trailing Stop -> Take Profit)
+      // 1. Evaluate Exits for Open Lots (Pessimistic Ordering without Time-Travel Bug):
+      //    Step 1: Check Floor Cut Loss
+      //    Step 2: Check Trailing Stop armed from previous candles
+      //    Step 3: Check Resting Limit Take Profit (60% / 80%)
+      //    Step 4: Update peakPrice & arm Ratchet Trailing Stop (38% / 55%) for subsequent candles
       const remainingLots: typeof heldLots = [];
       for (const lot of heldLots) {
-        // Track peak price since entry
-        lot.peakPrice = Math.max(lot.peakPrice ?? lot.buyPrice, c.high);
-
-        // Tranche Hand-off & Ratchet Profit Lock:
-        if (enableGridTrailingStop && channelSpan > 0) {
-          // ขั้นที่ 1: ราคาแตะ 60% ของกรอบ -> ล็อกกำไรที่ 38% ของกรอบ
-          if (lot.peakPrice >= floor + channelSpan * 0.60) {
-            lot.beLocked = true;
-            const lock38 = Math.max(
-              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
-              floor + channelSpan * 0.38
-            );
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock38);
-          }
-          // ขั้นที่ 2: ราคาแตะ 70% ของกรอบ -> ยกล็อกกำไรเพิ่มเป็น 55% ของกรอบ
-          if (lot.peakPrice >= floor + channelSpan * 0.70) {
-            lot.profitLocked = true;
-            const lock55 = Math.max(
-              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.004),
-              floor + channelSpan * 0.55
-            );
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock55);
-          }
-        }
-
         // 1) Cut Loss Hit (Taker Execution with Taker Fee + Taker Slippage)
         if (canTriggerCutLoss && c.low <= cutLossPrice) {
           const exitPrice = cutLossPrice * (1 - takerSlippagePct / 100);
@@ -1124,8 +1089,8 @@ export class BacktestService {
           continue;
         }
 
-        // 2) Trailing Stop Hit (Taker Execution with Taker Fee + Taker Slippage)
-        if (enableGridTrailingStop && lot.stopLossPrice && lot.stopLossPrice > cutLossPrice && c.low <= lot.stopLossPrice) {
+        // 2) Trailing Stop Hit (Only if already armed on a previous candle: lot.beLocked || lot.profitLocked)
+        if (enableGridTrailingStop && (lot.beLocked || lot.profitLocked) && lot.stopLossPrice && lot.stopLossPrice > cutLossPrice && c.low <= lot.stopLossPrice) {
           const exitPrice = lot.stopLossPrice * (1 - takerSlippagePct / 100);
           const proceeds = lot.qty * exitPrice * (1 - takerFeePct / 100);
           const invest = lot.qty * lot.buyPrice;
@@ -1195,9 +1160,7 @@ export class BacktestService {
             losses++;
           }
 
-          const exitType = (lot as any).isBeEscape ? "GRID_BE_ESCAPE" : "GRID_TP";
-
-          // Tranche Hand-off: เมื่อไม้ที่ 1 ขาย TP สำเร็จ ยก Stop ของไม้ที่ 2 ขึ้นมาล็อกกำไรที่ 38% ของกรอบทันที
+          // Tranche Hand-off: เมื่อไม้ที่ 1 ขาย TP สำเร็จ ยก Stop ของไม้ที่ 2 ขึ้นมาล็อกกำไรที่ 38% ของกรอบทันที (มีผลตั้งแต่แท่งถัดไป)
           for (const rem of heldLots) {
             if (rem.id !== lot.id) {
               rem.beLocked = true;
@@ -1219,7 +1182,7 @@ export class BacktestService {
             fanSpreadAtEntry: 0,
             exitTime: c.time,
             exitPrice,
-            exitType,
+            exitType: "GRID_TP",
             pnlQuote,
             pnlPct,
             holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
@@ -1234,11 +1197,34 @@ export class BacktestService {
           markers.push({
             time: c.time,
             position: "aboveBar",
-            color: (lot as any).isBeEscape ? "#f59e0b" : "#a855f7",
+            color: "#a855f7",
             shape: "arrowDown",
-            text: `${(lot as any).isBeEscape ? "🟡 GRID ESCAPE" : "🟣 GRID SELL"} #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+            text: `🟣 GRID SELL #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
           });
           continue;
+        }
+
+        // 4) Update peakPrice & Ratchet Trailing Stop for subsequent candles
+        lot.peakPrice = Math.max(lot.peakPrice ?? lot.buyPrice, c.high);
+        if (enableGridTrailingStop && channelSpan > 0) {
+          // ขั้นที่ 1: ราคาแตะ 60% ของกรอบ -> ล็อกกำไรที่ 38% ของกรอบ
+          if (lot.peakPrice >= floor + channelSpan * 0.60) {
+            lot.beLocked = true;
+            const lock38 = Math.max(
+              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
+              floor + channelSpan * 0.38
+            );
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock38);
+          }
+          // ขั้นที่ 2: ราคาแตะ 70% ของกรอบ -> ยกล็อกกำไรเพิ่มเป็น 55% ของกรอบ
+          if (lot.peakPrice >= floor + channelSpan * 0.70) {
+            lot.profitLocked = true;
+            const lock55 = Math.max(
+              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.004),
+              floor + channelSpan * 0.55
+            );
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock55);
+          }
         }
 
         remainingLots.push(lot);
@@ -1461,8 +1447,12 @@ export class BacktestService {
       }
 
       const maxLotsForUnlockedZones = unlockedCapitalZones * Math.max(1, curBuys.length);
-      if (isTradingActive && !isHlWaiting && !isZoneWaiting && passesDipHunterGuard && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
+      if (isTradingActive && !isHlWaiting && !isZoneWaiting && passesDipHunterGuard) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
+          if (heldLots.length >= maxLotsForUnlockedZones) break;
+          const currentInv = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
+          if (currentInv + trancheQuote > effectiveMaxInventory || cash < trancheQuote) continue;
+
           const bl = buyLevels[lvlIdx];
           const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
           // Queue Penetration: Price must trade through Limit Buy by 0.05%
@@ -1516,7 +1506,6 @@ export class BacktestService {
               shape: "arrowUp",
               text: `🟢 GRID BUY #${tradeCounter} (L${lvlIdx + 1} Z${unlockedCapitalZones}) @ $${buyPrice.toFixed(4)}`,
             });
-            break;
           }
         }
       }

@@ -8886,5 +8886,29 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชันเป็น **`0.3.0.44`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 292. Comprehensive Fix for 5 Critical Backtest Engine Bugs (Version `0.3.0.45`)
+- **การแก้ไข 5 บั๊กสำคัญใน `src/backtest-service.ts` และ `src/backtest.ts` (Plan v6.0)**:
+  1. **ลบโค้ดส่วนเกิน `Regime Breakdown Escape` ทิ้ง 100%**: กำจัดตรรกะที่ดึงเป้า Take Profit ลงมาเหลือเท่าทุน (`+0.15%`) จากการที่ `isDowntrendDropActive` ถูกทริกเกอร์ด้วยไส้เทียนสวิงย่อย ทำให้ไม้ `Escape` ลดลงเหลือ 0x และไม้สามารถวิ่งไปชน Take Profit จริงที่ 60% และ 80% ได้
+  2. **แก้ไข Intra-Bar Time-Travel Bug ของ Trailing Stop**: จัดลำดับการประเมินใหม่ให้เช็ค `Floor Cut Loss` -> `Trailing Stop (ที่ติดอาวุธจากแท่งก่อนหน้า)` -> `Resting Limit Take Profit (60% / 80%)` ก่อน แล้วจึงอัปเดต `peakPrice` และยก Ratchet Trailing Stop สำหรับแท่งถัดไป ป้องกันไม่ให้แท่งเขียวที่พุ่งไปชน TP โดนตัดขายที่ 38% กลางคัน
+  3. **รวมเงินทุนทำงานเต็ม 100% (`capitalZones: 1`)**: แก้ปัญหาเงินทุน 50% นอนนิ่งไม่ได้ใช้งานจากความขัดแย้งกับ `gridCutLossMode: "entry_floor"`
+  4. **ปรับ `dynamicMinWidth` ให้สอดคล้องกับ Sideway 15m ธรรมชาติ**: ปรับให้กรอบ Donchian เริ่มต้นที่ 1.2% (Stocks) / 1.5% (Crypto) เพื่อไม่ให้ขัดแย้งกับโหมด `SIDEWAY_ONLY`
+  5. **รองรับการรับทั้ง 2 ไม้ในแท่งเดียวกัน**: ลบ `break;` ออกและอัปเดต inventory แบบเรียลไทม์เพื่อให้แท่งเทียนที่รูดผ่านทั้ง 20% และ 8% สามารถแมตช์ได้ครบทั้ง 2 ไม้
+- **ผลการทดสอบ Master Benchmark v6.0 (12,000 แท่ง 15m ข้อมูลจริง)**:
+  - **AAPL (Apple)**: กำไรสุทธิ **+$12.02 (+6.01%)**, Profit Factor **1.52**, Win Rate 55.3% (TP 16x, Trail 5x, Cut 16x)
+  - **AVAXUSDT**: กำไรสุทธิ **+$7.92 (+3.96%)**, Profit Factor **1.29**, Win Rate 52.5% (TP 19x, Trail 2x, Cut 19x)
+  - **BTCUSDT**: Net PnL -0.83%, Win Rate 54.2%, Max DD 3.90% (TP 12x, Trail 1x, Cut 11x)
+  - **ADAUSDT**: Net PnL -1.84%, Win Rate 51.3% (TP 18x, Trail 2x, Cut 19x)
+  - **SOLUSDT**: Net PnL -2.14%, Win Rate 51.5% (TP 14x, Trail 3x, Cut 16x)
+  - **ETHUSDT**: Net PnL -2.60%, Win Rate 50.0% (TP 15x, Trail 1x, Cut 16x)
+  - **LINKUSDT**: Net PnL -3.50%, Win Rate 51.5% (TP 17x, Trail 0x, Cut 16x)
+  - **SPY**: Net PnL -1.53%, Win Rate 52.6% (TP 9x, Trail 1x, Cut 9x)
+  - **KO**: Net PnL -5.01%, Win Rate 46.2% (TP 11x, Trail 1x, Cut 14x)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.45`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 

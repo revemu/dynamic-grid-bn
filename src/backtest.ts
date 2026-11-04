@@ -751,15 +751,15 @@ export const MASTER_PLAN_GRID_CONFIG = {
   budget: 200,
   channelMode: "DONCHIAN_ATR" as const,
   donchianPeriod: 48,
-  minChannelWidthPct: 3.0,
+  minChannelWidthPct: 1.5,
   maxChannelWidthPct: 25.0,
   lockChannelInPosition: true,
   regimeFilterMode: "SIDEWAY_ONLY" as const,
   buyLevelPcts: [20, 8],
   sellLevelPcts: [60, 80],
-  capitalZones: 2,
+  capitalZones: 1,
   zoneMinDropPct: 2.5,
-  floorBufferPct: 1.2,
+  floorBufferPct: 0.6,
   gridCutLossMode: "entry_floor" as const,
   enableGridTrailingStop: true,
   costModel: { feePctPerSide: 0, slippagePctPerFill: 0 },
@@ -793,7 +793,7 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
   console.log("🚀 MASTER BENCHMARK RUNNER — DYNAMIC GRID (LIMIT-ONLY, SIDEWAY-ONLY, DEEP 2-TRANCHE, RATCHET TRAIL)");
   console.log("   Evaluation Dataset: 12,000 Candles 15m (~125 Days Crypto / ~1.5 Years US Stocks)");
   console.log("   Execution Model: 0% Maker Fee / 0% Slippage on Limit Buy & TP | Realistic Taker on Cut Loss / Trail");
-  console.log("   Target Buy: [20%, 8%] | Target Sell: [60%, 80%] | Capital Zones: 2 | Floor Buffer: 1.2%");
+  console.log("   Target Buy: [20%, 8%] | Target Sell: [60%, 80%] | Capital Zones: 1 | Floor Buffer: 0.6%");
   console.log("==========================================================================================================\n");
 
   const results: any[] = [];
@@ -818,8 +818,8 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
     const endPrice = candles[candles.length - 1]!.close;
     const bhReturnPct = ((endPrice - startPrice) / startPrice) * 100;
 
-    // Use minimum width of 2.5% for stocks, 3.0% for crypto
-    const minWidth = item.assetClass === "STOCK" ? 2.5 : 3.0;
+    // Use minimum width of 1.2% for stocks, 1.5% for crypto
+    const minWidth = item.assetClass === "STOCK" ? 1.2 : 1.5;
 
     const res = BacktestService.runDynamicGridSimulation(candles, {
       ...MASTER_PLAN_GRID_CONFIG,
