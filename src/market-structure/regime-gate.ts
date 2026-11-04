@@ -164,7 +164,7 @@ export class RegimeChannelGate {
     // ── Pillar 3: Safe Floor Proximity Buffer ──────────────────────────────
     // If the proposed floor is dangerously close to current price,
     // any minor random wick will trigger cut loss instantly. Reject until room exists.
-    if (!allowBaseBypass && actualProximityPct < minFloorProximityPct) {
+    if (!allowBaseBypass && minFloorProximityPct > 0 && actualProximityPct < minFloorProximityPct) {
       const flStr = proposedFloor < 0.01 ? proposedFloor.toFixed(8) : proposedFloor.toFixed(4);
       const prStr = price < 0.01 ? price.toFixed(8) : price.toFixed(4);
       return {

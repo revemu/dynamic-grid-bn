@@ -64,19 +64,21 @@ export class ChannelEngine {
       const rawBottom = allLows.length > 0 ? Math.min(...allLows) : price * 0.985;
       const rawUpper = allHighs.length > 0 ? Math.max(...allHighs) : price * 1.015;
 
-      const minDonchianSpan = Math.max(minSpan, price * effAtrPct * 2.0);
+      const minDonchianSpan = minSpan > 0 ? minSpan : price * 0.025;
       bottomBound = rawBottom;
       upperBound = rawUpper;
-      isSwingConfirmed = true;
 
+      // True Donchian Channel: Preserve actual highest high and lowest low without artificial ceiling inflation
       if (upperBound - bottomBound < minDonchianSpan) {
-        upperBound = bottomBound + minDonchianSpan;
         clampStatus = "CLAMPED_MIN";
+        // If true channel is narrower than minimum profitable span, do not trade paper-thin noise
+        isSwingConfirmed = false;
       } else if (maxSpan > 0 && upperBound - bottomBound > maxSpan) {
-        upperBound = bottomBound + maxSpan;
         clampStatus = "CLAMPED_MAX";
+        isSwingConfirmed = true;
       } else {
         clampStatus = "NATURAL_SWING";
+        isSwingConfirmed = true;
       }
 
       if (price > upperBound) {

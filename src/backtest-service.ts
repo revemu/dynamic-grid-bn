@@ -783,7 +783,7 @@ export class BacktestService {
     const timeframe = opts.timeframe || "5m";
     const initialCapital = opts.initialCapital ?? 200;
     const maxInventory = opts.maxInventoryQuote ?? initialCapital;
-    const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+    const cm = opts.costModel ?? { feePctPerSide: 0, slippagePctPerFill: 0 };
     const makerFeePct = cm.feePctPerSide ?? 0;
     const makerSlippagePct = cm.slippagePctPerFill ?? 0;
     const makerCostPerFill = (makerFeePct + makerSlippagePct) / 100;
@@ -808,9 +808,9 @@ export class BacktestService {
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const roundtripFeePct = (makerCostPerFill + takerCostPerFill) * 100;
     const effectiveMinProfitPct = Math.max(minNetProfitPct, roundtripFeePct + 0.20);
-    const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
-    const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
-    const regimeFilterMode = opts.regimeFilterMode ?? (opts.enableBaseConfirmationFilter ? "SIDEWAY_ONLY" : "OFF");
+    const curBuys = opts.buyLevelPcts ?? [20, 8];
+    const curSells = opts.sellLevelPcts ?? [60, 80];
+    const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
     const zoneBudgetQuote = maxInventory / totalZones;
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
     let isZoneReversalConfirmed = true;
@@ -1056,11 +1056,25 @@ export class BacktestService {
         // Track peak price since entry
         lot.peakPrice = Math.max(lot.peakPrice ?? lot.buyPrice, c.high);
 
-        // Tranche Hand-off: When price reaches 70% of span, raise stop loss to 55% of span
+        // Tranche Hand-off & Ratchet Profit Lock:
         if (enableGridTrailingStop && channelSpan > 0) {
+          // ขั้นที่ 1: ราคาแตะ 60% ของกรอบ -> ล็อกกำไรที่ 38% ของกรอบ
+          if (lot.peakPrice >= floor + channelSpan * 0.60) {
+            lot.beLocked = true;
+            const lock38 = Math.max(
+              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
+              floor + channelSpan * 0.38
+            );
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock38);
+          }
+          // ขั้นที่ 2: ราคาแตะ 70% ของกรอบ -> ยกล็อกกำไรเพิ่มเป็น 55% ของกรอบ
           if (lot.peakPrice >= floor + channelSpan * 0.70) {
             lot.profitLocked = true;
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, floor + channelSpan * 0.55);
+            const lock55 = Math.max(
+              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.004),
+              floor + channelSpan * 0.55
+            );
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock55);
           }
         }
 
@@ -1183,12 +1197,15 @@ export class BacktestService {
 
           const exitType = (lot as any).isBeEscape ? "GRID_BE_ESCAPE" : "GRID_TP";
 
-          // Tranche Hand-off: If a lot hits TP, raise remaining lots' stop to lock solid gain (38% of Span)
-          const handOffStopPrice = floor + channelSpan * 0.38;
+          // Tranche Hand-off: เมื่อไม้ที่ 1 ขาย TP สำเร็จ ยก Stop ของไม้ที่ 2 ขึ้นมาล็อกกำไรที่ 38% ของกรอบทันที
           for (const rem of heldLots) {
             if (rem.id !== lot.id) {
-              rem.profitLocked = true;
-              rem.stopLossPrice = Math.max(rem.stopLossPrice ?? cutLossPrice, handOffStopPrice);
+              rem.beLocked = true;
+              const handoffStop = Math.max(
+                rem.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
+                floor + channelSpan * 0.38
+              );
+              rem.stopLossPrice = Math.max(rem.stopLossPrice ?? cutLossPrice, handoffStop);
             }
           }
 
@@ -1396,7 +1413,7 @@ export class BacktestService {
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
       const trancheQuote = zoneBudgetQuote / Math.max(1, curBuys.length);
 
-      let isRegimeBlocked = false;
+      let isRegimeBlocked = !structure.isSwingConfirmed;
       if (regimeFilterMode === "SIDEWAY_ONLY") {
         const isRange = structure.regime === "RANGE";
         const canEstablish = structure.gridZone?.canEstablishChannel !== false;
@@ -1405,8 +1422,9 @@ export class BacktestService {
           isRegimeBlocked = true;
         }
       } else if (regimeFilterMode === "NO_DOWNTREND") {
-        const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive) || structure.gridZone?.canEstablishChannel === false;
-        if (isDowntrend) {
+        const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
+        const canEstablish = structure.gridZone?.canEstablishChannel !== false;
+        if (isDowntrend || !canEstablish) {
           isRegimeBlocked = true;
         }
       } else if (opts.enableBaseConfirmationFilter === true) {
@@ -1417,9 +1435,9 @@ export class BacktestService {
       const isHlWaiting = isRegimeBlocked;
       const isZoneWaiting = zoneRequireReversal && unlockedCapitalZones > 1 && !isZoneReversalConfirmed;
 
-      // Dip Hunter Entry Absorption Guard (Evaluated on Closed Candle i-1 to avoid lookahead bias)
+      // Dip Hunter Entry Absorption Guard (Active when explicitly requested)
       let passesDipHunterGuard = true;
-      if (opts.enableDipHunterEntryGuard !== false) {
+      if (opts.enableDipHunterEntryGuard === true) {
         const isWaterfall = consecutiveReds >= 4;
         const prevCandle = i > 0 ? candles[i - 1] : c;
         const prevRange = prevCandle.high - prevCandle.low;
@@ -1694,7 +1712,7 @@ export class BacktestService {
     const gridInitialCap = initialCapital * (gridCapPct / 100);
     const sniperInitialCap = initialCapital * (sniperCapPct / 100);
 
-    const cm = opts.costModel ?? { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
+    const cm = opts.costModel ?? { feePctPerSide: 0, slippagePctPerFill: 0 };
     const costPerFill = (cm.feePctPerSide + cm.slippagePctPerFill) / 100;
     const tradeDirection = opts.tradeDirection ?? "both";
 
@@ -1705,9 +1723,9 @@ export class BacktestService {
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const zoneBudgetQuote = gridInitialCap / totalZones;
-    const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
-    const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
-    const regimeFilterMode = opts.regimeFilterMode ?? (opts.enableBaseConfirmationFilter ? "SIDEWAY_ONLY" : "OFF");
+    const curBuys = opts.buyLevelPcts ?? [20, 8];
+    const curSells = opts.sellLevelPcts ?? [60, 80];
+    const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
     let isZoneReversalConfirmed = true;
     let zoneDumpLowPrice = 0;
@@ -2150,7 +2168,7 @@ export class BacktestService {
         const trancheQuote = zoneBudgetQuote / Math.max(1, curBuys.length);
         const currentGridInv = heldLots.reduce((s, l) => s + (l.qty * l.buyPrice), 0);
 
-        let isRegimeBlocked = false;
+        let isRegimeBlocked = !structure.isSwingConfirmed;
         if (regimeFilterMode === "SIDEWAY_ONLY") {
           const isRange = structure.regime === "RANGE";
           const canEstablish = structure.gridZone?.canEstablishChannel !== false;
@@ -2159,8 +2177,9 @@ export class BacktestService {
             isRegimeBlocked = true;
           }
         } else if (regimeFilterMode === "NO_DOWNTREND") {
-          const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive) || structure.gridZone?.canEstablishChannel === false;
-          if (isDowntrend) {
+          const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive);
+          const canEstablish = structure.gridZone?.canEstablishChannel !== false;
+          if (isDowntrend || !canEstablish) {
             isRegimeBlocked = true;
           }
         } else if (opts.enableBaseConfirmationFilter === true) {

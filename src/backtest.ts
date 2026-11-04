@@ -6,6 +6,9 @@
  * found in the LICENSE file at https://github.com/somnia-chain/dreamdex-bot-kit/blob/main/LICENSE
  */
 
+import fs from "fs";
+import path from "path";
+import { BacktestService } from "./backtest-service.js";
 import { DowStructureEngine } from "./market-structure/index.js";
 import { DowEngine } from "./market-structure/dow-engine.js";
 import { RegimeChannelGate } from "./market-structure/regime-gate.js";
@@ -744,227 +747,171 @@ export function runSwingSimulation(
   };
 }
 
-async function main() {
-  const symbols = ["BNBFDUSD", "BTCUSDT"];
+export const MASTER_PLAN_GRID_CONFIG = {
+  budget: 200,
+  channelMode: "DONCHIAN_ATR" as const,
+  donchianPeriod: 48,
+  minChannelWidthPct: 3.0,
+  maxChannelWidthPct: 25.0,
+  lockChannelInPosition: true,
+  regimeFilterMode: "SIDEWAY_ONLY" as const,
+  buyLevelPcts: [20, 8],
+  sellLevelPcts: [60, 80],
+  capitalZones: 2,
+  zoneMinDropPct: 2.5,
+  floorBufferPct: 1.2,
+  gridCutLossMode: "entry_floor" as const,
+  enableGridTrailingStop: true,
+  costModel: { feePctPerSide: 0, slippagePctPerFill: 0 },
+};
 
-  const configs: BacktestConfig[] = [
-    {
-      name: "1. Proposal 1: Multi-Stage TP (50% at 60% + 50% at Ceil) 🌟",
-      budget: 200,
-      sellProfitMode: "GRID_CASHFLOW",
-      channelMode: "DONCHIAN_ATR",
-      minChannelWidthPct: 1.8,
-      maxChannelWidthPct: 6.0,
-      buyLevelPcts: [15, 8, 2, 1, 0.5],
-      sellLevelPcts: [60, 100, 100, 100, 100],
-      buyLevelWeights: [50, 30, 20, 10, 10],
-      sellLevelWeights: [50, 50, 0, 0, 0],
-      enabledBuyLevels: [true, true, true, false, false],
-      enabledSellTargets: [true, true, false, false, false],
-      minNetProfitPct: 0.50,
-      floorBufferPct: 0.35,
-      dowTrendFilter: true,
-      enableTrendChannelGating: true,
-      enableExitOnDowntrendRegime: true,
-      enableExitOnTrendSupportBreak: false,
-      enableBuyBelowSellLevel1: true,
-      enableSellBelowTrendResistance: true,
-      enableLhDynamicEscape: false,
-      lockChannelInPosition: true,
-    },
-    {
-      name: "2. Previous Sniper Grid (Baseline [35,35,30] + No FastCut)",
-      budget: 200,
-      sellProfitMode: "GRID_CASHFLOW",
-      channelMode: "DONCHIAN_ATR",
-      minChannelWidthPct: 1.8,
-      maxChannelWidthPct: 6.0,
-      buyLevelPcts: [15, 8, 2, 1, 0.5],
-      sellLevelPcts: [50, 75, 95, 98, 100],
-      buyLevelWeights: [35, 35, 30, 10, 10],
-      enabledBuyLevels: [true, true, true, false, false],
-      enabledSellTargets: [true, true, true, false, false],
-      minNetProfitPct: 0.25,
-      floorBufferPct: 0.35,
-      dowTrendFilter: true,
-      enableTrendChannelGating: true,
-      enableExitOnDowntrendRegime: false,
-      enableExitOnTrendSupportBreak: false,
-      enableBuyBelowSellLevel1: true,
-      enableSellBelowTrendResistance: true,
-      enableLhDynamicEscape: false,
-      lockChannelInPosition: true,
-    },
-    {
-      name: "3. Sniper Grid (ชิดฟลอร์ 15/8/2% + SupportBreak = TRUE)",
-      budget: 200,
-      sellProfitMode: "GRID_CASHFLOW",
-      channelMode: "DONCHIAN_ATR",
-      minChannelWidthPct: 1.8,
-      maxChannelWidthPct: 6.0,
-      buyLevelPcts: [15, 8, 2, 1, 0.5],
-      sellLevelPcts: [50, 75, 95, 98, 100],
-      buyLevelWeights: [35, 35, 30, 10, 10],
-      enabledBuyLevels: [true, true, true, false, false],
-      enabledSellTargets: [true, true, true, false, false],
-      minNetProfitPct: 0.25,
-      floorBufferPct: 0.35,
-      dowTrendFilter: true,
-      enableTrendChannelGating: true,
-      enableExitOnTrendSupportBreak: true,
-      enableBuyBelowSellLevel1: true,
-      enableSellBelowTrendResistance: true,
-      enableLhDynamicEscape: true,
-      lockChannelInPosition: true,
-    },
-    {
-      name: "4. Classic Wide Grid (กระจายเต็มกรอบ 42/32/22%)",
-      budget: 200,
-      sellProfitMode: "GRID_CASHFLOW",
-      channelMode: "DONCHIAN_ATR",
-      minChannelWidthPct: 1.8,
-      maxChannelWidthPct: 6.0,
-      buyLevelPcts: [42, 32, 22, 12, 2],
-      sellLevelPcts: [52, 62, 72, 82, 92],
-      buyLevelWeights: [35, 35, 30, 10, 10],
-      enabledBuyLevels: [true, true, true, false, false],
-      enabledSellTargets: [true, true, true, false, false],
-      minNetProfitPct: 0.25,
-      floorBufferPct: 0.35,
-      dowTrendFilter: true,
-      enableTrendChannelGating: true,
-      enableExitOnTrendSupportBreak: false,
-      enableBuyBelowSellLevel1: true,
-      enableSellBelowTrendResistance: true,
-      enableLhDynamicEscape: true,
-      lockChannelInPosition: true,
-    },
-    {
-      name: "5. Equal 5-Tranche Wide Grid (กระจายเท่ากัน 5 ไม้ x 20%)",
-      budget: 200,
-      sellProfitMode: "GRID_CASHFLOW",
-      channelMode: "DONCHIAN_ATR",
-      minChannelWidthPct: 1.8,
-      maxChannelWidthPct: 6.0,
-      buySizingMode: "EQUAL",
-      buyLevelPcts: [42, 32, 22, 12, 2],
-      sellLevelPcts: [52, 62, 72, 82, 92],
-      enabledBuyLevels: [true, true, true, true, true],
-      enabledSellTargets: [true, true, true, true, true],
-      minNetProfitPct: 0.25,
-      floorBufferPct: 0.35,
-      dowTrendFilter: true,
-      enableTrendChannelGating: true,
-      enableExitOnTrendSupportBreak: false,
-      enableBuyBelowSellLevel1: true,
-      enableSellBelowTrendResistance: true,
-      enableLhDynamicEscape: true,
-      lockChannelInPosition: true,
-    },
-    {
-      name: "6. Naked Pure Grid (Zero Guards Baseline)",
-      budget: 200,
-      sellProfitMode: "GRID_CASHFLOW",
-      channelMode: "DOW_SWINGS",
-      minChannelWidthPct: 1.8,
-      maxChannelWidthPct: 6.0,
-      buyLevelPcts: [42, 32, 22, 12, 2],
-      sellLevelPcts: [52, 62, 72, 82, 92],
-      buyWeights: [35, 35, 30],
-      minNetProfitPct: 0.25,
-      floorBufferPct: 0.35,
-      dowTrendFilter: false,
-      enableTrendChannelGating: false,
-      enableExitOnTrendSupportBreak: false,
-      enableBuyBelowSellLevel1: false,
-      enableLhDynamicEscape: false,
-      lockChannelInPosition: false,
-    },
-  ];
+export interface BenchmarkAsset {
+  symbol: string;
+  file: string;
+  label: string;
+  assetClass: "CRYPTO" | "STOCK";
+}
 
+export const TARGET_BENCHMARK_ASSETS: BenchmarkAsset[] = [
+  // 1. High MCap Crypto
+  { symbol: "BTCUSDT", file: "BTCUSDT_15m.json", label: "BTC/USDT", assetClass: "CRYPTO" },
+  { symbol: "ETHUSDT", file: "ETHUSDT_15m.json", label: "ETH/USDT", assetClass: "CRYPTO" },
+  // 2. Mid MCap Crypto
+  { symbol: "SOLUSDT", file: "SOLUSDT_15m.json", label: "SOL/USDT", assetClass: "CRYPTO" },
+  { symbol: "AVAXUSDT", file: "AVAXUSDT_15m.json", label: "AVAX/USDT", assetClass: "CRYPTO" },
+  // 3. Lower/DeFi Crypto
+  { symbol: "LINKUSDT", file: "LINKUSDT_15m.json", label: "LINK/USDT", assetClass: "CRYPTO" },
+  { symbol: "ADAUSDT", file: "ADAUSDT_15m.json", label: "ADA/USDT", assetClass: "CRYPTO" },
+  // 4. US Stocks & ETF
+  { symbol: "SPY", file: "alpaca_SPY_15m.json", label: "SPY (S&P500)", assetClass: "STOCK" },
+  { symbol: "AAPL", file: "alpaca_AAPL_15m.json", label: "AAPL (Apple)", assetClass: "STOCK" },
+  { symbol: "KO", file: "alpaca_KO_15m.json", label: "KO (Coca-Cola)", assetClass: "STOCK" },
+];
+
+export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
   console.log("==========================================================================================================");
-  console.log("🚀 UNIFIED REALISTIC PRODUCTION BACKTEST BENCHMARK (All Profiles Evaluated)");
-  console.log("   Data: 1000 Binance 15m Candles (~10.4 Days) | Simulated Budget: $200");
+  console.log("🚀 MASTER BENCHMARK RUNNER — DYNAMIC GRID (LIMIT-ONLY, SIDEWAY-ONLY, DEEP 2-TRANCHE, RATCHET TRAIL)");
+  console.log("   Evaluation Dataset: 12,000 Candles 15m (~125 Days Crypto / ~1.5 Years US Stocks)");
+  console.log("   Execution Model: 0% Maker Fee / 0% Slippage on Limit Buy & TP | Realistic Taker on Cut Loss / Trail");
+  console.log("   Target Buy: [20%, 8%] | Target Sell: [60%, 80%] | Capital Zones: 2 | Floor Buffer: 1.2%");
   console.log("==========================================================================================================\n");
 
-  const results: BacktestResult[] = [];
+  const results: any[] = [];
+  const cacheDir = path.resolve(process.cwd(), "data", "cache", "klines");
 
-  for (const sym of symbols) {
-    console.log(`📡 Fetching historical data for ${sym}...`);
-    try {
-      const candles = await fetchKlines(sym, "15m", 1000);
-      const startPrice = candles[0]!.open;
-      const endPrice = candles[candles.length - 1]!.close;
-      const priceChangePct = ((endPrice - startPrice) / startPrice) * 100;
-      console.log(`   Market: $${startPrice.toFixed(4)} -> $${endPrice.toFixed(4)} (${priceChangePct >= 0 ? "+" : ""}${priceChangePct.toFixed(2)}%)\n`);
-
-      // 1-5: Grid Profiles
-      for (const cfg of configs) {
-        const res = runSimulation(sym, candles, cfg);
-        results.push(res);
-      }
-
-      // 7. Swing Strategy Raw (LL Retest, Breakout)
-      const swingCfgRaw: SwingStrategyConfig & { enableChoChGate?: boolean; name?: string } = {
-        name: "7. Swing Strategy (Raw LL Retest & Breakout)",
-        minRiskReward: 1.8,
-        stopLossBufferPct: 0.35,
-        maxPositionPct: 50.0,
-        tp1CloseRatio: 0.5,
-        tp1TargetType: "CENTER_POC",
-        tp2TargetType: "SWING_HIGH_HH",
-        trailingActivationPct: 1.2,
-        trailingPullbackPct: 0.5,
-        enableHlBaseEntry: true,
-        enableTrendlineBreakoutEntry: true,
-        enableSupportRetestEntry: true,
-        enableChoChGate: false,
-      };
-      results.push(runSwingSimulation(sym, candles, swingCfgRaw, 200));
-
-      // 8. Guarded Swing Strategy with Dow ChoCh Gate
-      const swingCfgGuarded: SwingStrategyConfig & { enableChoChGate?: boolean; name?: string } = {
-        name: "8. Guarded Swing Strategy (with Dow ChoCh Gate 🛡️)",
-        minRiskReward: 1.8,
-        stopLossBufferPct: 0.35,
-        maxPositionPct: 50.0,
-        tp1CloseRatio: 0.5,
-        tp1TargetType: "CENTER_POC",
-        tp2TargetType: "SWING_HIGH_HH",
-        trailingActivationPct: 1.2,
-        trailingPullbackPct: 0.5,
-        enableHlBaseEntry: true,
-        enableTrendlineBreakoutEntry: true,
-        enableSupportRetestEntry: true,
-        enableChoChGate: true,
-      };
-      results.push(runSwingSimulation(sym, candles, swingCfgGuarded, 200));
-
-    } catch (err) {
-      console.error(`❌ Error testing ${sym}:`, (err as Error).message);
+  for (const item of assets) {
+    const filePath = path.join(cacheDir, item.file);
+    if (!fs.existsSync(filePath)) {
+      console.warn(`⚠️ Warning: Cache file not found for ${item.symbol} at ${filePath}`);
+      continue;
     }
+
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const candles: Candle[] = Array.isArray(raw) ? raw : (raw.candles || []);
+
+    if (candles.length === 0) {
+      console.warn(`⚠️ Warning: No candles found in ${filePath}`);
+      continue;
+    }
+
+    const startPrice = candles[0]!.open;
+    const endPrice = candles[candles.length - 1]!.close;
+    const bhReturnPct = ((endPrice - startPrice) / startPrice) * 100;
+
+    // Use minimum width of 2.5% for stocks, 3.0% for crypto
+    const minWidth = item.assetClass === "STOCK" ? 2.5 : 3.0;
+
+    const res = BacktestService.runDynamicGridSimulation(candles, {
+      ...MASTER_PLAN_GRID_CONFIG,
+      symbol: item.symbol,
+      initialCapital: 200,
+      minChannelWidthPct: minWidth,
+    });
+
+    const sum = res.summary;
+    const trades = res.trades;
+
+    // Trade breakdown
+    const tpTrades = trades.filter((t) => t.exitType === "GRID_TP");
+    const trailTrades = trades.filter((t) => t.exitType === "GRID_TRAIL_TP");
+    const escapeTrades = trades.filter((t) => t.exitType === "GRID_BE_ESCAPE");
+    const cutTrades = trades.filter((t) => t.exitType === "GRID_CUT");
+    const openTrades = trades.filter((t) => t.exitType === "OPEN");
+
+    const winTrades = trades.filter((t) => (t.pnlPct ?? 0) >= 0);
+    const lossTrades = trades.filter((t) => (t.pnlPct ?? 0) < 0);
+    const avgWinPct = winTrades.length > 0 ? winTrades.reduce((s, t) => s + t.pnlPct, 0) / winTrades.length : 0;
+    const avgLossPct = lossTrades.length > 0 ? lossTrades.reduce((s, t) => s + t.pnlPct, 0) / lossTrades.length : 0;
+
+    results.push({
+      symbol: item.symbol,
+      label: item.label,
+      assetClass: item.assetClass,
+      candlesCount: candles.length,
+      bhReturnPct,
+      netPnlQuote: sum.netPnlQuote,
+      netPnlPct: sum.netPnlPct,
+      totalTrades: sum.totalTrades,
+      winRate: sum.winRate,
+      profitFactor: sum.profitFactor,
+      maxDrawdownPct: sum.maxDrawdownPct,
+      tpCount: tpTrades.length,
+      trailCount: trailTrades.length,
+      escapeCount: escapeTrades.length,
+      cutCount: cutTrades.length,
+      openCount: openTrades.length,
+      avgWinPct,
+      avgLossPct,
+    });
   }
 
-  console.log("\n==========================================================================================================================================================");
-  console.log("🏆 COMPREHENSIVE STRATEGY BENCHMARK AUDIT (10.4 DAYS 15M CANDLES)");
-  console.log("==========================================================================================================================================================");
-  console.log("| Symbol   | Profile                                                    | Net Return        | Trades | Cycles | Win Rate | CutLoss        | Max DD  | Final ($) |");
-  console.log("----------------------------------------------------------------------------------------------------------------------------------------------------------");
+  // Print results table
+  console.log("----------------------------------------------------------------------------------------------------------------------------------");
+  console.log("| Asset        | Bars   | B&H (%)  | Net Ret ($) | Net Ret (%) | Trades | WinRate | PF    | MaxDD | TP   | Trail | Escape | Cut |");
+  console.log("----------------------------------------------------------------------------------------------------------------------------------");
 
   for (const r of results) {
-    const symStr = r.symbol.padEnd(8);
-    const profStr = r.configName.padEnd(58);
-    const retStr = `${r.netPnl >= 0 ? "+" : ""}$${r.netPnl.toFixed(2)} (${r.netPnlPct >= 0 ? "+" : ""}${r.netPnlPct.toFixed(2)}%)`.padEnd(17);
-    const trStr = String(r.totalTrades).padEnd(6);
-    const cycStr = String(r.completedCycles ?? 0).padEnd(6);
-    const wrStr = `${r.winRate.toFixed(1)}%`.padEnd(8);
-    const clStr = `-$${r.cutLossLoss.toFixed(2)} (${r.floorCutLossCount}x)`.padEnd(14);
-    const ddStr = `${r.maxDrawdownPct.toFixed(2)}%`.padEnd(7);
-    const finStr = `$${r.finalEquity.toFixed(2)}`.padEnd(9);
+    const symStr = r.label.padEnd(12);
+    const barsStr = String(r.candlesCount).padStart(6);
+    const bhStr = `${r.bhReturnPct >= 0 ? "+" : ""}${r.bhReturnPct.toFixed(1)}%`.padStart(8);
+    const retQStr = `${r.netPnlQuote >= 0 ? "+" : ""}$${r.netPnlQuote.toFixed(2)}`.padStart(11);
+    const retPctStr = `${r.netPnlPct >= 0 ? "+" : ""}${r.netPnlPct.toFixed(2)}%`.padStart(11);
+    const trStr = String(r.totalTrades).padStart(6);
+    const wrStr = `${r.winRate.toFixed(1)}%`.padStart(7);
+    const pfStr = r.profitFactor >= 99 ? "MAX" : r.profitFactor.toFixed(2).padStart(5);
+    const ddStr = `${r.maxDrawdownPct.toFixed(2)}%`.padStart(6);
+    const tpStr = String(r.tpCount).padStart(4);
+    const trlStr = String(r.trailCount).padStart(5);
+    const escStr = String(r.escapeCount).padStart(6);
+    const cutStr = String(r.cutCount).padStart(3);
 
-    console.log(`| ${symStr} | ${profStr} | ${retStr} | ${trStr} | ${cycStr} | ${wrStr} | ${clStr} | ${ddStr} | ${finStr} |`);
+    console.log(`| ${symStr} | ${barsStr} | ${bhStr} | ${retQStr} | ${retPctStr} | ${trStr} | ${wrStr} | ${pfStr} | ${ddStr} | ${tpStr} | ${trlStr} | ${escStr} | ${cutStr} |`);
   }
-  console.log("==========================================================================================================================================================\n");
+  console.log("----------------------------------------------------------------------------------------------------------------------------------\n");
+
+  // Summary statistics
+  const totalCrypto = results.filter((r) => r.assetClass === "CRYPTO");
+  const totalStock = results.filter((r) => r.assetClass === "STOCK");
+
+  const avgCryptoRet = totalCrypto.reduce((s, r) => s + r.netPnlPct, 0) / Math.max(1, totalCrypto.length);
+  const avgStockRet = totalStock.reduce((s, r) => s + r.netPnlPct, 0) / Math.max(1, totalStock.length);
+  const overallRet = results.reduce((s, r) => s + r.netPnlPct, 0) / Math.max(1, results.length);
+
+  console.log(`📊 Benchmark Summary:`);
+  console.log(`   - Overall Average Net Return: ${overallRet >= 0 ? "+" : ""}${overallRet.toFixed(2)}%`);
+  console.log(`   - Crypto 6-Asset Average:     ${avgCryptoRet >= 0 ? "+" : ""}${avgCryptoRet.toFixed(2)}%`);
+  console.log(`   - US Stocks 3-Asset Average:  ${avgStockRet >= 0 ? "+" : ""}${avgStockRet.toFixed(2)}%`);
+
+  // Save report JSON
+  const reportPath = path.resolve(process.cwd(), "data", "backtest-master-report.json");
+  fs.writeFileSync(reportPath, JSON.stringify({ timestamp: new Date().toISOString(), config: MASTER_PLAN_GRID_CONFIG, results }, null, 2));
+  console.log(`\n💾 Saved detailed benchmark report to: ${reportPath}`);
+
+  return results;
+}
+
+async function main() {
+  await runMasterBenchmark();
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, "/")}` || process.argv[1]?.includes("backtest")) {

@@ -370,7 +370,7 @@ export class DowStructureEngine {
       lastCanonicalHigh,
       lastLh: lastLhPoint,
       isDowntrendDropActive,
-      minFloorProximityPct: options?.minFloorProximityPct ?? 1.5,
+      minFloorProximityPct: options?.minFloorProximityPct ?? 0,
       enableTrendGating: options?.enableTrendGating !== false,
       enableBaseConfirmationFilter: options?.enableBaseConfirmationFilter,
     });

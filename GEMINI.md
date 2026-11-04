@@ -8859,4 +8859,32 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.43`** ใน `package.json`, `src/version.ts`, `public/index.html`, และ `public/backtest.html`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 291. Unified Master Benchmark Architecture & 12,000-Candle Evaluation (Version `0.3.0.44`)
+- **การรวมศูนย์ระบบ Backtest ไว้ในสคริปต์หลัก (`src/backtest.ts`) และกำจัด Drift ถาวร**:
+  - ยกเลิกการสร้างสคริปต์ชั่วคราวในโฟลเดอร์ `scratch/` โดยรวมพารามิเตอร์ของ Master Plan ทั้ง 6 ข้อไว้ในสคริปต์หลัก `src/backtest.ts` (รันผ่าน `npm run backtest`) และล็อกค่า Default ใน `BacktestService.runDynamicGridSimulation` (`src/backtest-service.ts`)
+  - **ข้อ 1 (Cost Model 0% Fee)**: ล็อกค่าเริ่มต้นเป็น Maker Limit Buy & TP = 0% Fee / 0% Slippage (`costModel: { feePctPerSide: 0, slippagePctPerFill: 0 }`), Taker Cut Loss / Trailing Stop = 0.075% Fee + 0.10% Slippage
+  - **ข้อ 2 (คุมเทรนด์ Sideway & Base Confirmation)**: บังคับ `regimeFilterMode: "SIDEWAY_ONLY"`, คืนค่า `canEstablishChannel !== false` ร่วมกับ `isSwingConfirmed === true` เพื่อเปิดด่านสกัดขาลง ChoCh Gate และด่านสกัดช่วงทุบทำโลว์ใหม่ (`!isDowntrendDropActive`) 100% พร้อมปรับ `minFloorProximityPct: 0` ใน `src/market-structure/index.ts` เพื่อให้รับไม้ลึก 20% และ 8% ได้
+  - **ข้อ 3 (กรอบ Donchian แท้ & Width Guard)**: ใน `src/market-structure/channel-engine.ts` คงราคา High/Low จริงของ Donchian (`bottomBound = rawBottom`, `upperBound = rawUpper`) และบล็อก `isSwingConfirmed = false` เมื่อกรอบจริงแคบกว่าความกว้างขั้นต่ำที่ทำกำไรได้
+  - **ข้อ 4 (ตั้งรับ 2 ไม้ & ทุน 2 โซน)**: ล็อก `capitalZones: 2` (50% ต่อโซน), `buyLevelPcts: [20, 8]` และ `sellLevelPcts: [60, 80]`
+  - **ข้อ 5 (Ratchet Trailing Profit Lock)**: ราคาวิ่งแตะ 60% หรือไม้แรก TP -> ล็อก Stop ไม้ที่เหลือที่ 38% ของกรอบ, ราคาวิ่งแตะ 70% -> ยกล็อก Stop ตามขึ้นไปที่ 55% ของกรอบ
+  - **ข้อ 6 (Cut Loss & Escape)**: `gridCutLossMode: "entry_floor"`, `floorBufferPct: 1.2%`
+- **ผลการทดสอบ Master Benchmark บนชุดข้อมูลประวัติศาสตร์ 12,000 แท่ง 15m (4 เดือน Crypto / ~1.5 ปี US Stocks)**:
+  - `BTCUSDT` (12,000 bars): Net PnL -0.20%, Win Rate **87.5%**, Max DD 0.64% (Escape 7x, Cut 1x)
+  - `ETHUSDT` (12,000 bars): Net PnL -1.64%, Win Rate **70.4%**, Max DD 2.12% (TP 1x, Trail 4x, Escape 15x, Cut 7x)
+  - `SOLUSDT` (12,000 bars): Net PnL **+0.29%**, Win Rate **76.9%**, Profit Factor **1.19**, Max DD 1.03% (Trail 5x, Escape 18x, Cut 3x)
+  - `AVAXUSDT` (12,000 bars): Net PnL -0.84%, Win Rate **71.0%**, Max DD 2.66% (Trail 6x, Escape 19x, Cut 6x)
+  - `LINKUSDT` (12,000 bars): Net PnL -1.66%, Win Rate **67.7%**, Max DD 2.36% (TP 1x, Trail 8x, Escape 15x, Cut 7x)
+  - `ADAUSDT` (12,000 bars): Net PnL **+0.48%**, Win Rate **77.8%**, Profit Factor **1.15**, Max DD 2.38% (TP 4x, Trail 7x, Escape 19x, Cut 6x)
+  - `SPY` (8,490 bars): Net PnL -0.39%, Win Rate **66.7%**, Max DD 0.47% (Escape 2x, Cut 1x)
+  - `AAPL` (8,605 bars): Net PnL -1.82%, Win Rate **65.6%**, Max DD 2.49% (TP 1x, Trail 5x, Escape 17x, Cut 9x)
+  - `KO` (8,233 bars): Net PnL -1.86%, Win Rate **36.4%**, Max DD 2.31% (Trail 2x, Escape 4x, Cut 5x)
+- **Insight สำคัญจากการวิเคราะห์ Trade Breakdown**:
+  - พบว่า Win Rate สูงมาก (66% - 87.5%) และ Max Drawdown ต่ำมาก (< 2.6%) แต่กำไรโดยรวมถูกกดให้เหลือน้อย เนื่องจากกลไก **`GRID_BE_ESCAPE`** ทำงานบ่อยเกินไป (กว่า 50-70% ของไม้ที่ปิด ถูกดึงเป้าลงมาขายที่จุดคุ้มทุน +0.15% เพราะ `isDowntrendDropActive` หรือการแกว่งสวิงสั้นๆ ในแท่งเทียนทริกเกอร์โหมด Escape ไวเกินไป)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.44`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
