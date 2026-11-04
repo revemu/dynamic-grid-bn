@@ -798,6 +798,21 @@ export class BacktestService {
 
     const atrs = calcATR(candles, 14);
 
+    // คำนวณ EMA50 และ EMA200 สำหรับคัดกรอง Macro Uptrend ที่แท้จริง (ป้องกัน Bear Market Rally หลอก)
+    const ema50s: number[] = new Array(candles.length).fill(0);
+    const ema200s: number[] = new Array(candles.length).fill(0);
+    if (candles.length > 0) {
+      const k50 = 2 / (50 + 1);
+      const k200 = 2 / (200 + 1);
+      ema50s[0] = candles[0].close;
+      ema200s[0] = candles[0].close;
+      for (let idx = 1; idx < candles.length; idx++) {
+        const cl = candles[idx].close;
+        ema50s[idx] = cl * k50 + ema50s[idx - 1] * (1 - k50);
+        ema200s[idx] = cl * k200 + ema200s[idx - 1] * (1 - k200);
+      }
+    }
+
     const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 1));
     const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
     const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
@@ -904,8 +919,10 @@ export class BacktestService {
 
       const curAtr = atrs[i] ?? (c.close * 0.005);
       const atrPct = c.close > 0 ? (curAtr / c.close) * 100 : 0.5;
-      const minWidthFloor = opts.minChannelWidthPct ?? 2.0;
-      const dynamicMinWidth = Math.max(minWidthFloor, Math.min(4.5, atrPct * 4.0));
+      const configuredMinWidth = opts.minChannelWidthPct ?? 2.0;
+      // สำหรับสินทรัพย์ความผันผวนต่ำ (เช่น หุ้นสหรัฐฯ KO, SPY ที่ atrPct < 0.25%) อนุญาตให้บีบกรอบลงมาได้ถึง 1.0% ตาม ATR จริง
+      const effectiveMinWidthFloor = atrPct < 0.25 ? Math.max(1.0, atrPct * 6.0) : configuredMinWidth;
+      const dynamicMinWidth = Math.max(effectiveMinWidthFloor, Math.min(4.5, atrPct * 4.0));
 
       const structure = dow.getStructure(c.close, undefined, {
         useOnlyClosedCandles: true,
@@ -1052,16 +1069,24 @@ export class BacktestService {
         : floor * (1 - ((opts.floorBufferPct ?? 0.6) * 1.6) / 100);
       const cutLossPrice = closeCutLossPrice;
 
-      // 🛡️ Uptrend Identification & Per-Lot Cut Loss Immunity:
-      const isUptrend =
-        structure.regime === "UPTREND" ||
-        ((structure.regimeMetrics?.plusDI ?? 0) > (structure.regimeMetrics?.minusDI ?? 0) + 5 &&
-          structure.regime !== "DOWNTREND");
+      // 🛡️ Macro Uptrend Identification & Bounded Cushion Immunity:
+      const curEma50 = ema50s[i] ?? c.close;
+      const curEma200 = ema200s[i] ?? c.close;
+      const prevEma200 = ema200s[Math.max(0, i - 10)] ?? curEma200;
+      const isMacroUptrend =
+        structure.regime === "UPTREND" &&
+        c.close > curEma200 &&
+        curEma50 >= curEma200 * 0.999 &&
+        curEma200 >= prevEma200;
+      const isUptrend = isMacroUptrend;
 
-      const isSevereBearBreakdown =
-        structure.regime === "DOWNTREND" &&
-        (structure.regimeMetrics?.minusDI ?? 0) - (structure.regimeMetrics?.plusDI ?? 0) > 12 &&
-        consecutiveReds >= 3;
+      // ขอบเขต Cut Loss พิเศษสำหรับไม้ในเทรนด์ขาขึ้น (ถ่างระยะกันสะบัดออกไปเป็น -38% / -48% ของกรอบ แต่ไม่เกิน -1.8% จากทุน)
+      const uptrendCloseCutPrice = channelSpan > 0
+        ? floor - channelSpan * 0.38
+        : closeCutLossPrice * 0.995;
+      const uptrendWickCutPrice = channelSpan > 0
+        ? floor - channelSpan * 0.48
+        : emergencyWickCutPrice * 0.995;
 
       const baseCanTriggerCutLoss =
         gridCutLossMode !== "none" &&
@@ -1075,14 +1100,13 @@ export class BacktestService {
       const remainingLots: typeof heldLots = [];
       for (const lot of heldLots) {
         const holdingBars = lot.entryIdx !== undefined ? i - lot.entryIdx : 0;
-        const isLotUptrendProtected = Boolean(lot.enteredInUptrend || isUptrend);
+        const isLotUptrendProtected = Boolean(lot.enteredInUptrend && c.close >= curEma200 * 0.996);
 
-        // หากเป็นไม้ที่เข้าในเทรนด์ขาขึ้น แล้วราคาย่อหลุดขอบล่างของกรอบเดิม (closeCutLossPrice)
-        // ไม่สั่ง Cut Loss ทิ้งที่ก้นหลุม แต่ลดเป้าขายลงมาที่จุดคุ้มทุน+กำไรขั้นต่ำทันที เพื่อให้เด้งออกได้อย่างปลอดภัย
-        const isDippedBelowFloorInUptrend = isLotUptrendProtected && c.low <= closeCutLossPrice;
-        const escapeBarThreshold = isLotUptrendProtected ? 24 : 18;
+        // หากราคาย่อลงมาแตะโซน Cut Loss ปกติในขาขึ้น ให้ปรับเป้าขายลงมาที่จุดคุ้มทุน+กำไรขั้นต่ำทันที
+        const isDippedBelowNormalFloor = isLotUptrendProtected && c.low <= closeCutLossPrice;
+        const escapeBarThreshold = isLotUptrendProtected ? 22 : 18;
 
-        if ((holdingBars >= escapeBarThreshold || isDippedBelowFloorInUptrend) && !lot.isTimeDecayEscape) {
+        if ((holdingBars >= escapeBarThreshold || isDippedBelowNormalFloor) && !lot.isTimeDecayEscape) {
           const escapeTarget = lot.buyPrice * (1 + effectiveMinProfitPct / 100);
           if (escapeTarget < lot.targetPrice) {
             lot.targetPrice = escapeTarget;
@@ -1090,25 +1114,21 @@ export class BacktestService {
           }
         }
 
-        const isLotDisasterBreach = c.close <= lot.buyPrice * 0.955;
-        const canCutThisLot =
-          baseCanTriggerCutLoss &&
-          (!isLotUptrendProtected || isSevereBearBreakdown || isLotDisasterBreach);
+        const effectiveCloseCut = isLotUptrendProtected
+          ? Math.max(uptrendCloseCutPrice, lot.buyPrice * 0.982)
+          : closeCutLossPrice;
+        const effectiveWickCut = isLotUptrendProtected
+          ? Math.max(uptrendWickCutPrice, lot.buyPrice * 0.978)
+          : emergencyWickCutPrice;
 
-        const isEmergencyWickHit =
-          canCutThisLot &&
-          (!isLotUptrendProtected ? c.low <= emergencyWickCutPrice : isLotDisasterBreach);
-        const isConfirmedCloseCutHit =
-          canCutThisLot &&
-          (!isLotUptrendProtected
-            ? c.close <= closeCutLossPrice
-            : isSevereBearBreakdown || isLotDisasterBreach);
+        const isEmergencyWickHit = baseCanTriggerCutLoss && c.low <= effectiveWickCut;
+        const isConfirmedCloseCutHit = baseCanTriggerCutLoss && c.close <= effectiveCloseCut;
 
-        // 1) Cut Loss Hit (Taker Execution with Taker Fee + Taker Slippage)
+        // 1) Cut Loss Hit (Taker Execution with Taker Fee + Taker Slippage, capped at effectiveWickCut)
         if (isEmergencyWickHit || isConfirmedCloseCutHit) {
-          const rawCutExit = !isLotUptrendProtected
-            ? (isEmergencyWickHit ? emergencyWickCutPrice : Math.max(c.close, emergencyWickCutPrice))
-            : c.close;
+          const rawCutExit = isEmergencyWickHit
+            ? effectiveWickCut
+            : Math.max(c.close, effectiveWickCut);
           const exitPrice = rawCutExit * (1 - takerSlippagePct / 100);
           const proceeds = lot.qty * exitPrice * (1 - takerFeePct / 100);
           const invest = lot.qty * lot.buyPrice;
@@ -1279,31 +1299,33 @@ export class BacktestService {
         const refEntryFloor = lot.floorAtEntry ?? floor;
         const refEntrySpan = (lot.ceilingAtEntry && lot.floorAtEntry) ? (lot.ceilingAtEntry - lot.floorAtEntry) : channelSpan;
         if (enableGridTrailingStop && refEntrySpan > 0 && lot.peakPrice > lot.buyPrice) {
-          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 40% ของกรอบ (หรือบวก >= +0.55% จากทุน) -> ล็อกทุน + ค่าฟี + กำไร 0.20%
-          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.40 || lot.peakPrice >= lot.buyPrice * 1.0055) {
+          const roundtripTakerCost = makerCostPerFill + takerCostPerFill;
+          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 44% ของกรอบ (หรือบวก >= +0.65% จากทุน) และราคาปิดยืนเหนือจุดล็อกทุน
+          const lockEarly = lot.buyPrice * (1 + roundtripTakerCost + 0.0020);
+          if (
+            (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.44 || lot.peakPrice >= lot.buyPrice * 1.0065) &&
+            c.close > lockEarly
+          ) {
             lot.beLocked = true;
-            const lockEarly = lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0020);
-            const safeStop = Math.min(lockEarly, c.close);
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lockEarly);
           }
-          // ขั้นที่ 2 (Mid-Box Profit Lock): ราคาแตะ 52% ของกรอบ -> ล็อกกำไรที่ 30% ของกรอบ
-          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.52) {
-            const lock30 = Math.max(
-              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0035),
-              refEntryFloor + refEntrySpan * 0.30
-            );
-            const safeStop = Math.min(lock30, c.close);
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
+          // ขั้นที่ 2 (Mid-Box Profit Lock): ราคาแตะ 52% ของกรอบ -> ล็อกกำไรที่ 32% ของกรอบ
+          const lock32 = Math.max(
+            lot.buyPrice * (1 + roundtripTakerCost + 0.0035),
+            refEntryFloor + refEntrySpan * 0.32
+          );
+          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.52 && c.close > lock32) {
+            lot.beLocked = true;
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock32);
           }
           // ขั้นที่ 3 (Upper-Box Runner Lock): ราคาแตะ 65% ของกรอบ -> ล็อกกำไรที่ 50% ของกรอบ
-          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.65) {
+          const lock50 = Math.max(
+            lot.buyPrice * (1 + roundtripTakerCost + 0.0055),
+            refEntryFloor + refEntrySpan * 0.50
+          );
+          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.65 && c.close > lock50) {
             lot.profitLocked = true;
-            const lock50 = Math.max(
-              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0050),
-              refEntryFloor + refEntrySpan * 0.50
-            );
-            const safeStop = Math.min(lock50, c.close);
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock50);
           }
         }
 

@@ -9047,6 +9047,33 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชันเป็น **`0.3.0.51`** ใน `package.json` และ `src/version.ts`
   - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
 
+---
+
+### 299. Macro EMA200 Uptrend Filter, Bounded Cushion Immunity & Ratchet Margin Fix — Master Plan v11.0 (Version `0.3.0.52`)
+- **สาเหตุของปัญหา Asymmetric Payoff (ชนะ 75% แต่บางเหรียญติดลบ) ใน v10.1**:
+  1. **แจกเกราะ Uptrend พร่ำเพรื่อในขาลง**: ดูแค่สวิงสั้น 15m ทำให้ Altcoins ที่เป็นขาลงใหญ่ (LINK, ADA) โดนหลอกติดเกราะ `enteredInUptrend` จากการเด้งสั้นๆ แล้วลากไปชน Disaster Stop `-4.5%` ล้างกำไรของ 15–20 ไม้ชนะ
+  2. **บั๊ก `safeStop = Math.min(lockEarly, c.close)`**: ถ้าแท่งพุ่งแตะ `+0.55%` แล้วปิดต่ำกว่าทุน `stopLossPrice` จะถูกตั้งต่ำกว่าทุน ทำให้โดน Trail Stop ขายขาดทุน และตั้ง margin ต่ำกว่า Taker Cost รวม Slippage
+  3. **กรอบขั้นต่ำ 2.0% กว้างเกินไปสำหรับหุ้นผันผวนต่ำ (KO, SPY)**: หุ้นวิ่งเฉลี่ยแท่งละ 0.15% ทำให้กริดทำรอบ TP ไม่ทัน
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Master Plan v11.0)**:
+  1. **Macro EMA50/EMA200 Uptrend Filter**: ให้เกราะ `isMacroUptrend` เฉพาะเมื่อ `close > EMA200`, `EMA50 >= EMA200`, และเส้น `EMA200` กำลังยกตัวขึ้น ตัดปัญหาติดเกราะใน Bear Market Rally 100%
+  2. **Bounded Cushion Cut Loss (-38% / -48% ของกรอบ แต่ไม่เกิน -1.8% จากทุน)**: ถ่างระยะกันสะบัดไส้ในขาขึ้นอย่างปลอดภัย และคัดทิ้งทันทีเมื่อหลุดต่ำกว่า `EMA200 * 0.996` (ตัดปัญหาลากติดลบ `-4.5%` ทิ้งเด็ดขาด)
+  3. **Ratchet SafeStop & Margin Fix**: ปรับ Trigger ขั้นที่ 1 เป็น `44%` (หรือ `+0.65%`) โดยต้องปิดแท่งเหนือ `lockEarly` เท่านั้น และบวกเผื่อ `takerCostPerFill + makerCostPerFill + 0.20%` เพื่อการันตีกำไรสุทธิหลังหักค่าธรรมเนียม/Slippage
+  4. **Dynamic MinWidth for Low Volatility Assets**: สำหรับหุ้นที่ `atrPct < 0.25%` บีบกรอบขั้นต่ำลงมาตาม ATR จริง (ต่ำสุด 1.0%)
+- **ผลการทดสอบ Master Benchmark v11.0 (12,000 แท่ง 15m ข้อมูลจริง 9 สินทรัพย์)**:
+  - **Overall Average Net Return**: **พลิกกลับมาเป็นบวกสำเร็จ +0.86%** (จากเดิม -0.25% ใน v10.1 และ -1.12% ใน v10.0)
+  - **Crypto 6-Asset Average**: **พุ่งทะยานสู่ +1.81%**
+  - **AVAX/USDT**: กำไรพุ่งทำสถิติใหม่ **+$26.48 (+13.24%)**, Win Rate **81.3%**, Profit Factor **1.51**
+  - **ETH/USDT**: กำไรสุทธิ **+$4.23 (+2.11%)**, Win Rate **77.2%**, MaxDD **3.98%**
+  - **SPY (S&P500)**: พลิกกลับมาเป็นบวก **+$1.27 (+0.64%)**, Win Rate **69.4%**
+  - **AAPL (Apple)**: กำไรสุทธิ **+$1.98 (+0.99%)**, Win Rate **70.3%**
+  - **ADA/USDT**: ผลขาดทุนลดลงฮวบจาก -$7.99 เหลือเกือบหน้าทุน **-$0.43 (-0.21%)**
+  - **LINK/USDT**: ผลขาดทุนลดลงกว่าครึ่งจาก -$11.40 เหลือ **-$4.93 (-2.46%)** และ Win Rate พุ่งขึ้นเป็น **75.8%**
+  - **SOL/USDT**: ขาดทุนลดลงเหลือ **-$2.70 (-1.35%)**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.52`** ใน `package.json` และ `src/version.ts`
+  - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+
+
 - **สาเหตุของปัญหาทำไม Dynamic Grid ได้กำไรน้อยใน v8.0 (ค้นพบจาก `diag.ts` วิเคราะห์ MFE/MAE รายไม้)**:
   1. **Inverse Pyramid Adverse Selection (`buyWeights: [35, 65]` ที่ `[18%, 10%]` ของกรอบ)**:
      - ในจังหวะที่ชนะ (`GRID_TP`) ราคาเกือบ 100% ย่อแตะแค่ L1 (`18%`) แล้วเด้งขึ้นไปชน TP เลย ทำให้ได้กำไรบนเงินแค่ `$70` (35% ของทุน) อีก `$130` นอนนิ่ง
