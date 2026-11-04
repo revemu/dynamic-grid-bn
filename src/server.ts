@@ -956,7 +956,7 @@ export class DashboardServer {
             enableBaseConfirmationFilter: hlMode,
             channelMode: parsed.channelMode || (liveCfg.channelMode as any) || "DONCHIAN_ATR",
             donchianPeriod: parsed.donchianPeriod !== undefined ? Number(parsed.donchianPeriod) : (Number(liveCfg.donchianPeriod) || 48),
-            minChannelWidthPct: parsed.minChannelWidthPct !== undefined ? Number(parsed.minChannelWidthPct) : (Number(liveCfg.minChannelWidthPct) || 6.0),
+            minChannelWidthPct: parsed.minChannelWidthPct !== undefined ? Number(parsed.minChannelWidthPct) : (Number(liveCfg.minChannelWidthPct) || 2.0),
             maxChannelWidthPct: parsed.maxChannelWidthPct !== undefined ? Number(parsed.maxChannelWidthPct) : (Number(liveCfg.maxChannelWidthPct) || 20.0),
             floorBufferPct: parsed.floorBufferPct !== undefined ? Number(parsed.floorBufferPct) : (Number(liveCfg.floorBufferPct) || 0.0),
             maxInventoryQuote: parsed.budget ? Number(parsed.budget) : (Number(liveCfg.maxInventoryQuote) || budget),
@@ -1118,7 +1118,7 @@ export class DashboardServer {
           const enableBaseConfirmationFilter = parsed.enableBaseConfirmationFilter !== undefined ? Boolean(parsed.enableBaseConfirmationFilter) : false;
           const capitalZones = parsed.capitalZones !== undefined ? (Number(parsed.capitalZones) || 2) : (Number(liveCfg.capitalZones) || 2);
           const gridCutLossMode = parsed.gridCutLossMode || (liveCfg.gridCutLossMode as any) || "none";
-          const minChannelWidthPct = Number(parsed.minChannelWidthPct) || 6.0;
+          const minChannelWidthPct = Number(parsed.minChannelWidthPct) || 2.0;
           const maxChannelWidthPct = Number(parsed.maxChannelWidthPct) || 25.0;
           const donchianPeriod = Number(parsed.donchianPeriod) || 48;
           const channelMode = parsed.channelMode || "DONCHIAN_ATR";

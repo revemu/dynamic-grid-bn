@@ -1177,7 +1177,7 @@
       const canvasMarkers = [];
       for (const t of record.trades) {
         const isShort = t.side === "SHORT";
-        const isGrid = t.subsystem === "GRID" || t.exitType === "GRID_TP" || t.exitType === "GRID_CUT";
+        const isGrid = t.subsystem === "GRID" || t.exitType?.startsWith("GRID");
 
         canvasMarkers.push({
           time: t.entryTime,
@@ -1745,7 +1745,7 @@
     function renderRows(list) {
       return list.map((t) => {
         const isWin = t.pnlPct >= 0;
-        const isGrid = t.subsystem === "GRID" || t.exitType === "GRID_TP" || t.exitType === "GRID_CUT";
+        const isGrid = t.subsystem === "GRID" || t.exitType?.startsWith("GRID");
         const sysBadge = isGrid
           ? `<div style="display:inline-block; padding: 1px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); margin-top: 3px;">🕸️ GRID</div>`
           : `<div style="display:inline-block; padding: 1px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); margin-top: 3px;">🎯 SNIPER</div>`;
@@ -1755,6 +1755,12 @@
         if (t.exitType === "GRID_TP") {
           badgeClass = "badge-tp-full";
           badgeLabel = "🕸️ Grid TP";
+        } else if (t.exitType === "GRID_TRAIL_TP") {
+          badgeClass = isWin ? "badge-tp-full" : "badge-sl-loss";
+          badgeLabel = "🛡️ Grid Trail TP";
+        } else if (t.exitType === "GRID_BE_ESCAPE") {
+          badgeClass = "badge-tp-be";
+          badgeLabel = "🟡 Grid BE Escape";
         } else if (t.exitType === "GRID_CUT") {
           badgeClass = "badge-sl-loss";
           badgeLabel = "🕸️ Grid Cut";
@@ -2756,7 +2762,7 @@
               lockChannelInPosition,
               capitalZones,
               gridCutLossMode,
-              minChannelWidthPct: 6.0,
+              minChannelWidthPct: 2.0,
               maxChannelWidthPct: 25.0,
               donchianPeriod: 48,
               channelMode: "DONCHIAN_ATR",

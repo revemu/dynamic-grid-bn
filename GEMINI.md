@@ -8968,6 +8968,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชันเป็น **`0.3.0.47`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 295. Backtest Studio Chart/Table Alignment & Market Scanner Execution Fixes (Version `0.3.0.48`)
+- **สาเหตุและปัญหาที่พบ**:
+  1. **จุดซื้อ-ขายและประเภทการออกบนกราฟไม่ตรงกับตาราง**:
+     - ไม้ปิดกำไร `GRID_TRAIL_TP` และ `GRID_BE_ESCAPE` ใน `public/backtest.js` ไม่ได้ถูกดักจับ ทำให้หลุดไปเข้า fallback กลายเป็นป้ายแดง `SL (Loss)` ทั้งในตารางและบนกราฟ
+     - ในโหมด Dynamic Channel เมื่อกรอบราคาใหม่เลื่อนลงมาต่ำกว่าทุน โค้ดเดิมอ้างอิง `floor + channelSpan * 0.60` ของกรอบใหม่โดยไม่ได้ตรวจว่าราคาตลาดจริงขึ้นแตะเป้ากำไรหรือไม่ ทำให้เกิดบั๊ก Phantom Trailing Stop ขายกลางอากาศที่ราคาสูงกว่าแท่งเทียนจริง
+     - การเข้าซื้อ Limit Buy ขาดการตรวจสอบ `c.high >= bl` ทำให้สามารถเปิดสถานะที่ราคาสูงกว่า High ของแท่งเทียนได้
+  2. **Market Scanner พัง รันไม่ได้ หรือขึ้น 0 ไม้**:
+     - ค่า `minChannelWidthPct` เดิมฮาร์ดโค้ดส่ง `6.0%` เข้าไปในระบบ ทำให้กรอบ Donchian 48 แท่ง (4 ชม.) ในไทม์เฟรม 5m บล็อกการซื้อทุกเหรียญจนได้ 0 trades
+     - การสแกนแบบ Historical Leaderboard ดันมีเงื่อนไข `return;` ข้ามเหรียญทิ้งหากราคาแท่งสุดท้ายไม่อยู่ในโซนล่าง Donchian `<= 35%` ทำให้เหรียญหายไปจากตาราง 17 จาก 20 เหรียญและ Progress Bar ค้าง
+     - มีเหรียญ Stablecoin แปลกปลอม (`UUSDT`, `RWUSDUSDT`) หลุดเข้ามาในรายชื่อเหรียญสแกน
+     - มีแท็ก HTML ปิดเกินใน `public/backtest.html`
+- **การแก้ไขและสถาปัตยกรรมใหม่ (`v0.3.0.48`)**:
+  1. **Strict Realistic Order Matching & Ghost Fill Elimination**:
+     - บังคับการตรวจจับ Limit Buy Entry ให้ราคาแท่งเทียนวิ่งผ่านระดับราคาจริง (`c.low <= bl * 0.9995 && c.high >= bl`)
+     - แก้ไข Ratchet Trailing Stop ในโหมด Dynamic Channel ให้อ้างอิงระยะเปอร์เซ็นต์กรอบจากกรอบตอนเข้าซื้อของไม้นั้น (`lot.floorAtEntry`, `lot.ceilingAtEntry`) และต้องมี `c.high > lot.buyPrice` จริงเท่านั้น
+     - จำกัดราคา Match Exit สำหรับ Trailing Stop / Cut Loss ให้อยู่ภายในช่วงราคาจริงของแท่งเทียน `[c.low, c.high]`
+  2. **Backtest UI Markers & Badges Alignment**:
+     - รองรับ `GRID_TRAIL_TP` (`🛡️ Grid Trail TP`) และ `GRID_BE_ESCAPE` (`🟡 Grid BE Escape`) ใน `public/backtest.js` เพื่อแสดงป้ายสถานะและสีของจุดขายให้ตรงกับผลกำไรจริง
+  3. **Market Scanner Fixes & Donchian Parameter Tuning**:
+     - ปรับค่า `minChannelWidthPct` เริ่มต้นจาก 6.0% เป็น 2.0% ใน `src/server.ts`, `src/backtest-service.ts`, และ `public/backtest.js`
+     - นำเงื่อนไขตัดเหรียญทิ้งตามราคาแท่งสุดท้าย (`maxChannelPos`) ออกจากการสแกน Historical Leaderboard เพื่อให้รันผ่านครบทุกเหรียญและ Progress Bar ขยับครบ 100%
+     - เพิ่ม `U`, `RWUSD`, `BFUSD`, `USDE`, `XAUT` เข้า `STABLE_TOKENS`
+     - แก้ไขโครงสร้างแท็ก HTML ที่ปิดเกินใน `public/backtest.html`
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.48`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 

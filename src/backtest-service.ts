@@ -15,6 +15,7 @@ import { isSyntheticOrStock } from "./pair-rotator.js";
 
 export const STABLE_TOKENS = new Set([
   "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
+  "U", "RWUSD", "BFUSD", "USDE", "XAUT",
 ]);
 
 export const TOXIC_MEME_PENNY_TOKENS = new Set([
@@ -1112,7 +1113,8 @@ export class BacktestService {
 
         // 2) Trailing Stop Hit (Only if already armed on a previous candle: lot.beLocked || lot.profitLocked)
         if (enableGridTrailingStop && (lot.beLocked || lot.profitLocked) && lot.stopLossPrice && lot.stopLossPrice > cutLossPrice && c.low <= lot.stopLossPrice) {
-          const exitPrice = lot.stopLossPrice * (1 - takerSlippagePct / 100);
+          const rawExit = Math.min(lot.stopLossPrice, c.high);
+          const exitPrice = Math.max(c.low, rawExit * (1 - takerSlippagePct / 100));
           const proceeds = lot.qty * exitPrice * (1 - takerFeePct / 100);
           const invest = lot.qty * lot.buyPrice;
           const pnlQuote = proceeds - invest;
@@ -1226,25 +1228,31 @@ export class BacktestService {
         }
 
         // 4) Update peakPrice & Ratchet Trailing Stop for subsequent candles
+        // Must be driven by actual market price higher than entry price (cannot ratchet on a depressed market)
         lot.peakPrice = Math.max(lot.peakPrice ?? lot.buyPrice, c.high);
-        if (enableGridTrailingStop && channelSpan > 0) {
+        const refEntryFloor = lot.floorAtEntry ?? floor;
+        const refEntrySpan = (lot.ceilingAtEntry && lot.floorAtEntry) ? (lot.ceilingAtEntry - lot.floorAtEntry) : channelSpan;
+        if (enableGridTrailingStop && refEntrySpan > 0 && lot.peakPrice > lot.buyPrice) {
           // ขั้นที่ 1: ราคาแตะ 60% ของกรอบ -> ล็อกกำไรที่ 26% ของกรอบ (เหนือทุนไม้แรก และไม่โดนสะบัดกินตอนพักตัวกลางกรอบ)
-          if (lot.peakPrice >= floor + channelSpan * 0.60) {
+          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.60) {
             lot.beLocked = true;
             const lock26 = Math.max(
               lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
-              floor + channelSpan * 0.26
+              refEntryFloor + refEntrySpan * 0.26
             );
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock26);
+            // Must not place stop loss above current close price
+            const safeStop = Math.min(lock26, c.close);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
           }
           // ขั้นที่ 2: ราคาแตะ 72% ของกรอบ -> ยกล็อกกำไรเพิ่มเป็น 56% ของกรอบ
-          if (lot.peakPrice >= floor + channelSpan * 0.72) {
+          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.72) {
             lot.profitLocked = true;
             const lock56 = Math.max(
               lot.buyPrice * (1 + makerCostPerFill * 2 + 0.004),
-              floor + channelSpan * 0.56
+              refEntryFloor + refEntrySpan * 0.56
             );
-            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, lock56);
+            const safeStop = Math.min(lock56, c.close);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
           }
         }
 
@@ -1495,8 +1503,9 @@ export class BacktestService {
           const bl = buyLevels[lvlIdx];
           const alreadyFilledInCurrentZone = heldLots.some((l) => (l.zoneIndex ?? 1) === unlockedCapitalZones && l.index === lvlIdx);
           // Queue Penetration: Price must trade through Limit Buy by 0.05%
+          // And candle high must reach or exceed the limit price (must physically overlap bar range)
           // Also verify bar does not trigger cut loss on the entry candle
-          if (!alreadyFilledInCurrentZone && c.low <= bl * 0.9995 && (!canTriggerCutLoss || (c.close > closeCutLossPrice && c.low > emergencyWickCutPrice))) {
+          if (!alreadyFilledInCurrentZone && c.low <= bl * 0.9995 && c.high >= bl && (!canTriggerCutLoss || (c.close > closeCutLossPrice && c.low > emergencyWickCutPrice))) {
             tradeCounter++;
             const buyPrice = bl;
             const invest = Math.min(cash, weightedTrancheQuote);
@@ -3779,51 +3788,6 @@ export class BacktestService {
             if (!candles || candles.length < 50) return;
             const actualWarmup = isAutoSpread ? Math.max(0, candles.length - limit) : 0;
 
-            if (opts.tradeMode === "dynamic_grid") {
-              // Check HTF Governor for Dynamic Grid:
-              if (opts.gridHtfGovernor === "1h_ema200" && candles.length >= 2400) {
-                const c1h = BacktestService.aggregateCandles(candles, 60);
-                if (c1h.length >= 200) {
-                  const c1hCloses = c1h.map((c) => c.close);
-                  const ema200_1h = calcEMA(c1hCloses, 200);
-                  const last1h = c1h[c1h.length - 1];
-                  const lastEma = ema200_1h[ema200_1h.length - 1];
-                  if (last1h && lastEma && last1h.close < lastEma) {
-                    return; // Skip coins in 1H macro downtrend
-                  }
-                }
-              } else if (opts.gridHtfGovernor === "4h_ema75" && candles.length >= 2400) {
-                const c4h = BacktestService.aggregateCandles(candles, 240);
-                if (c4h.length >= 75) {
-                  const c4hCloses = c4h.map((c) => c.close);
-                  const ema75_4h = calcEMA(c4hCloses, 75);
-                  const last4h = c4h[c4h.length - 1];
-                  const lastEma = ema75_4h[ema75_4h.length - 1];
-                  if (last4h && lastEma && last4h.close < lastEma) {
-                    return; // Skip coins in 4H macro downtrend
-                  }
-                }
-              }
-
-              // Check position in Donchian channel:
-              if (opts.maxChannelPos !== undefined && opts.maxChannelPos < 1.0) {
-                const donPeriod = opts.donchianPeriod ?? 48;
-                const recentSlice = candles.slice(-donPeriod);
-                let dH = -Infinity, dL = Infinity;
-                for (const rc of recentSlice) {
-                  if (rc.high > dH) dH = rc.high;
-                  if (rc.low < dL) dL = rc.low;
-                }
-                if (dH > dL && dL > 0) {
-                  const lastC = candles[candles.length - 1].close;
-                  const posInChannel = (lastC - dL) / (dH - dL);
-                  if (posInChannel > opts.maxChannelPos) {
-                    return; // Skip coins outside lower channel zone
-                  }
-                }
-              }
-            }
-
             const symCostModel = opts.costModel ?? (
               isAlpaca
                 ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
@@ -3869,7 +3833,7 @@ export class BacktestService {
               gridCutLossMode: opts.gridCutLossMode ?? "none",
               channelMode: opts.channelMode ?? "DONCHIAN_ATR",
               donchianPeriod: opts.donchianPeriod ?? 48,
-              minChannelWidthPct: opts.minChannelWidthPct ?? 6.0,
+              minChannelWidthPct: opts.minChannelWidthPct ?? 2.0,
               maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
               zoneMinDropPct: opts.zoneMinDropPct ?? 2.5,
               zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
