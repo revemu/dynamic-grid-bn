@@ -750,6 +750,12 @@ export class BacktestService {
       zoneMinDropPct?: number;
       zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      enableGridTrailingStop?: boolean;
+      gridTrailingBreakevenRatio?: number;
+      gridTrailingProfitLockRatio?: number;
+      gridTrailingProfitLockTargetRatio?: number;
+      buyLevelPcts?: number[];
+      sellLevelPcts?: number[];
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
       startTradingBarIndex?: number;
@@ -782,7 +788,11 @@ export class BacktestService {
     const totalZones = Math.max(1, Math.min(5, opts.capitalZones ?? 2));
     const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
     const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
-    const gridCutLossMode = opts.gridCutLossMode ?? "none";
+    const gridCutLossMode = opts.gridCutLossMode ?? "entry_floor";
+    const enableGridTrailingStop = opts.enableGridTrailingStop ?? true;
+    const gridTrailingBreakevenRatio = opts.gridTrailingBreakevenRatio ?? 0.50;
+    const gridTrailingProfitLockRatio = opts.gridTrailingProfitLockRatio ?? 0.70;
+    const gridTrailingProfitLockTargetRatio = opts.gridTrailingProfitLockTargetRatio ?? 0.50;
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const roundtripFeePct = costPerFill * 2 * 100;
@@ -835,6 +845,10 @@ export class BacktestService {
       floorAtEntry?: number;
       ceilingAtEntry?: number;
       centerAtEntry?: number;
+      peakPrice?: number;
+      stopLossPrice?: number;
+      beLocked?: boolean;
+      profitLocked?: boolean;
     }> = [];
 
     const trades: BacktestTrade[] = [];
@@ -900,18 +914,10 @@ export class BacktestService {
         channelSpan = ceiling - floor;
         if (channelSpan <= 0) continue;
 
-        buyLevels = [
-          floor + channelSpan * 0.45,
-          floor + channelSpan * 0.33,
-          floor + channelSpan * 0.20,
-          floor + channelSpan * 0.08,
-        ];
-        sellTargets = [
-          floor + channelSpan * 0.55,
-          floor + channelSpan * 0.68,
-          floor + channelSpan * 0.80,
-          floor + channelSpan * 0.92,
-        ];
+        const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
+        const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
+        buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
+        sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
         activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
       } else if (lockChannelInPosition && lockedChannel && (totalZones <= 1 || structure.bottomBound >= (activeChannel?.floor ?? 0) * 0.999)) {
         // Position Lock: Freeze channel until all lots exit
@@ -1036,6 +1042,25 @@ export class BacktestService {
       // 1. Evaluate Sells & Cut Losses for Open Lots
       const remainingLots: typeof heldLots = [];
       for (const lot of heldLots) {
+        // Track peak price since entry
+        lot.peakPrice = Math.max(lot.peakPrice ?? lot.buyPrice, c.high);
+
+        // Dynamic Ratchet Trailing Stop updates
+        if (enableGridTrailingStop) {
+          const beTriggerPrice = floor + channelSpan * gridTrailingBreakevenRatio;
+          const profitLockTriggerPrice = floor + channelSpan * gridTrailingProfitLockRatio;
+          const profitLockStopPrice = floor + channelSpan * gridTrailingProfitLockTargetRatio;
+          const beStopPrice = lot.buyPrice * (1 + (roundtripFeePct + 0.10) / 100);
+
+          if (lot.peakPrice >= profitLockTriggerPrice) {
+            lot.profitLocked = true;
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, profitLockStopPrice);
+          } else if (lot.peakPrice >= beTriggerPrice) {
+            lot.beLocked = true;
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, beStopPrice);
+          }
+        }
+
         // Take Profit Hit
         if (c.high >= lot.targetPrice) {
           const exitPrice = lot.targetPrice;
@@ -1083,6 +1108,58 @@ export class BacktestService {
             color: "#a855f7",
             shape: "arrowDown",
             text: `🟣 GRID SELL #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+          });
+          continue;
+        }
+
+        // Trailing Stop Hit (Ratchet Profit Lock or Break-even Lock)
+        if (enableGridTrailingStop && lot.stopLossPrice && lot.stopLossPrice > cutLossPrice && c.low <= lot.stopLossPrice) {
+          const exitPrice = lot.stopLossPrice;
+          const proceeds = lot.qty * exitPrice * (1 - costPerFill);
+          const invest = lot.qty * lot.buyPrice;
+          const pnlQuote = proceeds - invest;
+          const pnlPct = invest > 0 ? (pnlQuote / invest) * 100 : 0;
+          cash += proceeds;
+          const exitCost = lot.qty * exitPrice * costPerFill;
+          totalFeesQuote += lot.costQuote + exitCost;
+
+          if (pnlQuote >= 0) {
+            grossProfit += pnlQuote;
+            wins++;
+          } else {
+            grossLoss += Math.abs(pnlQuote);
+            losses++;
+          }
+
+          const trailLabel = lot.profitLocked ? "PROFIT_LOCK" : "BE_LOCK";
+          trades.push({
+            id: lot.id,
+            subsystem: "GRID",
+            side: "LONG",
+            entryTime: lot.entryTime,
+            entryPrice: lot.buyPrice,
+            stopLossPrice: lot.stopLossPrice,
+            fanSpreadAtEntry: 0,
+            exitTime: c.time,
+            exitPrice,
+            exitType: "GRID_TRAIL_TP",
+            pnlQuote,
+            pnlPct,
+            holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+            costQuote: lot.costQuote + exitCost,
+            channelFloor: lot.floorAtEntry,
+            channelCeil: lot.ceilingAtEntry,
+            channelMid: lot.centerAtEntry,
+            channelSpanPct: lot.floorAtEntry && lot.ceilingAtEntry ? Number((((lot.ceilingAtEntry - lot.floorAtEntry) / lot.floorAtEntry) * 100).toFixed(2)) : undefined,
+            zoneIndex: lot.zoneIndex,
+          });
+
+          markers.push({
+            time: c.time,
+            position: "aboveBar",
+            color: "#3b82f6",
+            shape: "circle",
+            text: `🎯 GRID TRAIL #${lot.id} (${trailLabel}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
           });
           continue;
         }
@@ -1367,6 +1444,8 @@ export class BacktestService {
               floorAtEntry: floor,
               ceilingAtEntry: ceiling,
               centerAtEntry: center,
+              peakPrice: buyPrice,
+              stopLossPrice: cutLossPrice,
             });
 
             if (!lockedChannel) {
@@ -1560,6 +1639,8 @@ export class BacktestService {
       zoneMinDropPct?: number;
       zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      buyLevelPcts?: number[];
+      sellLevelPcts?: number[];
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
       tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";
@@ -1663,6 +1744,10 @@ export class BacktestService {
       floorAtEntry?: number;
       ceilingAtEntry?: number;
       centerAtEntry?: number;
+      peakPrice?: number;
+      stopLossPrice?: number;
+      beLocked?: boolean;
+      profitLocked?: boolean;
     }> = [];
 
     // Sniper Subsystem State
@@ -1755,18 +1840,10 @@ export class BacktestService {
         ceiling = structure.upperBound;
         center = structure.centerPrice;
         channelSpan = ceiling - floor;
-        buyLevels = [
-          floor + channelSpan * 0.45,
-          floor + channelSpan * 0.33,
-          floor + channelSpan * 0.20,
-          floor + channelSpan * 0.08,
-        ];
-        sellTargets = [
-          floor + channelSpan * 0.55,
-          floor + channelSpan * 0.68,
-          floor + channelSpan * 0.80,
-          floor + channelSpan * 0.92,
-        ];
+        const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
+        const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
+        buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
+        sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
         activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
       } else if (lockChannelInPosition && lockedChannel) {
         floor = lockedChannel.floor;
@@ -2106,6 +2183,8 @@ export class BacktestService {
                 floorAtEntry: floor,
                 ceilingAtEntry: ceiling,
                 centerAtEntry: center,
+                peakPrice: buyPrice,
+                stopLossPrice: cutLossPrice,
               });
 
               if (!lockedChannel) {
@@ -2547,6 +2626,8 @@ export class BacktestService {
       zoneMinDropPct?: number;
       zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      buyLevelPcts?: number[];
+      sellLevelPcts?: number[];
       zoneExitMode?: "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE";
       minNetProfitPct?: number;
       tp1TargetMode?: "EMA25" | "EMA75" | "EMA200";

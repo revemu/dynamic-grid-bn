@@ -245,7 +245,17 @@ export const defaultStrategyConfig = {
   /** Zone exit strategy: "PORTFOLIO_AVG" (default), "ORIGINAL_TARGETS", "PER_ZONE", "HYBRID_ZONE_RECOVERY", or "AVG_PROFIT_ALL". */
   zoneExitMode: "PORTFOLIO_AVG" as "PORTFOLIO_AVG" | "ORIGINAL_TARGETS" | "PER_ZONE" | "HYBRID_ZONE_RECOVERY" | "AVG_PROFIT_ALL",
   /** Cut loss behavior mode for dynamic grid in backtest: "none" (default for DCA hold), "entry_floor" (strict entry floor SL), or "final_zone_floor" (SL only after all zones exhausted). */
-  gridCutLossMode: "none" as "none" | "entry_floor" | "final_zone_floor",
+  gridCutLossMode: "entry_floor" as "none" | "entry_floor" | "final_zone_floor",
+
+  // ── Grid Trailing Stop & Ratchet Profit Lock ───────────────────────────
+  /** When true, activates dynamic Ratchet Step Trailing Stop for held grid lots to lock profits and rotate cashflow faster. Default true. */
+  enableGridTrailingStop: true,
+  /** Channel span ratio threshold to trigger Break-even lock (moving Stop Loss to entry + fee). Default 0.50 (Center of channel). */
+  gridTrailingBreakevenRatio: 0.50,
+  /** Channel span ratio threshold to trigger Profit Lock (moving Stop Loss to 50% of channel). Default 0.70. */
+  gridTrailingProfitLockRatio: 0.70,
+  /** Channel span ratio where Stop Loss is locked when profit lock triggers. Default 0.50. */
+  gridTrailingProfitLockTargetRatio: 0.50,
 
   // ── Support & Resistance Channel Calculation Mode ────────────────────────
   /**
@@ -275,8 +285,8 @@ export const defaultStrategyConfig = {
   donchianLookback: 48,
   /** Shared lookback (bars) for Peak/Valley detection, trendlines and market structure analysis (default 300 = initial candle load). */
   srLookbackCandles: 300,
-  /** Safety buffer below floor (in % of price, default 0.35%). */
-  floorBufferPct: 0.35,
+  /** Safety buffer below floor (in % of price, default 1.5%). */
+  floorBufferPct: 1.5,
   /** When true, dynamically scales Floor Cut-Loss buffer according to rolling ATR volatility to avoid wick stop-outs. Default true. */
   enableDynamicAtrBuffer: true,
   /** Multiplier of rolling ATR percentage to apply to dynamic Floor Buffer (default 0.75x ATR). */
@@ -465,6 +475,10 @@ export function loadConfigFromDatabase(): typeof defaultStrategyConfig {
       if (saved.gridCutLossMode === "none" || saved.gridCutLossMode === "entry_floor" || saved.gridCutLossMode === "final_zone_floor") {
         merged.gridCutLossMode = saved.gridCutLossMode;
       }
+      if (saved.enableGridTrailingStop !== undefined) merged.enableGridTrailingStop = Boolean(saved.enableGridTrailingStop);
+      if (saved.gridTrailingBreakevenRatio !== undefined) merged.gridTrailingBreakevenRatio = Number(saved.gridTrailingBreakevenRatio);
+      if (saved.gridTrailingProfitLockRatio !== undefined) merged.gridTrailingProfitLockRatio = Number(saved.gridTrailingProfitLockRatio);
+      if (saved.gridTrailingProfitLockTargetRatio !== undefined) merged.gridTrailingProfitLockTargetRatio = Number(saved.gridTrailingProfitLockTargetRatio);
       if (saved.breakevenEscapeProfitPct !== undefined) merged.breakevenEscapeProfitPct = Number(saved.breakevenEscapeProfitPct);
       if (saved.maxActiveMakerBuys !== undefined) merged.maxActiveMakerBuys = Number(saved.maxActiveMakerBuys);
       if (saved.enableBuyAboveTrendSupport !== undefined) merged.enableBuyAboveTrendSupport = Boolean(saved.enableBuyAboveTrendSupport);

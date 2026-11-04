@@ -43,6 +43,21 @@ export interface EvaluateCutLossParams {
   sellAll: (price: number, action: "SELL" | "CUT" | "MANUAL", anchorRefPrice?: number) => Promise<boolean | void>;
 }
 
+export interface EvaluateGridTrailingStopParams {
+  refPrice: number;
+  bestBid?: number;
+  lowerBound: number;
+  span: number;
+  cancelOrderInternal: (order: OpenOrder, reason: string) => Promise<void>;
+  sellTrancheIOC: (
+    qty: number,
+    execPrice: number,
+    levelName: string,
+    targetPrice: number,
+    allowLoss?: boolean,
+  ) => Promise<boolean>;
+}
+
 export class RiskManager {
   constructor(private host: IStrategyHost) {}
 
@@ -263,6 +278,91 @@ export class RiskManager {
     this.host.breakdownCandleTimes.clear();
     this.host.saveState();
     return true;
+  }
+
+  /**
+   * Evaluates Ratchet Step Trailing Stop for held grid lots:
+   * 1. Break-even Lock: When lot's observed peak price reaches >= 50% of channel span (Center),
+   *    Stop Loss is moved up to entry price + fee buffer (+0.3%) -> Risk-Free Trade!
+   * 2. Profit Lock: When lot's observed peak price reaches >= 70% of channel span,
+   *    Trailing Stop is moved up to 50% of channel span (Center) -> Locks in major bounce profit!
+   * 3. Execution: If refPrice pulls back and drops to or below lot.stopLossPrice, executes immediate IOC exit
+   *    to lock in profits, return 100% cash to portfolio, and accelerate cashflow rotation!
+   */
+  public async evaluateGridTrailingStop(params: EvaluateGridTrailingStopParams): Promise<boolean> {
+    if (this.host.cfg.enableGridTrailingStop === false) return false;
+    if (this.host.lots.length === 0) return false;
+
+    const { refPrice, bestBid, lowerBound, span, cancelOrderInternal, sellTrancheIOC } = params;
+    if (span <= 0 || lowerBound <= 0) return false;
+
+    const beRatio = this.host.cfg.gridTrailingBreakevenRatio ?? 0.50;
+    const profitLockRatio = this.host.cfg.gridTrailingProfitLockRatio ?? 0.70;
+    const profitLockTargetRatio = this.host.cfg.gridTrailingProfitLockTargetRatio ?? 0.50;
+
+    const beTriggerPrice = lowerBound + span * beRatio;
+    const profitLockTriggerPrice = lowerBound + span * profitLockRatio;
+    const profitLockStopPrice = lowerBound + span * profitLockTargetRatio;
+
+    let executedAny = false;
+    const execBid = (bestBid && bestBid > 0) ? bestBid : refPrice;
+
+    for (const lot of this.host.lots) {
+      // Track peak price since entry
+      lot.peakPrice = Math.max(lot.peakPrice ?? lot.price, refPrice);
+
+      // 1. Ratchet to Profit Lock if reached 70% of span
+      if (lot.peakPrice >= profitLockTriggerPrice) {
+        if (!lot.profitLocked) {
+          lot.profitLocked = true;
+          this.host.log(
+            `🎯 [GRID TRAILING STOP] Lot @ $${lot.price.toFixed(6)} activated Profit Lock (Peak $${lot.peakPrice.toFixed(6)} >= 70% Span). Trailing Stop raised to Center ($${profitLockStopPrice.toFixed(6)})!`,
+          );
+        }
+        lot.stopLossPrice = Math.max(lot.stopLossPrice ?? 0, profitLockStopPrice);
+      }
+      // 2. Ratchet to Break-even if reached 50% of span (Center)
+      else if (lot.peakPrice >= beTriggerPrice) {
+        const bePrice = lot.price * 1.003; // entry + 0.3% roundtrip fee buffer
+        if (!lot.beLocked) {
+          lot.beLocked = true;
+          this.host.log(
+            `🛡️ [GRID TRAILING STOP] Lot @ $${lot.price.toFixed(6)} activated Break-even Lock (Peak $${lot.peakPrice.toFixed(6)} >= 50% Span). Stop Loss raised to $${bePrice.toFixed(6)}!`,
+          );
+        }
+        lot.stopLossPrice = Math.max(lot.stopLossPrice ?? 0, bePrice);
+      }
+
+      // 3. Check if price dropped to or below the trailing stop price
+      if (lot.stopLossPrice && lot.stopLossPrice > 0 && refPrice <= lot.stopLossPrice && lot.qty >= this.host.minQty) {
+        const exitTypeDesc = lot.profitLocked ? "Profit Lock Exit" : "Break-even Exit";
+        this.host.log(
+          `⚡ [GRID TRAILING STOP TRIGGERED] Price $${refPrice.toFixed(6)} touched trailing stop $${lot.stopLossPrice.toFixed(6)} (${exitTypeDesc}) -> Executing immediate IOC sell for ${lot.qty.toFixed(4)} ${this.host.baseAsset} to rotate cashflow!`,
+        );
+
+        // Cancel resting sell for this lot if any
+        if (cancelOrderInternal && this.host.openOrders.length > 0) {
+          const restingSell = this.host.openOrders.find((o) => !o.isBid && Math.abs(o.qty - lot.qty) / (lot.qty || 1) < 0.05);
+          if (restingSell) {
+            await cancelOrderInternal(restingSell, "Grid Trailing Stop triggered — cancel resting sell to execute IOC exit");
+          }
+        }
+
+        const ok = await sellTrancheIOC(
+          lot.qty,
+          execBid,
+          `Trailing ${exitTypeDesc}`,
+          lot.stopLossPrice,
+          true,
+        );
+        if (ok) {
+          executedAny = true;
+          this.host.saveState();
+        }
+      }
+    }
+
+    return executedAny;
   }
 
   /**

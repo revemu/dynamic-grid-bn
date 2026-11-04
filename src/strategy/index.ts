@@ -3617,6 +3617,20 @@ export class DynamicGrid implements IStrategyHost, IStrategy {
     });
     if (cutLossHandled) return;
 
+    // ── GRID TRAILING STOP: RATCHET BREAK-EVEN & PROFIT LOCK ────────────────
+    if (isChannelReady && this.cfg.enableGridTrailingStop !== false && this.lots.length > 0) {
+      const trailingExitHandled = await this.riskManager.evaluateGridTrailingStop({
+        refPrice,
+        bestBid,
+        lowerBound,
+        span,
+        cancelOrderInternal: (order, reason) => this.orderExecutor.cancelOrderInternal(order, reason),
+        sellTrancheIOC: (qty, execPrice, levelName, targetPrice, allowLoss) =>
+          this.orderExecutor.sellTrancheIOC(qty, execPrice, levelName, targetPrice, allowLoss),
+      });
+      if (trailingExitHandled) return;
+    }
+
     // ── 100% UPPER BOUND: 100% FULL TAKE PROFIT EXIT & LH DYNAMIC ESCAPE ─────
     // Take profit when the Binance reference price or Best Bid reaches or crosses the 100% Ceiling or highest ENABLED sell level!
     // SAFETY: Take Profit must NEVER sell at a loss or micro-dust profit! Strictly require >= 0.50% profit above avgEntry on the actual execution Bid, and check DEX Bid discount vs Binance.

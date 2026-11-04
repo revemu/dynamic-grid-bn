@@ -213,8 +213,8 @@ export class RegimeClassifier {
     const isEma75Up = idx >= 5 ? ema75[idx] > ema75[idx - 5] : true;
 
     // HTF Alignment
-    let htfBull = true;
-    let htfBear = false;
+    let htfBull = isAboveEma75 && isEma75Up;
+    let htfBear = !isAboveEma75 && !isEma75Up;
     if (candlesHtf && candlesHtf.length >= 50) {
       const htfCloses = candlesHtf.map((x) => x.close);
       const htfEma = calcEMAArray(htfCloses, Math.min(75, candlesHtf.length - 1));

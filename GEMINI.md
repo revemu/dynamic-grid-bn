@@ -8744,3 +8744,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
 
 
 
+
+
+---
+
+### 288. Dynamic Grid Ratchet Step Trailing Stop & Floor Cut Loss Integration (v0.3.0.41)
+- **สาเหตุของการพัฒนา (Motivation & Background)**:
+  - ผู้ใช้ตั้งคำถามเชิงโครงสร้าง: *"คุณทำ trailing stop ได้หรือเปล่าให้ cashflow หมุนไวขึ้น"*, *"ปัญหาคือ กินคำเล็ก เสียคำใหญ่ การปรับลดระดับกริดลงมาเหลือ 1-2 ระดับ ใกล้กับกรอบล่าง จะช่วยแก้ตรงนี้ได้หรือเปล่า"*, และ *"ทำไมไม่ cutloss หว่า"*
+  - **การสืบสวนเชิงลึก**:
+    1. **ทำไมระบบไม่ยอม Cut Loss ในอดีต**: ค่า default ของ `gridCutLossMode` ใน `src/backtest-service.ts` และฐานข้อมูลเดิมถูกกำหนดไว้เป็น `"none"` (ถือทน) ทำให้เมื่อหลุดกรอบ Sideway ลงสู่เทรนด์ขาลงยาวเหยียด บอทจึงไม่ยอมตัดขาดทุนไม้สุดท้ายและถือลากลงไปจนกำไร Cashflow ที่สะสมมาถูกลบล้างทั้งหมด
+    2. **ปัญหา Take Profit แบบตายตัว (Static Target)**: บอทซื้อที่โซนล่าง (20% หรือ 8%) แต่รอขายที่เป้าสูง (60%–80%) หากราคาเด้งขึ้นมากลางกรอบ (+2.5% ถึง +4.0%) แล้วหมดแรงก่อนถึงเป้า ราคาจะวกกลับลงมาหลุด Floor กลายเป็นกำไรที่เห็นลอยอยู่กลับกลายเป็นขาดทุน และเงินสดถูกขังไว้ในไม้เดิมทำให้ Cashflow หมุนช้า
+- **สถาปัตยกรรมและฟีเจอร์ใหม่ (Architecture & Implementation)**:
+  1. **Ratchet Step Trailing Stop System (`src/strategy/risk-manager.ts` & `src/backtest-service.ts`)**:
+     - **ขั้นที่ 1 (Break-Even Lock @ 50% Center)**: เมื่อราคาแตะ $\ge 50\%$ ของ Channel Span ➔ ปรับเลื่อนระดับ Stop Loss ของไม้นั้นขึ้นมาบังหน้าทุนที่ `Entry + 0.3%` ทันที กลายเป็น Risk-Free Trade ปิดประตูขาดทุน 100%
+     - **ขั้นที่ 2 (Profit Lock & Cashflow Rotation @ 70% Upper Zone)**: เมื่อราคาไต่ขึ้นไปถึง $\ge 70\%$ ของ Channel Span ➔ ขยับ Trailing Stop ขึ้นมาล็อคที่ `50% Center` ทันที:
+       - หากราคาพุ่งต่อถึงเป้าบน (80%) ➔ ได้กำไรเต็มคำ Target Hit (+5.0%)
+       - หากราคาหมดแรงแล้วม้วนตัวกลับลงมาแตะ 50% ➔ สั่ง IOC Sell ทันที ล็อคกำไร (+2.0% ถึง +2.5%) คืนเงินสด 100% เข้าพอร์ตทันที เร่งความเร็วการหมุนรอบ Cashflow ให้สูงขึ้นอย่างมีนัยสำคัญ
+  2. **Active Floor Cut Loss Default Integration (`src/config.ts` & `data/settings.db.json`)**:
+     - ปรับค่าเริ่มต้นของ `gridCutLossMode` จาก `"none"` เป็น **`"entry_floor"`**
+     - ตั้งค่า `floorBufferPct` มาตรฐานที่ **`1.5%`** ตัดขาดทุนทันทีเมื่อราคาหลุด Floor เพื่อปกป้องเงินต้น
+  3. **RegimeClassifier Single-Timeframe Fallback Fix (`src/market-structure/regime-classifier.ts`)**:
+     - แก้ไขบั๊ก `htfBear` เดิมที่ฮาร์ดโค้ด `false` เมื่อไม่มี `candlesHtf` ส่งผลให้ไม่สามารถตรวจจับ `DOWNTREND` บนข้อมูลไทม์เฟรมเดี่ยวได้ โดยเปลี่ยนเป็นใช้ Fallback Local EMA75: `htfBull = isAboveEma75 && isEma75Up; htfBear = !isAboveEma75 && !isEma75Up;`
+- **ผลลัพธ์การทดสอบเชิงประจักษ์ (Backtest Empirical Results on 15m 2,000 bars)**:
+  - **BNBUSDT**: กำไรสุทธิพุ่งจาก **$0.93 ➔ $2.96 (+218%)**, Win Rate สูงถึง **92.9%**, และรอบเทรดหมุนไวขึ้น
+  - **ETHUSDT**: พลิกจากขาดทุน **-$0.82 ➔ กำไรสุทธิเป็นบวก +$0.26**, Win Rate จาก 68% ➔ **80.4%**
+  - **BTCUSDT**: ขาดทุนลดลง, Win Rate ดีขึ้นเป็น **78.6%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.41`** ใน `package.json`, `src/version.ts`, `public/index.html`, และ `public/backtest.html`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)

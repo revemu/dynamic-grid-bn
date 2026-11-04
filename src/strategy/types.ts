@@ -17,6 +17,10 @@ export interface Lot {
   qty: number;   // base remaining
   time: number;  // timestamp entry
   zoneIndex?: number; // capital allocation zone index (0..4)
+  peakPrice?: number; // highest price observed since lot creation
+  stopLossPrice?: number; // dynamic trailing stop loss price
+  beLocked?: boolean; // whether break-even stop loss has been locked
+  profitLocked?: boolean; // whether profit lock trailing has been triggered
 }
 
 export interface GridReadinessInfo {
