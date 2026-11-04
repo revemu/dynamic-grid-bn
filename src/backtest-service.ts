@@ -739,7 +739,8 @@ export class BacktestService {
       costModel?: { feePctPerSide: number; slippagePctPerFill: number };
       saveToHistory?: boolean;
       enableBaseConfirmationFilter?: boolean;
-  lockChannelInPosition?: boolean;
+      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "OFF";
+      lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
       minChannelWidthPct?: number;
@@ -797,6 +798,9 @@ export class BacktestService {
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const roundtripFeePct = costPerFill * 2 * 100;
     const effectiveMinProfitPct = Math.max(minNetProfitPct, roundtripFeePct + 0.20);
+    const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
+    const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
+    const regimeFilterMode = opts.regimeFilterMode ?? (opts.enableBaseConfirmationFilter ? "SIDEWAY_ONLY" : "OFF");
     const zoneBudgetQuote = maxInventory / totalZones;
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
     let isZoneReversalConfirmed = true;
@@ -914,8 +918,6 @@ export class BacktestService {
         channelSpan = ceiling - floor;
         if (channelSpan <= 0) continue;
 
-        const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
-        const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
         buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
         sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
         activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
@@ -969,18 +971,8 @@ export class BacktestService {
             ceiling = structure.upperBound;
             center = structure.centerPrice;
             channelSpan = ceiling - floor;
-            buyLevels = [
-              floor + channelSpan * 0.45,
-              floor + channelSpan * 0.33,
-              floor + channelSpan * 0.20,
-              floor + channelSpan * 0.08,
-            ];
-            sellTargets = [
-              floor + channelSpan * 0.55,
-              floor + channelSpan * 0.68,
-              floor + channelSpan * 0.80,
-              floor + channelSpan * 0.92,
-            ];
+            buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
+            sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
             activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
             lastZoneUnlockFloor = floor;
             stableFloorCandleCount = 0;
@@ -999,18 +991,8 @@ export class BacktestService {
           center = structure.centerPrice;
           channelSpan = ceiling - floor;
           if (channelSpan <= 0) continue;
-          buyLevels = [
-            floor + channelSpan * 0.45,
-            floor + channelSpan * 0.33,
-            floor + channelSpan * 0.20,
-            floor + channelSpan * 0.08,
-          ];
-          sellTargets = [
-            floor + channelSpan * 0.55,
-            floor + channelSpan * 0.68,
-            floor + channelSpan * 0.80,
-            floor + channelSpan * 0.92,
-          ];
+          buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
+          sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
           activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
           stableFloorCandleCount = 0;
         }
@@ -1380,11 +1362,27 @@ export class BacktestService {
 
       const effectiveMaxInventory = zoneBudgetQuote * unlockedCapitalZones;
       const currentInventory = heldLots.reduce((sum, l) => sum + (l.qty * l.buyPrice), 0);
-      const trancheQuote = zoneBudgetQuote / 4;
-      const isHlWaiting = opts.enableBaseConfirmationFilter === true && (
-        structure.gridZone?.canEstablishChannel === false ||
-        Boolean(structure.isDowntrendDropActive)
-      );
+      const trancheQuote = zoneBudgetQuote / Math.max(1, curBuys.length);
+
+      let isRegimeBlocked = false;
+      if (regimeFilterMode === "SIDEWAY_ONLY") {
+        const isRange = structure.regime === "RANGE";
+        const canEstablish = structure.gridZone?.canEstablishChannel !== false;
+        const notDropping = !structure.isDowntrendDropActive;
+        if (!isRange || !canEstablish || !notDropping) {
+          isRegimeBlocked = true;
+        }
+      } else if (regimeFilterMode === "NO_DOWNTREND") {
+        const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive) || structure.gridZone?.canEstablishChannel === false;
+        if (isDowntrend) {
+          isRegimeBlocked = true;
+        }
+      } else if (opts.enableBaseConfirmationFilter === true) {
+        if (structure.gridZone?.canEstablishChannel === false || Boolean(structure.isDowntrendDropActive)) {
+          isRegimeBlocked = true;
+        }
+      }
+      const isHlWaiting = isRegimeBlocked;
       const isZoneWaiting = zoneRequireReversal && unlockedCapitalZones > 1 && !isZoneReversalConfirmed;
 
       // Dip Hunter Entry Absorption Guard
@@ -1411,7 +1409,7 @@ export class BacktestService {
         }
       }
 
-      const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
+      const maxLotsForUnlockedZones = unlockedCapitalZones * Math.max(1, curBuys.length);
       if (isTradingActive && !isHlWaiting && !isZoneWaiting && passesDipHunterGuard && currentInventory + trancheQuote <= effectiveMaxInventory && cash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
         for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
           const bl = buyLevels[lvlIdx];
@@ -1628,6 +1626,7 @@ export class BacktestService {
       };
       candlesHtf?: Candle[];
       enableBaseConfirmationFilter?: boolean;
+      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "OFF";
       lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
@@ -1672,6 +1671,9 @@ export class BacktestService {
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const zoneBudgetQuote = gridInitialCap / totalZones;
+    const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
+    const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
+    const regimeFilterMode = opts.regimeFilterMode ?? (opts.enableBaseConfirmationFilter ? "SIDEWAY_ONLY" : "OFF");
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
     let isZoneReversalConfirmed = true;
     let zoneDumpLowPrice = 0;
@@ -1840,8 +1842,6 @@ export class BacktestService {
         ceiling = structure.upperBound;
         center = structure.centerPrice;
         channelSpan = ceiling - floor;
-        const curBuys = opts.buyLevelPcts ?? [45, 33, 20, 8];
-        const curSells = opts.sellLevelPcts ?? [55, 68, 80, 92];
         buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
         sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
         activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
@@ -1890,18 +1890,8 @@ export class BacktestService {
             ceiling = structure.upperBound;
             center = structure.centerPrice;
             channelSpan = ceiling - floor;
-            buyLevels = [
-              floor + channelSpan * 0.45,
-              floor + channelSpan * 0.33,
-              floor + channelSpan * 0.20,
-              floor + channelSpan * 0.08,
-            ];
-            sellTargets = [
-              floor + channelSpan * 0.55,
-              floor + channelSpan * 0.68,
-              floor + channelSpan * 0.80,
-              floor + channelSpan * 0.92,
-            ];
+            buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
+            sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
             activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
             lastZoneUnlockFloor = floor;
             stableFloorCandleCount = 0;
@@ -1918,18 +1908,8 @@ export class BacktestService {
           ceiling = structure.upperBound;
           center = structure.centerPrice;
           channelSpan = ceiling - floor;
-          buyLevels = [
-            floor + channelSpan * 0.45,
-            floor + channelSpan * 0.33,
-            floor + channelSpan * 0.20,
-            floor + channelSpan * 0.08,
-          ];
-          sellTargets = [
-            floor + channelSpan * 0.55,
-            floor + channelSpan * 0.68,
-            floor + channelSpan * 0.80,
-            floor + channelSpan * 0.92,
-          ];
+          buyLevels = curBuys.map((pct) => floor + channelSpan * (pct / 100));
+          sellTargets = curSells.map((pct) => floor + channelSpan * (pct / 100));
           activeChannel = { floor, ceiling, center, channelSpan, buyLevels: [...buyLevels], sellTargets: [...sellTargets] };
           stableFloorCandleCount = 0;
         }
@@ -2133,12 +2113,28 @@ export class BacktestService {
 
         // ── 2. EVALUATE GRID BUYS ──
         const effectiveMaxInventory = zoneBudgetQuote * unlockedCapitalZones;
-        const trancheQuote = zoneBudgetQuote / 4;
+        const trancheQuote = zoneBudgetQuote / Math.max(1, curBuys.length);
         const currentGridInv = heldLots.reduce((s, l) => s + (l.qty * l.buyPrice), 0);
-        const isHlWaiting = opts.enableBaseConfirmationFilter === true && (
-          structure.gridZone?.canEstablishChannel === false ||
-          Boolean(structure.isDowntrendDropActive)
-        );
+
+        let isRegimeBlocked = false;
+        if (regimeFilterMode === "SIDEWAY_ONLY") {
+          const isRange = structure.regime === "RANGE";
+          const canEstablish = structure.gridZone?.canEstablishChannel !== false;
+          const notDropping = !structure.isDowntrendDropActive;
+          if (!isRange || !canEstablish || !notDropping) {
+            isRegimeBlocked = true;
+          }
+        } else if (regimeFilterMode === "NO_DOWNTREND") {
+          const isDowntrend = structure.regime === "DOWNTREND" || Boolean(structure.isDowntrendDropActive) || structure.gridZone?.canEstablishChannel === false;
+          if (isDowntrend) {
+            isRegimeBlocked = true;
+          }
+        } else if (opts.enableBaseConfirmationFilter === true) {
+          if (structure.gridZone?.canEstablishChannel === false || Boolean(structure.isDowntrendDropActive)) {
+            isRegimeBlocked = true;
+          }
+        }
+        const isHlWaiting = isRegimeBlocked;
         const isZoneWaiting = zoneRequireReversal && unlockedCapitalZones > 1 && !isZoneReversalConfirmed;
 
         if (heldLots.length === 0) {
@@ -2149,7 +2145,7 @@ export class BacktestService {
           stableFloorCandleCount = 0;
         }
 
-        const maxLotsForUnlockedZones = unlockedCapitalZones * 4;
+        const maxLotsForUnlockedZones = unlockedCapitalZones * Math.max(1, curBuys.length);
         if (!isHlWaiting && !isZoneWaiting && currentGridInv + trancheQuote <= effectiveMaxInventory && gridCash >= trancheQuote && heldLots.length < maxLotsForUnlockedZones) {
 
           for (let lvlIdx = 0; lvlIdx < buyLevels.length; lvlIdx++) {
@@ -2614,6 +2610,7 @@ export class BacktestService {
       onlyEntryIdx?: number;
       trimWarmupPrefix?: boolean;
       enableBaseConfirmationFilter?: boolean;
+      regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "OFF";
   lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;

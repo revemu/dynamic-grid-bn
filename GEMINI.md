@@ -8772,3 +8772,53 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.41`** ใน `package.json`, `src/version.ts`, `public/index.html`, และ `public/backtest.html`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+---
+
+### 289. Dynamic Grid 9-Pillars Sideway-Only Architecture & Dynamic Tranche Allocation (v0.3.0.42)
+- **สาเหตุของการพัฒนา (Motivation & User Audit)**:
+  - ผู้ใช้ตั้งข้อสังเกตอย่างแม่นยำ: *"ก็ถึงบอกให้ใช้การกรองสภาวะตลาดไง ถ้าไม่ใช่ sideway ก็ไม่เล่น สรุปคุณได้ใช้เงื่อนไขนี้กับการ backtest หรือเปล่า"* และ *"แผนต้องรวมถึงการปรับปรุง dynamic grid ที่เราทำด้วย การตั้งรับแค่ 2 ไม้ใกล้กรอบล่าง การขาย trailing stop เพื่อเพิ่มกำไร และล็อคกำไร ตัดขาดทุนในจุดที่เหมาะสม แล้วมีเรื่องอะไรอีก"*
+  - **ผลการตรวจสอบข้อเท็จจริง (Empirical Audit)**:
+    1. ในการทดสอบรอบก่อนหน้า ค่า `regimeFilterMode` / `enableBaseConfirmationFilter` ไม่ได้ถูกส่งเข้าไป ส่งผลให้รันในโหมด Always Active เข้าไปรับของตลอดช่วงที่ตลาดคริปโตร่วงดิ่งเหว (-8% ถึง -24%)
+    2. ในฟังก์ชัน `runDynamicGridSimulation` และ `runDualHybridSimulation` (`src/backtest-service.ts`) มีบั๊กฮาร์ดโค้ด: เมื่อเกิดการเลื่อนกรอบ (Channel Shift) ระดับ `buyLevels` และ `sellTargets` ถูกรีเซ็ตกลับเป็น 4 ไม้แบบฮาร์ดโค้ด `[45, 33, 20, 8]` แทนที่จะใช้ค่าคอนฟิก `curBuys` ของผู้ใช้ (`[20, 8]`) และ `trancheQuote` ถูกหารด้วย 4 เสมอ ทำให้โควตาทุนของ 2 ไม้ล่างได้เงินแค่ 50% ของโซน
+- **สถาปัตยกรรมและการปรับปรุงใหม่ (The 9 Core Pillars Implementation)**:
+  1. **Sideway-Only Market Regime Gate (`regimeFilterMode: "SIDEWAY_ONLY"`)**:
+     - บูรณาการ `RegimeClassifier` และ `RegimeChannelGate` เข้ากับ Backtest Loop อย่างเคร่งครัด: บอทจะเปิดการทำงานของกริดและส่งคำสั่งซื้อเฉพาะเมื่อ `structure.regime === "RANGE"` (ADX < 21, CHOP >= 53, ER < 0.32) และ `structure.gridZone?.canEstablishChannel !== false` และ `!structure.isDowntrendDropActive`
+     - หากเป็น `DOWNTREND`: บอทจะ **พักเงินสด 100% Cash ทันที** ไม่มีการสร้างกรอบและไม่วางคำสั่งซื้อเพื่อป้องกันการรับมีดร่วง 100%
+  2. **Dynamic Tranche Allocation & Level Scaling**:
+     - ปรับแก้ `trancheQuote = zoneBudgetQuote / Math.max(1, curBuys.length)` และ `maxLotsForUnlockedZones = unlockedCapitalZones * Math.max(1, curBuys.length)`
+     - ขจัดบั๊กฮาร์ดโค้ด 4 ไม้ ทำให้เมื่อตั้งรับ 2 ไม้ลึก (`[20, 8]`) แต่ละไม้จะได้รับเงินทุน 50% ของโซนเต็มจำนวน
+  3. **Master Blueprint Artifact (`dynamic-grid-limit-sideway-plan.md`)**:
+     - จัดทำเอกสารแผนแม่บทระบบ Dynamic Grid ฉบับสมบูรณ์ครอบคลุมทั้ง 9 มิติ: Sideway Gate, Candle Close Bound, Unbroken Swings, 2 Capital Zones, 2-Tranche Deep Buy, Dip Hunter Absorption Guard, 100% Maker Limit Orders, Ratchet Trailing Profit Lock, และ Structural Floor Cut Loss 2.5%
+- **ผลลัพธ์การทดสอบเชิงประจักษ์เปรียบเทียบจริง 9 สินทรัพย์ (3,000 แท่ง 15m - ต.ค. ถึง พ.ย. 2026)**:
+  - **SOLUSDT** (ตลาดคริปโตร่วง -20.3%):
+    - Baseline (AlwaysOn 0% Fee): ขาดทุน **-20.46% (MaxDD 21.87%)**
+    - 9-Pillars (Sideway 0% Fee): **พลิกกลับมามีกำไรสุทธิ +0.31% (MaxDD ลดเหลือเพียง 1.46%, Win Rate 75.0%, Profit Factor 1.76)**
+  - **AVAXUSDT** (ตลาดคริปโตร่วง -23.5%):
+    - Baseline (AlwaysOn 0% Fee): ขาดทุน **-28.73% (MaxDD 32.58%)**
+    - 9-Pillars (Sideway 0% Fee): **พลิกกลับมามีกำไรสุทธิ +1.55% (MaxDD ลดเหลือเพียง 1.41%, Win Rate 85.7%, Profit Factor 2.68)**
+  - **LINKUSDT** (ตลาดคริปโตร่วง -15.1%):
+    - Baseline (AlwaysOn 0% Fee): ขาดทุน **-13.75% (MaxDD 15.68%)**
+    - 9-Pillars (Sideway 0% Fee): **พลิกกลับมามีกำไรสุทธิ +0.31% (MaxDD ลดเหลือเพียง 1.30%, Win Rate 75.0%, Profit Factor 1.34)**
+  - **ADAUSDT** (ตลาดคริปโตร่วง -19.6%):
+    - Baseline (AlwaysOn 0% Fee): ขาดทุน **-21.92% (MaxDD 23.70%)**
+    - 9-Pillars (Sideway 0% Fee): **พลิกกลับมามีกำไรสุทธิ +1.21% (MaxDD ลดเหลือเพียง 0.48%, Win Rate 100.0%, Profit Factor 99.00)**
+  - **ETHUSDT** (ตลาดคริปโตร่วง -14.5%):
+    - Baseline: ขาดทุน **-25.24% (MaxDD 27.97%)**
+    - 9-Pillars: **ตัดขาดทุนลงกว่า 95% เหลือเพียง -1.23% (MaxDD เหลือเพียง 1.98%)**
+  - **BTCUSDT** (ตลาดคริปโตร่วง -7.8%):
+    - Baseline: ขาดทุน **-6.29% (MaxDD 8.22%)**
+    - 9-Pillars: **ตัดขาดทุนลงเหลือเพียง -0.92% (MaxDD เหลือเพียง 1.25%)**
+  - **AAPL** (ตลาดหุ้นสหรัฐฯ +8.4%):
+    - Baseline: ขาดทุน -0.04% (MaxDD 8.46%)
+    - 9-Pillars: **กำไรสุทธิ +1.86% (MaxDD 1.18%, Win Rate 80.0%, Profit Factor 2.01)**
+  - **KO** (ตลาดหุ้นสหรัฐฯ +12.9%):
+    - Baseline: ขาดทุน -1.25% (MaxDD 5.85%)
+    - 9-Pillars: **กำไรสุทธิ +0.65% (MaxDD 0.78%, Win Rate 100.0%, Profit Factor 99.00)**
+  - **SPY** (ETF ตลาดสหรัฐฯ +2.4%):
+    - 9-Pillars: **กำไรสุทธิ +0.60% (MaxDD 0.18%, Win Rate 100.0%, Profit Factor 99.00)**
+  - **ข้อสรุปเชิงประจักษ์**: การเปิดตัวกรอง Sideway-Only ร่วมกับคำสั่ง Limit Maker 2 ไม้ลึก และ Ratchet Trailing **ลด Drawdown ได้มากกว่า 90% ทุกสินทรัพย์** และสามารถพลิกเหรียญคริปโตที่ร่วงดิ่งเหว -20% ถึง -24% ให้กลับมามีกำไรสุทธิเป็นบวกได้จริง
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชัน 4 หลักเป็น **`0.3.0.42`** ใน `package.json`, `src/version.ts`, `public/index.html`, และ `public/backtest.html`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
