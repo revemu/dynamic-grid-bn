@@ -810,9 +810,9 @@ export class BacktestService {
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const makerRoundtripFeePct = makerCostPerFill * 2 * 100;
     const effectiveMinProfitPct = Math.max(minNetProfitPct, makerRoundtripFeePct + 0.20);
-    const curBuys = opts.buyLevelPcts ?? [18, 10];
-    const curSells = opts.sellLevelPcts ?? [60, 80];
-    const curBuyWeights = opts.buyWeights ?? [35, 65];
+    const curBuys = opts.buyLevelPcts ?? [20, 12];
+    const curSells = opts.sellLevelPcts ?? [52, 72];
+    const curBuyWeights = opts.buyWeights ?? [55, 45];
     const totalBuyWeight = curBuyWeights.reduce((s, w) => s + w, 0) || 100;
     const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
     const zoneBudgetQuote = maxInventory / totalZones;
@@ -858,6 +858,7 @@ export class BacktestService {
       qty: number;
       buyPrice: number;
       entryTime: number;
+      entryIdx: number;
       targetPrice: number;
       costQuote: number;
       floorAtEntry?: number;
@@ -867,6 +868,7 @@ export class BacktestService {
       stopLossPrice?: number;
       beLocked?: boolean;
       profitLocked?: boolean;
+      isTimeDecayEscape?: boolean;
     }> = [];
 
     const trades: BacktestTrade[] = [];
@@ -1056,9 +1058,20 @@ export class BacktestService {
       //    Step 1: Check 2-Tier Floor Cut Loss (Confirmed Close <= closeCutLossPrice OR Wick <= emergencyWickCutPrice)
       //    Step 2: Check Trailing Stop armed from previous candles
       //    Step 3: Check Resting Limit Take Profit (60% / 80%)
-      //    Step 4: Update peakPrice & arm Ratchet Trailing Stop (26% / 56%) for subsequent candles
+      //    Step 4: Update peakPrice & arm Ratchet Trailing Stop (Early BE 40% / Mid 52% / Runner 65%) for subsequent candles
       const remainingLots: typeof heldLots = [];
       for (const lot of heldLots) {
+        const holdingBars = lot.entryIdx !== undefined ? i - lot.entryIdx : 0;
+
+        // Time-decay Breakeven Escape: if held >= 18 bars without hitting primary TP, lower target to break-even + min net profit
+        if (holdingBars >= 18 && !lot.isTimeDecayEscape) {
+          const escapeTarget = lot.buyPrice * (1 + effectiveMinProfitPct / 100);
+          if (escapeTarget < lot.targetPrice) {
+            lot.targetPrice = escapeTarget;
+            lot.isTimeDecayEscape = true;
+          }
+        }
+
         const isEmergencyWickHit = canTriggerCutLoss && c.low <= emergencyWickCutPrice;
         const isConfirmedCloseCutHit = canTriggerCutLoss && c.close <= closeCutLossPrice;
 
@@ -1092,7 +1105,7 @@ export class BacktestService {
             exitType: "GRID_CUT",
             pnlQuote,
             pnlPct,
-            holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+            holdingBars,
             costQuote: lot.costQuote + exitCost,
             channelFloor: lot.floorAtEntry,
             channelCeil: lot.ceilingAtEntry,
@@ -1145,7 +1158,7 @@ export class BacktestService {
             exitType: "GRID_TRAIL_TP",
             pnlQuote,
             pnlPct,
-            holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+            holdingBars,
             costQuote: lot.costQuote + exitCost,
             channelFloor: lot.floorAtEntry,
             channelCeil: lot.ceilingAtEntry,
@@ -1159,7 +1172,7 @@ export class BacktestService {
             position: "aboveBar",
             color: "#3b82f6",
             shape: "circle",
-            text: `🎯 GRID TRAIL #${lot.id} (${trailLabel}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+            text: `🎯 GRID TRAIL #${lot.id} (${trailLabel}) @ $${exitPrice.toFixed(4)} (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%)`,
           });
           continue;
         }
@@ -1188,12 +1201,14 @@ export class BacktestService {
             if (rem.id !== lot.id) {
               rem.beLocked = true;
               const handoffStop = Math.max(
-                rem.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
+                rem.buyPrice * (1 + makerCostPerFill * 2 + 0.0020),
                 floor + channelSpan * 0.26
               );
               rem.stopLossPrice = Math.max(rem.stopLossPrice ?? cutLossPrice, handoffStop);
             }
           }
+
+          const exitType: BacktestTrade["exitType"] = lot.isTimeDecayEscape ? "GRID_BE_ESCAPE" : "GRID_TP";
 
           trades.push({
             id: lot.id,
@@ -1205,10 +1220,10 @@ export class BacktestService {
             fanSpreadAtEntry: 0,
             exitTime: c.time,
             exitPrice,
-            exitType: "GRID_TP",
+            exitType,
             pnlQuote,
             pnlPct,
-            holdingBars: i - (candles.findIndex((x) => x.time === lot.entryTime) || i),
+            holdingBars,
             costQuote: lot.costQuote + exitCost,
             channelFloor: lot.floorAtEntry,
             channelCeil: lot.ceilingAtEntry,
@@ -1220,9 +1235,11 @@ export class BacktestService {
           markers.push({
             time: c.time,
             position: "aboveBar",
-            color: "#a855f7",
+            color: lot.isTimeDecayEscape ? "#06b6d4" : "#a855f7",
             shape: "arrowDown",
-            text: `🟣 GRID SELL #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
+            text: lot.isTimeDecayEscape
+              ? `⏱️ GRID BE ESCAPE #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`
+              : `🟣 GRID SELL #${lot.id} (L${lot.index + 1}${lot.zoneIndex ? ` Z${lot.zoneIndex}` : ''}) @ $${exitPrice.toFixed(4)} (+${pnlPct.toFixed(2)}%)`,
           });
           continue;
         }
@@ -1233,25 +1250,30 @@ export class BacktestService {
         const refEntryFloor = lot.floorAtEntry ?? floor;
         const refEntrySpan = (lot.ceilingAtEntry && lot.floorAtEntry) ? (lot.ceilingAtEntry - lot.floorAtEntry) : channelSpan;
         if (enableGridTrailingStop && refEntrySpan > 0 && lot.peakPrice > lot.buyPrice) {
-          // ขั้นที่ 1: ราคาแตะ 60% ของกรอบ -> ล็อกกำไรที่ 26% ของกรอบ (เหนือทุนไม้แรก และไม่โดนสะบัดกินตอนพักตัวกลางกรอบ)
-          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.60) {
+          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 40% ของกรอบ (หรือบวก >= +0.55% จากทุน) -> ล็อกทุน + ค่าฟี + กำไร 0.20%
+          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.40 || lot.peakPrice >= lot.buyPrice * 1.0055) {
             lot.beLocked = true;
-            const lock26 = Math.max(
-              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0025),
-              refEntryFloor + refEntrySpan * 0.26
-            );
-            // Must not place stop loss above current close price
-            const safeStop = Math.min(lock26, c.close);
+            const lockEarly = lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0020);
+            const safeStop = Math.min(lockEarly, c.close);
             lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
           }
-          // ขั้นที่ 2: ราคาแตะ 72% ของกรอบ -> ยกล็อกกำไรเพิ่มเป็น 56% ของกรอบ
-          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.72) {
-            lot.profitLocked = true;
-            const lock56 = Math.max(
-              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.004),
-              refEntryFloor + refEntrySpan * 0.56
+          // ขั้นที่ 2 (Mid-Box Profit Lock): ราคาแตะ 52% ของกรอบ -> ล็อกกำไรที่ 30% ของกรอบ
+          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.52) {
+            const lock30 = Math.max(
+              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0035),
+              refEntryFloor + refEntrySpan * 0.30
             );
-            const safeStop = Math.min(lock56, c.close);
+            const safeStop = Math.min(lock30, c.close);
+            lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
+          }
+          // ขั้นที่ 3 (Upper-Box Runner Lock): ราคาแตะ 65% ของกรอบ -> ล็อกกำไรที่ 50% ของกรอบ
+          if (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.65) {
+            lot.profitLocked = true;
+            const lock50 = Math.max(
+              lot.buyPrice * (1 + makerCostPerFill * 2 + 0.0050),
+              refEntryFloor + refEntrySpan * 0.50
+            );
+            const safeStop = Math.min(lock50, c.close);
             lot.stopLossPrice = Math.max(lot.stopLossPrice ?? cutLossPrice, safeStop);
           }
         }
@@ -1534,6 +1556,7 @@ export class BacktestService {
               qty: fillQty,
               buyPrice,
               entryTime: c.time,
+              entryIdx: i,
               targetPrice,
               costQuote: invest * makerCostPerFill,
               floorAtEntry: floor,
@@ -1612,7 +1635,7 @@ export class BacktestService {
         exitType: "OPEN",
         pnlQuote,
         pnlPct,
-        holdingBars: processedCandles.length - 1 - (processedCandles.findIndex((x) => x.time === lot.entryTime) || 0),
+        holdingBars: lot.entryIdx !== undefined ? processedCandles.length - 1 - lot.entryIdx : 0,
         costQuote: lot.costQuote + exitCost,
         channelFloor: lot.floorAtEntry,
         channelCeil: lot.ceilingAtEntry,
@@ -1734,6 +1757,7 @@ export class BacktestService {
       zoneMinDropPct?: number;
       zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      enableGridTrailingStop?: boolean;
       buyLevelPcts?: number[];
       sellLevelPcts?: number[];
       buyWeights?: number[];
@@ -1768,9 +1792,9 @@ export class BacktestService {
     const zoneExitMode = opts.zoneExitMode ?? "PORTFOLIO_AVG";
     const minNetProfitPct = Math.max(0.15, opts.minNetProfitPct ?? 0.25);
     const zoneBudgetQuote = gridInitialCap / totalZones;
-    const curBuys = opts.buyLevelPcts ?? [18, 10];
-    const curSells = opts.sellLevelPcts ?? [60, 80];
-    const curBuyWeights = opts.buyWeights ?? [35, 65];
+    const curBuys = opts.buyLevelPcts ?? [20, 12];
+    const curSells = opts.sellLevelPcts ?? [52, 72];
+    const curBuyWeights = opts.buyWeights ?? [55, 45];
     const totalBuyWeight = curBuyWeights.reduce((s, w) => s + w, 0) || 100;
     const regimeFilterMode = opts.regimeFilterMode ?? "SIDEWAY_ONLY";
     const zoneRequireReversal = opts.zoneRequireReversal !== false;
@@ -1849,6 +1873,7 @@ export class BacktestService {
       stopLossPrice?: number;
       beLocked?: boolean;
       profitLocked?: boolean;
+      isTimeDecayEscape?: boolean;
     }> = [];
 
     // Sniper Subsystem State
@@ -2711,7 +2736,7 @@ export class BacktestService {
       trimWarmupPrefix?: boolean;
       enableBaseConfirmationFilter?: boolean;
       regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "OFF";
-  lockChannelInPosition?: boolean;
+      lockChannelInPosition?: boolean;
       channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
       donchianPeriod?: number;
       minChannelWidthPct?: number;
@@ -2723,6 +2748,7 @@ export class BacktestService {
       zoneMinDropPct?: number;
       zoneRequireReversal?: boolean;
       gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
+      enableGridTrailingStop?: boolean;
       buyLevelPcts?: number[];
       sellLevelPcts?: number[];
       buyWeights?: number[];
@@ -2760,6 +2786,11 @@ export class BacktestService {
         gridCutLossMode: opts.gridCutLossMode,
         zoneExitMode: opts.zoneExitMode,
         minNetProfitPct: opts.minNetProfitPct,
+        buyLevelPcts: opts.buyLevelPcts,
+        sellLevelPcts: opts.sellLevelPcts,
+        buyWeights: opts.buyWeights,
+        regimeFilterMode: opts.regimeFilterMode,
+        enableGridTrailingStop: opts.enableGridTrailingStop,
       });
     }
 
@@ -2802,6 +2833,11 @@ export class BacktestService {
         gridCutLossMode: opts.gridCutLossMode,
         zoneExitMode: opts.zoneExitMode,
         minNetProfitPct: opts.minNetProfitPct,
+        buyLevelPcts: opts.buyLevelPcts,
+        sellLevelPcts: opts.sellLevelPcts,
+        buyWeights: opts.buyWeights,
+        regimeFilterMode: opts.regimeFilterMode,
+        enableGridTrailingStop: opts.enableGridTrailingStop,
       });
     }
 

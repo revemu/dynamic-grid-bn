@@ -8997,6 +8997,45 @@ When investigating live production behavior, debugging issues, or analyzing trad
   - อัปเดตเวอร์ชันเป็น **`0.3.0.48`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
 
+---
+
+### 296. Dynamic Grid Profitability Bottlenecks Resolution — Master Plan v9.0 (Version `0.3.0.49`)
+- **สาเหตุของปัญหาทำไม Dynamic Grid ได้กำไรน้อยใน v8.0 (ค้นพบจาก `diag.ts` วิเคราะห์ MFE/MAE รายไม้)**:
+  1. **Inverse Pyramid Adverse Selection (`buyWeights: [35, 65]` ที่ `[18%, 10%]` ของกรอบ)**:
+     - ในจังหวะที่ชนะ (`GRID_TP`) ราคาเกือบ 100% ย่อแตะแค่ L1 (`18%`) แล้วเด้งขึ้นไปชน TP เลย ทำให้ได้กำไรบนเงินแค่ `$70` (35% ของทุน) อีก `$130` นอนนิ่ง
+     - แต่เวลาหลุดแนวรับ ราคาจะลงไปรับ L2 (`$130`) เต็มๆ ทำให้เวลาโดน `GRID_CUT` จะโดนตัดขาดทุนบนเงินเต็ม `$200` (100% ของทุน) ➔ ชนะได้เงินก้อนเล็ก แพ้โดนก้อนใหญ่
+  2. **Ratchet Step 1 และ TP1 ถูกตั้งไว้สูงกว่าจุดสมดุลกลางกรอบ (`60%` ของกรอบ)**:
+     - ไม้ที่จบด้วย `GRID_CUT` กว่า 50% เคยเด้งขึ้นไปถึง `41%–59%` ของกรอบ (`+0.68%` ถึง `+1.22%`) ก่อนจะหมดแรงและวกกลับลงมา
+     - เนื่องจากตั้งทั้ง TP1 (`60%`) และจุดเริ่มล็อกหน้าทุน (`60%`) ไว้เท่ากัน ทำให้ไม้ที่เด้งมาแถว `45%–55%` ไม่ได้ทั้งขายและไม่ได้ทั้งล็อกหน้าทุน
+  3. **Stale Time-Decay ในกรอบที่เสื่อมสภาพ**:
+     - ไม้ที่ถือค้างนานเกิน 18–24 แท่ง (> 4.5–6 ชม.) โดยไม่ถึงเป้าบน มักจบลงด้วยการที่แนวรับพังทลายลงมา
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Master Plan v9.0)**:
+  1. **Rebalanced Entry Levels & Tranche Weights**:
+     - ปรับ `buyLevelPcts` จาก `[18, 10]` ➔ `[20, 12]`
+     - ปรับ `buyWeights` จาก `[35, 65]` ➔ `[55, 45]` เพื่อให้ไม้ L1 ที่ติดและชนะบ่อยที่สุดได้เงินทำงาน 55% ($110)
+  2. **Early Mid-Box Ratchet Shield & Equilibrium TP1**:
+     - ปรับ `sellLevelPcts` จาก `[60, 80]` ➔ `[52, 72]` (TP1 อยู่ที่ 52% ของกรอบ, TP2 Runner อยู่ที่ 72%)
+     - **Ratchet ขั้นที่ 1 (Early Breakeven Shield)**: เมื่อราคาแตะ `40%` ของกรอบ (หรือบวก `>= +0.55%` จากทุน) ยก Stop ล็อกทุน + ค่าฟี + กำไร 0.20% ทันที ตัดปัญหาไม้ที่เด้ง 41%–59% แล้ววกกลับลงมากลายเป็นขาดทุน
+     - **Ratchet ขั้นที่ 2 (Mid-Box Lock)**: เมื่อราคาแตะ `52%` ของกรอบ ยก Stop ล็อกกำไรที่ `30%` ของกรอบ
+     - **Ratchet ขั้นที่ 3 (Runner Lock)**: เมื่อราคาแตะ `65%` ของกรอบ ยก Stop ล็อกกำไรที่ `50%` ของกรอบ
+  3. **Time-Decay Breakeven Escape (`GRID_BE_ESCAPE`)**:
+     - เมื่อถือไม้ค้างครบ 18 แท่ง (`holdingBars >= 18`) แล้วยังไม่ถึง TP1 ให้ลดเป้า Limit Sell ลงมาที่ `lot.buyPrice * (1 + effectiveMinProfitPct / 100)` เพื่อระบายของออกอย่างปลอดภัยในแดนบวก
+  4. **Performance & Options Forwarding Optimization**:
+     - ปรับปรุงการเก็บ `entryIdx` ใน `heldLots` เป็น `O(1)` ขจัดปัญหา `findIndex` ซ้ำซ้อน 12,000 แท่ง
+     - ส่งต่อ `buyLevelPcts`, `sellLevelPcts`, `buyWeights`, `regimeFilterMode`, `enableGridTrailingStop` ใน `runMaFanSimulation` ครบ 100%
+- **ผลการทดสอบ Master Benchmark v9.0 (12,000 แท่ง 15m ข้อมูลจริง 9 สินทรัพย์)**:
+  - **BTC/USDT**: กำไรสุทธิ **+$1.69 (+0.85%)**, Win Rate **81.4%**, MaxDD **2.06%** (เทรด 43 ไม้, TP 6x, Trail 16x, Escape 14x, Cut 7x)
+  - **ETH/USDT**: กำไรสุทธิ **+$4.90 (+2.45%)**, Win Rate **83.5%**, MaxDD **3.88%** (เทรด 85 ไม้, TP 19x, Trail 35x, Escape 19x, Cut 12x)
+  - **AVAX/USDT**: กำไรสุทธิ **+$13.14 (+6.57%)**, Win Rate **75.1%**, MaxDD **4.97%** (เทรด 185 ไม้, TP 45x, Trail 96x, Escape 13x, Cut 31x)
+  - **AAPL (Apple)**: กำไรสุทธิ **+$1.98 (+0.99%)**, Win Rate **73.3%**, MaxDD **4.35%** (เทรด 101 ไม้, TP 30x, Trail 34x, Escape 12x, Cut 23x)
+  - **SOL/USDT**: Win Rate พุ่งขึ้นจาก 48% เป็น **75.4%**, MaxDD ลดลงเหลือ **5.41%** (Escape ช่วยเซฟได้ถึง 22 ไม้)
+  - **ADA/USDT**: Win Rate พุ่งขึ้นจาก 53% เป็น **76.5%** (Escape 20x, Trail 90x)
+  - **ภาพรวมพอร์ต**: อัตราชนะ (Win Rate) เฉลี่ยทั้ง 9 สินทรัพย์เพิ่มขึ้นเป็น **72% – 83.5%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.49`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
 
 
 

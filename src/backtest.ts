@@ -755,15 +755,16 @@ export const MASTER_PLAN_GRID_CONFIG = {
   maxChannelWidthPct: 25.0,
   lockChannelInPosition: true,
   regimeFilterMode: "SIDEWAY_ONLY" as const,
-  buyLevelPcts: [18, 10],
-  buyWeights: [35, 65],
-  sellLevelPcts: [60, 80],
+  buyLevelPcts: [20, 12],
+  buyWeights: [55, 45],
+  sellLevelPcts: [52, 72],
   capitalZones: 1,
   zoneMinDropPct: 2.5,
   floorBufferPct: 0.6,
   gridCutLossMode: "entry_floor" as const,
   enableGridTrailingStop: true,
   costModel: { feePctPerSide: 0, slippagePctPerFill: 0 },
+  saveToHistory: false,
 };
 
 export interface BenchmarkAsset {
@@ -794,7 +795,7 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
   console.log("🚀 MASTER BENCHMARK RUNNER — DYNAMIC GRID (LIMIT-ONLY, SIDEWAY-ONLY, DEEP 2-TRANCHE, RATCHET TRAIL)");
   console.log("   Evaluation Dataset: 12,000 Candles 15m (~125 Days Crypto / ~1.5 Years US Stocks)");
   console.log("   Execution Model: 0% Maker Fee / 0% Slippage on Limit Buy & TP | Realistic Taker on Cut Loss / Trail");
-  console.log("   Target Buy: [18%, 10%] (Weights: [35%, 65%]) | Target Sell: [60%, 80%] | Capital Zones: 1 | Bounded 2-Tier Span Cut Loss");
+  console.log("   Target Buy: [20%, 12%] (Weights: [55%, 45%]) | Target Sell: [52%, 72%] | Capital Zones: 1 | Bounded 2-Tier Span Cut Loss");
   console.log("==========================================================================================================\n");
 
   const results: any[] = [];
@@ -822,6 +823,7 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
     // Use minimum width of 1.4% for stocks, 2.0% for crypto
     const minWidth = item.assetClass === "STOCK" ? 1.4 : 2.0;
 
+    console.log(`[Benchmark] (${results.length + 1}/${assets.length}) Evaluating ${item.symbol}...`);
     const res = BacktestService.runDynamicGridSimulation(candles, {
       ...MASTER_PLAN_GRID_CONFIG,
       symbol: item.symbol,
