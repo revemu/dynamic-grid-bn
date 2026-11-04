@@ -2514,7 +2514,8 @@
         <tr id="scannerTableHeadRow">
           <th style="width: 45px;">#</th>
           <th>คู่เหรียญ / หุ้น</th>
-          <th>🧬 DNA Grade</th>
+          <th>🧬 Rolling DNA</th>
+          <th>📈 แนวโน้ม (Live Trend)</th>
           <th>สถานะในกรอบ (Stage & Pos)</th>
           <th>Bounce 52%</th>
           <th>Dip Wick%</th>
@@ -3018,8 +3019,19 @@
       const gradeIcon = grade === "S" ? "💎" : grade === "A" ? "🟢" : grade === "AVOID" ? "🔴" : "🟡";
 
       const dnaBadge = `
-        <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px; background:${gradeBg}; color:${gradeColor}; border:1px solid ${gradeBorder}; font-weight:700; font-size:11px;">
+        <span style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px; background:${gradeBg}; color:${gradeColor}; border:1px solid ${gradeBorder}; font-weight:700; font-size:11px;" title="Recent 60h: ${item.recentDnaScore ?? '--'} | Baseline 10d: ${item.baselineDnaScore ?? '--'}">
           ${gradeIcon} ${grade} <span style="font-size:10px; opacity:0.85;">(${item.dnaScore ?? 0})</span>
+        </span>
+      `;
+
+      const trendRegime = item.trendRegime || "ACCUMULATION_RANGE";
+      const trendBg = trendRegime === "BULL_UPTREND" ? "rgba(16, 185, 129, 0.15)" : trendRegime === "BEAR_DOWNTREND" ? "rgba(239, 68, 68, 0.15)" : "rgba(56, 189, 248, 0.15)";
+      const trendColor = trendRegime === "BULL_UPTREND" ? "#34d399" : trendRegime === "BEAR_DOWNTREND" ? "#f87171" : "#38bdf8";
+      const trendLabel = item.trendLabel || (trendRegime === "BULL_UPTREND" ? "🐂 ขาขึ้น 4H+1H" : trendRegime === "BEAR_DOWNTREND" ? "🐻 ขาลง (ห้ามเข้า)" : "🔄 ไซด์เวย์สะสม");
+
+      const trendBadge = `
+        <span style="display:inline-block; padding:2px 6px; border-radius:4px; font-weight:600; font-size:10.5px; background:${trendBg}; color:${trendColor};">
+          ${trendLabel}
         </span>
       `;
 
@@ -3031,6 +3043,7 @@
           <td style="text-align: center;">${rankBadge}</td>
           <td><b>${item.symbol}</b></td>
           <td>${dnaBadge}</td>
+          <td>${trendBadge}</td>
           <td style="font-size: 11px;">
             <div style="font-weight:600; color:#e2e8f0;">${stage}</div>
             <div style="font-size:10px; color:#94a3b8;">Pos: ${pos} ของกรอบ</div>

@@ -8107,11 +8107,23 @@
         </span>
       `;
 
+      const trendRegime = item.trendRegime || "ACCUMULATION_RANGE";
+      const trendBg = trendRegime === "BULL_UPTREND" ? "rgba(16, 185, 129, 0.15)" : trendRegime === "BEAR_DOWNTREND" ? "rgba(239, 68, 68, 0.15)" : "rgba(56, 189, 248, 0.15)";
+      const trendColor = trendRegime === "BULL_UPTREND" ? "#34d399" : trendRegime === "BEAR_DOWNTREND" ? "#f87171" : "#38bdf8";
+      const trendLabel = item.trendLabel || (trendRegime === "BULL_UPTREND" ? "🐂 ขาขึ้น 4H+1H" : trendRegime === "BEAR_DOWNTREND" ? "🐻 ขาลง" : "🔄 ไซด์เวย์");
+
+      const trendBadge = `
+        <span style="display:inline-block; padding:2px 6px; border-radius:4px; font-weight:600; font-size:10px; background:${trendBg}; color:${trendColor};">
+          ${trendLabel}
+        </span>
+      `;
+
       return `
         <tr style="${isTop ? 'background: rgba(16, 185, 129, 0.12); font-weight: bold;' : ''}">
           <td style="text-align: center;">${isTop ? '⭐ ' : ''}#${idx + 1}</td>
           <td style="color: #38bdf8;">${item.symbol}</td>
           <td>${dnaBadge}</td>
+          <td>${trendBadge}</td>
           <td><span class="badge" style="background: ${item.compositeScore >= 60 ? '#10b981' : '#f59e0b'}; color: #fff; padding: 2px 6px; border-radius: 4px;">${item.compositeScore}/100</span></td>
           <td style="color: ${pnlColor};">${item.netPnlPct >= 0 ? '+' : ''}${item.netPnlPct.toFixed(2)}%</td>
           <td>${item.winRate.toFixed(1)}%</td>

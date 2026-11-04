@@ -9284,3 +9284,36 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.58`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+
+---
+
+## 306. v0.3.0.59 — Master Plan v18.0: Dynamic Rolling Dual-Window DNA + Live Forward Trend Alignment & Tactical Pullback Auto-Rotation
+
+- **สาเหตุของปัญหาและข้อค้นพบ**:
+  1. การคำนวณ Market DNA แบบเดิมให้น้ำหนักข้อมูลย้อนหลังทุกแท่งเท่ากัน ทำให้กลายเป็น "ค่าเฉลี่ยในอดีต (Static Past Average)" ที่ไม่สามารถตรวจจับการเสื่อมสภาพของเหรียญในสัปดาห์ปัจจุบันได้ทันท่วงที
+  2. การสลับเหรียญอัตโนมัติ (Auto-Rotation) ต้องการตัวชี้วัดที่ **มองไปข้างหน้า (Forward-Looking)**: ต้องคัดเหรียญที่โครงสร้างภาพใหญ่ 4H/1H กำลังเป็นขาขึ้นยกฐาน (`🐂 BULL_UPTREND`) และราคาปัจจุบันย่อตัวลงมาอยู่ในโซนแนวรับล่าง (`Pos 10%–38%`) เพื่อให้เมื่อสลับเหรียญไปแล้ว บอทสามารถเปิดไม้ช้อนซื้อของถูกในทิศทางของเทรนด์ใหญ่และดีดขึ้นชน Take Profit ได้ทันที
+- **การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **Dual-Window Rolling DNA Engine (`BacktestService.evaluateGridDna`)**:
+     - แบ่งหน้าต่างวิเคราะห์เป็น **Baseline Window** (ย้อนหลัง 1,000 แท่ง ~10.4 วัน) เพื่อวัดนิสัยพื้นฐาน และ **Recent Form Window** (ย้อนหลัง 240 แท่ง ~60 ชม. ล่าสุด) เพื่อตรวจจับฟอร์มสด
+     - คำนวณคะแนนถ่วงน้ำหนัก: `dnaScore = 0.60 * recentDnaScore + 0.40 * baselineDnaScore`
+     - มีระบบ **Dynamic Degradation Guard**: หากในช่วง 60 ชม. ล่าสุดเกิดแรงเทขายไหลลงทางเดียว (`fastKnifeRate >= 50%`, `bounce52Rate < 45%`) จะลดเกรดลงสู่ `B` หรือ `AVOID` ทันที
+  2. **Live 4H & 1H Forward Trend Alignment Engine**:
+     - ตรวจจับความชันและโครงสร้างเส้นค่าเฉลี่ยแบบ Real-time ณ แท่งปัจจุบัน:
+       - `🐂 BULL_UPTREND`: ราคาปิดยืนเหนือ 4H/1H EMA50, เส้น EMA เชิดหัวขึ้น (`Slope > 0`)
+       - `🔄 ACCUMULATION_RANGE`: ไซด์เวย์สะสมพลังในกรอบ
+       - `🐻 BEAR_DOWNTREND`: แนวโน้มขาลง 4H (ตัดสิทธิ์เกรด S/A ทันที บังคับเป็น AVOID เพื่อป้องกันการรับมีด)
+  3. **3-Layer Forward Composite Auto-Rotation (`AutonomousPairRotator`)**:
+     - ปรับคะแนนคัดเลือกเหรียญใน `Stage 2`:
+       - **Layer 1 (40 pts)**: Dual-Window Rolling DNA Score
+       - **Layer 2 (35 pts)**: Forward Trend Alignment (4H/1H Bull) + Relative Strength vs BTC 24h
+       - **Layer 3 (25 pts)**: Tactical Pullback Entry (`Pos 10%–38%` ได้ 20 คะแนนเต็ม) + สภาพคล่องโวลุ่ม (5 คะแนน)
+  4. **UI Full Visibility Upgrade**:
+     - แสดงคอลัมน์ **`🧬 Rolling DNA`** และ **`📈 Live Trend (🐂 ขาขึ้น / 🔄 ไซด์เวย์ / 🐻 ขาลง)`** ในหน้า Market Scanner (`backtest.html`) และตาราง Auto-Rotate (`index.html` & `app.js`)
+- **ผลการทดสอบ Master Benchmark (12,000 แท่ง 15m ข้อมูลจริง 9 สินทรัพย์)**:
+  - **🧬 Grid DNA Grade S/A Average Net Return**: **+6.39%** (`SOL +6.70%`, `AVAX +8.52%`, `AAPL +3.94%`)
+  - **Overall Average Net Return**: **+1.57%**
+  - **Crypto 6-Asset Average**: **+1.95%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.59`** ใน `package.json` และ `src/version.ts`
+  - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)

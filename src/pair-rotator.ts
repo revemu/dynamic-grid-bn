@@ -19,6 +19,7 @@ export interface RotationCandidateScore {
   structureScore: number;
   positionScore: number;
   liquidityScore: number;
+  trendScore?: number;
   dnaScore?: number;
   dnaGrade?: "S" | "A" | "B" | "AVOID";
   bounce52Rate?: number;
@@ -34,6 +35,9 @@ export interface RotationCandidateScore {
   range24hPct: number;
   posInRange: number;
   channelWidthPct?: number;
+  trendRegime?: "BULL_UPTREND" | "ACCUMULATION_RANGE" | "BEAR_DOWNTREND";
+  trendLabel?: string;
+  rsVsBtc24h?: number;
   reason: string;
 }
 
@@ -308,8 +312,12 @@ export class AutonomousPairRotator {
 
     this.log(`Stage 1 selected ${candidateSymbols.length} pairs: ${candidateSymbols.join(", ")}`);
 
-    // 3. Stage 2: In-depth 5m/15m Simulation & Dow Structure Scoring
+    // 3. Stage 2: In-depth 15m/5m Dual-Window Rolling DNA & Forward Trend Scoring
     const report: RotationCandidateScore[] = [];
+
+    // Find BTC 24h change for relative strength comparison
+    const btcTicker = tickers.find((t) => t.symbol === "BTCUSDT");
+    const btcChange24h = btcTicker ? Number(btcTicker.priceChangePercent) : 0;
 
     for (const sym of candidateSymbols) {
       try {
@@ -321,31 +329,32 @@ export class AutonomousPairRotator {
         const last24h = tickerItem ? Number(tickerItem.lastPrice) : 0;
         const range24h = low24h > 0 ? ((high24h - low24h) / low24h) * 100 : 0;
         const posInRange = high24h > low24h ? (last24h - low24h) / (high24h - low24h) : 0.5;
+        const rsVsBtc24h = change24h - btcChange24h;
 
-        // Fetch 1,000 candles of 5m (~3.5 days) and 350 candles of 15m
-        const [candles5m, candles15m] = await Promise.all([
-          BacktestService.fetchBinanceCandles(sym, "5m", 1000),
-          BacktestService.fetchBinanceCandles(sym, "15m", 350).catch(() => []),
+        // Fetch up to 1,000 candles of 15m (~10.4 days) and 1,000 candles of 5m
+        const [candles15m, candles5m] = await Promise.all([
+          BacktestService.fetchBinanceCandles(sym, "15m", 1000).catch(() => []),
+          BacktestService.fetchBinanceCandles(sym, "5m", 1000).catch(() => []),
         ]);
 
-        if (!candles5m || candles5m.length < 200) {
+        const evalCandles = (candles15m && candles15m.length >= 60) ? candles15m : candles5m;
+        if (!evalCandles || evalCandles.length < 60) {
           continue;
         }
 
         // 🛡️ Smart Momentum Check: Reject coins with negative 4-hour return
-        if (candles5m.length >= 48) {
-          const lastC = candles5m[candles5m.length - 1].close;
-          const open4h = candles5m[Math.max(0, candles5m.length - 48)].open;
+        if (evalCandles.length >= 16) {
+          const lastC = evalCandles[evalCandles.length - 1].close;
+          const open4h = evalCandles[Math.max(0, evalCandles.length - 16)].open;
           const ret4h = open4h > 0 ? ((lastC - open4h) / open4h) * 100 : 0;
-          if (ret4h < 0.0) continue;
+          if (ret4h < -1.5) continue;
         }
 
         const symCostModel = sym.endsWith("FDUSD")
           ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
           : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 };
 
-        // 🧬 1. Market DNA Evaluation across 15m / 5m candle history
-        const evalCandles = (candles15m && candles15m.length >= 60) ? candles15m : candles5m;
+        // 🧬 1. Dual-Window Rolling Market DNA & Live Trend Alignment Evaluation
         const dna = BacktestService.evaluateGridDna(evalCandles, "CRYPTO");
 
         // 2. Production Dynamic Grid Simulation with MASTER_PLAN_GRID_CONFIG (Core v14.0)
@@ -372,48 +381,64 @@ export class AutonomousPairRotator {
 
         const summary = simRes.summary;
 
-        // Market DNA Points (up to 40 pts)
+        // ── 3-Layer Composite Scoring (Total 100) ──
+        // Layer 1: Market DNA Points (up to 40 pts, weighted by 60% recent form + 40% baseline)
         const dnaPoints = Math.round(dna.dnaScore * 0.40);
 
-        // Simulation Performance Score (up to 30 pts)
-        let simScore = 0;
-        if (summary.netPnlPct > 0 && summary.maxDrawdownPct <= 18) {
-          const pnlComponent = Math.min(18, summary.netPnlPct * 3.0 + summary.totalTrades * 1.0);
-          const wrComponent = Math.min(12, Math.max(0, (summary.winRate - 50) * 0.3) + Math.max(0, 12 - summary.maxDrawdownPct));
-          simScore = Math.min(30, Math.max(0, pnlComponent + wrComponent));
+        // Layer 2: Forward Trend & Relative Strength (up to 35 pts)
+        let trendScore = 0;
+        if (dna.trendRegime === "BULL_UPTREND") {
+          trendScore = 20;
+        } else if (dna.trendRegime === "ACCUMULATION_RANGE") {
+          trendScore = 12;
+        } else {
+          trendScore = 0; // Bear downtrend
         }
-
-        // Structure & Volatility Sweet Spot (up to 15 pts)
-        let structureScore = 0;
-        if (dna.avgSpan48Pct >= 2.8 && dna.avgSpan48Pct <= 5.8) {
-          structureScore = 15;
-        } else if (dna.avgSpan48Pct >= 2.2 && dna.avgSpan48Pct <= 7.0) {
-          structureScore = 8;
+        // Relative Strength bonus
+        if (rsVsBtc24h >= 0.5 && change24h <= 12.0) {
+          trendScore += 7;
+        } else if (rsVsBtc24h >= -1.0) {
+          trendScore += 3;
         }
+        // Simulation profit bonus in trend layer
+        if (summary.netPnlPct > 0 && summary.winRate >= 70) {
+          trendScore += 8;
+        } else if (summary.netPnlPct > 0) {
+          trendScore += 4;
+        }
+        trendScore = Math.min(35, trendScore);
 
-        // Position in Range Score (up to 10 pts)
+        // Layer 3: Tactical Pullback Entry Position (up to 20 pts) + Liquidity (up to 5 pts)
+        // Position in Range & Channel: sweet spot is 10% - 38%
         let positionScore = 0;
-        if (posInRange >= 0.12 && posInRange <= 0.40) {
-          positionScore = 10; // Prime bottom accumulation zone
-        } else if (posInRange > 0.40 && posInRange <= 0.60) {
-          positionScore = 5;  // Mid channel
+        if (posInRange >= 0.10 && posInRange <= 0.38) {
+          positionScore = 20; // Prime bottom pullback zone
+        } else if (posInRange > 0.38 && posInRange <= 0.55) {
+          positionScore = 12; // Lower-mid zone
+        } else if (posInRange < 0.10) {
+          positionScore = 6;  // Touching bottom
+        } else {
+          positionScore = 2;  // High in range
         }
 
         // Liquidity Score (up to 5 pts)
         const liquidityScore = Math.min(5, Math.max(0, (Math.log10(quoteVol) - 6) * 2));
 
-        // Penalty for AVOID / poor DNA
-        const dnaPenalty = dna.grade === "AVOID" ? -35 : (dna.grade === "B" ? -10 : 0);
+        // Penalty for AVOID / Downtrend flow
+        let penalty = 0;
+        if (dna.grade === "AVOID" || dna.trendRegime === "BEAR_DOWNTREND") penalty = -40;
+        else if (dna.grade === "B") penalty = -10;
 
-        const compositeScore = Math.max(0, Math.min(100, Math.round(dnaPoints + simScore + structureScore + positionScore + liquidityScore + dnaPenalty)));
+        const compositeScore = Math.max(0, Math.min(100, Math.round(dnaPoints + trendScore + positionScore + liquidityScore + penalty)));
 
         report.push({
           symbol: sym,
           compositeScore,
-          simScore: Math.round(simScore),
-          structureScore: Math.round(structureScore),
+          simScore: Math.round(summary.netPnlPct * 2),
+          structureScore: Math.round(dna.dnaScore * 0.2),
           positionScore: Math.round(positionScore),
           liquidityScore: Math.round(liquidityScore),
+          trendScore,
           dnaScore: dna.dnaScore,
           dnaGrade: dna.grade,
           bounce52Rate: dna.bounce52Rate,
@@ -429,7 +454,10 @@ export class AutonomousPairRotator {
           range24hPct: range24h,
           posInRange,
           channelWidthPct: dna.avgSpan48Pct,
-          reason: `DNA: [${dna.grade}] Score ${dna.dnaScore} (Bounce=${dna.bounce52Rate.toFixed(1)}%, Wick=${dna.avgDipWickPct.toFixed(1)}%, Span=${dna.avgSpan48Pct.toFixed(2)}%) | Sim: ${summary.netPnlPct >= 0 ? '+' : ''}${summary.netPnlPct.toFixed(1)}% (${summary.totalTrades}T, WR ${summary.winRate.toFixed(0)}%, DD ${summary.maxDrawdownPct.toFixed(1)}%) | Pos: ${(posInRange * 100).toFixed(0)}%`,
+          trendRegime: dna.trendRegime,
+          trendLabel: dna.trendLabel,
+          rsVsBtc24h,
+          reason: `DNA: [${dna.grade}] ${dna.dnaScore} (Rec=${dna.recentDnaScore ?? '--'}, Base=${dna.baselineDnaScore ?? '--'}) | Trend: ${dna.trendLabel ?? '--'} (RS=${rsVsBtc24h >= 0 ? '+' : ''}${rsVsBtc24h.toFixed(1)}%) | Pos: ${(posInRange * 100).toFixed(0)}% | Sim: ${summary.netPnlPct >= 0 ? '+' : ''}${summary.netPnlPct.toFixed(1)}% (${summary.totalTrades}T, WR ${summary.winRate.toFixed(0)}%)`,
         });
       } catch (e: any) {
         this.log(`Error simulating candidate ${sym}: ${e.message}`);

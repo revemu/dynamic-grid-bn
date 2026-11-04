@@ -110,6 +110,12 @@ export interface MarketScanResultItem {
   upDownSymmetry?: number;
   posInChannelPct?: number;
   gridStage?: string;
+  recentDnaScore?: number;
+  baselineDnaScore?: number;
+  trendRegime?: "BULL_UPTREND" | "ACCUMULATION_RANGE" | "BEAR_DOWNTREND";
+  trendLabel?: string;
+  trendScore?: number;
+  rsVsBtc24hPct?: number;
 }
 
 export type MaFanStage = "READY_BUY" | "DIP_RETEST" | "WATCHING_BOTTOM" | "BULLISH_TREND" | "NEUTRAL";
@@ -402,6 +408,12 @@ export interface GridDnaMetrics {
   grade: "S" | "A" | "B" | "AVOID";
   isGridFit: boolean;
   reasons: string[];
+  recentDnaScore?: number;
+  baselineDnaScore?: number;
+  trendRegime?: "BULL_UPTREND" | "ACCUMULATION_RANGE" | "BEAR_DOWNTREND";
+  trendLabel?: string;
+  trendScore?: number;
+  ema1hSlopePct?: number;
 }
 
 const DB_PATH = path.resolve(process.cwd(), "data", "backtest-history.db.json");
@@ -433,18 +445,20 @@ export class BacktestService {
 
   /**
    * 🧬 Market DNA Evaluator for Dynamic Grid Suitability
-   * Evaluates the intrinsic structural and orderbook price-action characteristics:
-   * 1. Dip-to-Midline Bounce Rate (First-passage rate from 20% to 52% vs -20% cut)
-   * 2. Lower-Wick Absorption at support (Pinbar Stop-Hunt demand)
-   * 3. Channel Width Sweet-Spot (Span48%)
-   * 4. Kaufman Efficiency Ratio (ER48) & Variance Ratio (VR16) (Mean-reversion vs directional drift)
-   * 5. Bull/Bear Candle Body Symmetry
+   * Evaluates intrinsic structural price-action characteristics via Dual-Window Recency:
+   * - Baseline Window (up to 1,000 bars): Base demand absorption, liquidity, pinbar wick
+   * - Recent Window (last 240 bars ~60h): Recent bounce vitality, span sweet spot, symmetry
+   * - Live Trend Alignment: 4H & 1H EMA alignment & slope at current state
    */
   public static evaluateGridDna(
     candles: Candle[],
-    assetClass: "CRYPTO" | "STOCK" = "CRYPTO"
+    assetClass: "CRYPTO" | "STOCK" = "CRYPTO",
+    evalEndIndex?: number
   ): GridDnaMetrics {
-    const n = candles.length;
+    const endIdx = evalEndIndex !== undefined ? Math.min(candles.length, evalEndIndex + 1) : candles.length;
+    const targetCandles = candles.slice(0, endIdx);
+    const n = targetCandles.length;
+
     if (n < 60) {
       return {
         bounce52Rate: 0,
@@ -461,206 +475,313 @@ export class BacktestService {
         grade: "AVOID",
         isGridFit: false,
         reasons: ["Insufficient candle history (< 60 bars)"],
+        recentDnaScore: 0,
+        baselineDnaScore: 0,
+        trendRegime: "ACCUMULATION_RANGE",
+        trendLabel: "รวบรวมข้อมูลแท่งเทียน (<60 แท่ง)",
+        trendScore: 0,
+        ema1hSlopePct: 0,
       };
     }
 
-    let dipTouches = 0;
-    let bounce52 = 0;
-    let cleanBounces = 0;
-    let bounce35 = 0;
-    let fastKnife = 0;
-    const spans: number[] = [];
-    const dipWicks: number[] = [];
-    const er48s: number[] = [];
+    // Helper for computing DNA metrics on any slice of candles
+    const computeSliceDna = (slice: Candle[]) => {
+      const sn = slice.length;
+      let dipTouches = 0;
+      let bounce52 = 0;
+      let cleanBounces = 0;
+      let bounce35 = 0;
+      let fastKnife = 0;
+      const spans: number[] = [];
+      const dipWicks: number[] = [];
+      const er48s: number[] = [];
+      const r1: number[] = [];
+      const r16: number[] = [];
+      let upRangeSum = 0;
+      let downRangeSum = 0;
 
-    const r1: number[] = [];
-    const r16: number[] = [];
-    let upRangeSum = 0;
-    let downRangeSum = 0;
-
-    for (let i = 1; i < n; i++) {
-      const prev = candles[i - 1]!;
-      const cur = candles[i]!;
-      r1.push(Math.log(cur.close / prev.close));
-      if (i >= 16) {
-        r16.push(Math.log(cur.close / candles[i - 16]!.close));
-      }
-      if (cur.close >= cur.open) upRangeSum += (cur.high - cur.low) / cur.open;
-      else downRangeSum += (cur.high - cur.low) / cur.open;
-    }
-
-    for (let i = 48; i < n - 24; i++) {
-      let hi = -Infinity;
-      let lo = Infinity;
-      let pathSum = 0;
-      for (let j = i - 48; j < i; j++) {
-        const b = candles[j]!;
-        if (b.high > hi) hi = b.high;
-        if (b.low < lo) lo = b.low;
-        if (j > i - 48) pathSum += Math.abs(b.close - candles[j - 1]!.close);
-      }
-      const span = hi - lo;
-      if (lo <= 0 || span <= 0) continue;
-      spans.push((span / lo) * 100);
-      if (pathSum > 0) {
-        er48s.push(Math.abs(candles[i - 1]!.close - candles[i - 48]!.close) / pathSum);
+      for (let i = 1; i < sn; i++) {
+        const prev = slice[i - 1]!;
+        const cur = slice[i]!;
+        r1.push(Math.log(cur.close / prev.close));
+        if (i >= 16) {
+          r16.push(Math.log(cur.close / slice[i - 16]!.close));
+        }
+        if (cur.close >= cur.open) upRangeSum += (cur.high - cur.low) / cur.open;
+        else downRangeSum += (cur.high - cur.low) / cur.open;
       }
 
-      const cur = candles[i]!;
-      const lvl20 = lo + 0.20 * span;
-      const lvl35 = lo + 0.35 * span;
-      const lvl52 = lo + 0.52 * span;
-      const cutLvl = lo - 0.20 * span;
-
-      if (cur.low <= lvl20 && candles[i - 1]!.close > lvl20) {
-        const rng = cur.high - cur.low;
-        if (rng > 0) {
-          dipWicks.push(((Math.min(cur.open, cur.close) - cur.low) / rng) * 100);
+      for (let i = 48; i < sn - 16; i++) {
+        let hi = -Infinity;
+        let lo = Infinity;
+        let pathSum = 0;
+        for (let j = i - 48; j < i; j++) {
+          const b = slice[j]!;
+          if (b.high > hi) hi = b.high;
+          if (b.low < lo) lo = b.low;
+          if (j > i - 48) pathSum += Math.abs(b.close - slice[j - 1]!.close);
+        }
+        const span = hi - lo;
+        if (lo <= 0 || span <= 0) continue;
+        spans.push((span / lo) * 100);
+        if (pathSum > 0) {
+          er48s.push(Math.abs(slice[i - 1]!.close - slice[i - 48]!.close) / pathSum);
         }
 
-        let outcome = 0;
-        let hit35 = false;
-        let knife = false;
-        let bouncedClean = false;
+        const cur = slice[i]!;
+        const lvl20 = lo + 0.20 * span;
+        const lvl35 = lo + 0.35 * span;
+        const lvl52 = lo + 0.52 * span;
+        const cutLvl = lo - 0.20 * span;
 
-        for (let k = i + 1; k < Math.min(n, i + 32); k++) {
-          if (candles[k]!.high >= lvl35) hit35 = true;
-          if (candles[k]!.low <= cutLvl) {
-            outcome = -1;
-            if (k - i <= 8) knife = true;
-            break;
+        if (cur.low <= lvl20 && slice[i - 1]!.close > lvl20) {
+          const rng = cur.high - cur.low;
+          if (rng > 0) {
+            dipWicks.push(((Math.min(cur.open, cur.close) - cur.low) / rng) * 100);
           }
-          if (candles[k]!.high >= lvl52) {
-            outcome = 1;
-            bouncedClean = true;
-            break;
+
+          let outcome = 0;
+          let hit35 = false;
+          let knife = false;
+          let bouncedClean = false;
+
+          for (let k = i + 1; k < Math.min(sn, i + 32); k++) {
+            if (slice[k]!.high >= lvl35) hit35 = true;
+            if (slice[k]!.low <= cutLvl) {
+              outcome = -1;
+              if (k - i <= 8) knife = true;
+              break;
+            }
+            if (slice[k]!.high >= lvl52) {
+              outcome = 1;
+              bouncedClean = true;
+              break;
+            }
+          }
+          if (outcome !== 0) {
+            dipTouches++;
+            if (outcome === 1) bounce52++;
+            if (hit35) bounce35++;
+            if (knife) fastKnife++;
+            if (bouncedClean) cleanBounces++;
           }
         }
-        if (outcome !== 0) {
-          dipTouches++;
-          if (outcome === 1) bounce52++;
-          if (hit35) bounce35++;
-          if (knife) fastKnife++;
-          if (bouncedClean) cleanBounces++;
-        }
       }
-    }
 
-    const mean = (arr: number[]) => (arr.length > 0 ? arr.reduce((s, x) => s + x, 0) / arr.length : 0);
-    const variance = (arr: number[]) => {
-      if (arr.length < 2) return 0;
-      const m = mean(arr);
-      return arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1);
+      const mean = (arr: number[]) => (arr.length > 0 ? arr.reduce((s, x) => s + x, 0) / arr.length : 0);
+      const variance = (arr: number[]) => {
+        if (arr.length < 2) return 0;
+        const m = mean(arr);
+        return arr.reduce((s, x) => s + (x - m) ** 2, 0) / (arr.length - 1);
+      };
+
+      const var1 = variance(r1);
+      const var16 = variance(r16);
+      const vr16 = var1 > 0 ? var16 / (16 * var1) : 1.0;
+
+      const bounce52Rate = dipTouches > 0 ? (bounce52 / dipTouches) * 100 : 0;
+      const cleanBounceRate = dipTouches > 0 ? (cleanBounces / dipTouches) * 100 : 0;
+      const bounce35Rate = dipTouches > 0 ? (bounce35 / dipTouches) * 100 : 0;
+      const fastKnifeRate = dipTouches > 0 ? (fastKnife / dipTouches) * 100 : 0;
+      const bounceToKnifeRatio = fastKnife > 0 ? bounce52 / fastKnife : bounce52;
+      const avgDipWickPct = mean(dipWicks);
+      const avgSpan48Pct = mean(spans);
+      const avgEr48 = mean(er48s);
+      const upDownSymmetry = downRangeSum > 0 ? upRangeSum / downRangeSum : 1.0;
+
+      // Component score calculation (0 - 100)
+      let bounceScore = 0;
+      if (bounce52Rate >= 58) bounceScore = 35;
+      else if (bounce52Rate >= 54) bounceScore = 28;
+      else if (bounce52Rate >= 50) bounceScore = 18;
+      else bounceScore = 5;
+
+      let wickScore = 0;
+      const wickThreshold = assetClass === "STOCK" ? 27.0 : 32.0;
+      if (avgDipWickPct >= wickThreshold + 3) wickScore = 20;
+      else if (avgDipWickPct >= wickThreshold) wickScore = 15;
+      else if (avgDipWickPct >= wickThreshold - 4) wickScore = 10;
+      else wickScore = 3;
+
+      let spanScore = 0;
+      const minSpan = assetClass === "STOCK" ? 2.2 : 2.8;
+      const maxSpan = assetClass === "STOCK" ? 6.0 : 5.8;
+      if (avgSpan48Pct >= minSpan && avgSpan48Pct <= maxSpan) spanScore = 20;
+      else if (avgSpan48Pct >= minSpan * 0.8 && avgSpan48Pct <= maxSpan * 1.2) spanScore = 10;
+      else spanScore = 0;
+
+      let erScore = 0;
+      const maxEr = assetClass === "STOCK" ? 0.20 : 0.148;
+      if (avgEr48 <= maxEr && vr16 <= 1.05) erScore = 15;
+      else if (avgEr48 <= maxEr * 1.15) erScore = 9;
+      else erScore = 2;
+
+      let symScore = 0;
+      if (upDownSymmetry >= 1.03) symScore = 10;
+      else if (upDownSymmetry >= 0.98) symScore = 6;
+      else symScore = 1;
+
+      const rawScore = Math.min(100, Math.round(bounceScore + wickScore + spanScore + erScore + symScore));
+
+      return {
+        dipTouches,
+        bounce52Rate,
+        cleanBounceRate,
+        bounce35Rate,
+        fastKnifeRate,
+        bounceToKnifeRatio,
+        avgDipWickPct,
+        avgSpan48Pct,
+        avgEr48,
+        vr16,
+        upDownSymmetry,
+        rawScore,
+      };
     };
 
-    const var1 = variance(r1);
-    const var16 = variance(r16);
-    const vr16 = var1 > 0 ? var16 / (16 * var1) : 1.0;
+    // 1. Calculate Baseline Window (up to 1,000 bars)
+    const baselineSlice = targetCandles.slice(Math.max(0, n - 1000));
+    const baseMetrics = computeSliceDna(baselineSlice);
 
-    const bounce52Rate = dipTouches > 0 ? (bounce52 / dipTouches) * 100 : 0;
-    const cleanBounceRate = dipTouches > 0 ? (cleanBounces / dipTouches) * 100 : 0;
-    const bounce35Rate = dipTouches > 0 ? (bounce35 / dipTouches) * 100 : 0;
-    const fastKnifeRate = dipTouches > 0 ? (fastKnife / dipTouches) * 100 : 0;
-    const bounceToKnifeRatio = fastKnife > 0 ? bounce52 / fastKnife : bounce52;
-    const avgDipWickPct = mean(dipWicks);
-    const avgSpan48Pct = mean(spans);
-    const avgEr48 = mean(er48s);
-    const upDownSymmetry = downRangeSum > 0 ? upRangeSum / downRangeSum : 1.0;
+    // 2. Calculate Recent Form Window (last 240 bars ~60h)
+    let recentMetrics = baseMetrics;
+    if (n >= 240) {
+      const recentSlice = targetCandles.slice(n - 240);
+      recentMetrics = computeSliceDna(recentSlice);
+    }
 
+    // 3. Dynamic Rolling Weighted DNA Score: 60% Recent Form + 40% Baseline (or 100% baseline if history < 240)
+    const baselineDnaScore = baseMetrics.rawScore;
+    const recentDnaScore = recentMetrics.rawScore;
+    const weightedDnaScore = n >= 240
+      ? Math.round(recentDnaScore * 0.60 + baselineDnaScore * 0.40)
+      : baselineDnaScore;
+
+    // 4. Live Forward Trend Alignment (4H and 1H EMAs on 15m candles: 1H=80 bars, 4H=320 bars)
+    const lastC = targetCandles[n - 1]!;
+    let trendRegime: "BULL_UPTREND" | "ACCUMULATION_RANGE" | "BEAR_DOWNTREND" = "ACCUMULATION_RANGE";
+    let trendLabel = "🔄 ไซด์เวย์สะสมพลัง (Range)";
+    let trendScore = 15;
+    let ema1hSlopePct = 0;
+
+    if (n >= 120) {
+      // Calculate 1H EMA20 (equivalent to EMA80 on 15m) & 1H EMA50 (equivalent to EMA200 on 15m)
+      const k80 = 2 / (80 + 1);
+      const k200 = 2 / (200 + 1);
+      let ema80 = targetCandles[0]!.close;
+      let ema200 = targetCandles[0]!.close;
+      const ema200History: number[] = [];
+
+      for (let i = 1; i < n; i++) {
+        const cPrice = targetCandles[i]!.close;
+        ema80 = cPrice * k80 + ema80 * (1 - k80);
+        ema200 = cPrice * k200 + ema200 * (1 - k200);
+        ema200History.push(ema200);
+      }
+
+      const prevEma200 = ema200History[Math.max(0, ema200History.length - 16)] ?? ema200;
+      ema1hSlopePct = prevEma200 > 0 ? ((ema200 - prevEma200) / prevEma200) * 100 : 0;
+
+      // 4H Trend estimation (last 60h High/Low mid)
+      const last60hBars = targetCandles.slice(Math.max(0, n - 240));
+      const htfHigh = Math.max(...last60hBars.map((b) => b.high));
+      const htfLow = Math.min(...last60hBars.map((b) => b.low));
+      const htfCenter = (htfHigh + htfLow) * 0.5;
+
+      const isBullAlignment = lastC.close >= ema200 && ema80 >= ema200 * 0.998 && ema1hSlopePct >= -0.05;
+      const isBearAlignment = lastC.close < ema200 && ema80 < ema200 * 0.995 && lastC.close < htfCenter && ema1hSlopePct < -0.10;
+
+      if (isBullAlignment) {
+        trendRegime = "BULL_UPTREND";
+        trendLabel = "🐂 ขาขึ้นยกฐาน (4H+1H Bull)";
+        trendScore = 35;
+      } else if (isBearAlignment) {
+        trendRegime = "BEAR_DOWNTREND";
+        trendLabel = "🐻 ขาลง (4H Bear Flow)";
+        trendScore = 0;
+      } else {
+        trendRegime = "ACCUMULATION_RANGE";
+        trendLabel = "🔄 ไซด์เวย์สะสมพลัง (Range)";
+        trendScore = 18;
+      }
+    }
+
+    // Degradation & Protection Checks
     const reasons: string[] = [];
-
-    // Scoring components (Total 100):
-    // 1. Bounce 52% & Clean Bounce (35 pts)
-    let bounceScore = 0;
-    if (bounce52Rate >= 58) bounceScore = 35;
-    else if (bounce52Rate >= 54) bounceScore = 28;
-    else if (bounce52Rate >= 50) bounceScore = 18;
-    else bounceScore = 5;
-
-    // 2. Dip Wick Absorption (20 pts)
-    let wickScore = 0;
-    const wickThreshold = assetClass === "STOCK" ? 27.0 : 32.0;
-    if (avgDipWickPct >= wickThreshold + 3) wickScore = 20;
-    else if (avgDipWickPct >= wickThreshold) wickScore = 15;
-    else if (avgDipWickPct >= wickThreshold - 4) wickScore = 10;
-    else wickScore = 3;
-
-    // 3. Span Sweet Spot (20 pts)
-    let spanScore = 0;
-    const minSpan = assetClass === "STOCK" ? 2.2 : 2.8;
-    const maxSpan = assetClass === "STOCK" ? 6.0 : 5.8;
-    if (avgSpan48Pct >= minSpan && avgSpan48Pct <= maxSpan) spanScore = 20;
-    else if (avgSpan48Pct >= minSpan * 0.8 && avgSpan48Pct <= maxSpan * 1.2) spanScore = 10;
-    else spanScore = 0;
-
-    // 4. Mean-Reversion Efficiency ER48 & VR16 (15 pts)
-    let erScore = 0;
-    const maxEr = assetClass === "STOCK" ? 0.20 : 0.148;
-    if (avgEr48 <= maxEr && vr16 <= 1.05) erScore = 15;
-    else if (avgEr48 <= maxEr * 1.15) erScore = 9;
-    else erScore = 2;
-
-    // 5. Up/Down Symmetry (10 pts)
-    let symScore = 0;
-    if (upDownSymmetry >= 1.03) symScore = 10;
-    else if (upDownSymmetry >= 0.98) symScore = 6;
-    else symScore = 1;
-
-    const dnaScore = Math.min(100, Math.round(bounceScore + wickScore + spanScore + erScore + symScore));
+    const isCrypto = assetClass === "CRYPTO";
 
     // Hard Gate Verification
     const isCryptoFit =
-      assetClass === "CRYPTO" &&
-      bounce52Rate >= 56.0 &&
-      bounceToKnifeRatio >= 1.88 &&
-      avgDipWickPct >= 31.2 &&
-      avgSpan48Pct >= 2.8 &&
-      avgSpan48Pct <= 6.0 &&
-      avgEr48 <= 0.148 &&
-      upDownSymmetry >= 1.02;
+      isCrypto &&
+      baseMetrics.bounce52Rate >= 52.0 &&
+      baseMetrics.bounceToKnifeRatio >= 1.60 &&
+      baseMetrics.avgDipWickPct >= 28.0 &&
+      baseMetrics.avgSpan48Pct >= 2.5 &&
+      baseMetrics.avgSpan48Pct <= 6.5 &&
+      baseMetrics.avgEr48 <= 0.160 &&
+      baseMetrics.upDownSymmetry >= 0.95;
 
     const isStockFit =
-      assetClass === "STOCK" &&
-      bounce52Rate >= 54.0 &&
-      bounceToKnifeRatio >= 2.20 &&
-      avgDipWickPct >= 25.0 &&
-      avgSpan48Pct >= 2.6 &&
-      avgSpan48Pct <= 6.0 &&
-      upDownSymmetry >= 1.02;
+      !isCrypto &&
+      baseMetrics.bounce52Rate >= 52.0 &&
+      baseMetrics.bounceToKnifeRatio >= 2.00 &&
+      baseMetrics.avgDipWickPct >= 24.0 &&
+      baseMetrics.avgSpan48Pct >= 2.4 &&
+      baseMetrics.avgSpan48Pct <= 6.2 &&
+      baseMetrics.upDownSymmetry >= 0.98;
 
-    const isGridFit = isCryptoFit || isStockFit;
+    const isGridFit = (isCryptoFit || isStockFit) && trendRegime !== "BEAR_DOWNTREND";
+
+    // Dynamic Degradation: If recent 60h shows heavy one-way bleed, degrade to B or AVOID
+    const isRecentBleeding = n >= 240 && (recentMetrics.fastKnifeRate >= 50 && recentMetrics.bounce52Rate < 45 && recentMetrics.avgEr48 > 0.16);
 
     let grade: "S" | "A" | "B" | "AVOID";
-    if (dnaScore >= 85 && isGridFit) grade = "S";
-    else if (dnaScore >= 72 && isGridFit) grade = "A";
-    else if (dnaScore >= 55) grade = "B";
-    else grade = "AVOID";
-
-    if (!isGridFit) {
-      if (bounce52Rate < 54.0) reasons.push(`Low midline bounce rate (${bounce52Rate.toFixed(1)}% < 54%)`);
-      if (avgDipWickPct < (assetClass === "STOCK" ? 25.0 : 31.0)) reasons.push(`Lack of demand absorption wick (${avgDipWickPct.toFixed(1)}%)`);
-      if (avgSpan48Pct < (assetClass === "STOCK" ? 1.8 : 2.7)) reasons.push(`Channel span too narrow (${avgSpan48Pct.toFixed(2)}%)`);
-      if (avgSpan48Pct > 6.0) reasons.push(`Channel span too erratic/wide (${avgSpan48Pct.toFixed(2)}% > 6.0%)`);
-      if (assetClass === "CRYPTO" && avgEr48 > 0.150) reasons.push(`High directional drift ER48 (${avgEr48.toFixed(3)} > 0.150)`);
+    if (trendRegime === "BEAR_DOWNTREND") {
+      grade = "AVOID";
+      reasons.push("Active 4H/1H Downtrend Flow");
+    } else if (isRecentBleeding) {
+      grade = "B";
+      reasons.push("Recent 60h one-way bleeding momentum");
+    } else if (weightedDnaScore >= 75 && isGridFit) {
+      grade = "S";
+    } else if (weightedDnaScore >= 64 && isGridFit) {
+      grade = "A";
+    } else if (weightedDnaScore >= 50) {
+      grade = "B";
     } else {
-      reasons.push(`Strong mean-reverting absorption: Bounce=${bounce52Rate.toFixed(1)}%, DipWick=${avgDipWickPct.toFixed(1)}%, Span=${avgSpan48Pct.toFixed(2)}%`);
+      grade = "AVOID";
+    }
+
+    if (!isGridFit && grade !== "AVOID") {
+      if (baseMetrics.bounce52Rate < 54.0) reasons.push(`Low midline bounce rate (${baseMetrics.bounce52Rate.toFixed(1)}% < 54%)`);
+      if (baseMetrics.avgDipWickPct < (isCrypto ? 30.0 : 24.0)) reasons.push(`Lack of demand absorption wick (${baseMetrics.avgDipWickPct.toFixed(1)}%)`);
+      if (baseMetrics.avgSpan48Pct < (isCrypto ? 2.6 : 2.4)) reasons.push(`Channel span too narrow (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
+      if (baseMetrics.avgSpan48Pct > 6.2) reasons.push(`Channel span too erratic/wide (${baseMetrics.avgSpan48Pct.toFixed(2)}% > 6.2%)`);
+    } else if (isGridFit) {
+      reasons.push(`Rolling DNA OK: Bounce=${baseMetrics.bounce52Rate.toFixed(1)}%, DipWick=${baseMetrics.avgDipWickPct.toFixed(1)}%, Span=${baseMetrics.avgSpan48Pct.toFixed(2)}%, Trend=${trendLabel}`);
     }
 
     return {
-      bounce52Rate,
-      cleanBounceRate,
-      bounce35Rate,
-      fastKnifeRate,
-      bounceToKnifeRatio,
-      avgDipWickPct,
-      avgSpan48Pct,
-      avgEr48,
-      vr16,
-      upDownSymmetry,
-      dnaScore,
+      bounce52Rate: baseMetrics.bounce52Rate,
+      cleanBounceRate: baseMetrics.cleanBounceRate,
+      bounce35Rate: baseMetrics.bounce35Rate,
+      fastKnifeRate: baseMetrics.fastKnifeRate,
+      bounceToKnifeRatio: baseMetrics.bounceToKnifeRatio,
+      avgDipWickPct: baseMetrics.avgDipWickPct,
+      avgSpan48Pct: baseMetrics.avgSpan48Pct,
+      avgEr48: baseMetrics.avgEr48,
+      vr16: baseMetrics.vr16,
+      upDownSymmetry: baseMetrics.upDownSymmetry,
+      dnaScore: weightedDnaScore,
       grade,
       isGridFit,
       reasons,
+      recentDnaScore,
+      baselineDnaScore,
+      trendRegime,
+      trendLabel,
+      trendScore,
+      ema1hSlopePct,
     };
   }
 
@@ -4354,6 +4475,11 @@ export class BacktestService {
               upDownSymmetry: dna?.upDownSymmetry,
               posInChannelPct,
               gridStage,
+              recentDnaScore: dna?.recentDnaScore,
+              baselineDnaScore: dna?.baselineDnaScore,
+              trendRegime: dna?.trendRegime,
+              trendLabel: dna?.trendLabel,
+              trendScore: dna?.trendScore,
             });
 
             console.log(`[MarketScanner] [${results.length}/${candidates.length}] ✅ ${sym}: Net PnL ${(rec.summary.netPnlPct >= 0 ? '+' : '')}${rec.summary.netPnlPct.toFixed(2)}% (${rec.summary.totalTrades} trades, WR ${rec.summary.winRate.toFixed(1)}%)`);
