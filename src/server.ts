@@ -1003,7 +1003,7 @@ export class DashboardServer {
       req.on("end", async () => {
         try {
           const parsed = body ? JSON.parse(body) : {};
-          const portfolioMode = parsed.portfolioMode || "mafan_portfolio";
+          const portfolioMode = parsed.portfolioMode || "grid_sequential";
           let result;
 
           if (portfolioMode === "mafan_portfolio") {
@@ -1039,25 +1039,27 @@ export class DashboardServer {
             });
           } else {
             const quoteAsset = parsed.quoteAsset === "USD" ? "USD" : (parsed.quoteAsset === "FDUSD" ? "FDUSD" : "USDT");
+            const timeframe = parsed.timeframe || "15m";
             const maxUniversePairs = Number(parsed.maxUniversePairs) || 50;
-            const limit = Number(parsed.limit) || 4000;
+            const limit = Number(parsed.limit) || 2000;
             const initialCapital = Number(parsed.initialCapital) || 200;
             const rotationIntervalMinutes = Number(parsed.rotationIntervalMinutes) || 180;
             const rotationIdleCashMinutes = Number(parsed.rotationIdleCashMinutes) || 120;
-            const rotationScoreMarginPct = Number(parsed.rotationScoreMarginPct) || 15;
-            const capitalZones = Number(parsed.capitalZones) || 2;
+            const rotationScoreMarginPct = Number(parsed.rotationScoreMarginPct) || 12;
+            const capitalZones = parsed.capitalZones !== undefined ? Number(parsed.capitalZones) : 1;
             const channelMode = parsed.channelMode || "DONCHIAN_ATR";
-            const gridCutLossMode = parsed.gridCutLossMode || "none";
+            const gridCutLossMode = parsed.gridCutLossMode || "entry_floor";
             const enableDipHunterEntryGuard = parsed.enableDipHunterEntryGuard !== false;
             const enableSignalInvalidationExit = parsed.enableSignalInvalidationExit !== false;
             const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "calibrated");
             const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
             const enableBtcMacroGate = parsed.enableBtcMacroGate !== false && parsed.enableBtcMacroGate !== "false";
             const gridHtfGovernor = (parsed.gridHtfGovernor || parsed.rotBtGridHtfGov || "1h_ema200") as "off" | "1h_ema200" | "4h_ema75";
-            const gridMaxChannelPos = parsed.gridMaxChannelPos !== undefined ? Number(parsed.gridMaxChannelPos) : (parsed.rotBtGridMaxPos !== undefined ? Number(parsed.rotBtGridMaxPos) : 0.35);
+            const gridMaxChannelPos = parsed.gridMaxChannelPos !== undefined ? Number(parsed.gridMaxChannelPos) : (parsed.rotBtGridMaxPos !== undefined ? Number(parsed.rotBtGridMaxPos) : 0.38);
 
             result = await BacktestService.runMultiPairRotationSimulation({
               quoteAsset,
+              timeframe,
               maxUniversePairs,
               limit,
               initialCapital,

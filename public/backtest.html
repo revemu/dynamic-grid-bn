@@ -668,8 +668,8 @@
           <div class="scanner-ctrl-group" style="border-left: 3px solid #10b981; padding-left: 8px;">
             <label style="color: #6ee7b7; font-weight: 700;">⚙️ รูปแบบพอร์ต (Portfolio Mode)</label>
             <select id="rotBtPortfolioMode" title="เลือกรูปแบบกลยุทธ์พอร์ตโฟลิโอ" style="font-weight: 700; color: #fff;">
-              <option value="grid_sequential">🔵 Single-Coin Sequential (Dynamic Grid + 1H EMA200 Governor - ผลเทสบวกจริง +3.11%) 👑</option>
-              <option value="mafan_portfolio" selected>🟢 Multi-Coin Portfolio (กระจาย 3 ช่อง - MA-Fan Sniper) ⭐</option>
+              <option value="grid_sequential" selected>🔵 Dynamic Grid DNA Auto-Rotation (สลับเหรียญตามเกรด DNA S/A + แนวโน้ม 4H/1H บน 15m) 👑</option>
+              <option value="mafan_portfolio">🟢 Multi-Coin Portfolio (กระจาย 3 ช่อง - MA-Fan Sniper)</option>
             </select>
           </div>
 
@@ -693,11 +693,10 @@
           <div class="scanner-ctrl-group">
             <label>ระยะเวลาย้อนหลัง (Limit)</label>
             <select id="rotBtLimit">
-              <option value="2000">2,000 แท่ง 5m (~7 วัน)</option>
-              <option value="4000" selected>4,000 แท่ง 5m (~14 วัน - แนะนำ)</option>
-              <option value="8640">8,640 แท่ง 5m (~30 วัน)</option>
-              <option value="17280">17,280 แท่ง 5m (~60 วัน)</option>
-              <option value="34560">34,560 แท่ง 5m (~120 วัน / 4 เดือน)</option>
+              <option value="1000">1,000 แท่ง 15m (~10.4 วัน)</option>
+              <option value="2000" selected>2,000 แท่ง 15m (~20.8 วัน - แนะนำ)</option>
+              <option value="3000">3,000 แท่ง 15m (~31.2 วัน / 1 เดือน)</option>
+              <option value="4000">4,000 แท่ง 15m (~41.6 วัน)</option>
             </select>
           </div>
           <div class="scanner-ctrl-group">
@@ -782,13 +781,13 @@
           </div>
           <div class="scanner-ctrl-group" data-rot-mode="grid">
             <label>Score Margin (%)</label>
-            <input type="number" id="rotBtScoreMargin" value="15" min="5" step="5" style="width: 70px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
+            <input type="number" id="rotBtScoreMargin" value="12" min="5" step="1" style="width: 70px; padding: 4px 6px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 4px; color: #fff;" />
           </div>
           <div class="scanner-ctrl-group" data-rot-mode="grid">
             <label>Capital Zones</label>
             <select id="rotBtZones">
-              <option value="1">1 โซน (100% Cashflow)</option>
-              <option value="2" selected>2 โซน (50% ต่อโซน)</option>
+              <option value="1" selected>1 โซน (100% Core v14.0 - แนะนำ)</option>
+              <option value="2">2 โซน (50% ต่อโซน)</option>
               <option value="3">3 โซน (33% ต่อโซน)</option>
             </select>
           </div>
@@ -871,6 +870,8 @@
                   <th>รอบ</th>
                   <th>ช่วงเวลา (Period)</th>
                   <th id="rotThSymbol">คู่เหรียญ (Pair)</th>
+                  <th>🧬 Rolling DNA</th>
+                  <th>📈 แนวโน้ม</th>
                   <th>เหตุผล (Trigger)</th>
                   <th>คะแนน (Score)</th>
                   <th>ทุนเริ่มต้น ➔ จบรอบ</th>
@@ -894,10 +895,15 @@
                 <tr>
                   <th>อันดับ</th>
                   <th id="rotThContribSymbol">คู่เหรียญ</th>
+                  <th>🧬 เกรด DNA</th>
                   <th>จำนวนรอบที่ถือ</th>
                   <th>ระยะเวลาถือครองรวม</th>
                   <th>จำนวนไม้เทรด</th>
                   <th>Win Rate (%)</th>
+                  <th>กำไร ($)</th>
+                  <th>กำไร (%)</th>
+                </tr>
+              </thead>
                   <th>กำไรรวม ($)</th>
                   <th>ผลตอบแทนสะสม (%)</th>
                 </tr>

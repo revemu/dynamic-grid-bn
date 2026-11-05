@@ -9317,3 +9317,31 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.59`** ใน `package.json` และ `src/version.ts`
   - ผ่านการตรวจสอบ `npm run typecheck` 100% (0 errors)
+
+---
+
+## 307. v0.3.0.60 — Master Plan v19.0: DNA-Driven Walk-Forward Multi-Pair Rotation Backtest & Studio UI Consolidation
+
+- **สาเหตุของปัญหาและข้อค้นพบ (Root Cause & Discovery)**:
+  1. **สถาปัตยกรรม Walk-Forward Rotation เดิมยังไม่เชื่อมโยงกับระบบ DNA**: ฟังก์ชัน `evaluateHistoricalFunnelAtTime` ใน [`src/backtest-service.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/backtest-service.ts) ยังคงใช้สูตรกรองความกว้างกรอบ `5.5%–16%` แบบเก่าบน `5m` และไม่ได้เรียกใช้ `evaluateGridDna` ทำให้การจำลองพอร์ตในอดีต (Tab 3: `pane-rotation`) สลับเหรียญโดยไม่สนใจเกรด DNA คุณภาพของเหรียญ
+  2. **ความไม่สอดคล้องของเครื่องยนต์เทรด (Engine Mismatch)**: การจำลองการเทรดในแต่ละรอบ (`legRecord`) ยังคงส่งพารามิเตอร์ของระบบเดิม (`5m`, `capitalZones: 2`, `gridCutLossMode: "none"`) แทนที่จะเป็น **Core Engine v14.0** (`15m`, `buyLevelPcts: [20, 12]`, `sellLevelPcts: [52, 72]`, `capitalZones: 1`, `gridCutLossMode: "entry_floor"`, 3-Step Ratchet Trailing Stop)
+  3. **UI และ API ยังตั้งค่าเริ่มต้นเป็น `mafan_portfolio`**: ค่าเริ่มต้นของหน้า Studio Tab 3 และ Endpoint `/api/backtest/rotation/run` ยังเลือกโหมด MA-Fan Multi-Coin Portfolio ซึ่งขัดกับแผนรวมกลยุทธ์เหลือกลยุทธ์เดียว และตารางประวัติรอบการสลับเหรียญ (Rotation Legs Timeline) ยังไม่มีข้อมูลแสดง `🧬 DNA Grade` และ `📈 Live Trend`
+- **การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **Point-in-Time 3-Layer DNA & Live Trend Funnel (`evaluateHistoricalFunnelAtTime`)**:
+     - สแกนและตัดข้อมูลแท่งเทียนย้อนหลัง ณ เวลา `targetTime` แบบสมบูรณ์ ปราศจาก Look-Ahead Bias 100%
+     - คำนวณ **3-Layer Dynamic DNA**: คัดเฉพาะเหรียญที่ได้ `Grade S` หรือ `Grade A` (หรือ `Grade B` ที่คะแนน `>= 58` และไม่เสื่อมสภาพ `isDegrading === false`)
+     - ตรวจสอบ **Live Trend Gate**: คัดทิ้งเหรียญที่เป็นแนวโน้มขาลง `BEAR_DOWNTREND` ทันที
+     - ตรวจสอบ **Tactical Pullback Gate**: คัดเฉพาะเหรียญที่ย่อตัวลงมาอยู่ในโซนแนวรับล่าง (`posRatio <= 0.38 - 0.55`)
+     - ให้คะแนนแบบ 3-Layer Forward Composite Score (40 คะแนน DNA + 35 คะแนน Trend/RS + 25 คะแนน Pullback/Volume)
+  2. **Walk-Forward Leg Execution ด้วย Core Engine v14.0 บน 15m (`runMultiPairRotationSimulation`)**:
+     - ปรับระยะเวลาแท่งเทียนมาตรฐานเป็น `15m` (`1,000 แท่ง ~10.4 วัน`, `2,000 แท่ง ~20.8 วัน`)
+     - รันแต่ละรอบด้วยชุดพารามิเตอร์ Core v14.0: `buyLevelPcts: [20, 12]`, `buyWeights: [55, 45]`, `sellLevelPcts: [52, 72]`, `capitalZones: 1`, `minChannelWidthPct: 2.0`, `maxChannelWidthPct: 25.0`, `gridCutLossMode: "entry_floor"`, `enableGridTrailingStop: true`
+     - สลับเหรียญเมื่อจบรอบ (`tradeJustClosed`) หรือหมดเวลาเงินสดว่าง (`idleTimeout` 6 ชม.) โดยหากเหรียญเดิมคุณภาพตกต่ำกว่าเกณฑ์จะสลับออกทันที หรือหากมีเหรียญ Grade S/A ใหม่ที่มีคะแนนชนะเหรียญเดิม `>= 12%` จะสลับทุนเข้าสู่เหรียญใหม่เพื่อเร่งผลตอบแทนทบต้น
+     - หากตลาดทั้งกระดานเข้าสู่ภาวะหมีหรือไม่มีเหรียญใดผ่านเกณฑ์ จะเข้าสู่โหมด **🛡️ Sit-Out Defense ถือเงินสด 100% Cash**
+  3. **Data Telemetry & Studio UI Full Parity**:
+     - บันทึก `dnaGrade`, `dnaScore`, `recentDnaScore`, `trendRegime`, `trendLabel`, `entryPosRatio` ลงใน `RotationLegRecord` และ `topCandidatesSnapshot`
+     - บันทึก `bestDnaGrade` และ `avgDnaScore` ลงในตารางสรุปผลงานรายเหรียญ (`pairContributions`)
+     - อัปเดต [`public/backtest.html`](file:///c:/Sites/github/dynamic-grid-bn/public/backtest.html), [`public/backtest.js`](file:///c:/Sites/github/dynamic-grid-bn/public/backtest.js), และ [`src/server.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/server.ts) ให้ตั้งค่าเริ่มต้นเป็น `grid_sequential` บน `15m` พร้อมแสดงป้าย `🧬 Rolling DNA` และ `📈 Live Trend` ในทุกแถวของประวัติการสลับเหรียญ
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.60`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)

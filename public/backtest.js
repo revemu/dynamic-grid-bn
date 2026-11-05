@@ -3399,11 +3399,29 @@
             trigLabel = exitT || "🎯 จบรอบ";
           }
 
+          let dnaBadge = "";
+          if (leg.dnaGrade) {
+            const dnaColor = leg.dnaGrade === "S" ? "#10b981" : (leg.dnaGrade === "A" ? "#38bdf8" : "#f59e0b");
+            dnaBadge = `<span class="badge" style="background: rgba(56, 189, 248, 0.15); color: ${dnaColor}; border: 1px solid ${dnaColor}; font-weight: bold; font-size: 11px; padding: 2px 6px; border-radius: 4px;">🧬 ${leg.dnaGrade} (${leg.dnaScore || 0})</span>`;
+          } else {
+            dnaBadge = `<span style="color: #64748b; font-size: 11px;">-</span>`;
+          }
+
+          let trendBadge = "";
+          if (leg.trendLabel) {
+            const isBull = leg.trendRegime === "BULL_UPTREND";
+            trendBadge = `<span class="badge" style="background: ${isBull ? 'rgba(16, 185, 129, 0.15)' : 'rgba(56, 189, 248, 0.15)'}; color: ${isBull ? '#10b981' : '#38bdf8'}; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${leg.trendLabel}</span>`;
+          } else {
+            trendBadge = `<span style="color: #64748b; font-size: 11px;">-</span>`;
+          }
+
           return `
             <tr>
               <td style="font-weight: bold; text-align: center;">#${leg.legIndex}</td>
               <td style="font-size: 11px; color: #94a3b8;">${startD} ➔ ${endD} (${leg.durationHours}h)</td>
               <td style="font-weight: bold; color: #38bdf8;">${leg.symbol}</td>
+              <td>${dnaBadge}</td>
+              <td>${trendBadge}</td>
               <td><span class="badge" style="background: ${trigBg}; color: ${trigColor}; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${trigLabel}</span></td>
               <td><span class="badge" style="background: ${leg.entryScore >= 70 ? '#10b981' : '#f59e0b'}; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px;">${leg.entryScore}/100</span></td>
               <td>${leg.startingCapital.toFixed(2)} ➔ ${leg.endingCapital.toFixed(2)}</td>
@@ -3442,7 +3460,7 @@
               }
               const legSymEl = document.getElementById("legSymTf");
               if (legSymEl) {
-                legSymEl.textContent = `${leg.symbol} 5M (รอบที่ #${leg.legIndex} | ${leg.netPnlPct >= 0 ? "+" : ""}${leg.netPnlPct.toFixed(2)}%)`;
+                legSymEl.textContent = `${leg.symbol} 15M (รอบที่ #${leg.legIndex} | ${leg.netPnlPct >= 0 ? "+" : ""}${leg.netPnlPct.toFixed(2)}%)`;
               }
             }
           });
@@ -3458,6 +3476,7 @@
             <tr style="${isTop ? 'background: rgba(16, 185, 129, 0.1); font-weight: bold;' : ''}">
               <td style="text-align: center;">${isTop ? '👑 ' : ''}#${idx + 1}</td>
               <td style="color: #38bdf8; font-weight: bold;">${item.symbol}</td>
+              <td><span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: bold; font-size: 11px;">🧬 ${item.bestDnaGrade || '-'}</span></td>
               <td>${item.legsCount} รอบ</td>
               <td>${item.totalHoursHeld} ชม.</td>
               <td>${item.tradesCount} ไม้</td>
@@ -3472,7 +3491,7 @@
 
     // ─── Dynamic Rotation Options Visibility ─────────────────────────
     function updateRotationOptionVisibility() {
-      const mode = document.getElementById("rotBtPortfolioMode")?.value || "mafan_portfolio";
+      const mode = document.getElementById("rotBtPortfolioMode")?.value || "grid_sequential";
       document.querySelectorAll("#pane-rotation [data-rot-mode]").forEach((el) => {
         const target = el.dataset.rotMode;
         if (mode === "mafan_portfolio") {
@@ -3497,10 +3516,10 @@
 
     if (btnStartRotationBt) {
       btnStartRotationBt.addEventListener("click", async () => {
-        const portfolioMode = document.getElementById("rotBtPortfolioMode")?.value || "mafan_portfolio";
+        const portfolioMode = document.getElementById("rotBtPortfolioMode")?.value || "grid_sequential";
         const quoteAsset = document.getElementById("rotBtQuoteAsset")?.value || "FDUSD";
         const maxUniversePairs = Number(document.getElementById("rotBtUniverseSize")?.value) || 50;
-        const limit = Number(document.getElementById("rotBtLimit")?.value) || 4000;
+        const limit = Number(document.getElementById("rotBtLimit")?.value) || 2000;
         const initialCapital = Number(document.getElementById("rotBtInitialCapital")?.value) || 200;
 
         let payload = {
@@ -3532,18 +3551,19 @@
           };
         } else {
           const rotationIntervalMinutes = Number(document.getElementById("rotBtCooldownMins")?.value) || 180;
-          const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 15;
-          const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 2;
+          const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 12;
+          const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 1;
           const enableDipHunterEntryGuard = document.getElementById("rotBtDipHunterGuard")?.value !== "off";
           const signalExitVal = document.getElementById("rotBtSignalExit")?.value || "calibrated";
           const enableSignalInvalidationExit = signalExitVal !== "off";
           const signalInvalidationMode = signalExitVal;
           const enableBtcMacroGate = document.getElementById("rotBtMacroGate")?.value !== "off";
           const gridHtfGovernor = document.getElementById("rotBtGridHtfGov")?.value || "1h_ema200";
-          const gridMaxChannelPos = Number(document.getElementById("rotBtGridMaxPos")?.value) || 0.35;
+          const gridMaxChannelPos = Number(document.getElementById("rotBtGridMaxPos")?.value) || 0.38;
 
           payload = {
             ...payload,
+            timeframe: "15m",
             rotationIntervalMinutes,
             rotationScoreMarginPct,
             capitalZones,

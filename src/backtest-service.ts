@@ -299,6 +299,7 @@ export interface MultiPairRotationOptions {
   minVolumeUsd?: number;
   capitalZones?: number;
   channelMode?: "DOW_SWINGS" | "DOW_ATR_CLAMP" | "FIXED_PCT_CLAMP" | "DONCHIAN_ATR" | "VOLUME_PROFILE_HTF";
+  donchianPeriod?: number;
   minChannelWidthPct?: number;
   maxChannelWidthPct?: number;
   zoneMinDropPct?: number;
@@ -322,6 +323,12 @@ export interface RotationLegRecord {
   durationHours: number;
   triggerReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" | "SIGNAL_DISQUALIFIED";
   entryScore: number;
+  dnaGrade?: "S" | "A" | "B" | "AVOID";
+  dnaScore?: number;
+  recentDnaScore?: number;
+  trendRegime?: "BULL_UPTREND" | "ACCUMULATION_RANGE" | "BEAR_DOWNTREND";
+  trendLabel?: string;
+  entryPosRatio?: number;
   previousSymbol?: string;
   previousSymbolScore?: number;
   startingCapital: number;
@@ -336,9 +343,14 @@ export interface RotationLegRecord {
   topCandidatesSnapshot: Array<{
     symbol: string;
     compositeScore: number;
+    dnaGrade?: string;
+    dnaScore?: number;
+    recentDnaScore?: number;
+    trendLabel?: string;
     netPnlPct: number;
     winRate: number;
     range24hPct: number;
+    posRatio?: number;
   }>;
   trades: BacktestTrade[];
   candles: Candle[];
@@ -353,6 +365,8 @@ export interface PairContributionItem {
   winRate: number;
   totalNetPnlQuote: number;
   totalNetPnlPct: number;
+  bestDnaGrade?: string;
+  avgDnaScore?: number;
 }
 
 export interface MultiPairRotationResult {
@@ -414,6 +428,7 @@ export interface GridDnaMetrics {
   trendLabel?: string;
   trendScore?: number;
   ema1hSlopePct?: number;
+  isDegrading?: boolean;
 }
 
 const DB_PATH = path.resolve(process.cwd(), "data", "backtest-history.db.json");
@@ -782,6 +797,7 @@ export class BacktestService {
       trendLabel,
       trendScore,
       ema1hSlopePct,
+      isDegrading: Boolean(recentDnaScore < baselineDnaScore - 12 || (recentDnaScore < 45 && baselineDnaScore >= 60)),
     };
   }
 
@@ -4811,10 +4827,11 @@ export class BacktestService {
   }
 
   /**
-   * Fetch historical 5m candles for Top N liquid pairs in FDUSD, USDT, or Alpaca USD universe
+   * Fetch historical candles for Top N liquid pairs in FDUSD, USDT, or Alpaca USD universe
    */
   public static async fetchTopUniverseCandles(opts: {
     quoteAsset: "FDUSD" | "USDT" | "USD";
+    timeframe?: string;
     maxPairs?: number;
     limit?: number;
     customWhitelist?: string[];
@@ -4823,8 +4840,9 @@ export class BacktestService {
   }): Promise<Map<string, Candle[]>> {
     const quote = opts.quoteAsset;
     const isAlpaca = quote === "USD";
+    const tf = opts.timeframe || "15m";
     const maxPairs = Math.max(5, Math.min(100, opts.maxPairs ?? 50));
-    const candlesLimit = Math.max(500, (opts.limit ?? 4000) + 600);
+    const candlesLimit = Math.max(500, (opts.limit ?? 2000) + 400);
     const blacklistSet = new Set((opts.blacklist ?? []).map((s) => s.toUpperCase().trim()));
 
     let targetSymbols: string[] = [];
@@ -4898,9 +4916,9 @@ export class BacktestService {
             opts.onProgress?.(this.rotationBtProgress);
 
             const candles = isAlpaca
-              ? await this.fetchAlpacaCandles(sym, "5m", candlesLimit)
-              : await this.fetchBinanceCandles(sym, "5m", candlesLimit);
-            if (candles && candles.length >= 300) {
+              ? await this.fetchAlpacaCandles(sym, tf, candlesLimit)
+              : await this.fetchBinanceCandles(sym, tf, candlesLimit);
+            if (candles && candles.length >= 100) {
               universeMap.set(sym, candles);
             }
           } catch (err: any) {
@@ -4918,8 +4936,8 @@ export class BacktestService {
   }
 
   /**
-   * Evaluate the 2-Stage Market Funnel Point-in-Time at a specific timestamp in history.
-   * Completely eliminates look-ahead bias by only evaluating candles up to targetTime.
+   * Evaluate the 3-Layer Dynamic DNA & Live Trend Funnel Point-in-Time at a specific timestamp in history.
+   * Completely eliminates look-ahead bias by only evaluating candles up to targetTime (Zero Look-Ahead).
    */
   public static evaluateHistoricalFunnelAtTime(opts: {
     targetTime: number;
@@ -4930,6 +4948,11 @@ export class BacktestService {
   }): Array<{
     symbol: string;
     compositeScore: number;
+    dnaGrade: "S" | "A" | "B" | "AVOID";
+    dnaScore: number;
+    recentDnaScore: number;
+    trendRegime: "BULL_UPTREND" | "ACCUMULATION_RANGE" | "BEAR_DOWNTREND";
+    trendLabel: string;
     simScore: number;
     structureScore: number;
     positionScore: number;
@@ -4966,9 +4989,9 @@ export class BacktestService {
 
     for (const [sym, candles] of universeCandles.entries()) {
       if (isAlpaca) {
-        if (sym === "SPY" || !candles || candles.length < 78) continue;
+        if (sym === "SPY" || !candles || candles.length < 50) continue;
       } else {
-        if (sym.startsWith("BTC") || SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym) || !candles || candles.length < 288) continue;
+        if (sym.startsWith("BTC") || SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym) || !candles || candles.length < 50) continue;
       }
       let low = 0;
       let high = candles.length - 1;
@@ -4982,7 +5005,7 @@ export class BacktestService {
           high = mid - 1;
         }
       }
-      if (idx >= (isAlpaca ? 20 : 60) && targetTime - candles[idx].time <= maxStaleSec) {
+      if (idx >= 20 && targetTime - candles[idx].time <= maxStaleSec) {
         totalBreadthPairs++;
         const curClose = candles[idx].close;
         const ema60 = calcEmaLocal(candles, idx, 60);
@@ -4996,7 +5019,7 @@ export class BacktestService {
     const btcCandles = isAlpaca
       ? (universeCandles.get("SPY") || universeCandles.get("SPYUSD"))
       : (universeCandles.get(`BTC${quoteAsset}`) || universeCandles.get("BTCUSDT"));
-    const btcMinBars = isAlpaca ? 78 : 288;
+    const btcMinBars = isAlpaca ? 50 : 60;
 
     if (btcCandles && btcCandles.length >= btcMinBars) {
       let low = 0;
@@ -5013,7 +5036,9 @@ export class BacktestService {
       }
       if (bIdx >= btcMinBars - 1) {
         const btcClose = btcCandles[bIdx].close;
-        const btcOpen24h = btcCandles[bIdx - (btcMinBars - 1)].open;
+        const btcIntervalSec = btcCandles.length >= 2 ? (btcCandles[1].time - btcCandles[0].time) : 900;
+        const btcBars24h = Math.max(16, Math.min(bIdx, Math.round(86400 / btcIntervalSec)));
+        const btcOpen24h = btcCandles[bIdx - btcBars24h].open;
         if (btcOpen24h > 0) {
           btcChange24hPct = ((btcClose - btcOpen24h) / btcOpen24h) * 100;
         }
@@ -5025,13 +5050,14 @@ export class BacktestService {
           }
 
           // B. Bitcoin / S&P 500 Macro Gate:
-          const sliceBtc = btcCandles.slice(bIdx - (btcMinBars - 1), bIdx + 1);
+          const sliceBtc = btcCandles.slice(Math.max(0, bIdx - btcBars24h), bIdx + 1);
           const smaBtc = sliceBtc.reduce((s: number, c: Candle) => s + c.close, 0) / sliceBtc.length;
-          const btcOpen4h = btcCandles[Math.max(0, bIdx - 48)].open;
+          const btcBars4h = Math.max(4, Math.round(14400 / btcIntervalSec));
+          const btcOpen4h = btcCandles[Math.max(0, bIdx - btcBars4h)].open;
           const ret4hPct = ((btcClose - btcOpen4h) / btcOpen4h) * 100;
 
           const smaFactor = isAlpaca ? 0.985 : 0.990;
-          const retFactor = isAlpaca ? -2.5 : -1.0;
+          const retFactor = isAlpaca ? -2.5 : -1.5;
           if (btcClose < smaBtc * smaFactor || ret4hPct < retFactor) {
             return []; // Macro breakdown: zero candidates allowed -> stay in Cash!
           }
@@ -5039,218 +5065,15 @@ export class BacktestService {
       }
     }
 
-    const minVol = isAlpaca ? 0 : (quoteAsset === "FDUSD" ? 300_000 : 750_000);
-    const stage1Candidates: Array<{
-      symbol: string;
-      idx: number;
-      quoteVol24h: number;
-      range24hPct: number;
-      change24hPct: number;
-      posRatio: number;
-      activityScore: number;
-      relativeStrengthPct: number;
-    }> = [];
-
-    // Stage 1: Point-in-Time 24h rolling window filter
-    for (const [sym, candles] of universeCandles.entries()) {
-      const minCandles = isAlpaca ? 78 : 288;
-      if (!candles || candles.length < minCandles) continue;
-      if (!isAlpaca && (SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym))) continue;
-
-      let low = 0;
-      let high = candles.length - 1;
-      let idx = -1;
-      while (low <= high) {
-        const mid = (low + high) >> 1;
-        if (candles[mid].time <= targetTime) {
-          idx = mid;
-          low = mid + 1;
-        } else {
-          high = mid - 1;
-        }
-      }
-
-      if (idx < minCandles - 1) continue;
-
-      // Stale candle check: candle time should be within maxStaleSec of targetTime
-      if (targetTime - candles[idx].time > maxStaleSec) continue;
-
-      // Ensure there are at least 5 candles ahead to actually simulate
-      if (candles.length - 1 - idx < 5) continue;
-
-      const slice24h = candles.slice(idx - (minCandles - 1), idx + 1);
-      let high24h = -Infinity;
-      let low24h = Infinity;
-      let quoteVol24h = 0;
-
-      for (const c of slice24h) {
-        if (c.high > high24h) high24h = c.high;
-        if (c.low < low24h) low24h = c.low;
-        quoteVol24h += c.volume * c.close;
-      }
-
-      if (low24h <= 0 || high24h <= low24h) continue;
-
-      const open24h = slice24h[0].open;
-      const lastPrice = slice24h[slice24h.length - 1].close;
-      const range24hPct = ((high24h - low24h) / low24h) * 100;
-      const change24hPct = open24h > 0 ? ((lastPrice - open24h) / open24h) * 100 : 0;
-      const posRatio = (lastPrice - low24h) / (high24h - low24h);
-
-      // Check 4-hour return (recent 48 bars): avoid catching falling knives currently dumping
-      const open4h = slice24h[Math.max(0, slice24h.length - 48)]?.open ?? open24h;
-      const return4hPct = open4h > 0 ? ((lastPrice - open4h) / open4h) * 100 : 0;
-
-      if (quoteVol24h < minVol) continue;
-      const minRange = isAlpaca ? 0.2 : 4.0;
-      const maxRange = isAlpaca ? 30.0 : 22.0;
-      if (range24hPct < minRange || range24hPct > maxRange) continue;
-      // Smart Bear Market Gate: Only select assets with healthy momentum (no downtrend assets)
-      const minChange = isAlpaca ? -2.0 : 0.5;
-      if (change24hPct < minChange || change24hPct > 15.0) continue;
-      
-      // Position in Channel / 24h Range: Default bottom 35% sweet spot for Grid accumulation!
-      // In US stocks, quality equities trade smoothly around 35%-65% channel; allow up to 65% for equities.
-      const defaultMaxPos = isAlpaca ? 0.65 : 0.35;
-      const maxAllowedPos = gridOpts?.gridMaxChannelPos !== undefined ? Number(gridOpts.gridMaxChannelPos) : defaultMaxPos;
-      if (posRatio < 0.05 || (posRatio > maxAllowedPos && (!isAlpaca || posRatio > 0.65))) continue;
-      if (return4hPct < (isAlpaca ? -1.0 : 0.0)) continue; // Reject assets in steep negative momentum
-
-      // HTF Trend Governor: Filter out assets in macro downtrend
-      const htfGov = gridOpts?.gridHtfGovernor ?? "1h_ema200";
-      if (htfGov === "1h_ema200" && idx >= 2400) {
-        const c1h = BacktestService.aggregateCandles(candles.slice(0, idx + 1), 60);
-        if (c1h.length >= 200) {
-          const closes1h = c1h.map((c) => c.close);
-          const ema200_1h = calcEMA(closes1h, 200);
-          const last1h = c1h[c1h.length - 1];
-          const lastEma = ema200_1h[ema200_1h.length - 1];
-          if (last1h && lastEma && last1h.close < lastEma) continue; // Reject HTF downtrend!
-        }
-      } else if (htfGov === "4h_ema75" && idx >= 2400) {
-        const c4h = BacktestService.aggregateCandles(candles.slice(0, idx + 1), 240);
-        if (c4h.length >= 75) {
-          const closes4h = c4h.map((c) => c.close);
-          const ema75_4h = calcEMA(closes4h, 75);
-          const last4h = c4h[c4h.length - 1];
-          const lastEma = ema75_4h[ema75_4h.length - 1];
-          if (last4h && lastEma && last4h.close < lastEma) continue;
-        }
-      }
-
-      const ema20 = calcEmaLocal(candles, idx, 20);
-      const ema60 = calcEmaLocal(candles, idx, 60);
-      if (!isAlpaca && lastPrice < ema60) continue; // Reject coins trading below 5h EMA
-
-      // Volume & buyer accumulation over past 4h (48 bars):
-      let vol4h = 0, upVol4h = 0, dnVol4h = 0;
-      for (let k = idx - 48; k <= idx; k++) {
-        if (k >= 0) {
-          const v = candles[k].volume * candles[k].close;
-          vol4h += v;
-          if (candles[k].close >= candles[k].open) upVol4h += v;
-          else dnVol4h += v;
-        }
-      }
-      const volSurge = (quoteVol24h / 6) > 0 ? vol4h / (quoteVol24h / 6) : 1.0;
-      const buyRatio = dnVol4h > 0 ? upVol4h / dnVol4h : 1.0;
-
-      // Higher lows structure (stepping lows in 3h blocks):
-      const getLow = (a: number, b: number) => {
-        let l = Infinity;
-        for (let k = Math.max(0, a); k <= b; k++) if (candles[k].low < l) l = candles[k].low;
-        return l;
-      };
-      const l3 = getLow(idx - 108, idx - 72);
-      const l2 = getLow(idx - 72, idx - 36);
-      const l1 = getLow(idx - 36, idx);
-      const hlSteps = (l1 > l2 * 1.001 ? 1 : 0) + (l2 > l3 * 1.001 ? 1 : 0);
-
-      // Short-term 4h acceleration:
-      const prev4hOpen = slice24h[Math.max(0, slice24h.length - 96)]?.open ?? open4h;
-      const prev4hClose = slice24h[Math.max(0, slice24h.length - 48)]?.close ?? open4h;
-      const prev4hRet = prev4hOpen > 0 ? ((prev4hClose - prev4hOpen) / prev4hOpen) * 100 : 0;
-      const accel4h = return4hPct - prev4hRet;
-
-      // Reversal confirmation:
-      const isEmaReversal = lastPrice > ema20 && ema20 >= ema60 * 0.998;
-      const hasBuyers = (volSurge >= 1.0 && buyRatio >= 0.85) || buyRatio >= 1.10;
-      const isViableReversal = isEmaReversal && (hlSteps >= 1 || accel4h >= 0.5) && hasBuyers;
-
-      // Relative Strength vs Bitcoin:
-      const relativeStrengthPct = change24hPct - btcChange24hPct;
-
-      // Base discount bonus: reward fresh turnarounds out of negative/flat base!
-      const freshBaseBonus = change24hPct <= 1.0 ? 25 : change24hPct <= 4.0 ? 12 : 0;
-
-      // Logarithmic volume weight to prevent mega-caps from monopolizing the slots:
-      const logVolScore = Math.min(15, Math.max(0, (Math.log10(quoteVol24h) - 5.5) * 5));
-
-      const activityScore =
-        (isViableReversal ? 35 : 0) +
-        freshBaseBonus +
-        hlSteps * 12 +
-        Math.min(6, Math.max(-2, accel4h)) * 4 +
-        Math.min(2.5, volSurge) * 8 +
-        Math.min(2.5, buyRatio) * 6 +
-        Math.min(14, range24hPct) * 1.2 +
-        logVolScore +
-        (relativeStrengthPct > 0 ? Math.min(10, relativeStrengthPct * 1.5) : -5);
-
-      stage1Candidates.push({
-        symbol: sym,
-        idx,
-        quoteVol24h,
-        range24hPct,
-        change24hPct,
-        posRatio,
-        activityScore,
-        relativeStrengthPct,
-      });
-    }
-
-    stage1Candidates.sort((a, b) => b.activityScore - a.activityScore);
-    const topCandidates = stage1Candidates.slice(0, 10);
-
-    if (activeSymbol && !topCandidates.some((c) => c.symbol === activeSymbol)) {
-      const activeCandles = universeCandles.get(activeSymbol);
-      if (activeCandles && activeCandles.length >= 288) {
-        let idx = activeCandles.findIndex((c) => c.time > targetTime);
-        idx = idx >= 0 ? idx - 1 : activeCandles.length - 1;
-        if (idx >= 287) {
-          const slice24h = activeCandles.slice(idx - 287, idx + 1);
-          let high24h = -Infinity;
-          let low24h = Infinity;
-          let quoteVol24h = 0;
-          for (const c of slice24h) {
-            if (c.high > high24h) high24h = c.high;
-            if (c.low < low24h) low24h = c.low;
-            quoteVol24h += c.volume * c.close;
-          }
-          if (high24h > low24h && low24h > 0) {
-            const open24h = slice24h[0].open;
-            const lastPrice = slice24h[slice24h.length - 1].close;
-            const chg = ((lastPrice - open24h) / open24h) * 100;
-            topCandidates.push({
-              symbol: activeSymbol,
-              idx,
-              quoteVol24h,
-              range24hPct: ((high24h - low24h) / low24h) * 100,
-              change24hPct: chg,
-              posRatio: (lastPrice - low24h) / (high24h - low24h),
-              activityScore: 0,
-              relativeStrengthPct: chg - btcChange24hPct,
-            });
-          }
-        }
-      }
-    }
-
-    if (topCandidates.length === 0) return [];
-
+    const minVol = isAlpaca ? 0 : (quoteAsset === "FDUSD" ? 250_000 : 500_000);
     const scoredCandidates: Array<{
       symbol: string;
       compositeScore: number;
+      dnaGrade: "S" | "A" | "B" | "AVOID";
+      dnaScore: number;
+      recentDnaScore: number;
+      trendRegime: "BULL_UPTREND" | "ACCUMULATION_RANGE" | "BEAR_DOWNTREND";
+      trendLabel: string;
       simScore: number;
       structureScore: number;
       positionScore: number;
@@ -5269,137 +5092,182 @@ export class BacktestService {
           ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
           : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 });
 
-    for (const cand of topCandidates) {
-      try {
-        const allSymCandles = universeCandles.get(cand.symbol);
-        if (!allSymCandles) continue;
+    // Stage 1 & 2: Point-in-Time Rolling DNA + Live Trend Funnel
+    for (const [sym, candles] of universeCandles.entries()) {
+      if (!candles || candles.length < 50) continue;
+      if (!isAlpaca && (SYNTHETIC_BLACKLIST.has(sym) || isSyntheticOrStock(sym))) continue;
 
-        const slice500 = allSymCandles.slice(Math.max(0, cand.idx - 499), cand.idx + 1);
-        if (slice500.length < 150) continue;
-
-        const lastBar = slice500[slice500.length - 1];
-
-        // 🌟 RULE 1: Dow Theory Regime Filter
-        // Dynamic Grid thrives in RANGE or UPTREND, but gets destroyed in DOWNTREND!
-        const dow = new DowStructureEngine(3, true, 20.0, 300);
-        for (const sc of slice500) {
-          dow.addCandle(sc);
-        }
-        const struct = dow.getStructure(lastBar.close, undefined, {
-          useOnlyClosedCandles: true,
-          mode: gridOpts?.channelMode ?? "DONCHIAN_ATR",
-        });
-        if (struct.regime === "DOWNTREND") {
-          continue; // Disqualify coins in confirmed Dow Theory Downtrend!
-        }
-
-        // 🌟 RULE 2: HTF Overextension Guard
-        // If price is > 10% above its 24h SMA (288 bars), skip overbought blow-off tops
-        const slice288 = slice500.slice(-288);
-        const sma288 = slice288.reduce((s, c) => s + c.close, 0) / slice288.length;
-        const distSma24hPct = ((lastBar.close - sma288) / sma288) * 100;
-        if (distSma24hPct > 10.0) {
-          continue;
-        }
-
-        const rec = this.runDynamicGridSimulation(slice500, {
-          symbol: cand.symbol,
-          timeframe: "5m",
-          initialCapital: 200,
-          maxInventoryQuote: 200,
-          costModel: symCostModel,
-          saveToHistory: false,
-          capitalZones: gridOpts?.capitalZones ?? 2,
-          channelMode: gridOpts?.channelMode ?? "DONCHIAN_ATR",
-          minChannelWidthPct: gridOpts?.minChannelWidthPct ?? 6.0,
-          maxChannelWidthPct: gridOpts?.maxChannelWidthPct ?? 25.0,
-          zoneMinDropPct: gridOpts?.zoneMinDropPct ?? 2.5,
-          zoneStabilizeCandles: gridOpts?.zoneStabilizeCandles ?? 3,
-        });
-
-        const summary = rec.summary;
-        let simScore = 0;
-        if (summary.netPnlPct > 0 && summary.maxDrawdownPct <= 22 && summary.totalTrades >= 2) {
-          const pnlComponent = Math.min(25, summary.netPnlPct * 3.5 + summary.totalTrades * 1.5);
-          const wrComponent = Math.min(20, Math.max(0, (summary.winRate - 50) * 0.4) + Math.max(0, 16 - summary.maxDrawdownPct));
-          simScore = Math.min(45, Math.max(0, pnlComponent + wrComponent));
-        }
-
-        let structureScore = 0;
-        const recentCandles = slice500.slice(-48);
-        const donchianHigh = Math.max(...recentCandles.map((c) => c.high));
-        const donchianLow = Math.min(...recentCandles.map((c) => c.low));
-        const channelWidthPct = donchianLow > 0 ? ((donchianHigh - donchianLow) / donchianLow) * 100 : 0;
-
-        if (channelWidthPct >= 5.5 && channelWidthPct <= 16.0) {
-          structureScore += 20;
-        } else if (channelWidthPct >= 16.0 && channelWidthPct <= 22.0) {
-          structureScore += 10;
-        }
-        if (recentCandles.length >= 2 && recentCandles[recentCandles.length - 1].close > donchianLow * 1.005) {
-          structureScore += 10;
-        }
-
-        let positionScore = 0;
-        if (cand.posRatio >= 0.08 && cand.posRatio <= 0.35) {
-          positionScore = 25; // Sweet spot for lower-channel Grid accumulation!
-        } else if (cand.posRatio > 0.35 && cand.posRatio <= 0.50) {
-          positionScore = 15;
-        } else if (cand.posRatio > 0.50 && cand.posRatio <= 0.70) {
-          positionScore = 5;
+      let low = 0;
+      let high = candles.length - 1;
+      let idx = -1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (candles[mid].time <= targetTime) {
+          idx = mid;
+          low = mid + 1;
         } else {
-          positionScore = -15; // Overbought climax penalty
+          high = mid - 1;
         }
-
-        const prevBar = slice500.length >= 2 ? slice500[slice500.length - 2] : lastBar;
-        const barRange = lastBar.high - lastBar.low;
-        const lowerWick = Math.min(lastBar.open, lastBar.close) - lastBar.low;
-        const hasAbsorption = barRange > 0 ? (lowerWick / barRange) >= 0.15 : false;
-        const isGreen = lastBar.close >= lastBar.open;
-        const isDipPullback = cand.posRatio >= 0.12 && cand.posRatio <= 0.88 && (hasAbsorption || isGreen || lastBar.close >= prevBar.close);
-
-        let momentumScore = 0;
-        if (cand.change24hPct > btcChange24hPct) {
-          // Outperforming BTC (Alpha leader)
-          momentumScore += Math.min(15, Math.max(5, (cand.change24hPct - btcChange24hPct) * 1.5));
-        } else if (cand.change24hPct < btcChange24hPct - 3.0) {
-          // Lagging BTC significantly (Weak underperformer)
-          momentumScore -= 10;
-        }
-        if (struct.regime === "UPTREND") {
-          momentumScore += 10; // Extra reward for confirmed Dow Uptrend
-        }
-
-        const liquidityScore = Math.min(10, Math.max(0, (Math.log10(cand.quoteVol24h) - 6) * 4));
-        const compositeScore = Math.round(simScore + structureScore + positionScore + liquidityScore + momentumScore);
-
-        scoredCandidates.push({
-          symbol: cand.symbol,
-          compositeScore,
-          simScore: Math.round(simScore),
-          structureScore: Math.round(structureScore),
-          positionScore: Math.round(positionScore),
-          liquidityScore: Math.round(liquidityScore),
-          netPnlPct: Number(summary.netPnlPct.toFixed(2)),
-          winRate: Number(summary.winRate.toFixed(1)),
-          range24hPct: Number(cand.range24hPct.toFixed(1)),
-          quoteVol24h: cand.quoteVol24h,
-          posRatio: Number(cand.posRatio.toFixed(3)),
-          isDipPullback,
-        });
-      } catch (err: any) {
-        console.warn(`[RotationBacktest] Failed scoring candidate ${cand.symbol}: ${err.message}`);
       }
+
+      if (idx < 40) continue;
+
+      // Stale candle check: candle time should be within maxStaleSec of targetTime
+      if (targetTime - candles[idx].time > maxStaleSec) continue;
+
+      const candleIntervalSec = candles.length >= 2 ? (candles[1].time - candles[0].time) : 900;
+      const bars24h = Math.max(16, Math.min(idx, Math.round(86400 / candleIntervalSec)));
+      const slice24h = candles.slice(idx - bars24h, idx + 1);
+      let high24h = -Infinity;
+      let low24h = Infinity;
+      let quoteVol24h = 0;
+
+      for (const c of slice24h) {
+        if (c.high > high24h) high24h = c.high;
+        if (c.low < low24h) low24h = c.low;
+        quoteVol24h += c.volume * c.close;
+      }
+
+      if (low24h <= 0 || high24h <= low24h) continue;
+
+      const open24h = slice24h[0].open;
+      const lastPrice = slice24h[slice24h.length - 1].close;
+      const range24hPct = ((high24h - low24h) / low24h) * 100;
+      const change24hPct = open24h > 0 ? ((lastPrice - open24h) / open24h) * 100 : 0;
+      const posRatio = (lastPrice - low24h) / (high24h - low24h);
+
+      const bars4h = Math.max(4, Math.round(14400 / candleIntervalSec));
+      const open4h = slice24h[Math.max(0, slice24h.length - bars4h)]?.open ?? open24h;
+      const return4hPct = open4h > 0 ? ((lastPrice - open4h) / open4h) * 100 : 0;
+
+      if (quoteVol24h < minVol && sym !== activeSymbol) continue;
+      const minRange = isAlpaca ? 0.2 : 2.0;
+      const maxRange = isAlpaca ? 30.0 : 35.0;
+      if ((range24hPct < minRange || range24hPct > maxRange) && sym !== activeSymbol) continue;
+
+      const defaultMaxPos = isAlpaca ? 0.65 : 0.38;
+      const maxAllowedPos = gridOpts?.gridMaxChannelPos !== undefined ? Number(gridOpts.gridMaxChannelPos) : defaultMaxPos;
+      if (sym !== activeSymbol) {
+        if (posRatio < 0.05 || (posRatio > maxAllowedPos && (!isAlpaca || posRatio > 0.65))) continue;
+        if (return4hPct < (isAlpaca ? -2.0 : -1.0)) continue;
+      }
+
+      // 🧬 1. Point-in-Time Rolling DNA Evaluation (Zero Look-Ahead)
+      const evalCandles = candles.slice(Math.max(0, idx - 999), idx + 1);
+      const dna = this.evaluateGridDna(evalCandles, isAlpaca ? "STOCK" : "CRYPTO");
+
+      if (sym !== activeSymbol) {
+        // Hard Gate: Reject AVOID or Degrading assets
+        if (dna.grade === "AVOID" || dna.isDegrading) continue;
+        // Hard Gate: Reject confirmed bear downtrend
+        if (dna.trendRegime === "BEAR_DOWNTREND") continue;
+        // Strict Grade Gate: S or A (or solid B with score >= 58)
+        if (dna.grade !== "S" && dna.grade !== "A" && !(dna.grade === "B" && dna.dnaScore >= 58)) continue;
+      }
+
+      // 2. Production Dynamic Grid Simulation with MASTER_PLAN_GRID_CONFIG (Core v14.0)
+      const simRes = this.runDynamicGridSimulation(evalCandles, {
+        symbol: sym,
+        timeframe: gridOpts?.timeframe || (candleIntervalSec >= 900 ? "15m" : "5m"),
+        initialCapital: 200,
+        maxInventoryQuote: 200,
+        channelMode: "DONCHIAN_ATR",
+        donchianPeriod: 48,
+        minChannelWidthPct: 2.0,
+        maxChannelWidthPct: 25.0,
+        lockChannelInPosition: true,
+        regimeFilterMode: "UPTREND_AND_SIDEWAY",
+        buyLevelPcts: [20, 12],
+        buyWeights: [55, 45],
+        sellLevelPcts: [52, 72],
+        capitalZones: 1,
+        zoneMinDropPct: 2.5,
+        floorBufferPct: 0.6,
+        gridCutLossMode: "entry_floor",
+        enableGridTrailingStop: true,
+        costModel: symCostModel,
+        saveToHistory: false,
+      });
+
+      const summary = simRes.summary;
+
+      // ── 3-Layer Composite Scoring (Total 100) ──
+      // Layer 1: Market DNA Points (up to 40 pts, weighted by 60% recent form + 40% baseline)
+      const dnaPoints = Math.round(dna.dnaScore * 0.40);
+
+      // Layer 2: Forward Trend & Relative Strength (up to 35 pts)
+      let trendScore = 0;
+      if (dna.trendRegime === "BULL_UPTREND") {
+        trendScore = 20;
+      } else if (dna.trendRegime === "ACCUMULATION_RANGE") {
+        trendScore = 12;
+      } else {
+        trendScore = 0;
+      }
+
+      const relativeStrengthPct = change24hPct - btcChange24hPct;
+      if (relativeStrengthPct >= 0.5 && change24hPct <= 12.0) {
+        trendScore += 7;
+      } else if (relativeStrengthPct >= -1.0) {
+        trendScore += 3;
+      }
+
+      if (summary.netPnlPct > 0 && summary.winRate >= 70) {
+        trendScore += 8;
+      } else if (summary.netPnlPct > 0) {
+        trendScore += 4;
+      }
+      trendScore = Math.min(35, trendScore);
+
+      // Layer 3: Tactical Pullback Entry Position (up to 20 pts) + Liquidity (up to 5 pts)
+      let positionScore = 0;
+      if (posRatio >= 0.10 && posRatio <= 0.38) {
+        positionScore = 20; // Prime bottom pullback accumulation
+      } else if (posRatio > 0.38 && posRatio <= 0.55) {
+        positionScore = 12;
+      } else if (posRatio < 0.10) {
+        positionScore = 6;
+      } else {
+        positionScore = 2;
+      }
+
+      const liquidityScore = Math.min(5, Math.max(0, (Math.log10(quoteVol24h) - 5.5) * 2));
+
+      // Penalties for lower quality/degradation
+      let penalty = 0;
+      if (dna.grade === "AVOID" || dna.trendRegime === "BEAR_DOWNTREND") penalty = -40;
+      else if (dna.grade === "B") penalty = -10;
+      else if (dna.isDegrading) penalty = -15;
+
+      const compositeScore = Math.max(0, Math.min(100, dnaPoints + trendScore + positionScore + liquidityScore + penalty));
+
+      const isDipPullback = posRatio >= 0.10 && posRatio <= 0.55;
+
+      scoredCandidates.push({
+        symbol: sym,
+        compositeScore,
+        dnaGrade: dna.grade,
+        dnaScore: dna.dnaScore,
+        recentDnaScore: dna.recentDnaScore,
+        trendRegime: dna.trendRegime,
+        trendLabel: dna.trendLabel,
+        simScore: Math.round(dnaPoints),
+        structureScore: Math.round(trendScore),
+        positionScore: Math.round(positionScore),
+        liquidityScore: Math.round(liquidityScore),
+        netPnlPct: Number(summary.netPnlPct.toFixed(2)),
+        winRate: Number(summary.winRate.toFixed(1)),
+        range24hPct: Number(range24hPct.toFixed(1)),
+        quoteVol24h,
+        posRatio: Number(posRatio.toFixed(3)),
+        isDipPullback,
+      });
     }
 
     scoredCandidates.sort((a, b) => b.compositeScore - a.compositeScore);
     const minScore = gridOpts?.compositeMinScore ?? 50;
     const viableCandidates = scoredCandidates.filter((c) => c.compositeScore >= minScore);
-    // Minimum Market Depth Rule: If fewer than 2 pairs in the universe score >= 50,
-    // the market lacks broad momentum (solitary trap). Sit out in 100% Cash!
-    if (viableCandidates.length < 2) {
-      return [];
-    }
+
     return viableCandidates;
   }
 
@@ -5409,15 +5277,16 @@ export class BacktestService {
    */
   public static async runMultiPairRotationSimulation(opts: MultiPairRotationOptions): Promise<MultiPairRotationResult> {
     const quote = opts.quoteAsset === "USD" ? "USD" : (opts.quoteAsset === "FDUSD" ? "FDUSD" : "USDT");
-    const timeframe = opts.timeframe || "5m";
-    const simLimit = Math.max(500, opts.limit || 4000);
+    const timeframe = opts.timeframe || "15m";
+    const simLimit = Math.max(500, opts.limit || 2000);
     const initialCapital = Math.max(10, opts.initialCapital || 200);
     const cooldownSec = (opts.rotationIntervalMinutes || 180) * 60;
-    const scoreMarginPct = opts.rotationScoreMarginPct || 15;
+    const scoreMarginPct = opts.rotationScoreMarginPct || 12;
 
-    // 1. Fetch Top 50 Universe Candles
+    // 1. Fetch Top Universe Candles
     const universeCandles = await this.fetchTopUniverseCandles({
       quoteAsset: quote,
+      timeframe,
       maxPairs: opts.maxUniversePairs || 50,
       limit: simLimit,
       customWhitelist: opts.customWhitelist,
@@ -5432,7 +5301,7 @@ export class BacktestService {
     let minCandleTime = Infinity;
     let maxCandleTime = 0;
     for (const candles of universeCandles.values()) {
-      if (candles.length >= 100) {
+      if (candles.length >= 60) {
         const firstTime = candles[0].time;
         const lastTime = candles[candles.length - 1].time;
         if (firstTime < minCandleTime) minCandleTime = firstTime;
@@ -5440,14 +5309,15 @@ export class BacktestService {
       }
     }
 
+    const barSec = timeframe === "15m" ? 900 : (timeframe === "1h" ? 3600 : 300);
     const simEndTime = maxCandleTime > 0 ? maxCandleTime : Math.floor(Date.now() / 1000);
-    const warmupSec = (quote === "USD" ? 78 : 288) * 300;
-    const requestedStart = simEndTime - simLimit * 300;
+    const warmupSec = (quote === "USD" ? 78 : 240) * barSec;
+    const requestedStart = simEndTime - simLimit * barSec;
     const simStartTime = Number.isFinite(minCandleTime)
       ? Math.max(minCandleTime + warmupSec, requestedStart)
       : requestedStart;
 
-    console.log(`[RotationBacktest] 🚀 Starting simulation: quote=${quote}, simLimit=${simLimit} bars (${((simLimit * 300) / 86400).toFixed(1)} days), universeLoaded=${universeCandles.size} pairs`);
+    console.log(`[RotationBacktest] 🚀 Starting simulation: quote=${quote}, timeframe=${timeframe}, simLimit=${simLimit} bars (${((simLimit * barSec) / 86400).toFixed(1)} days), universeLoaded=${universeCandles.size} pairs`);
     console.log(`[RotationBacktest] 📅 Timeline bounds: start=${new Date(simStartTime * 1000).toISOString()} (${simStartTime}) ➔ end=${new Date(simEndTime * 1000).toISOString()} (${simEndTime})`);
 
     this.rotationBtProgress = {
@@ -5467,10 +5337,10 @@ export class BacktestService {
     });
 
     console.log(`[RotationBacktest] 🔎 Initial funnel at ${new Date(simStartTime * 1000).toISOString()} found ${initialCandidates.length} eligible candidates: ` +
-      (initialCandidates.length > 0 ? initialCandidates.slice(0, 5).map(c => `${c.symbol}(score=${c.compositeScore},pos=${c.posRatio})`).join(", ") : "none")
+      (initialCandidates.length > 0 ? initialCandidates.slice(0, 5).map(c => `${c.symbol}(grade=${c.dnaGrade},score=${c.compositeScore},pos=${c.posRatio})`).join(", ") : "none")
     );
 
-    const initialStrongCandidate = initialCandidates.find((c) => c.compositeScore >= 60 && c.posRatio <= 0.88);
+    const initialStrongCandidate = initialCandidates.find((c) => (c.dnaGrade === "S" || c.dnaGrade === "A") && c.compositeScore >= 60 && c.posRatio <= 0.55);
     let activeCandidate = initialStrongCandidate || (initialCandidates[0]?.compositeScore >= 50 ? initialCandidates[0] : undefined);
     let activeSymbol = activeCandidate ? activeCandidate.symbol : "";
     if (!activeCandidate && !opts.enableBtcMacroGate) {
@@ -5479,6 +5349,11 @@ export class BacktestService {
       activeCandidate = {
         symbol: fallbackSym,
         compositeScore: 70,
+        dnaGrade: "A",
+        dnaScore: 75,
+        recentDnaScore: 78,
+        trendRegime: "BULL_UPTREND",
+        trendLabel: "Fallback BTC",
         simScore: 30,
         structureScore: 20,
         positionScore: 10,
@@ -5533,7 +5408,7 @@ export class BacktestService {
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
-          const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.35;
+          const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.38;
           if (c.posRatio > maxPos) return false;
           const idx = cCandles.findIndex((cd) => cd.time >= currentTime);
           return idx >= 0 && idx < cCandles.length - 10;
@@ -5547,7 +5422,7 @@ export class BacktestService {
         });
 
         if (viable) {
-          console.log(`[RotationBacktest] 🔄 Swapping to viable alternative candidate: ${viable.symbol} (score=${viable.compositeScore}, pos=${viable.posRatio})`);
+          console.log(`[RotationBacktest] 🔄 Swapping to viable alternative candidate: ${viable.symbol} (grade=${viable.dnaGrade}, score=${viable.compositeScore}, pos=${viable.posRatio})`);
           activeCandidate = viable;
           activeSymbol = viable.symbol;
           symCandles = universeCandles.get(activeSymbol);
@@ -5581,9 +5456,10 @@ export class BacktestService {
       const simStartIdx = warmupBars;
 
       legIndex++;
-      console.log(`[RotationBacktest] ▶️ [Leg #${legIndex}] Starting on ${activeSymbol} at ${new Date(currentLegStartTime * 1000).toISOString()} (cash=$${currentCash.toFixed(2)}, entryScore=${activeCandidate?.compositeScore || 65})`);
+      console.log(`[RotationBacktest] ▶️ [Leg #${legIndex}] Starting on ${activeSymbol} at ${new Date(currentLegStartTime * 1000).toISOString()} (cash=$${currentCash.toFixed(2)}, grade=${activeCandidate?.dnaGrade || "A"}, score=${activeCandidate?.compositeScore || 65})`);
 
       let legStopReason: "INITIAL_SELECTION" | "POST_ROUND_EXIT" | "IDLE_CASH_TIMEOUT" | "SIGNAL_DISQUALIFIED" = "POST_ROUND_EXIT";
+      let nextCandidate: any = undefined;
       let nextSymbol: string | undefined = undefined;
       let nextSymbolScore = 0;
       let currentScoreAtExit = activeCandidate?.compositeScore || 65;
@@ -5594,16 +5470,23 @@ export class BacktestService {
         timeframe,
         initialCapital: currentCash,
         maxInventoryQuote: currentCash,
-        capitalZones: opts.capitalZones ?? 2,
+        capitalZones: opts.capitalZones ?? 1,
         channelMode: opts.channelMode ?? "DONCHIAN_ATR",
-        minChannelWidthPct: opts.minChannelWidthPct ?? 6.0,
+        donchianPeriod: opts.donchianPeriod ?? 48,
+        minChannelWidthPct: opts.minChannelWidthPct ?? 2.0,
         maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
         zoneMinDropPct: opts.zoneMinDropPct ?? 2.5,
         zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
-        lockChannelInPosition: opts.lockChannelInPosition ?? false,
-        enableBaseConfirmationFilter: opts.enableBaseConfirmation ?? true,
+        floorBufferPct: 0.6,
+        lockChannelInPosition: opts.lockChannelInPosition ?? true,
+        regimeFilterMode: "UPTREND_AND_SIDEWAY",
+        buyLevelPcts: [20, 12],
+        buyWeights: [55, 45],
+        sellLevelPcts: [52, 72],
+        enableBaseConfirmationFilter: opts.enableBaseConfirmation ?? false,
         enableDipHunterEntryGuard: opts.enableDipHunterEntryGuard ?? true,
-        gridCutLossMode: opts.gridCutLossMode ?? "none",
+        gridCutLossMode: opts.gridCutLossMode ?? "entry_floor",
+        enableGridTrailingStop: true,
         costModel: (quote === "FDUSD" || quote === "USD")
           ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
           : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 },
@@ -5619,12 +5502,9 @@ export class BacktestService {
           });
 
           if (candidates.length === 0) {
-            // For US stocks, markets close overnight (17.5h/day) and on weekends (65.5h).
-            // Do not panic-dump the active stock to cash merely due to market closure.
             if (quote === "USD") {
               return false;
             }
-            // Market breakdown or BTC Macro Gate active: force flat exit to 100% Cash!
             console.log(
               `[RotationBacktest] 🛡️ [Leg #${legIndex}] Macro Gate / Market breakdown active at ${new Date(
                 state.time * 1000
@@ -5632,6 +5512,7 @@ export class BacktestService {
             );
             legStopReason = "SIGNAL_DISQUALIFIED";
             nextSymbol = undefined;
+            nextCandidate = undefined;
             return true;
           }
           scoresSnapshot = candidates.slice(0, 5);
@@ -5640,25 +5521,25 @@ export class BacktestService {
           const curScore = curItem ? curItem.compositeScore : 0;
           currentScoreAtExit = curScore;
 
-          // 🌟 WATCHLIST & REVERSAL SWEET SPOT LOGIC:
-          // A candidate on the watchlist is actionable if compositeScore >= 50 and posRatio <= 0.88, and not banned
+          // Actionable candidates: grade S/A or solid B, posRatio <= 0.55, not banned
           const pullbackCandidates = candidates.filter(
-            (c) => c.symbol !== activeSymbol && c.compositeScore >= 50 && c.posRatio <= 0.88 && !isBanned(c.symbol)
+            (c) => c.symbol !== activeSymbol && c.compositeScore >= 50 && c.posRatio <= 0.55 && !isBanned(c.symbol)
           );
 
-          // 1. If current coin has become disqualified (fell out of funnel or score < 40):
-          const isCurrentDisqualified = !curItem || curScore < 40;
+          // 1. If current coin has degraded (AVOID, bear downtrend, or score < 42):
+          const isCurrentDisqualified = !curItem || curScore < 42 || curItem.dnaGrade === "AVOID" || curItem.trendRegime === "BEAR_DOWNTREND";
           if (isCurrentDisqualified) {
             const bestPullback = pullbackCandidates[0];
             if (bestPullback && bestPullback.compositeScore >= 50) {
               console.log(
                 `[RotationBacktest] 🚨 [Leg #${legIndex}] Flat rotation triggered by SIGNAL_DISQUALIFIED at ${new Date(
                   state.time * 1000
-                ).toISOString()}: ${activeSymbol} (score=${curScore}) ➔ ${bestPullback.symbol} (score=${
+                ).toISOString()}: ${activeSymbol} (score=${curScore}) ➔ ${bestPullback.symbol} (grade=${bestPullback.dnaGrade}, score=${
                   bestPullback.compositeScore
                 }, posRatio=${bestPullback.posRatio})`
               );
               legStopReason = "SIGNAL_DISQUALIFIED";
+              nextCandidate = bestPullback;
               nextSymbol = bestPullback.symbol;
               nextSymbolScore = bestPullback.compositeScore;
               return true;
@@ -5669,6 +5550,7 @@ export class BacktestService {
                 ).toISOString()}: ${activeSymbol} (score=${curScore}) ➔ 100% CASH`
               );
               legStopReason = "SIGNAL_DISQUALIFIED";
+              nextCandidate = undefined;
               nextSymbol = undefined;
               return true;
             }
@@ -5680,22 +5562,22 @@ export class BacktestService {
           }
 
           // 2. Winning Horse Loyalty Policy:
-          // If the current coin is still performing well (curScore >= 45), require a substantial score margin
-          // to justify switching out, AND the new coin must be in the Pullback Retracement Sweet Spot!
+          // Require score margin to rotate into an eligible Grade S/A candidate in the pullback sweet spot!
           const requiredScore = curScore * (1 + scoreMarginPct / 100);
           const eligibleRotationCandidate = pullbackCandidates.find(
-            (c) => c.compositeScore >= 55 && c.compositeScore >= requiredScore
+            (c) => c.compositeScore >= 55 && c.compositeScore >= requiredScore && (c.dnaGrade === "S" || c.dnaGrade === "A")
           );
 
           if (eligibleRotationCandidate) {
             console.log(
               `[RotationBacktest] 🔀 [Leg #${legIndex}] Pullback rotation triggered by ${state.trigger} at ${new Date(
                 state.time * 1000
-              ).toISOString()}: ${activeSymbol} (${curScore}) ➔ ${eligibleRotationCandidate.symbol} (${
+              ).toISOString()}: ${activeSymbol} (${curScore}) ➔ ${eligibleRotationCandidate.symbol} (grade=${eligibleRotationCandidate.dnaGrade}, score=${
                 eligibleRotationCandidate.compositeScore
               }, posRatio=${eligibleRotationCandidate.posRatio}, required >= ${requiredScore.toFixed(1)})`
             );
             legStopReason = state.trigger;
+            nextCandidate = eligibleRotationCandidate;
             nextSymbol = eligibleRotationCandidate.symbol;
             nextSymbolScore = eligibleRotationCandidate.compositeScore;
             return true;
@@ -5714,11 +5596,6 @@ export class BacktestService {
             const isCatastrophicDump = state.posRatio24h < 0.05 && state.unrealizedPnlPct < -5.0;
             isDanger = isFloorBreak || isCatastrophicDump;
           } else {
-            // "calibrated" (Default & Recommended):
-            // Only trigger emergency liquidation on genuine structural collapse / max loss breach:
-            // 1. Strict leg drawdown limit: unrealized loss <= -4.0% of leg capital
-            // 2. Severe floor collapse: price drops > 4.5% below floor AND position is in a loss (< -2.5%)
-            // 3. Catastrophic 24h collapse: posRatio24h < 0.05 and unrealized PnL < -5.0%
             const isSevereFloorBreak = state.closePrice < state.floorPrice * 0.955 && state.unrealizedPnlPct < -2.5;
             const isMaxLossBreach = state.unrealizedPnlPct <= -4.0;
             const isCatastrophicDump = state.posRatio24h < 0.05 && state.unrealizedPnlPct < -5.0;
@@ -5735,7 +5612,8 @@ export class BacktestService {
             )} ➔ Liquidating ${state.heldLotsCount} lots to protect capital`
           );
           legStopReason = "SIGNAL_DISQUALIFIED";
-          nextSymbol = undefined; // Will evaluate clean on flat
+          nextCandidate = undefined;
+          nextSymbol = undefined;
           return true;
         },
       });
@@ -5795,6 +5673,12 @@ export class BacktestService {
         durationHours: Number(((legEndTime - currentLegStartTime) / 3600).toFixed(1)),
         triggerReason: legIndex === 1 ? "INITIAL_SELECTION" : legStopReason,
         entryScore: activeCandidate?.compositeScore || 65,
+        dnaGrade: activeCandidate?.dnaGrade,
+        dnaScore: activeCandidate?.dnaScore,
+        recentDnaScore: activeCandidate?.recentDnaScore,
+        trendRegime: activeCandidate?.trendRegime,
+        trendLabel: activeCandidate?.trendLabel,
+        entryPosRatio: activeCandidate?.posRatio,
         previousSymbol,
         previousSymbolScore,
         startingCapital: Number(startingCapital.toFixed(2)),
@@ -5806,7 +5690,18 @@ export class BacktestService {
         lossCount: legRecord.summary.lossTrades,
         winRate: Number(legRecord.summary.winRate.toFixed(1)),
         maxDrawdownPct: Number(legRecord.summary.maxDrawdownPct.toFixed(1)),
-        topCandidatesSnapshot: scoresSnapshot,
+        topCandidatesSnapshot: scoresSnapshot.map((c) => ({
+          symbol: c.symbol,
+          compositeScore: c.compositeScore,
+          dnaGrade: c.dnaGrade,
+          dnaScore: c.dnaScore,
+          recentDnaScore: c.recentDnaScore,
+          trendLabel: c.trendLabel,
+          netPnlPct: c.netPnlPct,
+          winRate: c.winRate,
+          range24hPct: c.range24hPct,
+          posRatio: c.posRatio,
+        })),
         trades: legRecord.trades,
         candles: legCandlesActive,
         markers: legRecord.markers.filter((m) => m.time >= currentLegStartTime),
@@ -5828,7 +5723,7 @@ export class BacktestService {
       }
 
       if (nextSymbol && nextSymbol !== activeSymbol) {
-        activeCandidate = { symbol: nextSymbol, compositeScore: nextSymbolScore } as any;
+        activeCandidate = nextCandidate || ({ symbol: nextSymbol, compositeScore: nextSymbolScore } as any);
         activeSymbol = nextSymbol;
       } else {
         const candidates = this.evaluateHistoricalFunnelAtTime({
@@ -5840,7 +5735,7 @@ export class BacktestService {
         const viable = candidates.find((c) => {
           if (c.compositeScore < 50) return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
-          const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.35;
+          const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.38;
           if (c.posRatio > maxPos) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
@@ -5855,12 +5750,13 @@ export class BacktestService {
           return idx >= 0 && idx < cCandles.length - 10;
         });
         if (viable) {
-          console.log(`[RotationBacktest] 🔄 Rotating to next top viable candidate: ${viable.symbol} (score=${viable.compositeScore}, pos=${viable.posRatio})`);
+          console.log(`[RotationBacktest] 🔄 Rotating to next top viable candidate: ${viable.symbol} (grade=${viable.dnaGrade}, score=${viable.compositeScore}, pos=${viable.posRatio})`);
           activeCandidate = viable;
           activeSymbol = viable.symbol;
         } else {
           // If no candidate is viable right now, hold 100% Cash and advance by 1 hour instead of aborting the simulation!
           activeSymbol = "";
+          activeCandidate = undefined;
           if (currentTime < simEndTime - 3600) {
             currentTime += 3600;
             const cashDd = peakEquity > 0 ? ((peakEquity - currentCash) / peakEquity) * 100 : 0;
@@ -5905,7 +5801,11 @@ export class BacktestService {
       const totalWins = legMatches.reduce((sum, l) => sum + l.winCount, 0);
       const winRate = p.tradesCount > 0 ? Number(((totalWins / p.tradesCount) * 100).toFixed(1)) : 0;
       const netPct = initialCapital > 0 ? Number(((p.totalNetPnlQuote / initialCapital) * 100).toFixed(2)) : 0;
-      return { ...p, winRate, totalNetPnlPct: netPct };
+      const grades = legMatches.map((l) => l.dnaGrade).filter(Boolean) as string[];
+      const bestDnaGrade = grades.includes("S") ? "S" : (grades.includes("A") ? "A" : (grades.includes("B") ? "B" : undefined));
+      const dnaScores = legMatches.map((l) => l.dnaScore).filter((s): s is number => typeof s === "number");
+      const avgDnaScore = dnaScores.length > 0 ? Math.round(dnaScores.reduce((a, b) => a + b, 0) / dnaScores.length) : undefined;
+      return { ...p, winRate, totalNetPnlPct: netPct, bestDnaGrade, avgDnaScore };
     });
 
     pairContributions.sort((a, b) => b.totalNetPnlQuote - a.totalNetPnlQuote);
@@ -5949,9 +5849,17 @@ export class BacktestService {
             initialCapital,
             maxInventoryQuote: initialCapital,
             startTradingBarIndex: bWarmup,
-            capitalZones: opts.capitalZones ?? 2,
-            channelMode: opts.channelMode ?? "DONCHIAN_ATR",
-            gridCutLossMode: opts.gridCutLossMode ?? "none",
+            capitalZones: 1,
+            channelMode: "DONCHIAN_ATR",
+            donchianPeriod: 48,
+            minChannelWidthPct: 2.0,
+            maxChannelWidthPct: 25.0,
+            buyLevelPcts: [20, 12],
+            buyWeights: [55, 45],
+            sellLevelPcts: [52, 72],
+            gridCutLossMode: "entry_floor",
+            enableGridTrailingStop: true,
+            lockChannelInPosition: true,
             saveToHistory: false,
           });
           benchmarkPnlPct = bRec.summary.netPnlPct;
