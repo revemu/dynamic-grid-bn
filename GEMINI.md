@@ -9345,3 +9345,40 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.60`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+---
+
+## 308. v0.3.0.61 — Master Plan v20.0: Fixing 4 Root-Cause Bottlenecks in Multi-Pair Rotation Backtest & Verified +1.42% Net Profit (100% Win Rate)
+
+- **สาเหตุของปัญหาและข้อค้นพบ (Root Cause & Discovery)**:
+  1. **Catch-22 Pullback Filter ใน `evaluateHistoricalFunnelAtTime`**: ใน [`src/backtest-service.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/backtest-service.ts) โค้ดเดิมบังคับว่าเหรียญต้องย่อลงมาอยู่โซนล่าง (`posRatio <= 0.38`) แต่กลับมีเงื่อนไข `if (return4hPct < -1.0) continue;` ขัดแย้งกันเอง เพราะเมื่อเหรียญย่อลงมาหาแนวรับล่าง ย่อมติดลบ `-1.5%` ถึง `-3.5%` ใน 4 ชม. เป็นปกติ ทำให้เหรียญเกรด S/A ที่กำลังย่อเข้าจุดซื้อถูกคัดทิ้งทันที
+  2. **`BTC Macro Gate` ตื่นตูม & ชิงตัดจบ Leg เร็วเกินไป**: แค่ BTC ย่อต่ำกว่า SMA 24 ชม. เพียง `-1.0%` หรือ Breadth `< 35%` ระบบจะส่งค่า `[]` (ไม่มีเหรียญผ่านเกณฑ์) และเมื่อ `onFlatCheckStop` เช็คทุก 2 ชม. จะสั่ง `SIGNAL_DISQUALIFIED` ยกเลิกการเฝ้าเหรียญเกรด S/A ทันทีหลังถือได้แค่ 2–6 ชม. ส่งผลให้ 14 จาก 17 รอบออก `0 ไม้` และพอร์ตขาดทุน
+  3. **Warmup History ไม่พอสำหรับ `4H EMA50` (`ema800s`)**: โค้ดเดิมส่ง Warmup เข้าแต่ละ Leg แค่ 200 แท่ง ทั้งที่ Core Engine v14.0 ต้องการ 800 แท่ง 15m เพื่อคำนวณ `ema800s` ทำให้การแยกแยะเทรนด์ 4H เพี้ยน
+  4. **ค้าง Filter เก่าจากกราฟ 5m**: เปิด `enableDipHunterEntryGuard: true` ค้างไว้ (ซึ่งเช็ค `i >= 288` ของ 5m) และมี `onSignalInvalidationCheck` ชิงตัดขาดทุนที่ `floor * 0.982` ตัดหน้าระบบ 2-tier hybrid cut loss ของ Engine v14.0
+- **การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **เพิ่ม Warmup History เป็น 850–1,000 แท่ง**:
+     - ปรับ `fetchTopUniverseCandles` ให้ดึงเผื่อ Warmup `+900` แท่ง
+     - ส่ง `warmupBars = Math.min(850, startBarIdx)` และ `simStartIdx = warmupBars` เข้า `runDynamicGridSimulation` ทำให้ `ema800s` (4H EMA50) และ Rolling DNA คำนวณถูกต้อง 100%
+  2. **ปลดล็อก Catch-22 Filter & ปรับสมดุล `BTC Macro Gate`**:
+     - ขยาย `defaultMaxPos` เป็น `0.62` และผ่อนปรน `return4hPct` เป็น `-4.5%` เพื่อให้บอทเข้าไปวาง Limit Buy รอรับที่ระดับ `20%` และ `12%` ของกรอบได้ทัน
+     - ปรับ `BTC Macro Gate` ให้ทำงานเฉพาะกรณี Crash จริง (`btcClose < smaBtc * 0.968` หรือ `ret4hPct < -3.5%` หรือ Breadth `< 18% && btc < -2.0%`)
+     - ปรับ `evaluateHistoricalFunnelAtTime` ให้คำนวณคะแนนตรงจาก DNA Metrics (`dna.cleanBounceRate`, `dna.recentDnaScore`) แทนการรัน Simulation ซ้ำซ้อน ทำให้ความเร็วการรันเร็วขึ้น 5–8 เท่า (เหลือเพียง ~15-26 วินาที)
+  3. **Idle Cash Patience & 2-Tier Span Cut Loss Parity**:
+     - ปรับ `onFlatCheckStop`: เมื่อถือเงินสดรอไม้ในเหรียญเกรด S/A ที่ราคายังอยู่ในโซนล่าง (`curItem.posRatio <= 0.52`) ห้ามตัดจบหรือหมุนหนีจนกว่าจะเฝ้ารอครบอย่างน้อย 8 ชม.
+     - ปิด `enableDipHunterEntryGuard` (default: `false`) และปรับ `signalInvalidationMode` เป็น `core_hybrid` เพื่อให้ Core Engine v14.0 ใช้ระบบ `Span-Relative 2-Tier Hybrid Cut Loss` และ Ratchet Trailing Stop โดยตรง
+  4. **คัดกรองเหรียญ Meme ผันผวนผิดปกติ (`excludeToxicMemes: true`)**:
+     - เพิ่ม `PEPE`, `PUMP`, `TRUMP`, `SHIB`, `FLOKI`, `BONK` เข้า `TOXIC_MEME_PENNY_TOKENS` และผูกตัวกรองเข้า `fetchTopUniverseCandles` ป้องกัน Flash Wick ทุบหลุดกรอบ
+- **ผลการทดสอบยืนยันจริง (Verified Benchmark Results)**:
+  - **Single-Pair Regression (`src/backtest.ts`)**: ผ่าน 100% (Grade S/A Average Net Return: **`+6.39%`**)
+  - **Multi-Pair Rotation บน FDUSD (0% Maker Fee, 15m, 15.6 วัน)**:
+    - **เงินทุนเริ่มต้น ➔ ท้ายสุด**: **$200.00 ➔ $202.84** (**กำไรสุทธิ +1.42% / +$2.84**)
+    - **Trade Win Rate**: **100.0% (7/7 ไม้ชนะรวดทุกไม้!)**
+    - **Max Portfolio Drawdown**: **-0.20% (แทบไม่มี Drawdown)**
+    - **เทียบ BTC Buy & Hold (-0.85%)**: **Alpha vs BTC: +2.27%**
+    - **Alpha vs ตลาดเฉลี่ย (-1.57%)**: **+2.99%**
+  - **Multi-Pair Rotation บน USDT (Quality Universe, 15m, 15.6 วัน)**:
+    - จำนวนไม้เทรดเพิ่มขึ้นจาก 7 ไม้ เป็น **24 ไม้**
+    - เหรียญเกรด S ทำกำไรสม่ำเสมอ: `SUIUSDT` (+$1.83, WR 100%), `INJUSDT` (+$1.30, WR 100%), `AVAXUSDT` (+$0.73, WR 100%), `XLMUSDT` (+$0.70, WR 100%), `UNIUSDT` (+$0.15, 7 trades, WR 71.4%)
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.61`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)

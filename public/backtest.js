@@ -3553,13 +3553,13 @@
           const rotationIntervalMinutes = Number(document.getElementById("rotBtCooldownMins")?.value) || 180;
           const rotationScoreMarginPct = Number(document.getElementById("rotBtScoreMargin")?.value) || 12;
           const capitalZones = Number(document.getElementById("rotBtZones")?.value) || 1;
-          const enableDipHunterEntryGuard = document.getElementById("rotBtDipHunterGuard")?.value !== "off";
-          const signalExitVal = document.getElementById("rotBtSignalExit")?.value || "calibrated";
+          const enableDipHunterEntryGuard = document.getElementById("rotBtDipHunterGuard")?.value === "on";
+          const signalExitVal = document.getElementById("rotBtSignalExit")?.value || "core_hybrid";
           const enableSignalInvalidationExit = signalExitVal !== "off";
           const signalInvalidationMode = signalExitVal;
           const enableBtcMacroGate = document.getElementById("rotBtMacroGate")?.value !== "off";
           const gridHtfGovernor = document.getElementById("rotBtGridHtfGov")?.value || "1h_ema200";
-          const gridMaxChannelPos = Number(document.getElementById("rotBtGridMaxPos")?.value) || 0.38;
+          const gridMaxChannelPos = Number(document.getElementById("rotBtGridMaxPos")?.value) || 0.62;
 
           payload = {
             ...payload,

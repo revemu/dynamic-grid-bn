@@ -1049,13 +1049,13 @@ export class DashboardServer {
             const capitalZones = parsed.capitalZones !== undefined ? Number(parsed.capitalZones) : 1;
             const channelMode = parsed.channelMode || "DONCHIAN_ATR";
             const gridCutLossMode = parsed.gridCutLossMode || "entry_floor";
-            const enableDipHunterEntryGuard = parsed.enableDipHunterEntryGuard !== false;
-            const enableSignalInvalidationExit = parsed.enableSignalInvalidationExit !== false;
-            const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "calibrated");
-            const enableBaseConfirmation = parsed.enableBaseConfirmation !== false;
+            const enableDipHunterEntryGuard = parsed.enableDipHunterEntryGuard === true;
+            const signalInvalidationMode = parsed.signalInvalidationMode || (parsed.enableSignalInvalidationExit === false ? "off" : "core_hybrid");
+            const enableSignalInvalidationExit = signalInvalidationMode !== "off";
+            const enableBaseConfirmation = parsed.enableBaseConfirmation === true;
             const enableBtcMacroGate = parsed.enableBtcMacroGate !== false && parsed.enableBtcMacroGate !== "false";
             const gridHtfGovernor = (parsed.gridHtfGovernor || parsed.rotBtGridHtfGov || "1h_ema200") as "off" | "1h_ema200" | "4h_ema75";
-            const gridMaxChannelPos = parsed.gridMaxChannelPos !== undefined ? Number(parsed.gridMaxChannelPos) : (parsed.rotBtGridMaxPos !== undefined ? Number(parsed.rotBtGridMaxPos) : 0.38);
+            const gridMaxChannelPos = parsed.gridMaxChannelPos !== undefined ? Number(parsed.gridMaxChannelPos) : (parsed.rotBtGridMaxPos !== undefined ? Number(parsed.rotBtGridMaxPos) : 0.62);
 
             result = await BacktestService.runMultiPairRotationSimulation({
               quoteAsset,
