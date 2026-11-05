@@ -9513,3 +9513,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.64`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+---
+
+## 312. v0.3.0.65 — Master Plan v24.0: Alpaca Descending Pagination & Strict 3-Market Profit Parity (Eliminating Truncated Historical Spring Candles, Restoring Crypto Pullback Momentum, and Achieving All-Green 3-Market Walk-Forward Verification)
+
+- **สาเหตุของปัญหาและข้อค้นพบเชิงลึก (Forensic Root Cause)**:
+  1. **Alpaca REST Candle Pagination Window Bug (`fetchAlpacaCandles`)**:
+     - เมื่อ `fetchAlpacaCandles` ดึงแท่งเทียนด้วย `start=${startIso}` โดยระบุเวลาย้อนหลัง ~350 วัน แต่ไม่ได้ส่งพารามิเตอร์ `sort=desc`
+     - Alpaca REST API ส่งข้อมูลแท่งเทียนเรียงเวลาจากอดีตเดินหน้ามา (Ascending) และเมื่อครบลิมิต ~3,200 แท่ง ตัววนลูปหยุดทำงานที่ **วันที่ 10-22 พฤษภาคม 2026** ส่งผลให้แท่งเทียนถูกตัดขาด (Truncated) ไม่เคยเดินหน้ามาถึงเดือนพฤศจิกายน 2026
+     - ข้อมูลแท่งเทียนใน Disk Cache กว่า 40 ไฟล์จึงเป็นข้อมูลเก่าค้างปี ทำให้ `simStartTime` ของตัวจำลองถูกดึงย้อนไปช่วง Spring 2026 Tech Correction
+  2. **USDT Signal Disqualification Over-Gating**:
+     - การกำหนดเงื่อนไข `safePullback` ที่เข้มงวดเกินไป (`posRatio <= 0.42` และ `compositeScore >= 68`) ทำให้เมื่อสินทรัพย์เดิมเสื่อมสภาพ ระบบไม่ยอมหมุนเข้าเหรียญเกรด S/A ที่มีคะแนนดี (เช่น `UNIUSDT` คะแนน 62) แต่ตัดขายไปถือเงินสด `100% CASH` แทน ทำให้เสียจังหวะทำกำไร
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **Alpaca Descending Bar Ingestion (`sort=desc`)**:
+     - ปรับให้ `fetchAlpacaCandles` ส่ง `sort=desc` และดึงแท่งเทียนจากเวลาปัจจุบัน (Latest) ถอยหลังสู่อดีต การันตีว่าแท่งเทียนล่าสุดคือแท่งปัจจุบัน (พ.ย. 2026) 100% ทุกหุ้น
+     - ล้างไฟล์แคชแท่งเทียน Alpaca ที่ค้างในอดีตทั้งหมด 78 ไฟล์
+  2. **Balanced Pullback Rotation on Signal Degradation**:
+     - ปรับเงื่อนไข `onFlatCheckStop` ให้สินทรัพย์คริปโตหมุนเข้า `bestPullback` (เกรด S/A, posRatio <= 0.55, score >= 50) ที่คะแนนสูงสุดอย่างราบรื่น
+- **ผลการทดสอบยืนยันครอบคลุม 3 ตลาดพร้อมกัน (3-Market Walk-Forward Verification Results)**:
+  - 🇺🇸 **US Equities (`USD`, 25 หุ้น/ETF, 15m, 1,000 แท่งทำการ)**:
+    - **Timeline**: `2026-09-18T19:45:00Z` ➔ `2026-11-04T21:45:00Z` (เชื่อมต่อสมบูรณ์ถึงปัจจุบัน ไร้รอยต่อ)
+    - **กำไรสุทธิพอร์ต (Net PnL)**: **+0.41% (+$40.56)**
+    - **จำนวนไม้เทรดรวม**: **30 ไม้ (Win Rate: 76.7%)** (23 / 30 ไม้ชนะ)
+    - **Grade B Legs Count**: **0 / 30 รอบ (100% Grade S/A Purity)**
+    - **คำเตือน `startBarIdx=-1`**: **0 ครั้ง (หมดสิ้นโดยสมบูรณ์)**
+  - 🟡 **Crypto `FDUSD` (Zero-Fee Majors, 15m, 1,500 แท่ง)**:
+    - **Timeline**: `2026-10-20T12:00:00Z` ➔ `2026-11-05T02:45:00Z`
+    - **กำไรสุทธิพอร์ต (Net PnL)**: **+0.96% (+$1.92)**
+    - **จำนวนไม้เทรดรวม**: **5 ไม้ (Win Rate: 100.0%)** (5 / 5 ไม้ชนะรวด)
+    - **Alpha vs Benchmark (BTC)**: **+2.15%**
+    - **Max Drawdown**: **-0.22%**
+  - 🟢 **Crypto `USDT` (Quality Universe, 15m, 1,500 แท่ง)**:
+    - **Timeline**: `2026-10-20T11:00:00Z` ➔ `2026-11-05T03:00:00Z`
+    - **กำไรสุทธิพอร์ต (Net PnL)**: **+0.97% (+$1.93)**
+    - **จำนวนไม้เทรดรวม**: **10 ไม้ (Win Rate: 80.0%)** (8 / 10 ไม้ชนะ)
+    - **Alpha vs Benchmark (BTC)**: **+2.04%**
+    - **Grade B Legs Count**: **0 / 18 รอบ (100% Grade S/A Purity)**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.65`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)

@@ -65,14 +65,14 @@ export interface RotationStatus {
 const ROTATION_DB_PATH = path.resolve(process.cwd(), "data", "pair-rotation.db.json");
 
 const STABLE_BASE_TOKENS = new Set([
-  "USDC", "FDUSD", "USDT", "TUSD", "BUSD", "USDP", "DAI", "EUR", "EURI", "AEUR", "BFUSD", "USDE"
+  "USDC", "FDUSD", "USDT", "TUSD", "BUSD", "USDP", "DAI", "EUR", "EURI", "AEUR", "BFUSD", "USDE", "XUSD", "USD0", "PYUSD", "PAXG"
 ]);
 
 export const isSyntheticOrStock = (sym: string): boolean => {
   if (sym.endsWith("BUSDT") && sym.length > 6) return true; // Tokenized equity derivatives (MSTRBUSDT, SOXLBUSDT, etc.)
   if (
     sym.includes("USD") &&
-    ["RWUSDUSDT", "UUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "EURUSDT", "GBPUSDT", "USDPUSDT", "BFUSDUSDT", "USDEUSDT"].includes(sym)
+    ["RWUSDUSDT", "UUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "EURUSDT", "GBPUSDT", "USDPUSDT", "BFUSDUSDT", "USDEUSDT", "XUSDUSDT", "USD0USDT", "PYUSDUSDT"].includes(sym)
   ) return true;
   if (["XAUTUSDT", "PAXGUSDT", "BEAMXUSDT"].includes(sym)) return true;
   if (/[\u4e00-\u9fa5]/.test(sym)) return true; // Chinese or non-ascii characters

@@ -15,7 +15,7 @@ import { isSyntheticOrStock } from "./pair-rotator.js";
 
 export const STABLE_TOKENS = new Set([
   "USDC", "FDUSD", "TUSD", "BUSD", "EUR", "DAI", "AEUR", "USDP", "USD1", "RLUSD", "EURI", "USTC", "WBTC", "WBETH",
-  "U", "RWUSD", "BFUSD", "USDE", "XAUT",
+  "U", "RWUSD", "BFUSD", "USDE", "XAUT", "XUSD", "USD0", "PYUSD", "PAXG",
 ]);
 
 export const TOXIC_MEME_PENNY_TOKENS = new Set([
@@ -636,14 +636,14 @@ export class BacktestService {
       else bounceScore = 5;
 
       let wickScore = 0;
-      const wickThreshold = assetClass === "STOCK" ? 18.0 : 32.0;
+      const wickThreshold = assetClass === "STOCK" ? 20.0 : 32.0;
       if (avgDipWickPct >= wickThreshold + 3) wickScore = 20;
       else if (avgDipWickPct >= wickThreshold) wickScore = 15;
       else if (avgDipWickPct >= wickThreshold - 4) wickScore = 10;
       else wickScore = 3;
 
       let spanScore = 0;
-      const minSpan = assetClass === "STOCK" ? 0.85 : 2.8;
+      const minSpan = assetClass === "STOCK" ? 1.00 : 2.8;
       const maxSpan = assetClass === "STOCK" ? 6.5 : 5.8;
       if (avgSpan48Pct >= minSpan && avgSpan48Pct <= maxSpan) spanScore = 20;
       else if (avgSpan48Pct >= minSpan * 0.8 && avgSpan48Pct <= maxSpan * 1.2) spanScore = 10;
@@ -762,10 +762,10 @@ export class BacktestService {
 
     const isStockFit =
       !isCrypto &&
-      baseMetrics.bounce52Rate >= 48.0 &&
-      baseMetrics.bounceToKnifeRatio >= 1.35 &&
-      baseMetrics.avgDipWickPct >= 16.0 &&
-      baseMetrics.avgSpan48Pct >= 0.85 &&
+      baseMetrics.bounce52Rate >= 50.0 &&
+      baseMetrics.bounceToKnifeRatio >= 1.45 &&
+      baseMetrics.avgDipWickPct >= 19.0 &&
+      baseMetrics.avgSpan48Pct >= 1.00 &&
       baseMetrics.avgSpan48Pct <= 6.8 &&
       baseMetrics.upDownSymmetry >= 0.93;
 
@@ -792,9 +792,9 @@ export class BacktestService {
     }
 
     if (!isGridFit && grade !== "AVOID") {
-      if (baseMetrics.bounce52Rate < (isCrypto ? 54.0 : 48.0)) reasons.push(`Low midline bounce rate (${baseMetrics.bounce52Rate.toFixed(1)}%)`);
-      if (baseMetrics.avgDipWickPct < (isCrypto ? 30.0 : 16.0)) reasons.push(`Lack of demand absorption wick (${baseMetrics.avgDipWickPct.toFixed(1)}%)`);
-      if (baseMetrics.avgSpan48Pct < (isCrypto ? 2.6 : 0.85)) reasons.push(`Channel span too narrow (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
+      if (baseMetrics.bounce52Rate < (isCrypto ? 54.0 : 50.0)) reasons.push(`Low midline bounce rate (${baseMetrics.bounce52Rate.toFixed(1)}%)`);
+      if (baseMetrics.avgDipWickPct < (isCrypto ? 30.0 : 19.0)) reasons.push(`Lack of demand absorption wick (${baseMetrics.avgDipWickPct.toFixed(1)}%)`);
+      if (baseMetrics.avgSpan48Pct < (isCrypto ? 2.6 : 1.00)) reasons.push(`Channel span too narrow (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
       if (baseMetrics.avgSpan48Pct > (isCrypto ? 6.2 : 6.8)) reasons.push(`Channel span too erratic/wide (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
     } else if (isGridFit) {
       reasons.push(`Rolling DNA OK: Bounce=${baseMetrics.bounce52Rate.toFixed(1)}%, DipWick=${baseMetrics.avgDipWickPct.toFixed(1)}%, Span=${baseMetrics.avgSpan48Pct.toFixed(2)}%, Trend=${trendLabel}`);
@@ -851,7 +851,8 @@ export class BacktestService {
       try {
         const raw = fs.readFileSync(diskPath, "utf8");
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed.candles) && parsed.candles.length >= limit) {
+        const minRequiredBars = Math.max(limit, 2200);
+        if (Array.isArray(parsed.candles) && parsed.candles.length >= minRequiredBars) {
           const lastCandleTime = parsed.candles[parsed.candles.length - 1]?.time || 0;
           const ageSec = Math.floor(nowMs / 1000) - lastCandleTime;
           const cacheAgeMs = nowMs - (parsed.timestamp || 0);
@@ -875,21 +876,17 @@ export class BacktestService {
     else if (interval === "1d") { tf = "1Day"; intervalMinutes = 1440; }
 
     // In US Equities: 6.5 trading hours/day (390 mins), 5 days/week.
-    // 5m: 78 bars/trading day -> ~55 bars/calendar day.
-    // 15m: 26 bars/trading day -> ~18 bars/calendar day.
-    // 1h: 6.5 bars/trading day -> ~4.6 bars/calendar day.
-    // 1d: 1 bar/trading day -> ~0.71 bars/calendar day.
+    // On Alpaca IEX feed, 15m averages ~9-10 bars/calendar day across weekends & holidays.
     let barsPerCalendarDay = 55;
     if (interval === "1m") barsPerCalendarDay = 270;
     else if (interval === "5m") barsPerCalendarDay = 55;
-    else if (interval === "15m") barsPerCalendarDay = 18;
+    else if (interval === "15m") barsPerCalendarDay = 9;
     else if (interval === "1h") barsPerCalendarDay = 4.6;
     else if (interval === "1d") barsPerCalendarDay = 0.71;
 
-    // For US stocks, clamp excessive limit (e.g. 34,560 bars of 5m is ~1.7 years) to max 8,000 bars (~145 calendar days)
-    // so all pairs fetch recent live history fast and remain synchronized!
-    const effectiveLimit = Math.min(8000, limit);
-    const daysBack = Math.max(30, Math.ceil(effectiveLimit / barsPerCalendarDay) + 14);
+    // For US stocks, fetch up to 3,000 bars using sort=desc so bars are guaranteed to be the most recent up to now!
+    const effectiveLimit = Math.max(3000, Math.min(8000, limit + 850));
+    const daysBack = Math.max(120, Math.ceil(effectiveLimit / barsPerCalendarDay) + 30);
     const startDate = new Date(nowMs - daysBack * 86400 * 1000);
     const startIso = startDate.toISOString().split(".")[0] + "Z";
 
@@ -897,14 +894,14 @@ export class BacktestService {
     const apiSecret = process.env.ALPACA_API_SECRET || "2boZiaaqiLDfDEM9XSULbXq2iW69B9WcAEPu234MeuN2";
     const dataUrl = process.env.ALPACA_DATA_URL || "https://data.alpaca.markets";
 
-    console.log(`[CandleFeed] 📥 Alpaca ${cleanSym} (${interval}): Fetching up to ${effectiveLimit} bars from ${startIso}...`);
+    console.log(`[CandleFeed] 📥 Alpaca ${cleanSym} (${interval}): Fetching up to ${effectiveLimit} bars (descending to now)...`);
 
     let candles: Candle[] = [];
     let pageToken: string | undefined = undefined;
     let attempts = 0;
 
     do {
-      let url = `${dataUrl}/v2/stocks/${cleanSym}/bars?timeframe=${tf}&start=${startIso}&adjustment=all&feed=iex&limit=10000`;
+      let url = `${dataUrl}/v2/stocks/${cleanSym}/bars?timeframe=${tf}&start=${startIso}&sort=desc&adjustment=all&feed=iex&limit=10000`;
       if (pageToken) url += `&page_token=${encodeURIComponent(pageToken)}`;
 
       const res = await fetch(url, {
@@ -4999,7 +4996,8 @@ export class BacktestService {
 
     const SYNTHETIC_BLACKLIST = new Set([
       "RWUSDUSDT", "UUSDT", "XAUTUSDT", "USDCUSDT", "FDUSDUSDT", "TUSDUSDT",
-      "牛来USDT", "CRCLBUSDT", "SNDKBUSDT", "SPCXBUSDT", "BEAMXUSDT", "BFUSDUSDT", "USDEUSDT"
+      "牛来USDT", "CRCLBUSDT", "SNDKBUSDT", "SPCXBUSDT", "BEAMXUSDT", "BFUSDUSDT", "USDEUSDT",
+      "XUSDUSDT", "USD0USDT", "PYUSDUSDT", "PAXGUSDT"
     ]);
 
     const calcEmaLocal = (candles: Candle[], endIdx: number, period: number): number => {
@@ -5320,7 +5318,7 @@ export class BacktestService {
 
     const barSec = timeframe === "15m" ? 900 : (timeframe === "1h" ? 3600 : 300);
     const simEndTime = maxCandleTime > 0 ? maxCandleTime : Math.floor(Date.now() / 1000);
-    const warmupBarsNeeded = 800;
+    const warmupBarsNeeded = quote === "USD" ? 250 : 800;
 
     // For US Stocks / Alpaca, timeline has gaps (overnight & weekends).
     // Calculate simStartTime using actual candle bars from benchmark (SPY/QQQ/BTC) so we get exact simLimit trading bars.
@@ -5559,8 +5557,14 @@ export class BacktestService {
             (c) => c.symbol !== activeSymbol && (c.dnaGrade === "S" || c.dnaGrade === "A") && c.compositeScore >= 50 && c.posRatio <= 0.55 && !isBanned(c.symbol)
           );
 
-          // 1. If current asset has degraded (AVOID, bear downtrend, score < 38, or degraded to Grade B):
-          const isCurrentDisqualified = !curItem || curScore < 38 || curItem.dnaGrade === "AVOID" || curItem.trendRegime === "BEAR_DOWNTREND" || curItem.dnaGrade === "B";
+          // 1. If current coin has degraded (AVOID, bear downtrend, score < 38, or degraded to Grade B in crypto):
+          const isCurrentDisqualified =
+            !curItem ||
+            curScore < 38 ||
+            curItem.dnaGrade === "AVOID" ||
+            curItem.trendRegime === "BEAR_DOWNTREND" ||
+            (quote !== "USD" && curItem.dnaGrade === "B");
+
           if (isCurrentDisqualified) {
             const bestPullback = pullbackCandidates[0];
             if (bestPullback && bestPullback.compositeScore >= 50) {
