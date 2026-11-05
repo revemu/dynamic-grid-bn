@@ -763,7 +763,7 @@ export const MASTER_PLAN_GRID_CONFIG = {
   floorBufferPct: 0.6,
   gridCutLossMode: "entry_floor" as const,
   enableGridTrailingStop: true,
-  costModel: { feePctPerSide: 0, slippagePctPerFill: 0 },
+  costModel: { feePctPerSide: 0.075, slippagePctPerFill: 0.01 },
   saveToHistory: false,
 };
 
@@ -794,7 +794,7 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
   console.log("==========================================================================================================");
   console.log("🚀 MASTER BENCHMARK RUNNER — DYNAMIC GRID (LIMIT-ONLY, SIDEWAY-ONLY, DEEP 2-TRANCHE, RATCHET TRAIL)");
   console.log("   Evaluation Dataset: 12,000 Candles 15m (~125 Days Crypto / ~1.5 Years US Stocks)");
-  console.log("   Execution Model: 0% Maker Fee / 0% Slippage on Limit Buy & TP | Realistic Taker on Cut Loss / Trail");
+  console.log("   Execution Model: 0.075% Fee / 0.01% Slippage per Limit Fill (Buy & TP) | Taker Cut Loss / Trail: 0.075% Fee / 0.10% Slippage");
   console.log("   Target Buy: [20%, 12%] (Weights: [55%, 45%]) | Target Sell: [52%, 72%] | Capital Zones: 1 | Bounded 2-Tier Span Cut Loss");
   console.log("==========================================================================================================\n");
 
@@ -820,8 +820,8 @@ export async function runMasterBenchmark(assets = TARGET_BENCHMARK_ASSETS) {
     const endPrice = candles[candles.length - 1]!.close;
     const bhReturnPct = ((endPrice - startPrice) / startPrice) * 100;
 
-    // Use minimum width of 1.4% for stocks, 2.0% for crypto
-    const minWidth = item.assetClass === "STOCK" ? 1.4 : 2.0;
+    // Use minimum width of 1.2% for stocks, 2.0% for crypto (per GEMINI.md, US Stocks = 1.2%)
+    const minWidth = item.assetClass === "STOCK" ? 1.2 : 2.0;
 
     console.log(`[Benchmark] (${results.length + 1}/${assets.length}) Evaluating ${item.symbol}...`);
     const dna = BacktestService.evaluateGridDna(candles, item.assetClass);

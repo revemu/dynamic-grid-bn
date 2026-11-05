@@ -101,7 +101,49 @@ dynamic-grid/
 - ห้าม commit ค่า API key, secret หรือ private key
 - `src/exchange/index.ts` ประกาศชนิด `bybit`/`okx` ไว้ใน `SupportedExchange` แต่ switch มีเฉพาะ binance, dreamdex, alpaca
 
-## 9. ช่องว่างที่ยังไม่ได้ตรวจ
+## 9. Master Plan ล่าสุดและผลทดสอบ (อ้างจาก GEMINI.md หัวข้อ `## 303.`–`## 312.`)
+
+ข้อมูลส่วนนี้มาจากบันทึกใน GEMINI.md ยังไม่ได้ตรวจซ้ำกับโค้ดทุกจุด
+หมายเลขในคอลัมน์ "หัวข้อ" คือเลขหัวข้อ `## NNN.` ไม่ใช่เลขบรรทัด บรรทัดจริงอยู่ในคอลัมน์ "บรรทัด" (ตรวจแล้วด้วย grep)
+
+| Master Plan | เวอร์ชัน | หัวข้อ GEMINI.md | บรรทัด GEMINI.md | ประเด็นหลัก |
+| :--- | :--- | :--- | :--- | :--- |
+| v15.0 | 0.3.0.56 | 303 | 9155 | Market DNA, Anti-Climax guard, ลดขาดทุนนอกกลุ่ม OOS |
+| v16.0 | 0.3.0.57 | 304 | 9189 | คืน Core Engine v14.0, ตัวคัด Grid DNA 5 มิติ (`evaluateGridDna`) |
+| v17.0 | 0.3.0.58 | 305 | 9267 | รวมกลยุทธ์เหลือ Dynamic Grid เดียว, คัดเหรียญเกรด S/A เท่านั้น |
+| v18.0 | 0.3.0.59 | 306 | 9291 | DNA แบบ Rolling สองหน้าต่าง, Live Trend 4H/1H |
+| v19.0 | 0.3.0.60 | 307 | 9323 | Walk-forward multi-pair rotation บน 15m |
+| v20.0 | 0.3.0.61 | 308 | 9351 | แก้ 4 จุดคอขวด (warmup, filter, BTC gate, ค่าเริ่มต้น) |
+| v21.0 | 0.3.0.62 | 309 | 9388 | Strict S/A, แก้ `curScore = 0` ลวงตา, คัด meme/penny coins |
+| v22.0 | 0.3.0.63 | 310 | 9431 | ขยายไปหุ้นสหรัฐฯ (Alpaca USD) |
+| v23.0 | 0.3.0.64 | 311 | 9479 | แก้ disk cache ไม่หมดอายุ, Forward bar gate, จูนเกณฑ์หุ้น |
+
+**แนวทางหลักที่บันทึกไว้**
+- Core Engine v14.0 เป็นฐาน: `buyLevelPcts` `[20, 12]` (หุ้น `[22, 12]`), `buyWeights` `[55, 45]`, `sellLevelPcts` `[52, 72]`, `capitalZones: 1`, `gridCutLossMode: "entry_floor"`, Ratchet Trailing Stop 3 ขั้น, Time-Decay Escape 18 แท่ง (15m)
+- Market DNA ให้เกรด `S / A / B / AVOID` ใช้เลือกสินทรัพย์ เฉพาะเกรด S/A เท่านั้นที่ได้เทรด
+- ค่า `minChannelWidthPct` แยกตามตลาด: หุ้นสหรัฐฯ `1.2%`, FDUSD `2.0%`, USDT `2.4%`
+- Universe ตัด meme/penny/privacy coins (เช่น `PEPE`, `ZECUSDT`, `ENAUSDT`, `HYPEUSDT`) ผ่าน `TOXIC_MEME_PENNY_TOKENS`
+- ตลาดหุ้นใช้ `getNextTradingBarTime` ข้ามช่วงปิดตลาดและสุดสัปดาห์
+- ค่าเริ่มต้น multi-pair rotation เป็น `grid_sequential` บน `15m`
+
+**ผลทดสอบล่าสุดที่บันทึกไว้ (v0.3.0.64)**
+
+| ตลาด | ข้อมูล | Net PnL | Win Rate | Max DD |
+| :--- | :--- | :--- | :--- | :--- |
+| หุ้นสหรัฐฯ (Alpaca USD, 20 หุ้น/ETF) | 15m, 1,000 แท่งทำการ | +0.71% (+$71.35) | 74.2% (23/31) | — |
+| FDUSD (6 คู่) | 15m, 1,500 แท่ง | +1.33% (+$2.66) | 100% (6/6) | -0.20% |
+| USDT (25 คู่) | 15m, 1,500 แท่ง | +1.09% (v0.3.0.63) | 81.8% (9/11) | -1.80% |
+
+- Grade B ที่เข้าเทรด: 0 ครั้ง (หุ้น 0/32, FDUSD 0/7, USDT 0/21)
+- คำเตือน `startBarIdx=-1`: 0 ครั้ง (หุ้นสหรัฐฯ)
+- ผล USDT ที่ 0.3.0.64 ยังไม่ได้ระบุไว้ในบันทึก จึงใช้ค่าจาก v0.3.0.63
+
+**ข้อควรระวัง**
+- ตัวเลขทั้งหมดเป็นผล backtest บนข้อมูลในอดีต ไม่ใช่ผลเทรดจริง
+- ตัวอย่างน้อย (เช่น 6–11 ไม้ต่อตลาด) ทำให้ Win Rate สูงเกินจริงได้ง่าย
+- บันทึกบอกว่า `typecheck` ผ่านทุกเวอร์ชัน แต่ยังไม่ได้รันซ้ำในรอบนี้
+
+## 10. ช่องว่างที่ยังไม่ได้ตรวจ
 
 - ยังไม่ได้อ่านรายละเอียด `server.ts`, `strategy/index.ts`, `exchange/binance/*`, `market-structure/*` ฉบับเต็ม
 - ยังไม่ได้รัน `npm run typecheck` ในรอบนี้

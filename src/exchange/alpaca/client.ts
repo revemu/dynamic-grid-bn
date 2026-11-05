@@ -34,8 +34,8 @@ export class AlpacaClient implements IExchangeClient {
   private dataUrl: string;
 
   constructor(opts: AlpacaClientOptions = {}) {
-    this.apiKey = opts.apiKey || process.env.ALPACA_API_KEY || "PKYAVG2YEWF3SWIPPJT3C42TVG";
-    this.apiSecret = opts.apiSecret || process.env.ALPACA_API_SECRET || "2boZiaaqiLDfDEM9XSULbXq2iW69B9WcAEPu234MeuN2";
+    this.apiKey = opts.apiKey || process.env.ALPACA_API_KEY || "";
+    this.apiSecret = opts.apiSecret || process.env.ALPACA_API_SECRET || "";
     this.baseUrl = opts.baseUrl || process.env.ALPACA_BASE_URL || "https://paper-api.alpaca.markets";
     this.dataUrl = opts.dataUrl || process.env.ALPACA_DATA_URL || "https://data.alpaca.markets";
   }

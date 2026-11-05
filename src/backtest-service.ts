@@ -893,8 +893,8 @@ export class BacktestService {
     const startDate = new Date(nowMs - daysBack * 86400 * 1000);
     const startIso = startDate.toISOString().split(".")[0] + "Z";
 
-    const apiKey = process.env.ALPACA_API_KEY || "PKYAVG2YEWF3SWIPPJT3C42TVG";
-    const apiSecret = process.env.ALPACA_API_SECRET || "2boZiaaqiLDfDEM9XSULbXq2iW69B9WcAEPu234MeuN2";
+    const apiKey = process.env.ALPACA_API_KEY || "";
+    const apiSecret = process.env.ALPACA_API_SECRET || "";
     const dataUrl = process.env.ALPACA_DATA_URL || "https://data.alpaca.markets";
 
     console.log(`[CandleFeed] 📥 Alpaca ${cleanSym} (${interval}): Fetching up to ${effectiveLimit} bars from ${startIso}...`);
@@ -1160,7 +1160,7 @@ export class BacktestService {
       timeframe?: string;
       initialCapital?: number;
       maxInventoryQuote?: number;
-      costModel?: { feePctPerSide: number; slippagePctPerFill: number };
+      costModel?: { feePctPerSide: number; slippagePctPerFill: number; takerFeePctPerSide?: number; takerSlippagePctPerFill?: number };
       saveToHistory?: boolean;
       enableBaseConfirmationFilter?: boolean;
       regimeFilterMode?: "SIDEWAY_ONLY" | "NO_DOWNTREND" | "UPTREND_AND_SIDEWAY" | "OFF";
@@ -1186,6 +1186,13 @@ export class BacktestService {
       minNetProfitPct?: number;
       startTradingBarIndex?: number;
       enableDipHunterEntryGuard?: boolean;
+      // ทดลอง: pure dynamic grid = ปิด cut loss, cap, escape, trailing/ratchet, anti-climax และ regime filter
+      // (ไม่ลบโค้ดเดิม; ใช้เทียบผลเท่านั้น). ค่าเริ่มต้น false.
+      pureGridMode?: boolean;
+      /** ทดลอง: เปิด time-decay escape กลับใน pure mode (ไม่มีในสเปก; ใช้เป็นทางออกของไม้ค้าง) */
+      pureKeepEscape?: boolean;
+      /** ทดลอง: เปิด regime filter (UPTREND_AND_SIDEWAY) กลับใน pure mode (GEMINI.md ไม่ได้ระบุ pure) */
+      pureKeepRegimeFilter?: boolean;
       onFlatCheckStop?: (state: {
         barIndex: number;
         time: number;
@@ -1213,9 +1220,10 @@ export class BacktestService {
     const makerSlippagePct = cm.slippagePctPerFill ?? 0;
     const makerCostPerFill = (makerFeePct + makerSlippagePct) / 100;
 
-    // Realistic Institutional Taker Costs for Emergency Exits (Stop Loss / Trailing Stop)
-    const takerFeePct = makerFeePct > 0 ? makerFeePct : 0.075;
-    const takerSlippagePct = 0.10;
+    // Taker costs for emergency exits (Stop Loss / Trailing Stop). Optional overrides via costModel;
+    // defaults keep the previous behaviour (taker fee = maker fee when set, slippage 0.10%).
+    const takerFeePct = cm.takerFeePctPerSide ?? (makerFeePct > 0 ? makerFeePct : 0.075);
+    const takerSlippagePct = cm.takerSlippagePctPerFill ?? 0.10;
     const takerCostPerFill = (takerFeePct + takerSlippagePct) / 100;
     const costPerFill = makerCostPerFill;
 
@@ -1256,7 +1264,11 @@ export class BacktestService {
     const zoneStabilizeCandles = Math.max(1, opts.zoneStabilizeCandles ?? 3);
     const zoneMinDropPct = Math.max(0.5, opts.zoneMinDropPct ?? 2.5);
     const gridCutLossMode = opts.gridCutLossMode ?? "entry_floor";
-    const enableGridTrailingStop = opts.enableGridTrailingStop ?? true;
+    const pureGridMode = opts.pureGridMode === true;
+    const pureKeepEscape = opts.pureKeepEscape === true;
+    const pureKeepRegimeFilter = opts.pureKeepRegimeFilter === true;
+    // pureGridMode ปิด trailing/ratchet ทั้งหมด (ดู GEMINI.md:9175 สำหรับ ratchet เดิม)
+    const enableGridTrailingStop = (opts.enableGridTrailingStop ?? true) && !pureGridMode;
     const gridTrailingBreakevenRatio = opts.gridTrailingBreakevenRatio ?? 0.50;
     const gridTrailingProfitLockRatio = opts.gridTrailingProfitLockRatio ?? 0.70;
     const gridTrailingProfitLockTargetRatio = opts.gridTrailingProfitLockTargetRatio ?? 0.50;
@@ -1581,6 +1593,11 @@ export class BacktestService {
       const cutLossPrice = closeCutLossPrice;
 
       // ขอบเขต Cut Loss พิเศษสำหรับไม้ในเทรนด์ขาขึ้น (4H/Macro Bull ถ่างระยะกันสะบัดเป็น -38% / -48% ของกรอบ)
+      // ข้อขัดแย้งกับ GEMINI.md:9168-9169 (v0.3.0.56 ระบุให้ยกเลิกการถ่างและใช้ -0.20 / -0.32)
+      // ตัดสิน: คง -0.38 / -0.48 ตาม GEMINI.md:9196 (v0.3.0.57 ใหม่กว่า)
+      // ผลทดสอบ (sumPnl%, ไม่รวม OPEN): -0.38 รวม 15.62 | -0.20 รวม 13.20
+      //   -0.38: TP 166.60, TRAIL 71.20, ESCAPE 41.56, CUT -263.74
+      //   -0.20: TP 171.95, TRAIL 66.66, ESCAPE 39.57, CUT -264.98
       const uptrendCloseCutPrice = channelSpan > 0
         ? floor - channelSpan * 0.38
         : closeCutLossPrice * 0.995;
@@ -1588,7 +1605,7 @@ export class BacktestService {
         ? floor - channelSpan * 0.48
         : emergencyWickCutPrice * 0.995;
 
-      const baseCanTriggerCutLoss =
+      const baseCanTriggerCutLoss = !pureGridMode &&
         gridCutLossMode !== "none" &&
         (gridCutLossMode === "entry_floor" || unlockedCapitalZones >= totalZones);
 
@@ -1603,12 +1620,16 @@ export class BacktestService {
 
         // ปรับเวลาถือครอง (Time-Decay Escape) ตามกระแสน้ำของ 4H:
         // - 4H Bear: รีบออกที่จุดคุ้มทุนภายใน 12 แท่ง (3 ชม.) ก่อนที่คลื่น 4H จะทุบซ้ำ
+        //   ข้อขัดแย้ง: GEMINI.md:9093 ระบุ 10 แท่ง แต่โค้ดตอนนี้ใช้ 12 (ทดสอบแยกผลจาก cap แล้ว) ยังไม่ตัดสิน
         // - 4H Bull: ให้เวลาถือรันเทรนด์ 22 แท่ง (5.5 ชม.)
         // - 4H Range / 1H Bull: 18 แท่ง (4.5 ชม.)
         const isDippedBelowNormalFloor = isLotUptrendProtected && c.low <= closeCutLossPrice;
+        // ข้อขัดแย้ง: GEMINI.md:9093 ระบุ 4H Bear = 10 แท่ง แต่ทดสอบรอบนี้ใช้ 12 แท่ง
+        // (ค่าเดิมก่อนแก้ใน backup) เพื่อแยกผลของ escape ออกจาก max-loss cap
         const escapeBarThreshold = isLotUptrendProtected ? 22 : (is4hBear && !is1hBull ? 12 : 18);
 
-        if ((holdingBars >= escapeBarThreshold || isDippedBelowNormalFloor) && !lot.isTimeDecayEscape) {
+        // pureKeepEscape: ทดลองเปิด escape ใน pure mode (ค่าเริ่มต้น off). สเปกฐาน GEMINI.md:9093
+        if ((!pureGridMode || pureKeepEscape) && (holdingBars >= escapeBarThreshold || isDippedBelowNormalFloor) && !lot.isTimeDecayEscape) {
           const escapeTarget = lot.buyPrice * (1 + effectiveMinProfitPct / 100);
           if (escapeTarget < lot.targetPrice) {
             lot.targetPrice = escapeTarget;
@@ -1616,12 +1637,17 @@ export class BacktestService {
           }
         }
 
-        const effectiveCloseCut = isLotUptrendProtected
-          ? Math.max(uptrendCloseCutPrice, lot.buyPrice * 0.982)
-          : closeCutLossPrice;
-        const effectiveWickCut = isLotUptrendProtected
-          ? Math.max(uptrendWickCutPrice, lot.buyPrice * 0.978)
-          : emergencyWickCutPrice;
+        // Max-loss cap ต่อไม้ (GEMINI.md:9170): close -1.45%, wick -1.85% จากราคาซื้อ ใช้กับทุกไม้
+        // ข้อขัดแย้ง: GEMINI.md:9196 ระบุให้ uptrend ถ่างเป็น -38%/-48% ของกรอบ; ใช้ cap นี้ทับเพื่อยึดสเปกหลัก
+        // ผลทดสอบ: ปิด cap แล้ว GRID_CUT แย่ลง (-289.30 vs -284.09) จึงคง cap ไว้
+        const effectiveCloseCut = Math.max(
+          isLotUptrendProtected ? uptrendCloseCutPrice : closeCutLossPrice,
+          pureGridMode ? -Infinity : lot.buyPrice * (1 - 0.0145),
+        );
+        const effectiveWickCut = Math.max(
+          isLotUptrendProtected ? uptrendWickCutPrice : emergencyWickCutPrice,
+          pureGridMode ? -Infinity : lot.buyPrice * (1 - 0.0185),
+        );
 
         const isEmergencyWickHit = baseCanTriggerCutLoss && c.low <= effectiveWickCut;
         const isConfirmedCloseCutHit = baseCanTriggerCutLoss && c.close <= effectiveCloseCut;
@@ -1802,10 +1828,10 @@ export class BacktestService {
         const refEntrySpan = (lot.ceilingAtEntry && lot.floorAtEntry) ? (lot.ceilingAtEntry - lot.floorAtEntry) : channelSpan;
         if (enableGridTrailingStop && refEntrySpan > 0 && lot.peakPrice > lot.buyPrice) {
           const roundtripTakerCost = makerCostPerFill + takerCostPerFill;
-          // ขั้นที่ 1 (Early Breakeven Shield): ราคาแตะ 44% ของกรอบ (หรือบวก >= +0.65% จากทุน) และราคาปิดยืนเหนือจุดล็อกทุน
-          const lockEarly = lot.buyPrice * (1 + roundtripTakerCost + 0.0020);
+          // ขั้นที่ 1 (Early Breakeven Shield, GEMINI.md:9175): ราคาแตะ 46% ของกรอบ (หรือบวก >= +0.75% จากทุน) และราคาปิดยืนเหนือจุดล็อกทุน (+0.26%)
+          const lockEarly = lot.buyPrice * (1 + roundtripTakerCost + 0.0026);
           if (
-            (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.44 || lot.peakPrice >= lot.buyPrice * 1.0065) &&
+            (lot.peakPrice >= refEntryFloor + refEntrySpan * 0.46 || lot.peakPrice >= lot.buyPrice * 1.0075) &&
             c.close > lockEarly
           ) {
             lot.beLocked = true;
@@ -2011,16 +2037,27 @@ export class BacktestService {
       // 🌐 Scoped 4H Bear Gate (แทรกแซงเฉพาะเมื่อกราฟ 4H เป็นขาลงชัดเจน เพื่อไม่ให้ไปตัดไม้ทำกำไรของ ETH/AVAX ในช่วง Sideway/Bull):
       let isHtfBlocked = false;
       if (is4hBear) {
-        if (htf4hPosRatio > 0.52 || (is1hBearFlow && !is1hStabilized)) {
+        if (htf4hPosRatio > 0.48 || (is1hBearFlow && !is1hStabilized)) {
           isHtfBlocked = true;
         }
+      }
+
+      // Anti-Climax / Parabolic Pullback Guard (GEMINI.md Master Plan v15.0):
+      // price high in the 60h box (or a wide box) while 1H momentum is falling -> no catching the knife until 1H stabilizes.
+      const htf4hSpanPct = c.close > 0 ? (htf4hSpan / c.close) * 100 : 0;
+      const is1hFalling = c.close < cur1hEma20 && cur1hEma20 < prev1hEma20;
+      // สเปก GEMINI.md:9091 แก้เป็นทุกสภาวะ 4H ตามผลทดสอบ (เดิมจำกัดเฉพาะ Neutral; GRID_CUT -284.09 -> -263.74)
+      // ข้อขัดแย้งกับ GEMINI.md:9090 (ขาขึ้นรับย่อถึง 80%) ยังไม่ตัดสิน
+      const isAntiClimax = (htf4hPosRatio > 0.68 || htf4hSpanPct > 5.0) && (is1hBearFlow || is1hFalling);
+      if (!pureGridMode && isAntiClimax && !is1hStabilized) {
+        isHtfBlocked = true;
       }
 
       let isRegimeBlocked = !structure.isSwingConfirmed;
       if (heldLots.length > 0 && lockedChannel !== null) {
         // เมื่อเปิดไม้ L1 และล็อกกรอบแล้ว อนุญาตให้รับไม้ L2 (65%) ในกรอบเดิมได้เสมอตราบใดที่ยังไม่หลุด Cut Loss
         isRegimeBlocked = false;
-      } else if (regimeFilterMode === "UPTREND_AND_SIDEWAY") {
+      } else if ((!pureGridMode || pureKeepRegimeFilter) && regimeFilterMode === "UPTREND_AND_SIDEWAY") {
         const isRange = structure.regime === "RANGE";
         const isBullishRegime = structure.regime === "UPTREND" || isUptrend;
         const isDonchianMode = (opts.channelMode ?? "DONCHIAN_ATR") === "DONCHIAN_ATR";
@@ -2091,7 +2128,20 @@ export class BacktestService {
         }
 
         const hasAbsorption = isGreenCandle || prevLowerWickPct >= 15 || (isNoFallingKnife && prevLowerWickPct >= 8);
-        if (isWaterfall || isBad24hDrop || !hasAbsorption) {
+        // GEMINI.md:9173: กรอบกว้าง (span > 4.8%) + แท่งก่อนหน้าแดงไร้ไส้ล่าง (ratio < 0.12) -> รอแท่งดึงไส้ล่างก่อน
+        const spanPctForGuard = floor > 0 ? (channelSpan / floor) * 100 : 0;
+        const isWideSpanNoWickRed = spanPctForGuard > 4.8 && !isGreenCandle && prevLowerWickPct / 100 < 0.12;
+        // GEMINI.md:9172: ER48 (48 แท่งปิดแล้ว) > 0.38 และราคาไหลลงทางเดียว -> ชะลอไม้แรก
+        let er48Now = 0;
+        if (i >= 48) {
+          let pathSum48 = 0;
+          for (let k = i - 47; k <= i - 1; k++) pathSum48 += Math.abs(candles[k]!.close - candles[k - 1]!.close);
+          const netMove48 = Math.abs(candles[i - 1]!.close - candles[i - 48]!.close);
+          er48Now = pathSum48 > 0 ? netMove48 / pathSum48 : 0;
+        }
+        const isOneWayDown48 = candles[i - 1]!.close < candles[i - 48]!.close;
+        const isEr48Blocked = i >= 48 && er48Now > 0.38 && isOneWayDown48;
+        if (isWaterfall || isBad24hDrop || !hasAbsorption || isWideSpanNoWickRed || isEr48Blocked) {
           passesDipHunterGuard = false;
         }
       }

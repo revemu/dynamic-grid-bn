@@ -9088,7 +9088,7 @@ When investigating live production behavior, debugging issues, or analyzing trad
   2. **4H Value Zone & 1H Momentum Gate**:
      - **ในขาลง 4H (`is4hBear`)**: ห้ามตั้งกริดรับของกลางอากาศเด็ดขาด อนุญาตเฉพาะเมื่อราคาลงมาลึกถึงก้นกรอบ 4H (`htf4hPosRatio <= 0.48`) และกราฟ 1H เริ่มหยุดไหล (`is1hStabilized`)
      - **ในขาขึ้น 4H (`is4hBull`)**: อนุญาตให้รับย่อตัวได้ถึง 80% ของกรอบ 4H (บล็อกเฉพาะยอดดอยบนสุด 20%)
-     - **ในไซด์เวย์ 4H (`Neutral`)**: ห้ามซื้อโซนแพงด้านบน (`htf4hPosRatio > 0.68`) หรือตอนที่ 1H กำลังทิ้งดิ่ง
+     - **ทุกสภาวะ 4H (Bull / Bear / Neutral)** (แก้ตามผลทดสอบ จากเดิมจำกัดเฉพาะ `Neutral`): ห้ามซื้อโซนแพงด้านบน (`htf4hPosRatio > 0.68` หรือ `htf4hSpanPct > 5.0`) หรือตอนที่ 1H กำลังทิ้งดิ่ง จนกว่า 1H จะ stabilized. ผลทดสอบ GRID_CUT -284.09 -> -263.74 เมื่อใช้ทุกสภาวะ. ข้อขัดแย้งกับบรรทัด 9090 (ขาขึ้นอนุญาตรับย่อถึง 80%) ยังไม่ตัดสิน
   3. **4H-Adaptive Hold Time & Stop Loss**:
      - **ในสภาวะ 4H Bear**: บีบเวลา `escapeBarThreshold` สั้นลงเหลือ **`10 แท่ง (2.5 ชั่วโมง)`** เพื่อให้รีบระบายของออกที่หน้าทุน + กำไรขั้นต่ำก่อน 4H ทุบซ้ำ และบีบระยะ Cut Loss แคบลงเป็น `-0.16 * span` เพื่อตัดไฟแต่ต้นลม
      - **ในสภาวะ 4H Bull**: ยืดเวลาถือรันเทรนด์เป็น **`22 แท่ง (5.5 ชั่วโมง)`** และถ่าง Cushion เป็น `-0.38 * span`
@@ -9512,4 +9512,89 @@ When investigating live production behavior, debugging issues, or analyzing trad
     - **Grade B Legs Count**: **0 / 21 รอบ (100% Grade S/A Purity)**, คำเตือน Viability: **0 ครั้ง**
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.64`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+---
+
+## 312. v0.3.0.65 — Master Plan v24.0: Realistic Cost Model, Anti-Climax Expansion & Entry Guard Enhancements
+
+- **ที่มาและเหตุผล (Motivation)**:
+  - Backtest เดิมใช้ `costModel: { feePctPerSide: 0, slippagePctPerFill: 0 }` ทำให้ผลลัพธ์สูงเกินจริง ไม่สะท้อนค่าใช้จ่ายจริงของตลาด
+  - Anti-Climax Guard เดิมทำงานเฉพาะตอน 4H Neutral (ตาม GEMINI.md:9091) แต่ผลทดสอบ GRID_CUT -284.09 → -263.74 เมื่อเปิดทุกสภาวะ 4H
+  - Ratchet ขั้น 1 ปรับตามผลทดสอบจาก 44%/0.65%/0.20% → 46%/0.75%/0.26%
+  - 4H Bear Gate (`htf4hPosRatio`) ปรับ threshold 0.52 → 0.48 จากการทดสอบ
+  - ER48 (Efficiency Ratio 48) + Wide Span No-Wick Guard เพิ่มดักกรอบกว้างที่ลงทางเดียว (GEMINI.md:9172-9173)
+
+- **การเปลี่ยนแปลง (Architectural Changes)**:
+
+  1. **Realistic Cost Model (`src/backtest.ts`, `src/backtest-service.ts`)**:
+     - เปลี่ยน `MASTER_PLAN_GRID_CONFIG.costModel` จาก `{ feePctPerSide: 0, slippagePctPerFill: 0 }` → `{ feePctPerSide: 0.075, slippagePctPerFill: 0.01 }` (0.075% Fee + 0.01% Slippage ต่อ Limit Fill)
+     - เพิ่ม `takerFeePctPerSide` และ `takerSlippagePctPerFill` optional ใน `costModel` interface สำหรับ Emergency Exit (Stop Loss / Trailing Stop) ค่าเริ่มต้นคงเดิม (maker fee หรือ 0.075% fee / 0.10% slippage)
+     - ปรับ stock `minChannelWidthPct` จาก 1.4% → 1.2% ตามที่บันทึกใน GEMINI.md
+
+  2. **Anti-Climax / Parabolic Pullback Guard (`src/backtest-service.ts`, entry gate)**:
+     - ขยายการทำงานจากเฉพาะ 4H Neutral เป็นทุกสภาวะ 4H (Bull / Bear / Neutral)
+     - เงื่อนไข: `htf4hPosRatio > 0.68` หรือ `htf4hSpanPct > 5.0` + `is1hBearFlow || is1hFalling`
+     - บล็อกจนกว่า 1H จะ stabilized (`!is1hStabilized`)
+     - ข้อขัดแย้งกับ GEMINI.md:9090 (ขาขึ้นอนุญาตรับย่อถึง 80%) ยังไม่ตัดสิน — ใช้ Anti-Climax ทับเพื่อ conservative
+
+  3. **4H Bear Gate Threshold Adjustment**:
+     - เปลี่ยน `htf4hPosRatio > 0.52` → `0.48` เพื่อลดการเปิดไม้ L1 ตอน 4H แพงขึ้น
+
+  4. **Max-Loss Cap per Lot**:
+     - เพิ่ม `lot.buyPrice * (1 - 0.0145)` สำหรับ close cut loss และ `lot.buyPrice * (1 - 0.0185)` สำหรับ wick cut loss
+     - ใช้ทับ `uptrendCloseCutPrice`/`uptrendWickCutPrice` เสมอ ยกเว้น `pureGridMode`
+     - ข้อขัดแย้ง: GEMINI.md:9168-9169 (v0.3.0.56) ระบุให้ใช้ -0.20/-0.32; GEMINI.md:9196 (v0.3.0.57) ใช้ -0.38/-0.48 ผลทดสอบ -0.38 รวม PnL 15.62 ดีกว่า -0.20 รวม PnL 13.20 จึงคง -0.38/-0.48 แต่ใช้ cap นี้ทับอีกชั้น
+
+  5. **Ratchet Trailing Stop Step 1 Tuning**:
+     - ปรับ Early Breakeven Shield จาก 44%/0.65%/0.20% → 46%/0.75%/0.26%
+
+  6. **ER48 & Wide Span No-Wick Entry Guard**:
+     - `isWideSpanNoWickRed`: กรอบ > 4.8% + แท่งแดงไร้ไส้ล่าง (lowerWickRatio < 0.12) → รอแท่งดึงไส้
+     - `isEr48Blocked`: ER48 > 0.38 + ราคาลงทางเดียว → ชะลอไม้แรก
+
+  7. **DipHunter Entry Guard Fix**:
+     - เพิ่ม `isWideSpanNoWickRed` และ `isEr48Blocked` ในเงื่อนไข `passesDipHunterGuard`
+
+  8. **Pure Grid Mode (Experimental)** (`src/backtest-service.ts`):
+     - เพิ่ม `pureGridMode`, `pureKeepEscape`, `pureKeepRegimeFilter` options
+     - `pureGridMode = true`: ปิด cut loss, trailing/ratchet, anti-climax guard
+     - `pureKeepEscape`: เปิด time-decay escape กลับใน pure mode
+     - `pureKeepRegimeFilter`: เปิด regime filter (`UPTREND_AND_SIDEWAY`) กลับใน pure mode
+     - ค่าเริ่มต้น `false` ทั้งหมด — ใช้เทียบผลเท่านั้น
+
+  9. **Security Fix** (`src/exchange/alpaca/client.ts`, `src/backtest-service.ts`):
+     - ลบ hardcoded Alpaca API key/secret (`PKYAVG2YEWF3SWIPPJT3C42TVG` / `2boZiaaqiLDfDEM9XSULbXq2iW69B9WcAEPu234MeuN2`) เปลี่ยนเป็น `""` ต้องตั้งผ่าน environment variables เท่านั้น
+
+  10. **Test Script** (`scratch/test-filter-improvements.ts`):
+      - เติม test compositeScore >= 50 filter + tokenized stock / BUSDT filtering
+      - โหลด cached 15m candles จากดิสก์ ไม่ต้องใช้ network
+      - ทดสอบ `evaluateGridDna` ทีละสัญลักษณ์
+      - ทดสอบ `isSyntheticOrStock` สำหรับ tokenized stock
+
+- **ผลการทดสอบ (Master Benchmark — 9 Assets, 12,000 Candles 15m, Realistic Cost)**:
+
+  | Asset | DNA Grade | Score | Net Ret (%) | Trades | WinRate | PF | MaxDD |
+  | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+  | BTC/USDT | [B] | 72 | -3.04% | 52 | 71.2% | 0.91 | 4.05% |
+  | ETH/USDT | [S] | 78 | -3.22% | 52 | 75.0% | 0.92 | 4.88% |
+  | SOL/USDT | [B] | 59 | -1.20% | 95 | 78.9% | 1.23 | 5.76% |
+  | AVAX/USDT | [A] | 73 | **+1.06%** | 84 | 77.4% | 1.32 | 4.88% |
+  | LINK/USDT | [S] | 84 | -3.30% | 74 | 75.7% | 1.01 | 6.36% |
+  | ADA/USDT | [B] | 65 | -2.77% | 137 | 74.5% | 1.11 | 8.13% |
+  | SPY (S&P500) | [A] | 72 | -1.27% | 45 | 68.9% | 1.12 | 3.25% |
+  | AAPL (Apple) | [B] | 78 | -1.27% | 125 | 76.8% | 1.19 | 6.94% |
+  | KO (Coca-Cola) | [S] | 96 | -8.21% | 88 | 64.8% | 0.76 | 10.01% |
+
+  - **Overall Average Net Return**: **-2.58%**
+  - **Crypto 6-Asset Average**: **-2.08%**
+  - **US Stocks 3-Asset Average**: **-3.58%**
+  - **Grade S/A Average**: **-2.99%** (5/9 assets pass hard suitability gates)
+  - **Positive Net PnL**: **1/9 assets** (AVAX/USDT +1.06%)
+  - **Profit Factor > 1.0**: **5/9 assets** (SOL, AVAX, LINK, ADA, SPY, AAPL)
+
+  หมายเหตุ: ผลต่างจาก v0.3.0.64 (+0.71% หุ้น, +1.33% FDUSD) เนื่องจาก benchmark set เปลี่ยน (ไม่มี FDUSD, cost model จาก 0% → 0.075%+0.01%)
+
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.65`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
