@@ -38,6 +38,7 @@ export const TOXIC_MEME_PENNY_TOKENS = new Set([
   "1000BONKUSDT",
   "ENAUSDT",
   "HYPEUSDT",
+  "ZECUSDT",
   "WIFUSDT",
   "PNUTUSDT",
   "ACTUSDT",
@@ -334,6 +335,8 @@ export interface MultiPairRotationOptions {
   gridCutLossMode?: "none" | "entry_floor" | "final_zone_floor";
   gridHtfGovernor?: "off" | "1h_ema200" | "4h_ema75";
   gridMaxChannelPos?: number;
+  buyLevelPcts?: number[];
+  sellLevelPcts?: number[];
 }
 
 export interface RotationLegRecord {
@@ -633,21 +636,21 @@ export class BacktestService {
       else bounceScore = 5;
 
       let wickScore = 0;
-      const wickThreshold = assetClass === "STOCK" ? 27.0 : 32.0;
+      const wickThreshold = assetClass === "STOCK" ? 22.0 : 32.0;
       if (avgDipWickPct >= wickThreshold + 3) wickScore = 20;
       else if (avgDipWickPct >= wickThreshold) wickScore = 15;
       else if (avgDipWickPct >= wickThreshold - 4) wickScore = 10;
       else wickScore = 3;
 
       let spanScore = 0;
-      const minSpan = assetClass === "STOCK" ? 2.2 : 2.8;
-      const maxSpan = assetClass === "STOCK" ? 6.0 : 5.8;
+      const minSpan = assetClass === "STOCK" ? 1.2 : 2.8;
+      const maxSpan = assetClass === "STOCK" ? 6.5 : 5.8;
       if (avgSpan48Pct >= minSpan && avgSpan48Pct <= maxSpan) spanScore = 20;
       else if (avgSpan48Pct >= minSpan * 0.8 && avgSpan48Pct <= maxSpan * 1.2) spanScore = 10;
       else spanScore = 0;
 
       let erScore = 0;
-      const maxEr = assetClass === "STOCK" ? 0.20 : 0.148;
+      const maxEr = assetClass === "STOCK" ? 0.22 : 0.148;
       if (avgEr48 <= maxEr && vr16 <= 1.05) erScore = 15;
       else if (avgEr48 <= maxEr * 1.15) erScore = 9;
       else erScore = 2;
@@ -759,12 +762,12 @@ export class BacktestService {
 
     const isStockFit =
       !isCrypto &&
-      baseMetrics.bounce52Rate >= 52.0 &&
-      baseMetrics.bounceToKnifeRatio >= 2.00 &&
-      baseMetrics.avgDipWickPct >= 24.0 &&
-      baseMetrics.avgSpan48Pct >= 2.4 &&
-      baseMetrics.avgSpan48Pct <= 6.2 &&
-      baseMetrics.upDownSymmetry >= 0.98;
+      baseMetrics.bounce52Rate >= 50.0 &&
+      baseMetrics.bounceToKnifeRatio >= 1.45 &&
+      baseMetrics.avgDipWickPct >= 20.0 &&
+      baseMetrics.avgSpan48Pct >= 1.15 &&
+      baseMetrics.avgSpan48Pct <= 6.8 &&
+      baseMetrics.upDownSymmetry >= 0.93;
 
     const isGridFit = (isCryptoFit || isStockFit) && trendRegime !== "BEAR_DOWNTREND";
 
@@ -789,10 +792,10 @@ export class BacktestService {
     }
 
     if (!isGridFit && grade !== "AVOID") {
-      if (baseMetrics.bounce52Rate < 54.0) reasons.push(`Low midline bounce rate (${baseMetrics.bounce52Rate.toFixed(1)}% < 54%)`);
-      if (baseMetrics.avgDipWickPct < (isCrypto ? 30.0 : 24.0)) reasons.push(`Lack of demand absorption wick (${baseMetrics.avgDipWickPct.toFixed(1)}%)`);
-      if (baseMetrics.avgSpan48Pct < (isCrypto ? 2.6 : 2.4)) reasons.push(`Channel span too narrow (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
-      if (baseMetrics.avgSpan48Pct > 6.2) reasons.push(`Channel span too erratic/wide (${baseMetrics.avgSpan48Pct.toFixed(2)}% > 6.2%)`);
+      if (baseMetrics.bounce52Rate < (isCrypto ? 54.0 : 50.0)) reasons.push(`Low midline bounce rate (${baseMetrics.bounce52Rate.toFixed(1)}%)`);
+      if (baseMetrics.avgDipWickPct < (isCrypto ? 30.0 : 20.0)) reasons.push(`Lack of demand absorption wick (${baseMetrics.avgDipWickPct.toFixed(1)}%)`);
+      if (baseMetrics.avgSpan48Pct < (isCrypto ? 2.6 : 1.15)) reasons.push(`Channel span too narrow (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
+      if (baseMetrics.avgSpan48Pct > (isCrypto ? 6.2 : 6.8)) reasons.push(`Channel span too erratic/wide (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
     } else if (isGridFit) {
       reasons.push(`Rolling DNA OK: Bounce=${baseMetrics.bounce52Rate.toFixed(1)}%, DipWick=${baseMetrics.avgDipWickPct.toFixed(1)}%, Span=${baseMetrics.avgSpan48Pct.toFixed(2)}%, Trend=${trendLabel}`);
     }
@@ -5061,7 +5064,7 @@ export class BacktestService {
       if (bIdx >= btcMinBars - 1) {
         const btcClose = btcCandles[bIdx].close;
         const btcIntervalSec = btcCandles.length >= 2 ? (btcCandles[1].time - btcCandles[0].time) : 900;
-        const btcBars24h = Math.max(16, Math.min(bIdx, Math.round(86400 / btcIntervalSec)));
+        const btcBars24h = isAlpaca ? Math.min(bIdx, 26) : Math.max(16, Math.min(bIdx, Math.round(86400 / btcIntervalSec)));
         const btcOpen24h = btcCandles[bIdx - btcBars24h].open;
         if (btcOpen24h > 0) {
           btcChange24hPct = ((btcClose - btcOpen24h) / btcOpen24h) * 100;
@@ -5076,7 +5079,7 @@ export class BacktestService {
           // B. Bitcoin / S&P 500 Macro Crash Gate (True Crash Only, not normal -1% pullbacks):
           const sliceBtc = btcCandles.slice(Math.max(0, bIdx - btcBars24h), bIdx + 1);
           const smaBtc = sliceBtc.reduce((s: number, c: Candle) => s + c.close, 0) / sliceBtc.length;
-          const btcBars4h = Math.max(4, Math.round(14400 / btcIntervalSec));
+          const btcBars4h = isAlpaca ? Math.min(bIdx, 14) : Math.max(4, Math.round(14400 / btcIntervalSec));
           const btcOpen4h = btcCandles[Math.max(0, bIdx - btcBars4h)].open;
           const ret4hPct = ((btcClose - btcOpen4h) / btcOpen4h) * 100;
 
@@ -5140,7 +5143,7 @@ export class BacktestService {
       if (targetTime - candles[idx].time > maxStaleSec) continue;
 
       const candleIntervalSec = candles.length >= 2 ? (candles[1].time - candles[0].time) : 900;
-      const bars24h = Math.max(16, Math.min(idx, Math.round(86400 / candleIntervalSec)));
+      const bars24h = isAlpaca ? Math.min(idx, 26) : Math.max(16, Math.min(idx, Math.round(86400 / candleIntervalSec)));
       const slice24h = candles.slice(idx - bars24h, idx + 1);
       let high24h = -Infinity;
       let low24h = Infinity;
@@ -5160,7 +5163,7 @@ export class BacktestService {
       const change24hPct = open24h > 0 ? ((lastPrice - open24h) / open24h) * 100 : 0;
       const posRatio = (lastPrice - low24h) / (high24h - low24h);
 
-      const bars4h = Math.max(4, Math.round(14400 / candleIntervalSec));
+      const bars4h = isAlpaca ? Math.min(slice24h.length - 1, 14) : Math.max(4, Math.round(14400 / candleIntervalSec));
       const open4h = slice24h[Math.max(0, slice24h.length - bars4h)]?.open ?? open24h;
       const return4hPct = open4h > 0 ? ((lastPrice - open4h) / open4h) * 100 : 0;
 
@@ -5312,11 +5315,32 @@ export class BacktestService {
 
     const barSec = timeframe === "15m" ? 900 : (timeframe === "1h" ? 3600 : 300);
     const simEndTime = maxCandleTime > 0 ? maxCandleTime : Math.floor(Date.now() / 1000);
-    const warmupSec = (quote === "USD" ? 120 : 800) * barSec;
-    const requestedStart = simEndTime - simLimit * barSec;
-    const simStartTime = Number.isFinite(minCandleTime)
-      ? Math.max(minCandleTime + warmupSec, requestedStart)
-      : requestedStart;
+    const warmupBarsNeeded = quote === "USD" ? 150 : 800;
+
+    // For US Stocks / Alpaca, timeline has gaps (overnight & weekends).
+    // Calculate simStartTime using actual candle bars from benchmark (SPY/QQQ/BTC) so we get exact simLimit trading bars.
+    let simStartTime = 0;
+    const refBenchmarkCandles = universeCandles.get("SPY") || universeCandles.get("BTCUSDT") || universeCandles.get("BTCFDUSD") || Array.from(universeCandles.values())[0];
+    if (refBenchmarkCandles && refBenchmarkCandles.length >= 100) {
+      const targetStartIdx = Math.max(warmupBarsNeeded, refBenchmarkCandles.length - simLimit);
+      simStartTime = refBenchmarkCandles[targetStartIdx]?.time ?? (simEndTime - simLimit * barSec);
+    } else {
+      const warmupSec = warmupBarsNeeded * barSec;
+      const requestedStart = simEndTime - simLimit * barSec;
+      simStartTime = Number.isFinite(minCandleTime)
+        ? Math.max(minCandleTime + warmupSec, requestedStart)
+        : requestedStart;
+    }
+
+    const getNextTradingBarTime = (t: number): number => {
+      if (quote !== "USD") return t + 3600;
+      let nextT = Infinity;
+      for (const cList of universeCandles.values()) {
+        const nextC = cList.find((c) => c.time > t);
+        if (nextC && nextC.time < nextT) nextT = nextC.time;
+      }
+      return Number.isFinite(nextT) ? nextT : t + 3600;
+    };
 
     console.log(`[RotationBacktest] 🚀 Starting simulation: quote=${quote}, timeframe=${timeframe}, simLimit=${simLimit} bars (${((simLimit * barSec) / 86400).toFixed(1)} days), universeLoaded=${universeCandles.size} pairs`);
     console.log(`[RotationBacktest] 📅 Timeline bounds: start=${new Date(simStartTime * 1000).toISOString()} (${simStartTime}) ➔ end=${new Date(simEndTime * 1000).toISOString()} (${simEndTime})`);
@@ -5433,7 +5457,7 @@ export class BacktestService {
           startBarIdx = symCandles ? symCandles.findIndex((c) => c.time >= currentTime) : -1;
           if (!symCandles || startBarIdx < 0 || startBarIdx >= symCandles.length - 10) {
             console.warn(`[RotationBacktest] 🛑 Alternative candidate ${activeSymbol} also lacks candles. Holding 100% cash.`);
-            currentTime += 3600;
+            currentTime = getNextTradingBarTime(currentTime);
             equityCurve.push({
               time: currentTime,
               equity: currentCash,
@@ -5444,7 +5468,7 @@ export class BacktestService {
           }
         } else {
           console.warn(`[RotationBacktest] 🛡️ No viable pairs found at ${new Date(currentTime * 1000).toISOString()} (Macro Gate active or bear regime). Holding 100% cash.`);
-          currentTime += 3600;
+          currentTime = getNextTradingBarTime(currentTime);
           equityCurve.push({
             time: currentTime,
             equity: currentCash,
@@ -5477,14 +5501,14 @@ export class BacktestService {
         capitalZones: opts.capitalZones ?? 1,
         channelMode: opts.channelMode ?? "DONCHIAN_ATR",
         donchianPeriod: opts.donchianPeriod ?? 48,
-        minChannelWidthPct: opts.minChannelWidthPct ?? (quote === "USDT" ? 2.4 : 2.0),
+        minChannelWidthPct: opts.minChannelWidthPct ?? (quote === "USDT" ? 2.4 : (quote === "USD" ? 1.2 : 2.0)),
         maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
         zoneMinDropPct: opts.zoneMinDropPct ?? 2.5,
         zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
         floorBufferPct: 0.6,
         lockChannelInPosition: opts.lockChannelInPosition ?? true,
         regimeFilterMode: "UPTREND_AND_SIDEWAY",
-        buyLevelPcts: [20, 12],
+        buyLevelPcts: opts.buyLevelPcts ?? (quote === "USD" ? [22, 12] : [20, 12]),
         buyWeights: [55, 45],
         sellLevelPcts: [52, 72],
         enableBaseConfirmationFilter: opts.enableBaseConfirmation ?? false,
@@ -5746,6 +5770,7 @@ export class BacktestService {
         });
         const viable = candidates.find((c) => {
           if (c.compositeScore < 50) return false;
+          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
           const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.38;
           if (c.posRatio > maxPos) return false;
@@ -5755,6 +5780,8 @@ export class BacktestService {
           return idx >= 0 && idx < cCandles.length - 10;
         }) || candidates.find((c) => {
           if (c.compositeScore < 50) return false;
+          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
+          if (c.posRatio > 0.50) return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
@@ -5766,11 +5793,11 @@ export class BacktestService {
           activeCandidate = viable;
           activeSymbol = viable.symbol;
         } else {
-          // If no candidate is viable right now, hold 100% Cash and advance by 1 hour instead of aborting the simulation!
+          // If no candidate is viable right now, hold 100% Cash and advance by next trading bar instead of aborting the simulation!
           activeSymbol = "";
           activeCandidate = undefined;
           if (currentTime < simEndTime - 3600) {
-            currentTime += 3600;
+            currentTime = getNextTradingBarTime(currentTime);
             const cashDd = peakEquity > 0 ? ((peakEquity - currentCash) / peakEquity) * 100 : 0;
             equityCurve.push({
               time: currentTime,

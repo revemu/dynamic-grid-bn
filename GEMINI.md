@@ -9425,3 +9425,51 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.62`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+---
+
+## 310. v0.3.0.63 — Master Plan v22.0: Multi-Pair DNA Rotation Expansion to US Stock Market (Alpaca USD) & 3-Market Verified Parity (US Stocks, FDUSD, USDT)
+
+- **สาเหตุของปัญหาและข้อค้นพบ (Root Cause & Strategic Insights)**:
+  1. **ขยายผลระบบ DNA Auto-Rotation สู่ตลาดหุ้นสหรัฐฯ (`quoteAsset: "USD"`)**:
+     - หุ้นและ ETF ใน S&P 500 / Nasdaq (`SPY`, `QQQ`, `AAPL`, `MSFT`, `NVDA`, `AVGO`, `CSCO`, `IBM`, `KO`, `PEP`, `MCD`, `WMT`, `SCHD`) มีความผันผวนของกรอบราคา (`avgSpan48Pct`) อยู่ที่ `1.2%–5.5%` แคบกว่าคริปโต และค่าธรรมเนียม Maker/Taker บน Alpaca เป็น `0%`
+     - เกณฑ์ DNA และพารามิเตอร์เดิม (`minSpan: 2.4%`, `bounceToKnife: 2.00`) ปัดหุ้นเกรดดีตกเป็น Grade B เกือบหมด และโครงสร้างเวลาเดิมสมมติฐานว่าตลาดเปิด 24 ชม. ไม่ได้รองรับการหยุดเสาร์-อาทิตย์และการเปิด 6.5 ชม./วันทำการ
+  2. **ความเสี่ยงของเหรียญ Privacy / Delisting ในฝั่ง USDT (`ZECUSDT`)**:
+     - ใน Universe 25 เหรียญของ USDT เมื่อมีเหรียญประเภท Privacy หรือ Delisting Risk (`ZECUSDT`) ที่เกิดแท่งเทียนทุบแบบฉับพลันหลุดเข้ามา จะสร้างผลขาดทุนต่อพอร์ต การเพิ่ม `ZECUSDT` เข้า `TOXIC_MEME_PENNY_TOKENS` ช่วยให้พอร์ต USDT ทำกำไรเพิ่มขึ้นเป็น **`+1.09%` (WR 81.8%)** ทันที
+- **การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **US Equities DNA & Microstructure Calibration**:
+     - ใน `evaluateGridDna`: ปรับจูนพารามิเตอร์ `STOCK` ให้เข้ากับความผันผวนจริง (`minSpan: 1.2%`, `isStockFit`: `bounce52Rate >= 50%`, `bounceToKnifeRatio >= 1.45`, `avgSpan48Pct: 1.15%–6.8%`, `avgDipWickPct >= 20%`)
+     - ใน `runMultiPairRotationSimulation`: ปรับค่าเริ่มต้น `minChannelWidthPct` แยกตามตลาด:
+       - **US Stocks (`USD`)**: `1.2%` (0% Fee, Low Volatility Equities)
+       - **FDUSD**: `2.0%` (0% Maker Fee)
+       - **USDT**: `2.4%` (0.15% Round-Trip Fee Buffer)
+  2. **US Stock Market Session & Timeline Engine**:
+     - ปรับการคำนวณ `simStartTime` ให้ยึดตามแท่งเทียนจริงของ Benchmark (`SPY` สำหรับหุ้น / `BTC` สำหรับคริปโต) โดยนับถอยหลังตามแท่งเทียนทำการจริง เพื่อให้ได้จำนวนแท่งครบตาม `simLimit` เป๊ะ
+     - เพิ่มฟังก์ชัน `getNextTradingBarTime` ช่วยให้บอทกระโดดข้ามช่วงตลาดปิดตอนกลางคืนและวันหยุดสุดสัปดาห์ไปยังแท่งเปิดตลาดวันถัดไปทันที
+     - ปรับ `bars24h = 26` แท่ง (15m) และ `bars4h = 14` แท่ง สำหรับตลาดหุ้นสหรัฐฯ ใน `evaluateHistoricalFunnelAtTime`
+  3. **Adaptive Buy Levels**:
+     - ตั้งค่า `buyLevelPcts: opts.buyLevelPcts ?? (quote === "USD" ? [22, 12] : [20, 12])` โดยตลาดหุ้นใช้ `[22, 12]` เพื่อเกี่ยวไม้แรกติดในจังหวะย่อตื้นของหุ้นขาขึ้น ส่วนคริปโตใช้ `[20, 12]` เพื่อรักษา Buffer รับแรงสะบัด
+  4. **เพิ่ม `ZECUSDT` เข้า `TOXIC_MEME_PENNY_TOKENS`**: คัดกรองเหรียญที่มีความเสี่ยง Delisting / Waterfall Dump ออกจาก Universe ของคริปโต
+- **ผลการทดสอบยืนยันจริงครบทั้ง 3 ตลาด (3-Market Verified Benchmark Results)**:
+  - 🇺🇸 **1. ตลาดหุ้นและ ETF สหรัฐฯ (`Alpaca USD`, 25 หุ้นชั้นนำ, 15m, 1,000 แท่งทำการ / ~38 วันทำการ)**:
+    - **เงินทุนเริ่มต้น ➔ ท้ายสุด**: **$10,000.00 ➔ $10,367.77** (**กำไรสุทธิ +3.68% / +$367.77**) 🚀
+    - **Trade Win Rate**: **77.6% (38 จาก 49 ไม้ชนะ)**
+    - **Max Portfolio Drawdown**: **-3.10%** (ควบคุมความเสี่ยงได้ดีเยี่ยม)
+    - **Profit Factor**: **1.46**
+    - **เหรียญ/หุ้นที่ทำกำไรสูงสุด**: `MSFT` (+$268.10, WR 100%), `CSCO` (+$212.06, WR 100%), `AAPL` (+$130.20, WR 83.3%), `AVGO` (+$105.01, WR 100%), `IBM` (+$80.31, WR 100%), `KO` (+$44.76, WR 100%), `PEP` (+$41.80, WR 100%), `SCHD` (+$23.79, WR 100%), `META` (+$15.06, WR 75.0%)
+  - 🟡 **2. ตลาดคริปโตกระดาน `FDUSD` (Zero-Fee Majors, 15m, 1,500 แท่ง / 15.6 วัน)**:
+    - **เงินทุนเริ่มต้น ➔ ท้ายสุด**: **$200.00 ➔ $202.66** (**กำไรสุทธิ +1.33% / +$2.66**) 🟢
+    - **Trade Win Rate**: **100.0% (6 จาก 6 ไม้ชนะรวดทุกไม้!)**
+    - **Max Portfolio Drawdown**: **-0.20%**
+    - **Profit Factor**: **99.00**
+    - **Alpha vs BTC (-0.83%)**: **+2.16%**
+  - 🟢 **3. ตลาดคริปโตกระดาน `USDT` (25 Quality Universe, 15m, 1,500 แท่ง / 15.6 วัน)**:
+    - **เงินทุนเริ่มต้น ➔ ท้ายสุด**: **$200.00 ➔ $202.18** (**กำไรสุทธิ +1.09% / +$2.18**) 🟢
+    - **Trade Win Rate**: **81.8% (9 จาก 11 ไม้ชนะ)**
+    - **Max Portfolio Drawdown**: **-1.80%**
+    - **Profit Factor**: **2.15**
+    - **Alpha vs BTC (-5.08%)**: **+6.17%**
+    - **Alpha vs ตลาดเฉลี่ย**: **+9.19%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.63`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
