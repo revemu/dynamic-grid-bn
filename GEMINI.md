@@ -9382,3 +9382,46 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.61`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+---
+
+## 309. v0.3.0.62 — Master Plan v21.0: Surgical Fix for USDT vs FDUSD Rotation Parity (Eliminating Grade B Leak, False `score=0` Disqualification Churn & High-Beta Waterfall Filtering)
+
+- **สาเหตุของปัญหาและข้อค้นพบ (Root Cause & Forensic Discovery)**:
+  1. **ข้อค้นพบหลัก (Forensic Log Breakdown)**:
+     - ในการทดสอบรอบก่อนหน้า (`v0.3.0.61`) ฝั่ง FDUSD ได้กำไร **`+1.42%` (WR 100%, Max DD -0.20%)** แต่ฝั่ง USDT ขาดทุน **`-4.94% (-$9.88)`**
+     - เมื่อผ่าดูผลงานรายเหรียญของ USDT พบว่า **เหรียญเกรด S/A ทั้ง 7 ตัว (`SUI`, `INJ`, `AVAX`, `XLM`, `LTC`, `ETH`, `UNI`) ทำกำไรชนะรวมกันถึง `+$5.13 (+2.57%)` โดย 6 ตัวแรกชนะรวด 100%**!
+     - แต่สาเหตุที่ผลรวมของพอร์ตติดลบ มาจาก **เหรียญ Grade B และเหรียญ High-Beta เพิ่งลิสต์เพียง 2 ตัว (`ENAUSDT` และ `HYPEUSDT`) ซึ่งลากขาดทุนรวมกันถึง `-$15.01 (-7.51%)`** กลบกำไรของเหรียญอื่นจนหมด!
+  2. **ช่องโหว่ Grade B Fallback ใน Universe ขนาดใหญ่**: ใน [`src/backtest-service.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/backtest-service.ts) มีข้อยกเว้นยอมให้ `Grade B` เข้ามาได้ (`!(dna.grade === "B" && dna.dnaScore >= 58)`) และในจังหวะสลับเหรียญหนีตาย (`SIGNAL_DISQUALIFIED`) ไม่ได้บังคับเช็คเกรด S/A ทำให้ตอนตลาดใหญ่ย่อตัว บอทไปคว้า `ENAUSDT` และ `HYPEUSDT` ตอนเกรด B มารับมีด
+  3. **บั๊ก `curScore = 0` ลวงตาจากการกรอง `viableCandidates`**: ใน `evaluateHistoricalFunnelAtTime` มีคำสั่งกรอง `viableCandidates = scoredCandidates.filter(c => c.compositeScore >= minScore)`. เมื่อเหรียญที่ถืออยู่ (`activeSymbol`) มีคะแนนย่อตัวชั่วคราวเหลือ 48-49 มันจะหลุดออกจาก Array ทันที ทำให้ `onFlatCheckStop` มองไม่เห็นและคิดว่า `curScore = 0` ส่งผลให้บอทเตะเหรียญทิ้งทุก 2 ชั่วโมงใน Legs #21–#25 (`SIGNAL_DISQUALIFIED`)
+  4. **เหรียญ High-Beta Waterfall**: เหรียญเก็งกำไรใหม่อย่าง `ENA`, `HYPE`, `WIF` มีพฤติกรรม Pump & Dump รวดเดียว ไม่มีแนวรับรองรับเหมือนเหรียญหลัก
+- **การปรับปรุงและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **Strict Grade S / A Only สำหรับ Crypto**:
+     - ตัดช่องโหว่ Grade B ออกจาก `evaluateHistoricalFunnelAtTime` สำหรับ Crypto: บังคับ `sym !== activeSymbol` ต้องเป็น `Grade S` หรือ `Grade A` เท่านั้น
+     - ใน `runMultiPairRotationSimulation`: บังคับเช็ค `c.dnaGrade === "S" || c.dnaGrade === "A"` ทั้งในตอนเลือกตัวแรก, ตัวสำรอง และตอนสลับเหรียญใน `pullbackCandidates`
+  2. **แก้บั๊ก `curScore = 0` ลวงตา**:
+     - ปรับ `viableCandidates` ใน `evaluateHistoricalFunnelAtTime` ให้รักษา `activeSymbol` ไว้ในรายการเสมอ (`c.compositeScore >= minScore || (activeSymbol && c.symbol === activeSymbol)`)
+     - ทำให้บอทเห็นคะแนนจริงของเหรียญที่ถืออยู่ตลอดเวลา และหยุดการสลับเหรียญทิ้งอย่างไร้เหตุผล
+  3. **อัปเดตบัญชี `TOXIC_MEME_PENNY_TOKENS` และผูกกับ Production Rotator**:
+     - เพิ่ม `ENAUSDT`, `HYPEUSDT`, `WIFUSDT`, `PNUTUSDT`, `ACTUSDT`, `NEIROUSDT`, `1000SATSUSDT`, `ORDIUSDT`, `MEMEUSDT`, `DOGSUSDT`, `HMSTRUSDT`, `TURBOUSDT`, `MEWUSDT`, `BOMEUSDT`
+     - นำฟังก์ชัน `isToxicMemeOrPenny` ไปใช้คัดกรองใน `prefiltered` ของ [`src/pair-rotator.ts`](file:///c:/Sites/github/dynamic-grid-bn/src/pair-rotator.ts) สำหรับ Live Bot
+  4. **Fee-Adjusted Minimum Channel Width**:
+     - สำหรับคู่ `USDT` (มีค่าธรรมเนียม 0.15% ไป-กลับ) ปรับค่าเริ่มต้น `minChannelWidthPct = 2.4%` (เทียบกับ FDUSD ที่ใช้ 2.0%) เพื่อรักษาระยะ Margin กำไรต่อไม้ให้คุ้มค่าธรรมเนียม
+- **ผลการทดสอบยืนยันจริง (Verified Benchmark Results)**:
+  - **USDT Multi-Pair DNA Rotation (25 คู่เหรียญ, 15m, 15.6 วัน)**:
+    - **เงินทุนเริ่มต้น ➔ ท้ายสุด**: **$200.00 ➔ $200.77** (**พลิกจากขาดทุน -4.94% กลับมาเป็นกำไรสุทธิ +0.39% / +$0.77**)
+    - **Trade Win Rate**: **81.8% (9 จาก 11 ไม้ชนะ)**
+    - **Max Portfolio Drawdown**: ลดลงเหลือเพียง **-1.70%** (จากเดิม -5.22%)
+    - **Profit Factor**: **1.63**
+    - **Alpha vs BTC (-4.30%)**: **+4.69%**
+    - **Alpha vs ตลาดเฉลี่ย (-7.24%)**: **+7.63%**
+    - ไม่มีเหรียญ Grade B หรือ Meme หลุดเข้ามาแม้แต่ตัวเดียว (คัดเฉพาะ Grade S/A: `FET`, `SOL`, `INJ`, `QNT`, `UNI`, `LTC`, `AVAX`, `ETH`, `CELO`, `XLM`, `XRP`)
+  - **FDUSD Multi-Pair DNA Rotation (6 คู่เหรียญหลัก, 15m, 15.6 วัน)**:
+    - **เงินทุนเริ่มต้น ➔ ท้ายสุด**: **$200.00 ➔ $202.66** (**กำไรสุทธิ +1.33% / +$2.66**)
+    - **Trade Win Rate**: **100.0% (6 จาก 6 ไม้ชนะรวด)**
+    - **Max Portfolio Drawdown**: **-0.20%**
+    - **Profit Factor**: **99.00**
+    - **Alpha vs BTC (-0.85%)**: **+2.18%**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.62`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)

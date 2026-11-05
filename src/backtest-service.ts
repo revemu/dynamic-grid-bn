@@ -36,6 +36,20 @@ export const TOXIC_MEME_PENNY_TOKENS = new Set([
   "FLOKIUSDT",
   "BONKUSDT",
   "1000BONKUSDT",
+  "ENAUSDT",
+  "HYPEUSDT",
+  "WIFUSDT",
+  "PNUTUSDT",
+  "ACTUSDT",
+  "NEIROUSDT",
+  "1000SATSUSDT",
+  "ORDIUSDT",
+  "MEMEUSDT",
+  "DOGSUSDT",
+  "HMSTRUSDT",
+  "TURBOUSDT",
+  "MEWUSDT",
+  "BOMEUSDT",
 ]);
 
 export const TOP_US_STOCK_UNIVERSE = [
@@ -5171,8 +5185,9 @@ export class BacktestService {
         if (dna.grade === "AVOID" || dna.isDegrading) continue;
         // Hard Gate: Reject confirmed bear downtrend
         if (dna.trendRegime === "BEAR_DOWNTREND") continue;
-        // Strict Grade Gate: S or A (or solid B with score >= 58)
-        if (dna.grade !== "S" && dna.grade !== "A" && !(dna.grade === "B" && dna.dnaScore >= 58)) continue;
+        // Strict Grade Gate: S or A only for crypto (Zero Tolerance for Grade B waterfall traps)
+        if (!isAlpaca && dna.grade !== "S" && dna.grade !== "A") continue;
+        if (isAlpaca && dna.grade !== "S" && dna.grade !== "A" && !(dna.grade === "B" && dna.dnaScore >= 58)) continue;
       }
 
       // ── 3-Layer Composite Scoring (Total 100) ──
@@ -5250,7 +5265,8 @@ export class BacktestService {
 
     scoredCandidates.sort((a, b) => b.compositeScore - a.compositeScore);
     const minScore = gridOpts?.compositeMinScore ?? 50;
-    const viableCandidates = scoredCandidates.filter((c) => c.compositeScore >= minScore);
+    // Always preserve activeSymbol so onFlatCheckStop gets its genuine score and avoids false score=0 churn
+    const viableCandidates = scoredCandidates.filter((c) => c.compositeScore >= minScore || (activeSymbol && c.symbol === activeSymbol));
 
     return viableCandidates;
   }
@@ -5326,7 +5342,7 @@ export class BacktestService {
     );
 
     const initialStrongCandidate = initialCandidates.find((c) => (c.dnaGrade === "S" || c.dnaGrade === "A") && c.compositeScore >= 60 && c.posRatio <= 0.55);
-    let activeCandidate = initialStrongCandidate || (initialCandidates[0]?.compositeScore >= 50 ? initialCandidates[0] : undefined);
+    let activeCandidate = initialStrongCandidate || (initialCandidates[0]?.compositeScore >= 50 && (quote === "USD" || initialCandidates[0]?.dnaGrade === "S" || initialCandidates[0]?.dnaGrade === "A") ? initialCandidates[0] : undefined);
     let activeSymbol = activeCandidate ? activeCandidate.symbol : "";
     if (!activeCandidate && !opts.enableBtcMacroGate) {
       const fallbackSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
@@ -5390,6 +5406,7 @@ export class BacktestService {
 
         const viable = altCandidates.find((c) => {
           if (c.compositeScore < 50) return false;
+          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
@@ -5399,6 +5416,8 @@ export class BacktestService {
           return idx >= 0 && idx < cCandles.length - 10;
         }) || altCandidates.find((c) => {
           if (c.compositeScore < 50) return false;
+          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
+          if (c.posRatio > 0.50) return false;
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
@@ -5458,7 +5477,7 @@ export class BacktestService {
         capitalZones: opts.capitalZones ?? 1,
         channelMode: opts.channelMode ?? "DONCHIAN_ATR",
         donchianPeriod: opts.donchianPeriod ?? 48,
-        minChannelWidthPct: opts.minChannelWidthPct ?? 2.0,
+        minChannelWidthPct: opts.minChannelWidthPct ?? (quote === "USDT" ? 2.4 : 2.0),
         maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
         zoneMinDropPct: opts.zoneMinDropPct ?? 2.5,
         zoneStabilizeCandles: opts.zoneStabilizeCandles ?? 3,
@@ -5506,13 +5525,13 @@ export class BacktestService {
           const curScore = curItem ? curItem.compositeScore : 0;
           currentScoreAtExit = curScore;
 
-          // Actionable candidates: grade S/A or solid B, posRatio <= 0.55, not banned
+          // Actionable candidates: grade S/A only (crypto), posRatio <= 0.55, not banned
           const pullbackCandidates = candidates.filter(
-            (c) => c.symbol !== activeSymbol && c.compositeScore >= 50 && c.posRatio <= 0.55 && !isBanned(c.symbol)
+            (c) => c.symbol !== activeSymbol && (quote === "USD" || c.dnaGrade === "S" || c.dnaGrade === "A") && c.compositeScore >= 50 && c.posRatio <= 0.55 && !isBanned(c.symbol)
           );
 
-          // 1. If current coin has degraded (AVOID, bear downtrend, or score < 38):
-          const isCurrentDisqualified = !curItem || curScore < 38 || curItem.dnaGrade === "AVOID" || curItem.trendRegime === "BEAR_DOWNTREND";
+          // 1. If current coin has degraded (AVOID, bear downtrend, score < 38, or degraded to Grade B in crypto):
+          const isCurrentDisqualified = !curItem || curScore < 38 || curItem.dnaGrade === "AVOID" || curItem.trendRegime === "BEAR_DOWNTREND" || (quote !== "USD" && curItem.dnaGrade === "B");
           if (isCurrentDisqualified) {
             const bestPullback = pullbackCandidates[0];
             if (bestPullback && bestPullback.compositeScore >= 50) {

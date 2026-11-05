@@ -8,7 +8,7 @@
 
 import fs from "fs";
 import path from "path";
-import { BacktestService } from "./backtest-service.js";
+import { BacktestService, isToxicMemeOrPenny } from "./backtest-service.js";
 import { getActiveBinanceTradingSymbols } from "./exchange/binance/client.js";
 import type { Config } from "./config.js";
 
@@ -260,6 +260,7 @@ export class AutonomousPairRotator {
       if (blacklistSet.has(sym)) return false;
       if (whitelistSet.size > 0 && !whitelistSet.has(sym)) return false;
       if (isSyntheticOrStock(sym)) return false;
+      if (isToxicMemeOrPenny(sym, Number(t.lastPrice))) return false;
 
       const vol = Number(t.quoteVolume);
       if (vol < minVolume) return false;
