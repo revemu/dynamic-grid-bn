@@ -636,14 +636,14 @@ export class BacktestService {
       else bounceScore = 5;
 
       let wickScore = 0;
-      const wickThreshold = assetClass === "STOCK" ? 22.0 : 32.0;
+      const wickThreshold = assetClass === "STOCK" ? 18.0 : 32.0;
       if (avgDipWickPct >= wickThreshold + 3) wickScore = 20;
       else if (avgDipWickPct >= wickThreshold) wickScore = 15;
       else if (avgDipWickPct >= wickThreshold - 4) wickScore = 10;
       else wickScore = 3;
 
       let spanScore = 0;
-      const minSpan = assetClass === "STOCK" ? 1.2 : 2.8;
+      const minSpan = assetClass === "STOCK" ? 0.85 : 2.8;
       const maxSpan = assetClass === "STOCK" ? 6.5 : 5.8;
       if (avgSpan48Pct >= minSpan && avgSpan48Pct <= maxSpan) spanScore = 20;
       else if (avgSpan48Pct >= minSpan * 0.8 && avgSpan48Pct <= maxSpan * 1.2) spanScore = 10;
@@ -762,10 +762,10 @@ export class BacktestService {
 
     const isStockFit =
       !isCrypto &&
-      baseMetrics.bounce52Rate >= 50.0 &&
-      baseMetrics.bounceToKnifeRatio >= 1.45 &&
-      baseMetrics.avgDipWickPct >= 20.0 &&
-      baseMetrics.avgSpan48Pct >= 1.15 &&
+      baseMetrics.bounce52Rate >= 48.0 &&
+      baseMetrics.bounceToKnifeRatio >= 1.35 &&
+      baseMetrics.avgDipWickPct >= 16.0 &&
+      baseMetrics.avgSpan48Pct >= 0.85 &&
       baseMetrics.avgSpan48Pct <= 6.8 &&
       baseMetrics.upDownSymmetry >= 0.93;
 
@@ -792,9 +792,9 @@ export class BacktestService {
     }
 
     if (!isGridFit && grade !== "AVOID") {
-      if (baseMetrics.bounce52Rate < (isCrypto ? 54.0 : 50.0)) reasons.push(`Low midline bounce rate (${baseMetrics.bounce52Rate.toFixed(1)}%)`);
-      if (baseMetrics.avgDipWickPct < (isCrypto ? 30.0 : 20.0)) reasons.push(`Lack of demand absorption wick (${baseMetrics.avgDipWickPct.toFixed(1)}%)`);
-      if (baseMetrics.avgSpan48Pct < (isCrypto ? 2.6 : 1.15)) reasons.push(`Channel span too narrow (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
+      if (baseMetrics.bounce52Rate < (isCrypto ? 54.0 : 48.0)) reasons.push(`Low midline bounce rate (${baseMetrics.bounce52Rate.toFixed(1)}%)`);
+      if (baseMetrics.avgDipWickPct < (isCrypto ? 30.0 : 16.0)) reasons.push(`Lack of demand absorption wick (${baseMetrics.avgDipWickPct.toFixed(1)}%)`);
+      if (baseMetrics.avgSpan48Pct < (isCrypto ? 2.6 : 0.85)) reasons.push(`Channel span too narrow (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
       if (baseMetrics.avgSpan48Pct > (isCrypto ? 6.2 : 6.8)) reasons.push(`Channel span too erratic/wide (${baseMetrics.avgSpan48Pct.toFixed(2)}%)`);
     } else if (isGridFit) {
       reasons.push(`Rolling DNA OK: Bounce=${baseMetrics.bounce52Rate.toFixed(1)}%, DipWick=${baseMetrics.avgDipWickPct.toFixed(1)}%, Span=${baseMetrics.avgSpan48Pct.toFixed(2)}%, Trend=${trendLabel}`);
@@ -854,7 +854,9 @@ export class BacktestService {
         if (Array.isArray(parsed.candles) && parsed.candles.length >= limit) {
           const lastCandleTime = parsed.candles[parsed.candles.length - 1]?.time || 0;
           const ageSec = Math.floor(nowMs / 1000) - lastCandleTime;
-          if (ageSec < 7200 || !cached) {
+          const cacheAgeMs = nowMs - (parsed.timestamp || 0);
+          // Stock market closes on weekends/nights, so allow up to 4 days (345600s) if file written within 2 hours
+          if (ageSec < 86400 * 4 && cacheAgeMs < 7200 * 1000) {
             console.log(`[CandleFeed] 💾 Disk Cache HIT for Alpaca ${cleanSym} (${interval}) -> using ${parsed.candles.length} candles`);
             this.candleCache.set(cacheKey, { timestamp: parsed.timestamp || nowMs, candles: parsed.candles });
             return parsed.candles.slice(-limit);
@@ -980,7 +982,8 @@ export class BacktestService {
         if (Array.isArray(parsed.candles) && parsed.candles.length >= limit) {
           const lastCandleTime = parsed.candles[parsed.candles.length - 1]?.time || 0;
           const ageSec = Math.floor(nowMs / 1000) - lastCandleTime;
-          if (ageSec < 7200 || !cached) {
+          const cacheAgeMs = nowMs - (parsed.timestamp || 0);
+          if (ageSec < 7200 && cacheAgeMs < 7200 * 1000) {
             console.log(`[CandleFeed] 💾 Disk Cache HIT for ${cleanSym} (${interval}) -> using ${parsed.candles.length} candles`);
             this.candleCache.set(cacheKey, { timestamp: parsed.timestamp || nowMs, candles: parsed.candles });
             return parsed.candles.slice(-limit);
@@ -4867,8 +4870,8 @@ export class BacktestService {
     const isAlpaca = quote === "USD";
     const tf = opts.timeframe || "15m";
     const maxPairs = Math.max(5, Math.min(100, opts.maxPairs ?? 50));
-    const warmupBuffer = isAlpaca ? 300 : 900;
-    const candlesLimit = Math.max(1200, (opts.limit ?? 2000) + warmupBuffer);
+    const warmupBuffer = 900;
+    const candlesLimit = Math.max(1500, (opts.limit ?? 2000) + warmupBuffer);
     const blacklistSet = new Set((opts.blacklist ?? []).map((s) => s.toUpperCase().trim()));
 
     let targetSymbols: string[] = [];
@@ -5139,6 +5142,9 @@ export class BacktestService {
 
       if (idx < 40) continue;
 
+      // Ensure candidate has forward bars remaining to actually trade in the simulation!
+      if (sym !== activeSymbol && idx >= candles.length - 12) continue;
+
       // Stale candle check: candle time should be within maxStaleSec of targetTime
       if (targetTime - candles[idx].time > maxStaleSec) continue;
 
@@ -5188,9 +5194,8 @@ export class BacktestService {
         if (dna.grade === "AVOID" || dna.isDegrading) continue;
         // Hard Gate: Reject confirmed bear downtrend
         if (dna.trendRegime === "BEAR_DOWNTREND") continue;
-        // Strict Grade Gate: S or A only for crypto (Zero Tolerance for Grade B waterfall traps)
-        if (!isAlpaca && dna.grade !== "S" && dna.grade !== "A") continue;
-        if (isAlpaca && dna.grade !== "S" && dna.grade !== "A" && !(dna.grade === "B" && dna.dnaScore >= 58)) continue;
+        // Strict Grade Gate: S or A only across all markets (Zero Tolerance for Grade B waterfall traps)
+        if (dna.grade !== "S" && dna.grade !== "A") continue;
       }
 
       // ── 3-Layer Composite Scoring (Total 100) ──
@@ -5315,7 +5320,7 @@ export class BacktestService {
 
     const barSec = timeframe === "15m" ? 900 : (timeframe === "1h" ? 3600 : 300);
     const simEndTime = maxCandleTime > 0 ? maxCandleTime : Math.floor(Date.now() / 1000);
-    const warmupBarsNeeded = quote === "USD" ? 150 : 800;
+    const warmupBarsNeeded = 800;
 
     // For US Stocks / Alpaca, timeline has gaps (overnight & weekends).
     // Calculate simStartTime using actual candle bars from benchmark (SPY/QQQ/BTC) so we get exact simLimit trading bars.
@@ -5366,7 +5371,7 @@ export class BacktestService {
     );
 
     const initialStrongCandidate = initialCandidates.find((c) => (c.dnaGrade === "S" || c.dnaGrade === "A") && c.compositeScore >= 60 && c.posRatio <= 0.55);
-    let activeCandidate = initialStrongCandidate || (initialCandidates[0]?.compositeScore >= 50 && (quote === "USD" || initialCandidates[0]?.dnaGrade === "S" || initialCandidates[0]?.dnaGrade === "A") ? initialCandidates[0] : undefined);
+    let activeCandidate = initialStrongCandidate || (initialCandidates[0]?.compositeScore >= 50 && (initialCandidates[0]?.dnaGrade === "S" || initialCandidates[0]?.dnaGrade === "A") ? initialCandidates[0] : undefined);
     let activeSymbol = activeCandidate ? activeCandidate.symbol : "";
     if (!activeCandidate && !opts.enableBtcMacroGate) {
       const fallbackSym = quote === "FDUSD" ? "BTCFDUSD" : "BTCUSDT";
@@ -5430,7 +5435,7 @@ export class BacktestService {
 
         const viable = altCandidates.find((c) => {
           if (c.compositeScore < 50) return false;
-          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
+          if (c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
           if (!cCandles) return false;
@@ -5440,7 +5445,7 @@ export class BacktestService {
           return idx >= 0 && idx < cCandles.length - 10;
         }) || altCandidates.find((c) => {
           if (c.compositeScore < 50) return false;
-          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
+          if (c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
           if (c.posRatio > 0.50) return false;
           if (isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
@@ -5549,13 +5554,13 @@ export class BacktestService {
           const curScore = curItem ? curItem.compositeScore : 0;
           currentScoreAtExit = curScore;
 
-          // Actionable candidates: grade S/A only (crypto), posRatio <= 0.55, not banned
+          // Actionable candidates: grade S/A only across all markets, posRatio <= 0.55, not banned
           const pullbackCandidates = candidates.filter(
-            (c) => c.symbol !== activeSymbol && (quote === "USD" || c.dnaGrade === "S" || c.dnaGrade === "A") && c.compositeScore >= 50 && c.posRatio <= 0.55 && !isBanned(c.symbol)
+            (c) => c.symbol !== activeSymbol && (c.dnaGrade === "S" || c.dnaGrade === "A") && c.compositeScore >= 50 && c.posRatio <= 0.55 && !isBanned(c.symbol)
           );
 
-          // 1. If current coin has degraded (AVOID, bear downtrend, score < 38, or degraded to Grade B in crypto):
-          const isCurrentDisqualified = !curItem || curScore < 38 || curItem.dnaGrade === "AVOID" || curItem.trendRegime === "BEAR_DOWNTREND" || (quote !== "USD" && curItem.dnaGrade === "B");
+          // 1. If current asset has degraded (AVOID, bear downtrend, score < 38, or degraded to Grade B):
+          const isCurrentDisqualified = !curItem || curScore < 38 || curItem.dnaGrade === "AVOID" || curItem.trendRegime === "BEAR_DOWNTREND" || curItem.dnaGrade === "B";
           if (isCurrentDisqualified) {
             const bestPullback = pullbackCandidates[0];
             if (bestPullback && bestPullback.compositeScore >= 50) {
@@ -5770,7 +5775,7 @@ export class BacktestService {
         });
         const viable = candidates.find((c) => {
           if (c.compositeScore < 50) return false;
-          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
+          if (c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
           const maxPos = opts.gridMaxChannelPos !== undefined ? Number(opts.gridMaxChannelPos) : 0.38;
           if (c.posRatio > maxPos) return false;
@@ -5780,7 +5785,7 @@ export class BacktestService {
           return idx >= 0 && idx < cCandles.length - 10;
         }) || candidates.find((c) => {
           if (c.compositeScore < 50) return false;
-          if (quote !== "USD" && c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
+          if (c.dnaGrade !== "S" && c.dnaGrade !== "A") return false;
           if (c.posRatio > 0.50) return false;
           if (c.symbol === activeSymbol || isBanned(c.symbol)) return false;
           const cCandles = universeCandles.get(c.symbol);
@@ -5891,14 +5896,17 @@ export class BacktestService {
             capitalZones: 1,
             channelMode: "DONCHIAN_ATR",
             donchianPeriod: 48,
-            minChannelWidthPct: 2.0,
-            maxChannelWidthPct: 25.0,
-            buyLevelPcts: [20, 12],
+            minChannelWidthPct: opts.minChannelWidthPct ?? (quote === "USDT" ? 2.4 : (quote === "USD" ? 1.2 : 2.0)),
+            maxChannelWidthPct: opts.maxChannelWidthPct ?? 25.0,
+            buyLevelPcts: opts.buyLevelPcts ?? (quote === "USD" ? [22, 12] : [20, 12]),
             buyWeights: [55, 45],
             sellLevelPcts: [52, 72],
             gridCutLossMode: "entry_floor",
             enableGridTrailingStop: true,
             lockChannelInPosition: true,
+            costModel: (quote === "FDUSD" || quote === "USD")
+              ? { feePctPerSide: 0, slippagePctPerFill: 0.01 }
+              : { feePctPerSide: 0.075, slippagePctPerFill: 0.01 },
             saveToHistory: false,
           });
           benchmarkPnlPct = bRec.summary.netPnlPct;

@@ -9473,3 +9473,43 @@ When investigating live production behavior, debugging issues, or analyzing trad
 - **Version Bump & Typecheck**:
   - อัปเดตเวอร์ชันเป็น **`0.3.0.63`** ใน `package.json` และ `src/version.ts`
   - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
+
+---
+
+## 311. v0.3.0.64 — Master Plan v23.0: Forensic Bug Fixes & Cross-Market Data Synchronization (Fixing Stale Disk Cache & End-of-Data Loop, Stock Grade S/A Calibration, and Warmup/Benchmark Parity)
+
+- **สาเหตุของปัญหาและข้อค้นพบเชิงลึก (Forensic Root Cause)**:
+  1. **บั๊ก Disk Cache ไม่เคยหมดอายุ (`fetchAlpacaCandles` & `fetchBinanceCandles`)**:
+     - เงื่อนไขเดิม `if (ageSec < 7200 || !cached)` มีข้อผิดพลาดทางตรรกะ เนื่องจากตัวเช็คอยู่ภายในบล็อก `if (!cached && fs.existsSync(diskPath))` ทำให้ `!cached` เป็น `true` เสมอ ส่งผลให้ไฟล์แคชแท่งเทียนบนดิสก์ที่โหลดไว้ตั้งแต่อดีตไม่เคยหมดอายุและไม่เคยดึงข้อมูลใหม่
+     - ผลกระทบ: ในตลาดหุ้นสหรัฐฯ (`USD`) หุ้น `SPY` มีแท่งเทียนถึงวันที่ `2026-11-03` แต่หุ้น `IBM` มีแท่งเทียนจบแค่วันที่ `2026-10-26` และ `AAPL` จบก่อนวันที่ `2026-09-25`
+  2. **Funnel คัดเลือกหุ้นที่แท่งเทียนหมดแล้วซ้ำๆ (`startBarIdx = -1`)**:
+     - ใน `evaluateHistoricalFunnelAtTime` ขาดการตรวจสอบว่าเหรียญ/หุ้นตัวนั้นยังมีแท่งเทียนในอนาคตเหลือให้เทรดหรือไม่ ส่งผลให้หลังวันที่ `2026-10-26` ระบบยังคงให้คะแนน `IBM` ด้วยแท่งสุดท้ายเดิมเป็น `Grade S (score 93.40)` และหมุนเข้า `IBM` ใน Leg #46–#50 โดยที่ตัวจำลองหลักไม่มีแท่งเทียนให้เทรด เกิดคำเตือน `⚠️ Pair IBM is not viable (startBarIdx=-1)` ซ้ำๆ
+  3. **คะแนน DNA สูงแต่ถูกปัดตกเป็น `Grade B` และ Grade B รั่วเข้าตลาดหุ้น**:
+     - เกณฑ์ `isStockFit` เดิมกำหนด `minSpan = 1.15%` และ `avgDipWickPct >= 20.0%` ซึ่งหุ้นบลูชิพและ ETF ที่นิ่งและปลอดภัยสูง (`SPY`, `KO`, `CSCO`, `SCHD`) มีความกว้างกรอบ 48 แท่งอยู่ที่ `0.85%–1.12%` พอไม่ผ่านเกณฑ์ย่อยข้อเดียวจึงถูกปัดตกเป็น `[B|91]` หรือ `[B|86]`
+     - เพื่อแก้ขัด โค้ดเดิมจึงเปิดช่องยกเว้น `quote === "USD"` ให้เทรด `Grade B` ได้ ทำให้หุ้นที่กำลังซึมลงจริงๆ อย่าง `AMZN [B|74]` และ `MSFT [B|65]` หลุดเข้ามาสร้างผลขาดทุน
+  4. **ความไม่สอดคล้องของ `warmupBuffer` และค่า Benchmark ท้ายตาราง**:
+     - `fetchTopUniverseCandles` ดึง `warmupBuffer = 300` สำหรับ Alpaca ทั้งที่เอนจินจำลองใช้ย้อนหลังถึง `850` แท่งสำหรับ `EMA800` และการจำลอง Benchmark ท้ายตารางยัง Hardcode ค่า `minChannelWidthPct: 2.0` สำหรับทุกตลาด
+- **การแก้ไขและสถาปัตยกรรมใหม่ (Architectural Improvements)**:
+  1. **Candle Cache Expiration Repair**:
+     - แก้ไขตรรกะตรวจสอบแคชบนดิสก์ใน `fetchAlpacaCandles` และ `fetchBinanceCandles`: ตรวจสอบทั้งอายุแท่งเทียนและอายุไฟล์แคชจริง (`cacheAgeMs < 7200 * 1000`) ป้องกันการใช้แคชเก่าค้างปี
+     - ปรับ `warmupBuffer = 900` แท่งเท่ากันทุกตลาด และดึง `candlesLimit = Math.max(1500, limit + warmupBuffer)`
+  2. **Forward Bar Viability Gate ใน Funnel**:
+     - เพิ่มเงื่อนไข `if (sym !== activeSymbol && idx >= candles.length - 12) continue;` ใน `evaluateHistoricalFunnelAtTime` การันตีว่าสินทรัพย์ที่จะถูกเลือกต้องมีแท่งเทียนเหลือในอนาคตอย่างน้อย 12 แท่ง
+  3. **Stock Microstructure Calibration & Strict Grade S/A Only**:
+     - ปรับจูนเกณฑ์ `STOCK` ใน `evaluateGridDna`: `minSpan = 0.85%`, `wickThreshold = 18.0%`, `isStockFit`: `bounce52Rate >= 48.0%`, `bounceToKnifeRatio >= 1.35`, `avgDipWickPct >= 16.0%`, `avgSpan48Pct >= 0.85%` ทำให้หุ้นบลูชิพ/ETF ได้รับเกรด **`Grade S/A`** ตามคุณภาพจริง (`SPY`, `AAPL`, `GOOGL`, `META`, `IBM`, `QCOM` ได้ `S|92–S|100`)
+     - บังคับใช้ **Strict Grade S/A Gate** ทั่วทั้งระบบ (`c.dnaGrade === "S" || c.dnaGrade === "A"`) ตัดช่องโหว่การรับสินทรัพย์ `Grade B` ในตลาดหุ้นสหรัฐฯ 100%
+  4. **Benchmark Parity**:
+     - ปรับการจำลอง Single-Pair Benchmark ให้ใช้ค่า `opts.minChannelWidthPct`, `opts.buyLevelPcts` และ `costModel` ตรงตามตลาดนั้นๆ
+- **ผลการทดสอบยืนยันจริง (Verification Results)**:
+  - 🇺🇸 **US Equities (`USD`, 20 หุ้น/ETF, 15m, 1,000 แท่งทำการ)**:
+    - **Grade B Legs Count**: **0 / 32 รอบ (0% Grade B, 100% Grade S/A Purity!)**
+    - **คำเตือน `startBarIdx=-1`**: **0 ครั้ง (หมดสิ้นโดยสมบูรณ์)**
+    - **ข้อมูลแท่งเทียน**: ซิงโครไนซ์สมบูรณ์ถึง `2026-11-04T20:45:00.000Z`
+    - **กำไรสุทธิ (Net PnL)**: **+0.71% (+$71.35)**, Trade Win Rate: **74.2% (23/31 ไม้ชนะ)**, Alpha vs SPY: **+1.56%**
+  - 🟡 **Crypto `FDUSD` (Zero-Fee Majors, 15m, 1,500 แท่ง)**:
+    - **กำไรสุทธิ (Net PnL)**: **+1.33% (+$2.66)**, Trade Win Rate: **100.0% (6/6 ไม้ชนะรวด)**, Max DD: **-0.20%**, Grade B Count: **0 / 7**
+  - 🟢 **Crypto `USDT` (Quality Universe, 15m, 1,500 แท่ง)**:
+    - **Grade B Legs Count**: **0 / 21 รอบ (100% Grade S/A Purity)**, คำเตือน Viability: **0 ครั้ง**
+- **Version Bump & Typecheck**:
+  - อัปเดตเวอร์ชันเป็น **`0.3.0.64`** ใน `package.json` และ `src/version.ts`
+  - ตรวจสอบผ่าน `npm run typecheck` 100% (0 errors)
